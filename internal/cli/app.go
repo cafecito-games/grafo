@@ -16,16 +16,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
 	"github.com/cafecito-games/grafo/internal/mcpserver"
-	parserapi "github.com/cafecito-games/grafo/internal/parser"
-	configparser "github.com/cafecito-games/grafo/internal/parser/config"
-	gdscriptparser "github.com/cafecito-games/grafo/internal/parser/gdscript"
-	godotparser "github.com/cafecito-games/grafo/internal/parser/godot"
-	golangparser "github.com/cafecito-games/grafo/internal/parser/golang"
-	manifestparser "github.com/cafecito-games/grafo/internal/parser/manifest"
-	pythonparser "github.com/cafecito-games/grafo/internal/parser/python"
-	sqlparser "github.com/cafecito-games/grafo/internal/parser/sql"
-	postgresparser "github.com/cafecito-games/grafo/internal/parser/sql/postgres"
-	typescriptparser "github.com/cafecito-games/grafo/internal/parser/typescript"
+	parserdefaults "github.com/cafecito-games/grafo/internal/parser/defaults"
 	"github.com/cafecito-games/grafo/internal/query"
 	"github.com/cafecito-games/grafo/internal/semantic"
 	sourcecontext "github.com/cafecito-games/grafo/internal/source"
@@ -99,11 +90,6 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 	return 0
 }
 
-func registry() *parserapi.Registry {
-	return parserapi.NewRegistry(gdscriptparser.New(), godotparser.New(), golangparser.New(), pythonparser.New(), typescriptparser.New(),
-		manifestparser.New(), sqlparser.New(postgresparser.New()), configparser.New())
-}
-
 func (a *App) index(ctx context.Context, args parsedArguments) error {
 	root, err := optionalPath(args.positionals)
 	if err != nil {
@@ -122,7 +108,7 @@ func (a *App) index(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	report, err := indexer.NewService(repository, registry()).Run(ctx, project, indexer.Options{
+	report, err := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{
 		Force: args.flags["force"], MaxFileSize: maxSize,
 	})
 	if err != nil {
@@ -152,7 +138,7 @@ func (a *App) watch(ctx context.Context, args parsedArguments) error {
 		if err != nil {
 			return err
 		}
-		report, runErr := indexer.NewService(repository, registry()).Run(ctx, project, indexer.Options{})
+		report, runErr := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{})
 		closeErr := repository.Close()
 		if runErr != nil {
 			return runErr
@@ -535,7 +521,7 @@ func openExisting(ctx context.Context, root string) (indexer.Project, graph.Repo
 	if err != nil {
 		return project, nil, err
 	}
-	if _, err := indexer.NewService(repository, registry()).Run(ctx, project, indexer.Options{}); err != nil {
+	if _, err := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{}); err != nil {
 		repository.Close()
 		return project, nil, fmt.Errorf("refresh index: %w", err)
 	}
@@ -552,7 +538,7 @@ func openRead(ctx context.Context, args parsedArguments) (graph.ReadRepository, 
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		if err := repository.Refresh(ctx, registry()); err != nil {
+		if err := repository.Refresh(ctx, parserdefaults.NewRegistry()); err != nil {
 			repository.Close()
 			return nil, nil, nil, err
 		}
@@ -567,13 +553,13 @@ func openRead(ctx context.Context, args parsedArguments) (graph.ReadRepository, 
 
 func refreshRead(ctx context.Context, repository graph.ReadRepository, projects []indexer.Project) error {
 	if federated, ok := repository.(*federation.Repository); ok {
-		return federated.Refresh(ctx, registry())
+		return federated.Refresh(ctx, parserdefaults.NewRegistry())
 	}
 	indexed, ok := repository.(graph.IndexRepository)
 	if !ok || len(projects) != 1 {
 		return fmt.Errorf("repository does not support index refresh")
 	}
-	_, err := indexer.NewService(indexed, registry()).Run(ctx, projects[0], indexer.Options{})
+	_, err := indexer.NewService(indexed, parserdefaults.NewRegistry()).Run(ctx, projects[0], indexer.Options{})
 	return err
 }
 

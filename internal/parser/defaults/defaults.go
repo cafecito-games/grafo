@@ -1,0 +1,23 @@
+// Package defaults owns the production parser registry shared by the CLI and
+// deterministic evaluation corpus.
+package defaults
+
+import (
+	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	configparser "github.com/cafecito-games/grafo/internal/parser/config"
+	gdscriptparser "github.com/cafecito-games/grafo/internal/parser/gdscript"
+	godotparser "github.com/cafecito-games/grafo/internal/parser/godot"
+	golangparser "github.com/cafecito-games/grafo/internal/parser/golang"
+	manifestparser "github.com/cafecito-games/grafo/internal/parser/manifest"
+	pythonparser "github.com/cafecito-games/grafo/internal/parser/python"
+	sqlparser "github.com/cafecito-games/grafo/internal/parser/sql"
+	postgresparser "github.com/cafecito-games/grafo/internal/parser/sql/postgres"
+	typescriptparser "github.com/cafecito-games/grafo/internal/parser/typescript"
+)
+
+func NewRegistry() *parserapi.Registry {
+	return parserapi.NewRegistry(
+		gdscriptparser.New(), godotparser.New(), golangparser.New(), pythonparser.New(), typescriptparser.New(),
+		manifestparser.New(), sqlparser.New(postgresparser.New()), configparser.New(),
+	)
+}

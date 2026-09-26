@@ -1,0 +1,8 @@
+config_version=5
+
+[application]
+config/name="Matrix"
+run/main_scene="res://scenes/main.tscn"
+
+[input]
+jump={"deadzone": 0.5, "events": []}

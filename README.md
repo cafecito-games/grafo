@@ -175,7 +175,12 @@ speculative edges to every declaration with the same name.
 
 ```sh
 task check
+task eval:resolution
 ```
+
+The resolution corpus is the parser-to-storage correctness gate for structural
+changes. See [Deterministic resolution corpus](docs/evaluation.md) before
+changing fixtures or committed expectations.
 
 To exercise GDScript extraction against a representative Godot project, run:
 

@@ -1,0 +1,2526 @@
+{
+  "schema_version": 1,
+  "case_id": "local-language-matrix",
+  "repositories": [
+    {
+      "id": "matrix",
+      "path": "repos/matrix"
+    }
+  ],
+  "expect": {
+    "nodes": [
+      {
+        "repo": "matrix",
+        "kind": "class",
+        "qualified_name": "Node",
+        "external": true
+      },
+      {
+        "repo": "matrix",
+        "kind": "class",
+        "qualified_name": "Player"
+      },
+      {
+        "repo": "matrix",
+        "kind": "class",
+        "qualified_name": "web/worker.BaseWorker"
+      },
+      {
+        "repo": "matrix",
+        "kind": "class",
+        "qualified_name": "web/worker.TSWorker"
+      },
+      {
+        "repo": "matrix",
+        "kind": "column",
+        "qualified_name": "public.events.id"
+      },
+      {
+        "repo": "matrix",
+        "kind": "column",
+        "qualified_name": "public.events.payload"
+      },
+      {
+        "repo": "matrix",
+        "kind": "column",
+        "qualified_name": "public.pgsql_events.id"
+      },
+      {
+        "repo": "matrix",
+        "kind": "column",
+        "qualified_name": "public.psql_events.id"
+      },
+      {
+        "repo": "matrix",
+        "kind": "config_key",
+        "qualified_name": "config:.env.local:LOCAL_ONLY"
+      },
+      {
+        "repo": "matrix",
+        "kind": "config_key",
+        "qualified_name": "config:.env:API_TOKEN"
+      },
+      {
+        "repo": "matrix",
+        "kind": "config_key",
+        "qualified_name": "config:.env:DATABASE_URL"
+      },
+      {
+        "repo": "matrix",
+        "kind": "config_key",
+        "qualified_name": "config:config.json:service.name"
+      },
+      {
+        "repo": "matrix",
+        "kind": "config_key",
+        "qualified_name": "config:config.yml:service"
+      },
+      {
+        "repo": "matrix",
+        "kind": "config_key",
+        "qualified_name": "config:config.yml:service.region"
+      },
+      {
+        "repo": "matrix",
+        "kind": "config_key",
+        "qualified_name": "config:project.godot:application/config/name"
+      },
+      {
+        "repo": "matrix",
+        "kind": "config_key",
+        "qualified_name": "config:project.godot:application/run/main_scene"
+      },
+      {
+        "repo": "matrix",
+        "kind": "config_key",
+        "qualified_name": "config:project.godot:config_version"
+      },
+      {
+        "repo": "matrix",
+        "kind": "config_key",
+        "qualified_name": "config:project.godot:input/jump"
+      },
+      {
+        "repo": "matrix",
+        "kind": "config_key",
+        "qualified_name": "config:settings.properties:service.mode"
+      },
+      {
+        "repo": "matrix",
+        "kind": "event",
+        "qualified_name": "Player.finished"
+      },
+      {
+        "repo": "matrix",
+        "kind": "event",
+        "qualified_name": "jobs.ready",
+        "external": true
+      },
+      {
+        "repo": "matrix",
+        "kind": "event",
+        "qualified_name": "scenes/main:Main/Button.pressed"
+      },
+      {
+        "repo": "matrix",
+        "kind": "external",
+        "qualified_name": "reflect.ValueOf",
+        "external": true
+      },
+      {
+        "repo": "matrix",
+        "kind": "external",
+        "qualified_name": "reflect.ValueOf(name).Call",
+        "external": true
+      },
+      {
+        "repo": "matrix",
+        "kind": "field",
+        "qualified_name": "resources/sample.display_name"
+      },
+      {
+        "repo": "matrix",
+        "kind": "field",
+        "qualified_name": "scenes/main:Main.script"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": ".env"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": ".env.local"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "a/duplicate.go"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "b/duplicate.go"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "config.json"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "config.yml"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "go.mod"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "main.go"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "project.godot"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "requirements-dev.txt"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "requirements.txt"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "resources/sample.tres"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "scenes/exported.escn"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "scenes/main.tscn"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "schema.pgsql"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "schema.psql"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "schema.sql"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "scripts/player.gd"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "service.py"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "settings.properties"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "types.pyi"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "web/package.json"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "web/view.tsx"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "web/worker.ts"
+      },
+      {
+        "repo": "matrix",
+        "kind": "function",
+        "qualified_name": "example.com/matrix.DynamicTarget"
+      },
+      {
+        "repo": "matrix",
+        "kind": "function",
+        "qualified_name": "example.com/matrix.Invoke"
+      },
+      {
+        "repo": "matrix",
+        "kind": "function",
+        "qualified_name": "example.com/matrix.Run"
+      },
+      {
+        "repo": "matrix",
+        "kind": "function",
+        "qualified_name": "example.com/matrix.helper"
+      },
+      {
+        "repo": "matrix",
+        "kind": "function",
+        "qualified_name": "example.com/matrix/a.Duplicate"
+      },
+      {
+        "repo": "matrix",
+        "kind": "function",
+        "qualified_name": "example.com/matrix/b.Duplicate"
+      },
+      {
+        "repo": "matrix",
+        "kind": "function",
+        "qualified_name": "service.python_call"
+      },
+      {
+        "repo": "matrix",
+        "kind": "function",
+        "qualified_name": "service.python_target"
+      },
+      {
+        "repo": "matrix",
+        "kind": "function",
+        "qualified_name": "types.typed_value"
+      },
+      {
+        "repo": "matrix",
+        "kind": "function",
+        "qualified_name": "web/view.View"
+      },
+      {
+        "repo": "matrix",
+        "kind": "interface",
+        "qualified_name": "web/worker.Runnable"
+      },
+      {
+        "repo": "matrix",
+        "kind": "method",
+        "qualified_name": "Player.done"
+      },
+      {
+        "repo": "matrix",
+        "kind": "method",
+        "qualified_name": "Player.load_scene"
+      },
+      {
+        "repo": "matrix",
+        "kind": "method",
+        "qualified_name": "Player.on_finished"
+      },
+      {
+        "repo": "matrix",
+        "kind": "method",
+        "qualified_name": "on_pressed",
+        "external": true
+      },
+      {
+        "repo": "matrix",
+        "kind": "module",
+        "qualified_name": "@example/matrix-web"
+      },
+      {
+        "repo": "matrix",
+        "kind": "module",
+        "qualified_name": "example.com/matrix"
+      },
+      {
+        "repo": "matrix",
+        "kind": "module",
+        "qualified_name": "example.com/shared",
+        "external": true
+      },
+      {
+        "repo": "matrix",
+        "kind": "module",
+        "qualified_name": "os",
+        "external": true
+      },
+      {
+        "repo": "matrix",
+        "kind": "module",
+        "qualified_name": "project"
+      },
+      {
+        "repo": "matrix",
+        "kind": "module",
+        "qualified_name": "pytest",
+        "external": true
+      },
+      {
+        "repo": "matrix",
+        "kind": "module",
+        "qualified_name": "reflect",
+        "external": true
+      },
+      {
+        "repo": "matrix",
+        "kind": "module",
+        "qualified_name": "requests",
+        "external": true
+      },
+      {
+        "repo": "matrix",
+        "kind": "module",
+        "qualified_name": "resources/sample"
+      },
+      {
+        "repo": "matrix",
+        "kind": "module",
+        "qualified_name": "scenes/exported"
+      },
+      {
+        "repo": "matrix",
+        "kind": "module",
+        "qualified_name": "scenes/main"
+      },
+      {
+        "repo": "matrix",
+        "kind": "module",
+        "qualified_name": "scripts/player",
+        "external": true
+      },
+      {
+        "repo": "matrix",
+        "kind": "module",
+        "qualified_name": "shared-ui",
+        "external": true
+      },
+      {
+        "repo": "matrix",
+        "kind": "parameter",
+        "qualified_name": "Player.on_finished._value"
+      },
+      {
+        "repo": "matrix",
+        "kind": "parameter",
+        "qualified_name": "example.com/matrix.Invoke.name"
+      },
+      {
+        "repo": "matrix",
+        "kind": "parameter",
+        "qualified_name": "types.typed_value.value"
+      },
+      {
+        "repo": "matrix",
+        "kind": "repository",
+        "qualified_name": "matrix"
+      },
+      {
+        "repo": "matrix",
+        "kind": "table",
+        "qualified_name": "public.events"
+      },
+      {
+        "repo": "matrix",
+        "kind": "table",
+        "qualified_name": "public.pgsql_events"
+      },
+      {
+        "repo": "matrix",
+        "kind": "table",
+        "qualified_name": "public.psql_events"
+      },
+      {
+        "repo": "matrix",
+        "kind": "variable",
+        "qualified_name": "scenes/exported:Exported"
+      },
+      {
+        "repo": "matrix",
+        "kind": "variable",
+        "qualified_name": "scenes/main:Main"
+      },
+      {
+        "repo": "matrix",
+        "kind": "variable",
+        "qualified_name": "scenes/main:Main/Button"
+      },
+      {
+        "repo": "matrix",
+        "kind": "view",
+        "qualified_name": "public.recent_events"
+      }
+    ],
+    "edges": [
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "class",
+          "qualified_name": "Player"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "event",
+          "qualified_name": "Player.finished"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 3,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "class",
+          "qualified_name": "Player"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.done"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 11,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "class",
+          "qualified_name": "Player"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 5,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "class",
+          "qualified_name": "Player"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.on_finished"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 14,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "class",
+          "qualified_name": "Player"
+        },
+        "relation": "extends",
+        "to": {
+          "repo": "matrix",
+          "kind": "class",
+          "qualified_name": "Node",
+          "external": true
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "class",
+          "qualified_name": "web/worker.TSWorker"
+        },
+        "relation": "extends",
+        "to": {
+          "repo": "matrix",
+          "kind": "class",
+          "qualified_name": "web/worker.BaseWorker"
+        },
+        "source": {
+          "path": "web/worker.ts",
+          "line": 3,
+          "column": 16
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "class",
+          "qualified_name": "web/worker.TSWorker"
+        },
+        "relation": "implements",
+        "to": {
+          "repo": "matrix",
+          "kind": "interface",
+          "qualified_name": "web/worker.Runnable"
+        },
+        "source": {
+          "path": "web/worker.ts",
+          "line": 3,
+          "column": 35
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:.env:DATABASE_URL"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:.env:API_TOKEN"
+        },
+        "source": {
+          "path": ".env",
+          "line": 2,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:project.godot:application/run/main_scene"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "scenes/main"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 5,
+          "column": 16
+        },
+        "properties": {
+          "resource": "res://scenes/main.tscn"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "event",
+          "qualified_name": "scenes/main:Main/Button.pressed"
+        },
+        "relation": "handled_by",
+        "to": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "on_pressed",
+          "external": true
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 10,
+          "column": 1
+        },
+        "properties": {
+          "receiver": "scenes/main:Main"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "field",
+          "qualified_name": "scenes/main:Main.script"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "scripts/player",
+          "external": true
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 6,
+          "column": 10
+        },
+        "properties": {
+          "resource_id": "1_player"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": ".env.local"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:.env.local:LOCAL_ONLY"
+        },
+        "source": {
+          "path": ".env.local",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": ".env"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:.env:API_TOKEN"
+        },
+        "source": {
+          "path": ".env",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": ".env"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:.env:DATABASE_URL"
+        },
+        "source": {
+          "path": ".env",
+          "line": 2,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "a/duplicate.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "example.com/matrix/a.Duplicate"
+        },
+        "source": {
+          "path": "a/duplicate.go",
+          "line": 3,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "b/duplicate.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "example.com/matrix/b.Duplicate"
+        },
+        "source": {
+          "path": "b/duplicate.go",
+          "line": 3,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "config.json"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:config.json:service.name"
+        },
+        "source": {
+          "path": "config.json",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "config.yml"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:config.yml:service.region"
+        },
+        "source": {
+          "path": "config.yml",
+          "line": 2,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "config.yml"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:config.yml:service"
+        },
+        "source": {
+          "path": "config.yml",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "go.mod"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "example.com/matrix"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "main.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "example.com/matrix.DynamicTarget"
+        },
+        "source": {
+          "path": "main.go",
+          "line": 20,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "main.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "example.com/matrix.Invoke"
+        },
+        "source": {
+          "path": "main.go",
+          "line": 16,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "main.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "example.com/matrix.Run"
+        },
+        "source": {
+          "path": "main.go",
+          "line": 8,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "main.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "example.com/matrix.helper"
+        },
+        "source": {
+          "path": "main.go",
+          "line": 14,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "main.go"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "os",
+          "external": true
+        },
+        "source": {
+          "path": "main.go",
+          "line": 4,
+          "column": 2
+        },
+        "properties": {
+          "alias": "os"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "main.go"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "reflect",
+          "external": true
+        },
+        "source": {
+          "path": "main.go",
+          "line": 5,
+          "column": 2
+        },
+        "properties": {
+          "alias": "reflect"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "project.godot"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "project"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "resources/sample.tres"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "resources/sample"
+        },
+        "source": {
+          "path": "resources/sample.tres",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "scenes/exported.escn"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "scenes/exported"
+        },
+        "source": {
+          "path": "scenes/exported.escn",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "scenes/main.tscn"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "scenes/main"
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "schema.pgsql"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "table",
+          "qualified_name": "public.pgsql_events"
+        },
+        "source": {
+          "path": "schema.pgsql",
+          "line": 1,
+          "column": 14
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "schema.psql"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "table",
+          "qualified_name": "public.psql_events"
+        },
+        "source": {
+          "path": "schema.psql",
+          "line": 1,
+          "column": 14
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "schema.sql"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "table",
+          "qualified_name": "public.events"
+        },
+        "source": {
+          "path": "schema.sql",
+          "line": 1,
+          "column": 14
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "schema.sql"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "view",
+          "qualified_name": "public.recent_events"
+        },
+        "source": {
+          "path": "schema.sql",
+          "line": 6,
+          "column": 13
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "scripts/player.gd"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "class",
+          "qualified_name": "Player"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "service.py"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "service.python_call"
+        },
+        "source": {
+          "path": "service.py",
+          "line": 4,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "service.py"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "service.python_target"
+        },
+        "source": {
+          "path": "service.py",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "settings.properties"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:settings.properties:service.mode"
+        },
+        "source": {
+          "path": "settings.properties",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "types.pyi"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "types.typed_value"
+        },
+        "source": {
+          "path": "types.pyi",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "web/package.json"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "@example/matrix-web"
+        },
+        "source": {
+          "path": "web/package.json",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "web/view.tsx"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "web/view.View"
+        },
+        "source": {
+          "path": "web/view.tsx",
+          "line": 1,
+          "column": 8
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "web/worker.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "class",
+          "qualified_name": "web/worker.BaseWorker"
+        },
+        "source": {
+          "path": "web/worker.ts",
+          "line": 2,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "web/worker.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "class",
+          "qualified_name": "web/worker.TSWorker"
+        },
+        "source": {
+          "path": "web/worker.ts",
+          "line": 3,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "web/worker.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "interface",
+          "qualified_name": "web/worker.Runnable"
+        },
+        "source": {
+          "path": "web/worker.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "example.com/matrix.Invoke"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "matrix",
+          "kind": "external",
+          "qualified_name": "reflect.ValueOf(name).Call",
+          "external": true
+        },
+        "source": {
+          "path": "main.go",
+          "line": 17,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "example.com/matrix.Invoke"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "matrix",
+          "kind": "external",
+          "qualified_name": "reflect.ValueOf",
+          "external": true
+        },
+        "source": {
+          "path": "main.go",
+          "line": 17,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "example.com/matrix.Invoke"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "parameter",
+          "qualified_name": "example.com/matrix.Invoke.name"
+        },
+        "source": {
+          "path": "main.go",
+          "line": 16,
+          "column": 13
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "example.com/matrix.Run"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "example.com/matrix.helper"
+        },
+        "source": {
+          "path": "main.go",
+          "line": 9,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "example.com/matrix.Run"
+        },
+        "relation": "publishes",
+        "to": {
+          "repo": "matrix",
+          "kind": "event",
+          "qualified_name": "jobs.ready",
+          "external": true
+        },
+        "source": {
+          "path": "main.go",
+          "line": 10,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "example.com/matrix.Run"
+        },
+        "relation": "reads_config",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:.env:API_TOKEN"
+        },
+        "source": {
+          "path": "main.go",
+          "line": 11,
+          "column": 9
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "service.python_call"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "service.python_target"
+        },
+        "source": {
+          "path": "service.py",
+          "line": 5,
+          "column": 12
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "types.typed_value"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "parameter",
+          "qualified_name": "types.typed_value.value"
+        },
+        "source": {
+          "path": "types.pyi",
+          "line": 1,
+          "column": 17
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.done"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 8,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "publishes",
+        "to": {
+          "repo": "matrix",
+          "kind": "event",
+          "qualified_name": "Player.finished"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 6,
+          "column": 2
+        },
+        "properties": {
+          "signal": "Player.finished"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "reads_config",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:project.godot:application/run/main_scene"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 9,
+          "column": 9
+        },
+        "properties": {
+          "source": "project.godot"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "subscribes",
+        "to": {
+          "repo": "matrix",
+          "kind": "event",
+          "qualified_name": "Player.finished"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 7,
+          "column": 2
+        },
+        "properties": {
+          "signal": "Player.finished"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.on_finished"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "parameter",
+          "qualified_name": "Player.on_finished._value"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 14,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "@example/matrix-web"
+        },
+        "relation": "depends_on",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "shared-ui",
+          "external": true
+        },
+        "source": {
+          "path": "web/package.json",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "ecosystem": "npm",
+          "scope": "runtime",
+          "version": "workspace:*"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "example.com/matrix"
+        },
+        "relation": "depends_on",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "example.com/shared",
+          "external": true
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 5,
+          "column": 1
+        },
+        "properties": {
+          "ecosystem": "go",
+          "scope": "runtime",
+          "version": "v0.0.0"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "project"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:project.godot:application/config/name"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 4,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "project"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:project.godot:application/run/main_scene"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 5,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "project"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:project.godot:config_version"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "project"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:project.godot:input/jump"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 8,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "resources/sample"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "matrix",
+          "kind": "field",
+          "qualified_name": "resources/sample.display_name"
+        },
+        "source": {
+          "path": "resources/sample.tres",
+          "line": 4,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "scenes/exported"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "variable",
+          "qualified_name": "scenes/exported:Exported"
+        },
+        "source": {
+          "path": "scenes/exported.escn",
+          "line": 3,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "scenes/main"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "variable",
+          "qualified_name": "scenes/main:Main"
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 5,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "scenes/main"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "scripts/player",
+          "external": true
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 3,
+          "column": 1
+        },
+        "properties": {
+          "id": "1_player",
+          "resource": "res://scripts/player.gd",
+          "type": "Script"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "parameter",
+          "qualified_name": "example.com/matrix.Invoke.name"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "matrix",
+          "kind": "external",
+          "qualified_name": "reflect.ValueOf",
+          "external": true
+        },
+        "source": {
+          "path": "main.go",
+          "line": 17,
+          "column": 2
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": ".env.local"
+        },
+        "source": {
+          "path": ".env.local",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": ".env"
+        },
+        "source": {
+          "path": ".env",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "a/duplicate.go"
+        },
+        "source": {
+          "path": "a/duplicate.go",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "b/duplicate.go"
+        },
+        "source": {
+          "path": "b/duplicate.go",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "config.json"
+        },
+        "source": {
+          "path": "config.json",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "config.yml"
+        },
+        "source": {
+          "path": "config.yml",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "go.mod"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "main.go"
+        },
+        "source": {
+          "path": "main.go",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "project.godot"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "requirements-dev.txt"
+        },
+        "source": {
+          "path": "requirements-dev.txt",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "requirements.txt"
+        },
+        "source": {
+          "path": "requirements.txt",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "resources/sample.tres"
+        },
+        "source": {
+          "path": "resources/sample.tres",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "scenes/exported.escn"
+        },
+        "source": {
+          "path": "scenes/exported.escn",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "scenes/main.tscn"
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "schema.pgsql"
+        },
+        "source": {
+          "path": "schema.pgsql",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "schema.psql"
+        },
+        "source": {
+          "path": "schema.psql",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "schema.sql"
+        },
+        "source": {
+          "path": "schema.sql",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "scripts/player.gd"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "service.py"
+        },
+        "source": {
+          "path": "service.py",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "settings.properties"
+        },
+        "source": {
+          "path": "settings.properties",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "types.pyi"
+        },
+        "source": {
+          "path": "types.pyi",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "web/package.json"
+        },
+        "source": {
+          "path": "web/package.json",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "web/view.tsx"
+        },
+        "source": {
+          "path": "web/view.tsx",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "web/worker.ts"
+        },
+        "source": {
+          "path": "web/worker.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "depends_on",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "pytest",
+          "external": true
+        },
+        "source": {
+          "path": "requirements-dev.txt",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "ecosystem": "pypi",
+          "scope": "development",
+          "version": "==9.0.0"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "depends_on",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "requests",
+          "external": true
+        },
+        "source": {
+          "path": "requirements.txt",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "ecosystem": "pypi",
+          "scope": "runtime",
+          "version": "==2.32.0"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "table",
+          "qualified_name": "public.events"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "matrix",
+          "kind": "column",
+          "qualified_name": "public.events.id"
+        },
+        "source": {
+          "path": "schema.sql",
+          "line": 2,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "table",
+          "qualified_name": "public.events"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "matrix",
+          "kind": "column",
+          "qualified_name": "public.events.payload"
+        },
+        "source": {
+          "path": "schema.sql",
+          "line": 3,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "table",
+          "qualified_name": "public.pgsql_events"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "matrix",
+          "kind": "column",
+          "qualified_name": "public.pgsql_events.id"
+        },
+        "source": {
+          "path": "schema.pgsql",
+          "line": 1,
+          "column": 35
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "table",
+          "qualified_name": "public.psql_events"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "matrix",
+          "kind": "column",
+          "qualified_name": "public.psql_events.id"
+        },
+        "source": {
+          "path": "schema.psql",
+          "line": 1,
+          "column": 34
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "variable",
+          "qualified_name": "scenes/main:Main/Button"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "event",
+          "qualified_name": "scenes/main:Main/Button.pressed"
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 10,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "variable",
+          "qualified_name": "scenes/main:Main"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "variable",
+          "qualified_name": "scenes/main:Main/Button"
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 8,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "variable",
+          "qualified_name": "scenes/main:Main"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "matrix",
+          "kind": "field",
+          "qualified_name": "scenes/main:Main.script"
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 6,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "variable",
+          "qualified_name": "scenes/main:Main"
+        },
+        "relation": "subscribes",
+        "to": {
+          "repo": "matrix",
+          "kind": "event",
+          "qualified_name": "scenes/main:Main/Button.pressed"
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 10,
+          "column": 1
+        },
+        "properties": {
+          "method": "on_pressed",
+          "signal": "pressed"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "view",
+          "qualified_name": "public.recent_events"
+        },
+        "relation": "reads",
+        "to": {
+          "repo": "matrix",
+          "kind": "table",
+          "qualified_name": "public.events"
+        },
+        "source": {
+          "path": "schema.sql",
+          "line": 7,
+          "column": 25
+        }
+      }
+    ],
+    "queries": [
+      {
+        "id": "go-local-call",
+        "from": "example.com/matrix.Run",
+        "to": "example.com/matrix.helper",
+        "direction": "outgoing",
+        "relations": [
+          "calls"
+        ],
+        "nodes": [
+          {
+            "repo": "matrix",
+            "kind": "function",
+            "qualified_name": "example.com/matrix.Run"
+          },
+          {
+            "repo": "matrix",
+            "kind": "function",
+            "qualified_name": "example.com/matrix.helper"
+          }
+        ],
+        "edges": [
+          {
+            "from": {
+              "repo": "matrix",
+              "kind": "function",
+              "qualified_name": "example.com/matrix.Run"
+            },
+            "relation": "calls",
+            "to": {
+              "repo": "matrix",
+              "kind": "function",
+              "qualified_name": "example.com/matrix.helper"
+            },
+            "source": {
+              "path": "main.go",
+              "line": 9,
+              "column": 2
+            }
+          }
+        ]
+      },
+      {
+        "id": "gdscript-config",
+        "from": "Player.load_scene",
+        "to": "config:project.godot:application/run/main_scene",
+        "direction": "outgoing",
+        "relations": [
+          "reads_config"
+        ],
+        "nodes": [
+          {
+            "repo": "matrix",
+            "kind": "method",
+            "qualified_name": "Player.load_scene"
+          },
+          {
+            "repo": "matrix",
+            "kind": "config_key",
+            "qualified_name": "config:project.godot:application/run/main_scene"
+          }
+        ],
+        "edges": [
+          {
+            "from": {
+              "repo": "matrix",
+              "kind": "method",
+              "qualified_name": "Player.load_scene"
+            },
+            "relation": "reads_config",
+            "to": {
+              "repo": "matrix",
+              "kind": "config_key",
+              "qualified_name": "config:project.godot:application/run/main_scene"
+            },
+            "source": {
+              "path": "scripts/player.gd",
+              "line": 9,
+              "column": 9
+            },
+            "properties": {
+              "source": "project.godot"
+            }
+          }
+        ]
+      }
+    ],
+    "ambiguities": [
+      {
+        "selector": "Duplicate",
+        "candidates": [
+          {
+            "repo": "matrix",
+            "kind": "function",
+            "qualified_name": "example.com/matrix/a.Duplicate"
+          },
+          {
+            "repo": "matrix",
+            "kind": "function",
+            "qualified_name": "example.com/matrix/b.Duplicate"
+          }
+        ]
+      }
+    ],
+    "forbidden_edges": [
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "example.com/matrix.Invoke"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "example.com/matrix.DynamicTarget"
+        }
+      }
+    ],
+    "forbidden_paths": [
+      {
+        "from": "example.com/matrix.Invoke",
+        "to": "example.com/matrix.DynamicTarget",
+        "direction": "outgoing",
+        "relations": [
+          "calls"
+        ]
+      }
+    ]
+  }
+}
