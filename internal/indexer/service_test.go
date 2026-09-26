@@ -10,6 +10,7 @@ import (
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	configparser "github.com/cafecito-games/grafo/internal/parser/config"
 	golangparser "github.com/cafecito-games/grafo/internal/parser/golang"
+	postgresparser "github.com/cafecito-games/grafo/internal/parser/postgres"
 	typescriptparser "github.com/cafecito-games/grafo/internal/parser/typescript"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 )
@@ -20,6 +21,7 @@ func TestServiceIndexesOnlyChangedFiles(t *testing.T) {
 	write(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26\n")
 	write(t, filepath.Join(root, "main.go"), "package main\nfunc main() { helper() }\nfunc helper() {}\n")
 	write(t, filepath.Join(root, "web.ts"), "export function handler() { return process.env.API_URL }\n")
+	write(t, filepath.Join(root, "schema.sql"), "CREATE TABLE events (id bigint PRIMARY KEY);\n")
 	write(t, filepath.Join(root, ".env"), "API_URL=http://localhost:8080\n")
 
 	project, err := indexer.DiscoverProject(ctx, root)
@@ -31,21 +33,21 @@ func TestServiceIndexesOnlyChangedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer repository.Close()
-	registry := parserapi.NewRegistry(golangparser.New(), typescriptparser.New(), configparser.New())
+	registry := parserapi.NewRegistry(golangparser.New(), typescriptparser.New(), postgresparser.New(), configparser.New())
 	service := indexer.NewService(repository, registry)
 
 	first, err := service.Run(ctx, project, indexer.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Updated) != 3 || first.Unchanged != 0 {
+	if len(first.Updated) != 4 || first.Unchanged != 0 {
 		t.Fatalf("unexpected initial report: %#v", first)
 	}
 	second, err := service.Run(ctx, project, indexer.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Updated) != 0 || second.Unchanged != 3 {
+	if len(second.Updated) != 0 || second.Unchanged != 4 {
 		t.Fatalf("expected incremental no-op: %#v", second)
 	}
 

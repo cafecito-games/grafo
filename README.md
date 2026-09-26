@@ -5,8 +5,8 @@ can query from the command line. Source symbols, calls, imports, configuration,
 HTTP routes, and event-like publish/subscribe operations become nodes and edges.
 
 This repository is at the foundation stage. Go is parsed with the Go compiler
-AST and TypeScript/TSX with Tree-sitter. The index is local, incremental,
-branch-aware, and stored in SQLite.
+AST, TypeScript/TSX with Tree-sitter, and PostgreSQL SQL with PostgreSQL's own
+parser. The index is local, incremental, branch-aware, and stored in SQLite.
 
 [Architecture and extension points](docs/architecture.md)
 
@@ -54,6 +54,9 @@ are marked `federated` and retain their original evidence.
   parameters, local variables, basic assignment/argument/return flow, imports,
   calls, inheritance, `process.env`, Express-style routes, and common
   publish/subscribe calls.
+- PostgreSQL tables, views, columns, indexes, functions, procedures, and the
+  relations read or written by DDL and DML statements in `.sql`, `.pgsql`, and
+  `.psql` files.
 - `.env`, YAML, JSON, and Java `.properties` keys and value references.
 - Outbound Go `net/http` and TypeScript `fetch`/Axios calls, linked to matching
   endpoint declarations locally or across repository boundaries.
