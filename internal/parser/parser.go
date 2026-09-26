@@ -51,7 +51,7 @@ func (r *Registry) Languages() []string {
 
 func FileNode(input Input, language string) graph.Node {
 	return graph.Node{
-		ID: graph.NodeID(graph.KindFile, input.Repository+":"+input.Path), Kind: graph.KindFile,
+		ID: graph.NodeID(graph.KindFile, input.RepoID+":"+input.Path), Kind: graph.KindFile,
 		Name: filepath.Base(input.Path), QualifiedName: input.Path, Language: language,
 		Location: graph.Location{Path: input.Path, Line: 1, Column: 1}, OwnerFile: input.Path,
 	}
@@ -73,12 +73,12 @@ func NewBuilder(input Input, language string) *Builder {
 }
 
 func (b *Builder) FileID() string {
-	return graph.NodeID(graph.KindFile, b.Input.Repository+":"+b.Input.Path)
+	return graph.NodeID(graph.KindFile, b.Input.RepoID+":"+b.Input.Path)
 }
 
 func (b *Builder) AddNode(node graph.Node) string {
 	if node.ID == "" {
-		node.ID = graph.NodeID(node.Kind, node.QualifiedName, node.Location.Path)
+		node.ID = graph.NodeID(node.Kind, node.QualifiedName, b.Input.RepoID, node.Location.Path)
 	}
 	if node.OwnerFile == "" {
 		node.OwnerFile = b.Input.Path

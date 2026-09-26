@@ -19,6 +19,7 @@ class Checkout extends Base implements Handler {
     const token = process.env.API_TOKEN;
     const service = new ChargeService();
     service.charge(request);
+    axios.post("/checkout", request);
     events.publish("order.created", {});
     return request;
   }
@@ -40,6 +41,7 @@ app.post("/checkout", checkout);
 	assertHasFact(t, result.Facts, graph.EdgeReadsConfig, "API_TOKEN")
 	assertHasFact(t, result.Facts, graph.EdgePublishes, "order.created")
 	assertHasFact(t, result.Facts, graph.EdgeCalls, "src/app.ChargeService.charge")
+	assertHasFact(t, result.Facts, graph.EdgeRequests, "POST /checkout")
 	assertHasFact(t, result.Facts, graph.EdgeExtends, "Base")
 	assertHasFact(t, result.Facts, graph.EdgeImplements, "Handler")
 	assertHasFactKind(t, result.Facts, graph.EdgeAssigns)

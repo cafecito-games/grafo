@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cafecito-games/grafo/internal/federation"
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
 	"github.com/cafecito-games/grafo/internal/mcpserver"
@@ -166,22 +167,24 @@ func (a *App) watch(ctx context.Context, args parsedArguments) error {
 }
 
 type statusOutput struct {
-	Project   indexer.Project `json:"project"`
-	IndexedAt string          `json:"indexed_at"`
-	Commit    string          `json:"indexed_commit,omitempty"`
-	Counts    graph.Counts    `json:"counts"`
+	Projects  []indexer.Project `json:"projects"`
+	IndexedAt string            `json:"indexed_at"`
+	Commit    string            `json:"indexed_commit,omitempty"`
+	Counts    graph.Counts      `json:"counts"`
 }
 
 func (a *App) status(ctx context.Context, args parsedArguments) error {
-	root, err := optionalPath(args.positionals)
+	if len(args.positionals) > 1 || (len(args.positionals) == 1 && args.values["repos"] != "") {
+		return fmt.Errorf("usage: grafo status [path] [--repos pathA,pathB]")
+	}
+	if len(args.positionals) == 1 {
+		args.values["repo"] = args.positionals[0]
+	}
+	repository, projects, closeRepository, err := openRead(ctx, args)
 	if err != nil {
 		return err
 	}
-	project, repository, err := openExisting(ctx, root)
-	if err != nil {
-		return err
-	}
-	defer repository.Close()
+	defer closeRepository()
 	counts, err := repository.Counts(ctx)
 	if err != nil {
 		return err
@@ -194,11 +197,13 @@ func (a *App) status(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	output := statusOutput{Project: project, IndexedAt: indexedAt, Commit: commit, Counts: counts}
+	output := statusOutput{Projects: projects, IndexedAt: indexedAt, Commit: commit, Counts: counts}
 	if args.flags["json"] {
 		return writeJSON(a.stdout, output)
 	}
-	fmt.Fprintf(a.stdout, "%s · branch %s\n", project.Name, project.Branch)
+	for _, project := range projects {
+		fmt.Fprintf(a.stdout, "%s · branch %s\n", project.Name, project.Branch)
+	}
 	fmt.Fprintf(a.stdout, "%d files · %d nodes · %d edges · %d unresolved\n", counts.Files, counts.Nodes, counts.Edges, counts.External)
 	fmt.Fprintf(a.stdout, "indexed %s\n", indexedAt)
 	return nil
@@ -206,14 +211,17 @@ func (a *App) status(ctx context.Context, args parsedArguments) error {
 
 func (a *App) mcp(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo mcp [--repo path]")
+		return fmt.Errorf("usage: grafo mcp [--repo path | --repos pathA,pathB]")
 	}
-	project, repository, err := openExisting(ctx, repoPath(args))
+	repository, projects, closeRepository, err := openRead(ctx, args)
 	if err != nil {
 		return err
 	}
-	defer repository.Close()
-	return mcpserver.New(repository, project).Run(ctx, Version)
+	defer closeRepository()
+	service := mcpserver.NewFederated(repository, projects).WithRefresh(func(refreshContext context.Context) error {
+		return refreshRead(refreshContext, repository, projects)
+	})
+	return service.Run(ctx, Version)
 }
 
 func (a *App) find(ctx context.Context, args parsedArguments) error {
@@ -224,11 +232,11 @@ func (a *App) find(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	_, repository, err := openExisting(ctx, repoPath(args))
+	repository, _, closeRepository, err := openRead(ctx, args)
 	if err != nil {
 		return err
 	}
-	defer repository.Close()
+	defer closeRepository()
 	nodes, err := query.NewService(repository).Find(ctx, strings.Join(args.positionals, " "), limit)
 	if err != nil {
 		return err
@@ -244,11 +252,11 @@ func (a *App) show(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 1 {
 		return fmt.Errorf("usage: grafo show <symbol-or-id>")
 	}
-	_, repository, err := openExisting(ctx, repoPath(args))
+	repository, _, closeRepository, err := openRead(ctx, args)
 	if err != nil {
 		return err
 	}
-	defer repository.Close()
+	defer closeRepository()
 	node, err := query.NewService(repository).Resolve(ctx, args.positionals[0])
 	if err != nil {
 		return err
@@ -278,7 +286,7 @@ func (a *App) neighbors(ctx context.Context, args parsedArguments, mode string) 
 		depthDefault, direction = 4, query.Incoming
 		relations = []graph.EdgeKind{graph.EdgeCalls, graph.EdgeHandledBy, graph.EdgeImports,
 			graph.EdgeExtends, graph.EdgeImplements, graph.EdgeEmbeds, graph.EdgeReferences,
-			graph.EdgeAssigns, graph.EdgeReturns, graph.EdgePasses}
+			graph.EdgeAssigns, graph.EdgeReturns, graph.EdgePasses, graph.EdgeRequests}
 	}
 	depth, err := intOption(args, "depth", depthDefault)
 	if err != nil {
@@ -288,11 +296,11 @@ func (a *App) neighbors(ctx context.Context, args parsedArguments, mode string) 
 	if err != nil {
 		return err
 	}
-	_, repository, err := openExisting(ctx, repoPath(args))
+	repository, _, closeRepository, err := openRead(ctx, args)
 	if err != nil {
 		return err
 	}
-	defer repository.Close()
+	defer closeRepository()
 	result, err := query.NewService(repository).Neighborhood(ctx, args.positionals[0], depth, direction, relations, limit)
 	if err != nil {
 		return err
@@ -324,11 +332,11 @@ func (a *App) path(ctx context.Context, args parsedArguments) error {
 		return err
 	}
 	direction := query.Direction(args.values["direction"])
-	_, repository, err := openExisting(ctx, repoPath(args))
+	repository, _, closeRepository, err := openRead(ctx, args)
 	if err != nil {
 		return err
 	}
-	defer repository.Close()
+	defer closeRepository()
 	result, err := query.NewService(repository).ShortestPath(ctx, args.positionals[0], args.positionals[1], direction, parseRelations(args.values["relation"]), limit)
 	if err != nil {
 		return err
@@ -356,7 +364,49 @@ func openExisting(ctx context.Context, root string) (indexer.Project, graph.Repo
 		return project, nil, err
 	}
 	repository, err := sqlite.Open(ctx, project.IndexPath)
-	return project, repository, err
+	if err != nil {
+		return project, nil, err
+	}
+	if _, err := indexer.NewService(repository, registry()).Run(ctx, project, indexer.Options{}); err != nil {
+		repository.Close()
+		return project, nil, fmt.Errorf("refresh index: %w", err)
+	}
+	return project, repository, nil
+}
+
+func openRead(ctx context.Context, args parsedArguments) (graph.ReadRepository, []indexer.Project, func() error, error) {
+	if args.values["repo"] != "" && args.values["repos"] != "" {
+		return nil, nil, nil, fmt.Errorf("--repo and --repos cannot be used together")
+	}
+	if raw := args.values["repos"]; raw != "" {
+		paths := strings.Split(raw, ",")
+		repository, err := federation.Open(ctx, paths)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if err := repository.Refresh(ctx, registry()); err != nil {
+			repository.Close()
+			return nil, nil, nil, err
+		}
+		return repository, repository.Projects(), repository.Close, nil
+	}
+	project, repository, err := openExisting(ctx, repoPath(args))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return repository, []indexer.Project{project}, repository.Close, nil
+}
+
+func refreshRead(ctx context.Context, repository graph.ReadRepository, projects []indexer.Project) error {
+	if federated, ok := repository.(*federation.Repository); ok {
+		return federated.Refresh(ctx, registry())
+	}
+	indexed, ok := repository.(graph.IndexRepository)
+	if !ok || len(projects) != 1 {
+		return fmt.Errorf("repository does not support index refresh")
+	}
+	_, err := indexer.NewService(indexed, registry()).Run(ctx, projects[0], indexer.Options{})
+	return err
 }
 
 func (a *App) printIndexReport(report indexer.Report, asJSON bool) error {
@@ -410,7 +460,7 @@ type parsedArguments struct {
 
 var booleanOptions = map[string]bool{"json": true, "force": true, "help": true}
 var valueOptions = map[string]bool{
-	"repo": true, "depth": true, "direction": true, "relation": true,
+	"repo": true, "repos": true, "depth": true, "direction": true, "relation": true,
 	"limit": true, "interval": true, "max-file-size": true,
 }
 
@@ -509,10 +559,10 @@ const helpText = `Grafo builds a deterministic semantic graph of a repository.
 Usage:
   grafo index [path] [--force] [--json]
   grafo watch [path] [--interval 1s]
-  grafo status [path] [--json]
-  grafo mcp [--repo path]
-  grafo find <text> [--limit 20] [--repo path] [--json]
-  grafo show <symbol-or-id> [--repo path] [--json]
+  grafo status [path] [--repos pathA,pathB] [--json]
+  grafo mcp [--repo path | --repos pathA,pathB]
+  grafo find <text> [--limit 20] [--repo path | --repos pathA,pathB] [--json]
+  grafo show <symbol-or-id> [--repo path | --repos pathA,pathB] [--json]
   grafo neighbors <symbol-or-id> [--depth 1] [--direction both]
   grafo callers <symbol-or-id> [--depth 3]
   grafo callees <symbol-or-id> [--depth 3]
@@ -520,6 +570,7 @@ Usage:
   grafo path <from> <to> [--direction outgoing] [--relation calls,...]
   grafo version
 
-Options may appear before or after positional arguments. Query commands refuse
-to use another branch's index; run grafo index after switching branches.
+Options may appear before or after positional arguments. All query commands
+accept --repo or a comma-separated --repos list. Active branch indexes are
+refreshed incrementally before queries and never substituted across branches.
 `

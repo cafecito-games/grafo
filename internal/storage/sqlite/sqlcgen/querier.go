@@ -36,6 +36,7 @@ type Querier interface {
 	ListDirtyFacts(ctx context.Context) ([]Fact, error)
 	ListEdgesFrom(ctx context.Context, fromID string) ([]Edge, error)
 	ListEdgesTo(ctx context.Context, toID string) ([]Edge, error)
+	ListExternalEdgesMatching(ctx context.Context, arg ListExternalEdgesMatchingParams) ([]Edge, error)
 	ListFacts(ctx context.Context) ([]Fact, error)
 	ListFiles(ctx context.Context) ([]File, error)
 	MarkDirtyNode(ctx context.Context, nodeID string) error

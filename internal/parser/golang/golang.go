@@ -320,6 +320,12 @@ func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input,
 		return
 	}
 	method := strings.ToLower(graph.SimpleName(callee))
+	if isHTTPMethod(method) && len(call.Args) > 0 && (strings.HasPrefix(callee, "net/http.") || strings.HasPrefix(callee, "http.")) {
+		if route, ok := stringArgument(call.Args, 0); ok {
+			b.AddFact(fromID, graph.EdgeRequests, "", strings.ToUpper(method)+" "+route, graph.KindEndpoint, loc, nil)
+			return
+		}
+	}
 	if isHTTPMethod(method) && len(call.Args) > 1 {
 		if route, ok := stringArgument(call.Args, 0); ok {
 			if strings.HasPrefix(route, "/") {
