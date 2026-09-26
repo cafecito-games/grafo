@@ -84,6 +84,9 @@ are marked `federated` and retain their original evidence.
   variables, type annotations, basic assignment/argument/return flow, imports,
   calls, inheritance, environment reads, framework route decorators, outbound
   HTTP requests, and common publish/subscribe calls.
+- Go modules, npm packages, and Python requirements from `go.mod`,
+  `package.json`, and `requirements*.txt`, including version, scope, indirect,
+  optional, and replacement metadata. Dependency edges resolve across repos.
 - `.env`, YAML, JSON, and Java `.properties` keys and value references.
 - Outbound Go `net/http`, Python Requests/HTTPX, and TypeScript `fetch`/Axios
   calls, linked to matching endpoint declarations locally or across repository

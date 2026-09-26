@@ -12,6 +12,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/indexer"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	golangparser "github.com/cafecito-games/grafo/internal/parser/golang"
+	manifestparser "github.com/cafecito-games/grafo/internal/parser/manifest"
 	"github.com/cafecito-games/grafo/internal/query"
 	"github.com/cafecito-games/grafo/internal/semantic"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
@@ -21,7 +22,7 @@ func TestRepositoryResolvesHTTPAcrossIndexes(t *testing.T) {
 	ctx := context.Background()
 	clientRoot := t.TempDir()
 	serverRoot := t.TempDir()
-	write(t, filepath.Join(clientRoot, "go.mod"), "module example.com/client\n\ngo 1.26\n")
+	write(t, filepath.Join(clientRoot, "go.mod"), "module example.com/client\n\ngo 1.26\n\nrequire example.com/server v0.0.0\n")
 	write(t, filepath.Join(clientRoot, "client.go"), `package client
 import "net/http"
 func Call() { http.Get("/charge") }
@@ -62,6 +63,17 @@ func Routes() { router.Get("/charge", Handler) }
 	}
 	if !foundIncoming {
 		t.Fatalf("incoming federated edge missing: %#v", incoming)
+	}
+	dependency, err := query.NewService(repository).Neighborhood(ctx, "example.com/client", 1,
+		query.Outgoing, []graph.EdgeKind{graph.EdgeDependsOn}, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dependency.Nodes) != 2 || dependency.Nodes[1].Node.Kind != graph.KindModule || dependency.Nodes[1].Node.QualifiedName != "example.com/server" {
+		t.Fatalf("cross-repository module dependency was not resolved: %#v", dependency.Nodes)
+	}
+	if len(dependency.Edges) != 1 || dependency.Edges[0].Properties["federated"] != "true" {
+		t.Fatalf("expected a federated dependency edge: %#v", dependency.Edges)
 	}
 
 	semanticService := semantic.NewService(repository, repository, handlerEmbedder{})
@@ -107,7 +119,7 @@ func index(t *testing.T, ctx context.Context, root string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := indexer.NewService(repository, parserapi.NewRegistry(golangparser.New()))
+	service := indexer.NewService(repository, parserapi.NewRegistry(golangparser.New(), manifestparser.New()))
 	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
 		repository.Close()
 		t.Fatal(err)

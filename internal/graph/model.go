@@ -60,6 +60,7 @@ const (
 	EdgeReturns     EdgeKind = "returns"
 	EdgePasses      EdgeKind = "passes"
 	EdgeRequests    EdgeKind = "requests"
+	EdgeDependsOn   EdgeKind = "depends_on"
 )
 
 type Location struct {
