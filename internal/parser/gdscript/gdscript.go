@@ -428,6 +428,21 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 			return
 		}
 	}
+	if (callee == "ProjectSettings.get_setting" || callee == "ProjectSettings.has_setting") && len(node.Arguments) > 0 {
+		if key, ok := literalString(node.Arguments[0]); ok && key != "" {
+			e.b.AddFact(fromID, graph.EdgeReadsConfig, "", key, graph.KindConfigKey, loc,
+				map[string]string{"source": "project.godot"})
+			return
+		}
+	}
+	if strings.HasPrefix(callee, "Input.") || strings.HasPrefix(callee, "InputMap.") {
+		for _, argument := range node.Arguments {
+			if action, ok := literalString(argument); ok && action != "" {
+				e.b.AddFact(fromID, graph.EdgeReadsConfig, "", "input/"+action, graph.KindConfigKey, loc,
+					map[string]string{"source": "project.godot"})
+			}
+		}
+	}
 	if method == "emit_signal" && len(node.Arguments) > 0 {
 		if name, ok := literalString(node.Arguments[0]); ok {
 			e.addSignalFact(fromID, graph.EdgePublishes, name, current, loc)

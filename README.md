@@ -5,9 +5,9 @@ can query from the command line. Source symbols, calls, imports, configuration,
 HTTP routes, and event-like publish/subscribe operations become nodes and edges.
 
 This repository is at the foundation stage. Go is parsed with the Go compiler
-AST, GDScript uses `gdparser`, Python and TypeScript/TSX use Tree-sitter, and
-PostgreSQL SQL uses PostgreSQL's own parser. The index is local, incremental,
-branch-aware, and stored in SQLite.
+AST, Godot source formats use `gdparser`, Python and TypeScript/TSX use
+Tree-sitter, and PostgreSQL SQL uses PostgreSQL's own parser. The index is
+local, incremental, branch-aware, and stored in SQLite.
 
 [Architecture and extension points](docs/architecture.md)
 
@@ -96,8 +96,13 @@ are marked `federated` and retain their original evidence.
   optional, and replacement metadata. Dependency edges resolve across repos.
 - Godot 4 GDScript script and inner classes, methods, fields, parameters, local
   variables, enums, inheritance, resource loads, calls, basic
-  assignment/argument/return flow, environment reads, and signal declarations,
-  emissions, and connections.
+  assignment/argument/return flow, environment and project-setting reads, and
+  signal declarations, emissions, and connections.
+- Godot text scenes and resources (`.tscn`, `.tres`, and `.escn`), including
+  scene nodes, subresources, properties, external resources, node paths, and
+  declarative signal connections; `project.godot` settings and resource paths;
+  and shader/include modules, uniforms, structs, functions, parameters, locals,
+  calls, global references, and `#include` relationships.
 - `.env`, YAML, JSON, and Java `.properties` keys and value references.
 - Outbound Go `net/http`, Python Requests/HTTPX, and TypeScript `fetch`/Axios
   calls, linked to matching endpoint declarations locally or across repository
@@ -173,6 +178,12 @@ To exercise GDScript extraction against a representative Godot project, run:
 
 ```sh
 GRAFO_GDSCRIPT_CORPUS=/path/to/project go test ./internal/parser/gdscript -run TestCorpus -count=1
+```
+
+The non-GDScript Godot formats can be checked against the same project with:
+
+```sh
+GRAFO_GODOT_CORPUS=/path/to/project go test ./internal/parser/godot -run TestCorpus -count=1
 ```
 
 After changing a migration or query, run `task generate` and commit the updated

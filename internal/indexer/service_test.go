@@ -10,11 +10,13 @@ import (
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	configparser "github.com/cafecito-games/grafo/internal/parser/config"
 	gdscriptparser "github.com/cafecito-games/grafo/internal/parser/gdscript"
+	godotparser "github.com/cafecito-games/grafo/internal/parser/godot"
 	golangparser "github.com/cafecito-games/grafo/internal/parser/golang"
 	pythonparser "github.com/cafecito-games/grafo/internal/parser/python"
 	sqlparser "github.com/cafecito-games/grafo/internal/parser/sql"
 	postgresparser "github.com/cafecito-games/grafo/internal/parser/sql/postgres"
 	typescriptparser "github.com/cafecito-games/grafo/internal/parser/typescript"
+	"github.com/cafecito-games/grafo/internal/query"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 )
 
@@ -67,6 +69,48 @@ func TestServiceIndexesOnlyChangedFiles(t *testing.T) {
 	if len(third.Updated) != 1 || len(third.Removed) != 1 || third.Removed[0] != "web.ts" {
 		t.Fatalf("unexpected incremental update: %#v", third)
 	}
+}
+
+func TestServiceIndexesAndLinksGodotProjectSources(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	write(t, filepath.Join(root, "project.godot"), "config_version=5\n\n[application]\nrun/main_scene=\"res://scenes/main.tscn\"\n")
+	write(t, filepath.Join(root, "settings.gd"), "class_name Settings\nfunc main_scene():\n\treturn ProjectSettings.get_setting(\"application/run/main_scene\")\n")
+	if err := os.MkdirAll(filepath.Join(root, "scenes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "scenes", "main.tscn"), "[gd_scene format=3]\n\n[node name=\"Main\" type=\"Node\"]\n")
+
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	service := indexer.NewService(repository, parserapi.NewRegistry(gdscriptparser.New(), godotparser.New()))
+	report, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Updated) != 3 || len(report.Diagnostics) != 0 {
+		t.Fatalf("unexpected Godot index report: %#v", report)
+	}
+
+	queries := query.NewService(repository)
+	setting, err := queries.Neighborhood(ctx, "config:project.godot:application/run/main_scene", 1,
+		query.Outgoing, nil, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertReached(t, setting, "scenes/main")
+	reader, err := queries.Neighborhood(ctx, "Settings.main_scene", 1, query.Outgoing, nil, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertReached(t, reader, "config:project.godot:application/run/main_scene")
 }
 
 func TestServiceReindexesSQLWhenDialectConfigurationChanges(t *testing.T) {
@@ -221,4 +265,14 @@ func write(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func assertReached(t *testing.T, traversal query.Traversal, qualified string) {
+	t.Helper()
+	for _, reached := range traversal.Nodes {
+		if reached.Node.QualifiedName == qualified {
+			return
+		}
+	}
+	t.Fatalf("did not reach %q: %#v", qualified, traversal)
 }

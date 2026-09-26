@@ -123,6 +123,23 @@ func TestParserSupportsGDScriptFilesCaseInsensitively(t *testing.T) {
 	}
 }
 
+func TestParserLinksProjectSettingsAndInputActions(t *testing.T) {
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "scripts/settings.gd", RepoID: "repo:sample", Content: []byte(`class_name Settings
+
+func load_main_scene() -> String:
+	if Input.is_action_just_pressed("jump"):
+		return "jump"
+	return ProjectSettings.get_setting("application/run/main_scene")
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasFact(t, result.Facts, graph.EdgeReadsConfig, "application/run/main_scene")
+	assertHasFact(t, result.Facts, graph.EdgeReadsConfig, "input/jump")
+}
+
 func assertHasFactKind(t *testing.T, facts []graph.Fact, kind graph.EdgeKind) {
 	t.Helper()
 	for _, fact := range facts {

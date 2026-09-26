@@ -19,6 +19,7 @@ import (
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	configparser "github.com/cafecito-games/grafo/internal/parser/config"
 	gdscriptparser "github.com/cafecito-games/grafo/internal/parser/gdscript"
+	godotparser "github.com/cafecito-games/grafo/internal/parser/godot"
 	golangparser "github.com/cafecito-games/grafo/internal/parser/golang"
 	manifestparser "github.com/cafecito-games/grafo/internal/parser/manifest"
 	pythonparser "github.com/cafecito-games/grafo/internal/parser/python"
@@ -99,7 +100,7 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 }
 
 func registry() *parserapi.Registry {
-	return parserapi.NewRegistry(gdscriptparser.New(), golangparser.New(), pythonparser.New(), typescriptparser.New(),
+	return parserapi.NewRegistry(gdscriptparser.New(), godotparser.New(), golangparser.New(), pythonparser.New(), typescriptparser.New(),
 		manifestparser.New(), sqlparser.New(postgresparser.New()), configparser.New())
 }
 
