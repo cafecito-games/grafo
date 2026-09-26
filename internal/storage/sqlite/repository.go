@@ -373,6 +373,8 @@ func filterCandidates(fact graph.Fact, rows []sqlcgen.Node) []sqlcgen.Node {
 		allowed = func(kind graph.NodeKind) bool {
 			return kind == graph.KindConfigKey || kind == graph.KindTable || kind == graph.KindView
 		}
+	case graph.EdgeImports, graph.EdgeDependsOn:
+		allowed = func(kind graph.NodeKind) bool { return kind == graph.KindModule || kind == graph.KindPackage }
 	case graph.EdgeExtends, graph.EdgeImplements, graph.EdgeEmbeds:
 		allowed = func(kind graph.NodeKind) bool {
 			return kind == graph.KindType || kind == graph.KindClass || kind == graph.KindInterface

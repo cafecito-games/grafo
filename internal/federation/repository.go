@@ -375,7 +375,7 @@ func candidateAllowed(relation graph.EdgeKind, kind graph.NodeKind) bool {
 		return kind == graph.KindConfigKey || kind == graph.KindTable || kind == graph.KindView
 	case graph.EdgeExtends, graph.EdgeImplements, graph.EdgeEmbeds:
 		return kind == graph.KindType || kind == graph.KindClass || kind == graph.KindInterface
-	case graph.EdgeImports:
+	case graph.EdgeImports, graph.EdgeDependsOn:
 		return kind == graph.KindModule || kind == graph.KindPackage
 	default:
 		return true

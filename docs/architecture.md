@@ -16,7 +16,7 @@ storage can evolve independently.
       internal/graph       nodes, edges, facts, narrow repository ports
             ▲
             │
-  internal/parser/*        Go AST, Python/TypeScript Tree-sitter, SQL router, config mappers
+  internal/parser/*        language ASTs, manifests, SQL router, config mappers
        └─ sql/*            dialect adapters such as PostgreSQL
   internal/storage/sqlite  Goose + sqlc adapter
 ```
@@ -90,6 +90,9 @@ Grafo does not require sqlc.
   and `StatusRepository` ports.
 - Add new relationships as facts first; keep name/type resolution in the
   reconciliation stage so parsers remain syntactic.
+- Dependency manifests emit shared module nodes and `depends_on` facts, keeping
+  ecosystem-specific versions and scopes in edge properties. Federation
+  resolves exact module declarations without copying manifest contents.
 - Replace the current portable vector scan with a specialized vector index at
   very large candidate counts; keep the `semantic.Repository` port stable.
 
