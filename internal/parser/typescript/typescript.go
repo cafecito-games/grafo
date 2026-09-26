@@ -32,6 +32,8 @@ type scope struct {
 	parentID  string
 	container string
 	receiver  string
+	symbols   map[string]string
+	types     map[string]string
 }
 
 type extractor struct {
@@ -62,7 +64,7 @@ func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseRes
 		b.Diagnostic(int(root.StartPosition().Row)+1, "warning", "TypeScript contains syntax errors; indexed the recoverable tree")
 	}
 	e := &extractor{b: b, input: input, source: input.Content, module: parserapi.ModuleName(input.Path)}
-	e.walk(root, scope{currentID: b.FileID(), parentID: b.FileID()})
+	e.walk(root, scope{currentID: b.FileID(), parentID: b.FileID(), symbols: map[string]string{}, types: map[string]string{}})
 	return b.Finish(), nil
 }
 
@@ -90,6 +92,11 @@ func (e *extractor) walk(node *treesitter.Node, current scope) {
 		if e.parseFunctionVariable(node, current) {
 			return
 		}
+		e.parseVariable(node, current)
+	case "assignment_expression":
+		e.parseAssignment(node, current)
+	case "return_statement":
+		e.parseReturn(node, current)
 	case "call_expression", "new_expression":
 		e.parseCall(node, current)
 	case "member_expression", "subscript_expression":
@@ -139,9 +146,12 @@ func (e *extractor) parseFunction(node *treesitter.Node, current scope, kind gra
 	}
 	nodeID := e.b.Declare(current.parentID, graph.Node{Kind: kind, Name: name,
 		QualifiedName: qualified, Location: loc, Properties: properties})
+	functionScope := scope{currentID: nodeID, parentID: nodeID, container: qualified,
+		receiver: current.receiver, symbols: map[string]string{}, types: map[string]string{}}
+	e.declareParameters(node.ChildByFieldName("parameters"), functionScope)
 	body := node.ChildByFieldName("body")
 	if body != nil {
-		e.walk(body, scope{currentID: nodeID, parentID: nodeID, container: qualified, receiver: current.receiver})
+		e.walk(body, functionScope)
 	}
 }
 
@@ -163,11 +173,14 @@ func (e *extractor) parseFunctionVariable(node *treesitter.Node, current scope) 
 	}
 	nodeID := e.b.Declare(current.parentID, graph.Node{Kind: graph.KindFunction, Name: name,
 		QualifiedName: qualified, Location: loc, Properties: properties})
+	functionScope := scope{currentID: nodeID, parentID: nodeID, container: qualified,
+		receiver: current.receiver, symbols: map[string]string{}, types: map[string]string{}}
+	e.declareParameters(value.ChildByFieldName("parameters"), functionScope)
 	body := value.ChildByFieldName("body")
 	if body == nil {
 		body = value
 	}
-	e.walkChildren(body, scope{currentID: nodeID, parentID: nodeID, container: qualified, receiver: current.receiver})
+	e.walkChildren(body, functionScope)
 	return true
 }
 
@@ -183,7 +196,8 @@ func (e *extractor) parseClass(node *treesitter.Node, current scope) {
 	e.parseHeritage(node, classID)
 	body := node.ChildByFieldName("body")
 	if body != nil {
-		e.walkChildren(body, scope{currentID: classID, parentID: classID, container: qualified, receiver: qualified})
+		e.walkChildren(body, scope{currentID: classID, parentID: classID, container: qualified,
+			receiver: qualified, symbols: map[string]string{}, types: map[string]string{}})
 	}
 }
 
@@ -199,7 +213,8 @@ func (e *extractor) parseInterface(node *treesitter.Node, current scope) {
 	e.parseHeritage(node, interfaceID)
 	body := node.ChildByFieldName("body")
 	if body != nil {
-		e.walkChildren(body, scope{currentID: interfaceID, parentID: interfaceID, container: qualified})
+		e.walkChildren(body, scope{currentID: interfaceID, parentID: interfaceID, container: qualified,
+			symbols: map[string]string{}, types: map[string]string{}})
 	}
 }
 
@@ -253,6 +268,10 @@ func (e *extractor) parseCall(node *treesitter.Node, current scope) {
 	}
 	if current.receiver != "" && strings.HasPrefix(callee, "this.") {
 		callee = current.receiver + strings.TrimPrefix(callee, "this")
+	} else if receiver, method, ok := strings.Cut(callee, "."); ok {
+		if inferred := current.types[receiver]; inferred != "" {
+			callee = inferred + "." + method
+		}
 	}
 	fromID := current.currentID
 	if fromID == "" {
@@ -289,7 +308,174 @@ func (e *extractor) parseCall(node *treesitter.Node, current scope) {
 			return
 		}
 	}
+	for position, argument := range args {
+		for _, sourceID := range e.referencedVariables(argument, current.symbols) {
+			e.b.AddFact(sourceID, graph.EdgePasses, "", callee, "", loc,
+				map[string]string{"argument": fmt.Sprint(position)})
+		}
+	}
 	e.b.AddFact(fromID, graph.EdgeCalls, "", callee, "", loc, nil)
+}
+
+func (e *extractor) declareParameters(parameters *treesitter.Node, current scope) {
+	if parameters == nil {
+		return
+	}
+	for i := uint(0); i < parameters.NamedChildCount(); i++ {
+		parameter := parameters.NamedChild(i)
+		nameNode := parameter
+		if pattern := parameter.ChildByFieldName("pattern"); pattern != nil {
+			nameNode = pattern
+		} else if name := parameter.ChildByFieldName("name"); name != nil {
+			nameNode = name
+		}
+		name := strings.TrimSpace(e.text(nameNode))
+		if !isIdentifier(name) {
+			continue
+		}
+		typeText := e.typeText(parameter)
+		properties := map[string]string{}
+		if typeText != "" {
+			properties["type"] = typeText
+		}
+		id := e.b.Declare(current.currentID, graph.Node{Kind: graph.KindParameter, Name: name,
+			QualifiedName: current.container + "." + name, Location: e.location(parameter), Properties: properties})
+		current.symbols[name] = id
+		if typeText != "" {
+			current.types[name] = e.qualifyType(typeText)
+		}
+	}
+}
+
+func (e *extractor) parseVariable(node *treesitter.Node, current scope) {
+	name := strings.TrimSpace(e.text(node.ChildByFieldName("name")))
+	if !isIdentifier(name) || current.currentID == "" {
+		return
+	}
+	typeText := e.typeText(node)
+	value := node.ChildByFieldName("value")
+	if typeText == "" {
+		typeText = e.inferExpressionType(value, current)
+	}
+	properties := map[string]string{}
+	if typeText != "" {
+		properties["type"] = typeText
+	}
+	loc := e.location(node)
+	qualified := e.qualify(current.container, name)
+	id := e.b.Declare(current.currentID, graph.Node{Kind: graph.KindVariable, Name: name,
+		QualifiedName: fmt.Sprintf("%s@%d", qualified, loc.Line), Location: loc, Properties: properties})
+	if current.symbols == nil {
+		current.symbols = map[string]string{}
+	}
+	if current.types == nil {
+		current.types = map[string]string{}
+	}
+	current.symbols[name] = id
+	if typeText != "" {
+		current.types[name] = e.qualifyType(typeText)
+	}
+	for _, sourceID := range e.referencedVariables(value, current.symbols) {
+		if sourceID != id {
+			e.b.AddFact(sourceID, graph.EdgeAssigns, id, "", graph.KindVariable, loc, nil)
+		}
+	}
+}
+
+func (e *extractor) parseAssignment(node *treesitter.Node, current scope) {
+	left := node.ChildByFieldName("left")
+	right := node.ChildByFieldName("right")
+	if left == nil || right == nil {
+		return
+	}
+	targetID := current.symbols[strings.TrimSpace(e.text(left))]
+	if targetID == "" {
+		return
+	}
+	for _, sourceID := range e.referencedVariables(right, current.symbols) {
+		e.b.AddFact(sourceID, graph.EdgeAssigns, targetID, "", graph.KindVariable, e.location(node), nil)
+	}
+}
+
+func (e *extractor) parseReturn(node *treesitter.Node, current scope) {
+	for i := uint(0); i < node.NamedChildCount(); i++ {
+		for _, sourceID := range e.referencedVariables(node.NamedChild(i), current.symbols) {
+			e.b.AddFact(sourceID, graph.EdgeReturns, current.currentID, "", "", e.location(node), nil)
+		}
+	}
+}
+
+func (e *extractor) referencedVariables(node *treesitter.Node, symbols map[string]string) []string {
+	if node == nil || len(symbols) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	var result []string
+	var visit func(*treesitter.Node)
+	visit = func(current *treesitter.Node) {
+		if current == nil {
+			return
+		}
+		if current.Kind() == "identifier" {
+			if id := symbols[strings.TrimSpace(e.text(current))]; id != "" && !seen[id] {
+				seen[id] = true
+				result = append(result, id)
+			}
+		}
+		for i := uint(0); i < current.NamedChildCount(); i++ {
+			visit(current.NamedChild(i))
+		}
+	}
+	visit(node)
+	return result
+}
+
+func (e *extractor) typeText(node *treesitter.Node) string {
+	if node == nil {
+		return ""
+	}
+	if typed := node.ChildByFieldName("type"); typed != nil {
+		return strings.TrimPrefix(strings.TrimSpace(e.text(typed)), ":")
+	}
+	for i := uint(0); i < node.NamedChildCount(); i++ {
+		child := node.NamedChild(i)
+		if child.Kind() == "type_annotation" {
+			return strings.TrimPrefix(strings.TrimSpace(e.text(child)), ":")
+		}
+	}
+	return ""
+}
+
+func (e *extractor) inferExpressionType(node *treesitter.Node, current scope) string {
+	if node == nil {
+		return ""
+	}
+	if node.Kind() == "new_expression" {
+		constructor := node.ChildByFieldName("constructor")
+		return strings.TrimSpace(e.text(constructor))
+	}
+	if node.Kind() == "identifier" {
+		return current.types[strings.TrimSpace(e.text(node))]
+	}
+	return ""
+}
+
+func (e *extractor) qualifyType(typeText string) string {
+	typeText = strings.TrimSpace(strings.TrimSuffix(typeText, "[]"))
+	typeText = strings.TrimSuffix(typeText, " | undefined")
+	if typeText == "" || strings.ContainsAny(typeText, "<>{}[]|&") || isTypeScriptPrimitive(typeText) || strings.Contains(typeText, ".") {
+		return typeText
+	}
+	return e.module + "." + typeText
+}
+
+func isTypeScriptPrimitive(value string) bool {
+	switch value {
+	case "string", "number", "boolean", "bigint", "symbol", "unknown", "any", "never", "void", "object", "undefined", "null":
+		return true
+	default:
+		return false
+	}
 }
 
 func (e *extractor) parseEnvironmentRead(node *treesitter.Node, current scope) {

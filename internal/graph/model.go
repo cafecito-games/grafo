@@ -24,6 +24,8 @@ const (
 	KindClass      NodeKind = "class"
 	KindInterface  NodeKind = "interface"
 	KindField      NodeKind = "field"
+	KindVariable   NodeKind = "variable"
+	KindParameter  NodeKind = "parameter"
 	KindConfigKey  NodeKind = "config_key"
 	KindEndpoint   NodeKind = "endpoint"
 	KindEvent      NodeKind = "event"

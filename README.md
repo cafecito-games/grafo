@@ -32,9 +32,11 @@ blast radius, and index status.
 
 ## What the first slice understands
 
-- Go packages, functions, methods, types, fields, imports, calls, embedding,
+- Go packages, functions, methods, types, fields, parameters, local variables,
+  imports, calls, basic assignment/argument/return flow, embedding,
   `os.Getenv`/`LookupEnv`, `net/http` routes, and common publish/subscribe calls.
-- TypeScript and TSX modules, functions, classes, interfaces, methods, imports,
+- TypeScript and TSX modules, functions, classes, interfaces, methods,
+  parameters, local variables, basic assignment/argument/return flow, imports,
   calls, inheritance, `process.env`, Express-style routes, and common
   publish/subscribe calls.
 - `.env`, YAML, JSON, and Java `.properties` keys and value references.

@@ -105,15 +105,154 @@ func parseFunction(b *parserapi.Builder, fset *token.FileSet, input parserapi.In
 	}
 	functionID := b.Declare(b.FileID(), node)
 	if decl.Body != nil {
+		flow := collectFunctionBindings(b, fset, input, pkg, imports, qualified, functionID, decl)
+		if receiverVariable != "" {
+			flow.types[receiverVariable] = receiverQualified
+		}
 		goast.Inspect(decl.Body, func(n goast.Node) bool {
 			call, ok := n.(*goast.CallExpr)
 			if !ok {
 				return true
 			}
-			parseCall(b, fset, input, imports, functionID, receiverVariable, receiverQualified, call)
+			parseCall(b, fset, input, pkg, imports, functionID, receiverVariable, receiverQualified, flow, call)
 			return true
 		})
+		emitDataFlow(b, fset, input, pkg, imports, functionID, receiverVariable, receiverQualified, flow, decl.Body)
 	}
+}
+
+type functionBindings struct {
+	symbols map[string]string
+	types   map[string]string
+}
+
+func collectFunctionBindings(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input, pkg string, imports map[string]string, functionName, functionID string, decl *goast.FuncDecl) functionBindings {
+	bindings := functionBindings{symbols: map[string]string{}, types: map[string]string{}}
+	declare := func(name string, kind graph.NodeKind, typeText string, loc graph.Location) {
+		if name == "" || name == "_" {
+			return
+		}
+		qualified := functionName + "." + name
+		if kind == graph.KindVariable {
+			qualified += fmt.Sprintf("@%d", loc.Line)
+		}
+		properties := map[string]string{}
+		if typeText != "" {
+			properties["type"] = typeText
+		}
+		id := b.Declare(functionID, graph.Node{Kind: kind, Name: name, QualifiedName: qualified,
+			Location: loc, Properties: properties})
+		bindings.symbols[name] = id
+		if typeText != "" {
+			bindings.types[name] = qualifyGoType(typeText, pkg, imports)
+		}
+	}
+	if decl.Type.Params != nil {
+		for _, field := range decl.Type.Params.List {
+			typeText := render(fset, field.Type)
+			for _, name := range field.Names {
+				declare(name.Name, graph.KindParameter, typeText, location(input.Path, fset, name.Pos(), name.End()))
+			}
+		}
+	}
+	goast.Inspect(decl.Body, func(n goast.Node) bool {
+		switch value := n.(type) {
+		case *goast.AssignStmt:
+			if value.Tok != token.DEFINE {
+				return true
+			}
+			for index, lhs := range value.Lhs {
+				ident, ok := lhs.(*goast.Ident)
+				if !ok {
+					continue
+				}
+				typeText := ""
+				if index < len(value.Rhs) {
+					typeText = inferGoExprType(value.Rhs[index], fset, pkg, imports, bindings.types)
+				} else if len(value.Rhs) == 1 {
+					typeText = inferGoExprType(value.Rhs[0], fset, pkg, imports, bindings.types)
+				}
+				declare(ident.Name, graph.KindVariable, typeText, location(input.Path, fset, ident.Pos(), ident.End()))
+			}
+		case *goast.DeclStmt:
+			gen, ok := value.Decl.(*goast.GenDecl)
+			if !ok || gen.Tok != token.VAR {
+				return true
+			}
+			for _, raw := range gen.Specs {
+				spec, ok := raw.(*goast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for index, name := range spec.Names {
+					typeText := render(fset, spec.Type)
+					if typeText == "" && index < len(spec.Values) {
+						typeText = inferGoExprType(spec.Values[index], fset, pkg, imports, bindings.types)
+					}
+					declare(name.Name, graph.KindVariable, typeText, location(input.Path, fset, name.Pos(), name.End()))
+				}
+			}
+		}
+		return true
+	})
+	return bindings
+}
+
+func emitDataFlow(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input, pkg string, imports map[string]string, functionID, receiverVariable, receiverQualified string, bindings functionBindings, body *goast.BlockStmt) {
+	goast.Inspect(body, func(n goast.Node) bool {
+		switch value := n.(type) {
+		case *goast.AssignStmt:
+			for index, lhs := range value.Lhs {
+				ident, ok := lhs.(*goast.Ident)
+				if !ok {
+					continue
+				}
+				targetID := bindings.symbols[ident.Name]
+				if targetID == "" || len(value.Rhs) == 0 {
+					continue
+				}
+				rhs := value.Rhs[min(index, len(value.Rhs)-1)]
+				loc := location(input.Path, fset, value.Pos(), value.End())
+				for _, sourceID := range referencedVariables(rhs, bindings.symbols) {
+					b.AddFact(sourceID, graph.EdgeAssigns, targetID, "", graph.KindVariable, loc, nil)
+				}
+			}
+		case *goast.ReturnStmt:
+			loc := location(input.Path, fset, value.Pos(), value.End())
+			for _, result := range value.Results {
+				for _, sourceID := range referencedVariables(result, bindings.symbols) {
+					b.AddFact(sourceID, graph.EdgeReturns, functionID, "", "", loc, nil)
+				}
+			}
+		case *goast.CallExpr:
+			callee := resolvedGoCallee(value, fset, pkg, imports, receiverVariable, receiverQualified, bindings.types)
+			loc := location(input.Path, fset, value.Pos(), value.End())
+			for position, argument := range value.Args {
+				for _, sourceID := range referencedVariables(argument, bindings.symbols) {
+					b.AddFact(sourceID, graph.EdgePasses, "", callee, "", loc,
+						map[string]string{"argument": strconv.Itoa(position)})
+				}
+			}
+		}
+		return true
+	})
+}
+
+func referencedVariables(expr goast.Expr, symbols map[string]string) []string {
+	seen := map[string]bool{}
+	var result []string
+	goast.Inspect(expr, func(n goast.Node) bool {
+		ident, ok := n.(*goast.Ident)
+		if !ok {
+			return true
+		}
+		if id := symbols[ident.Name]; id != "" && !seen[id] {
+			seen[id] = true
+			result = append(result, id)
+		}
+		return true
+	})
+	return result
 }
 
 func parseType(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input, pkg string, spec *goast.TypeSpec) {
@@ -161,8 +300,8 @@ func parseFields(b *parserapi.Builder, fset *token.FileSet, input parserapi.Inpu
 	}
 }
 
-func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input, imports map[string]string, fromID, receiverVariable, receiverQualified string, call *goast.CallExpr) {
-	callee := render(fset, call.Fun)
+func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input, pkg string, imports map[string]string, fromID, receiverVariable, receiverQualified string, bindings functionBindings, call *goast.CallExpr) {
+	callee := resolvedGoCallee(call, fset, pkg, imports, receiverVariable, receiverQualified, bindings.types)
 	loc := location(input.Path, fset, call.Pos(), call.End())
 	if callee == "os.Getenv" || callee == "os.LookupEnv" {
 		if key, ok := stringArgument(call.Args, 0); ok {
@@ -170,7 +309,7 @@ func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input,
 		}
 		return
 	}
-	if callee == "http.HandleFunc" || callee == "http.Handle" {
+	if callee == "http.HandleFunc" || callee == "http.Handle" || callee == "net/http.HandleFunc" || callee == "net/http.Handle" {
 		if route, ok := stringArgument(call.Args, 0); ok {
 			endpointID := addEndpoint(b, loc, "ANY", route)
 			b.AddFact(fromID, graph.EdgeExposes, endpointID, "", "", loc, nil)
@@ -201,10 +340,17 @@ func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input,
 			return
 		}
 	}
+	b.AddFact(fromID, graph.EdgeCalls, "", callee, "", loc, nil)
+}
+
+func resolvedGoCallee(call *goast.CallExpr, fset *token.FileSet, pkg string, imports map[string]string, receiverVariable, receiverQualified string, types map[string]string) string {
+	callee := render(fset, call.Fun)
 	if selector, ok := call.Fun.(*goast.SelectorExpr); ok {
 		if ident, ok := selector.X.(*goast.Ident); ok {
 			if ident.Name == receiverVariable && receiverQualified != "" {
 				callee = receiverQualified + "." + selector.Sel.Name
+			} else if inferred := types[ident.Name]; inferred != "" {
+				callee = inferred + "." + selector.Sel.Name
 			} else if imported, exists := imports[ident.Name]; exists {
 				callee = imported + "." + selector.Sel.Name
 			}
@@ -224,7 +370,65 @@ func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input,
 			}
 		}
 	}
-	b.AddFact(fromID, graph.EdgeCalls, "", callee, "", loc, nil)
+	if ident, ok := call.Fun.(*goast.Ident); ok && !strings.Contains(ident.Name, ".") {
+		callee = pkg + "." + ident.Name
+	}
+	return callee
+}
+
+func inferGoExprType(expr goast.Expr, fset *token.FileSet, pkg string, imports, types map[string]string) string {
+	switch value := expr.(type) {
+	case *goast.CompositeLit:
+		return qualifyGoType(render(fset, value.Type), pkg, imports)
+	case *goast.UnaryExpr:
+		return inferGoExprType(value.X, fset, pkg, imports, types)
+	case *goast.Ident:
+		return types[value.Name]
+	case *goast.CallExpr:
+		if ident, ok := value.Fun.(*goast.Ident); ok {
+			if ident.Name == "new" && len(value.Args) > 0 {
+				return qualifyGoType(render(fset, value.Args[0]), pkg, imports)
+			}
+			if strings.HasPrefix(ident.Name, "New") && len(ident.Name) > 3 {
+				return pkg + "." + strings.TrimPrefix(ident.Name, "New")
+			}
+		}
+		if selector, ok := value.Fun.(*goast.SelectorExpr); ok {
+			if packageIdent, ok := selector.X.(*goast.Ident); ok && strings.HasPrefix(selector.Sel.Name, "New") {
+				if imported := imports[packageIdent.Name]; imported != "" {
+					return imported + "." + strings.TrimPrefix(selector.Sel.Name, "New")
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func qualifyGoType(typeText, pkg string, imports map[string]string) string {
+	typeText = strings.TrimSpace(typeText)
+	typeText = strings.TrimLeft(typeText, "*[]")
+	if index := strings.Index(typeText, "["); index >= 0 {
+		typeText = typeText[:index]
+	}
+	if prefix, rest, ok := strings.Cut(typeText, "."); ok {
+		if imported := imports[prefix]; imported != "" {
+			return imported + "." + rest
+		}
+		return typeText
+	}
+	if typeText == "" || isBuiltinGoType(typeText) {
+		return ""
+	}
+	return pkg + "." + typeText
+}
+
+func isBuiltinGoType(value string) bool {
+	switch value {
+	case "bool", "byte", "complex64", "complex128", "error", "float32", "float64", "int", "int8", "int16", "int32", "int64", "rune", "string", "uint", "uint8", "uint16", "uint32", "uint64", "uintptr", "any":
+		return true
+	default:
+		return false
+	}
 }
 
 func addEndpoint(b *parserapi.Builder, loc graph.Location, method, route string) string {
