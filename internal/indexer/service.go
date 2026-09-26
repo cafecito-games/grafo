@@ -1,0 +1,146 @@
+package indexer
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"time"
+
+	"github.com/cafecito-games/grafo/internal/graph"
+	parserapi "github.com/cafecito-games/grafo/internal/parser"
+)
+
+const workspaceOwner = "__workspace__"
+
+type Options struct {
+	Force       bool
+	MaxFileSize int64
+}
+
+type Report struct {
+	Project     Project            `json:"project"`
+	Updated     []string           `json:"updated"`
+	Unchanged   int                `json:"unchanged"`
+	Removed     []string           `json:"removed"`
+	Skipped     []string           `json:"skipped,omitempty"`
+	Diagnostics []graph.Diagnostic `json:"diagnostics,omitempty"`
+	Counts      graph.Counts       `json:"counts"`
+	ElapsedMS   int64              `json:"elapsed_ms"`
+}
+
+type Service struct {
+	repository graph.IndexRepository
+	parsers    *parserapi.Registry
+}
+
+func NewService(repository graph.IndexRepository, parsers *parserapi.Registry) *Service {
+	return &Service{repository: repository, parsers: parsers}
+}
+
+func (s *Service) Run(ctx context.Context, project Project, options Options) (Report, error) {
+	started := time.Now()
+	if options.MaxFileSize <= 0 {
+		options.MaxFileSize = 5 << 20
+	}
+	report := Report{Project: project, Updated: []string{}, Removed: []string{}}
+	workspace := graph.ParseResult{Nodes: []graph.Node{{
+		ID: project.ID, Kind: graph.KindRepository, Name: project.Name,
+		QualifiedName: project.Name, OwnerFile: workspaceOwner,
+		Properties: map[string]string{"root": project.Root, "branch": project.Branch},
+	}}}
+	if err := s.repository.ReplaceOwner(ctx, workspaceOwner, workspace); err != nil {
+		return report, fmt.Errorf("store workspace: %w", err)
+	}
+	known, err := s.repository.Files(ctx)
+	if err != nil {
+		return report, fmt.Errorf("load indexed files: %w", err)
+	}
+	paths, err := discoverFiles(ctx, project, s.parsers)
+	if err != nil {
+		return report, fmt.Errorf("discover source files: %w", err)
+	}
+	current := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		absolute := filepath.Join(project.Root, filepath.FromSlash(path))
+		info, err := os.Stat(absolute)
+		if err != nil {
+			report.Diagnostics = append(report.Diagnostics, graph.Diagnostic{Path: path, Level: "warning", Message: err.Error()})
+			continue
+		}
+		if info.Size() > options.MaxFileSize {
+			report.Skipped = append(report.Skipped, path)
+			continue
+		}
+		content, err := os.ReadFile(absolute)
+		if err != nil {
+			report.Diagnostics = append(report.Diagnostics, graph.Diagnostic{Path: path, Level: "warning", Message: err.Error()})
+			continue
+		}
+		current[path] = true
+		digest := sha256.Sum256(content)
+		hash := hex.EncodeToString(digest[:])
+		previous, exists := known[path]
+		if exists && previous.Hash == hash && !options.Force {
+			report.Unchanged++
+			continue
+		}
+		languageParser, ok := s.parsers.For(path)
+		if !ok {
+			continue
+		}
+		input := parserapi.Input{Root: project.Root, Path: path, Content: content,
+			Repository: project.Name, RepoID: project.ID, GoModule: project.GoModule}
+		parsed, parseErr := languageParser.Parse(ctx, input)
+		if parseErr != nil {
+			parsed.Diagnostics = append(parsed.Diagnostics, graph.Diagnostic{Path: path, Level: "error", Message: parseErr.Error()})
+		}
+		fileID := graph.NodeID(graph.KindFile, project.Name+":"+path)
+		parsed.Facts = append(parsed.Facts, graph.Fact{
+			ID:     graph.FactID(path, project.ID, graph.EdgeContains, fileID, 1, 0),
+			FromID: project.ID, Kind: graph.EdgeContains, TargetID: fileID,
+			Location: graph.Location{Path: path, Line: 1, Column: 1}, OwnerFile: path,
+		})
+		record := graph.FileRecord{Path: path, Hash: hash, Language: languageParser.Language(),
+			Size: info.Size(), ModifiedNS: info.ModTime().UnixNano(), IndexedAt: graph.NowUTC()}
+		if err := s.repository.ReplaceFile(ctx, record, parsed); err != nil {
+			return report, fmt.Errorf("store %s: %w", path, err)
+		}
+		report.Updated = append(report.Updated, path)
+		report.Diagnostics = append(report.Diagnostics, parsed.Diagnostics...)
+	}
+	for path := range known {
+		if !current[path] {
+			report.Removed = append(report.Removed, path)
+		}
+	}
+	sort.Strings(report.Removed)
+	if err := s.repository.RemoveFiles(ctx, report.Removed); err != nil {
+		return report, fmt.Errorf("remove deleted files: %w", err)
+	}
+	if len(report.Updated) > 0 || len(report.Removed) > 0 {
+		if err := s.repository.Reconcile(ctx); err != nil {
+			return report, fmt.Errorf("resolve graph edges: %w", err)
+		}
+	}
+	if err := s.repository.SetMeta(ctx, "repository_id", project.ID); err != nil {
+		return report, err
+	}
+	for key, value := range map[string]string{
+		"root": project.Root, "branch": project.Branch, "commit": project.Commit,
+		"indexed_at": graph.NowUTC(), "schema_version": fmt.Sprint(graph.SchemaVersion),
+	} {
+		if err := s.repository.SetMeta(ctx, key, value); err != nil {
+			return report, err
+		}
+	}
+	report.Counts, err = s.repository.Counts(ctx)
+	if err != nil {
+		return report, err
+	}
+	report.ElapsedMS = time.Since(started).Milliseconds()
+	return report, nil
+}

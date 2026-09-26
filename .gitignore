@@ -1,0 +1,6 @@
+/.grafo/
+/.task/
+/grafo
+*.test
+*.out
+.DS_Store
