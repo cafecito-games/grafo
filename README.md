@@ -67,6 +67,33 @@ Grafo currently performs syntactic and name-based linking. It does not yet do
 type-checker-grade dispatch, full SSA data flow, or embedding-based natural
 language candidate discovery. Structural retrieval remains graph-based.
 
+## SQL dialects
+
+One SQL router owns `.sql` files and delegates them to installed dialects.
+PostgreSQL also owns the unambiguous `.pgsql` and `.psql` extensions. Plain
+`.sql` remains configuration-free when exactly one installed dialect accepts
+its syntax. When multiple dialects accept the same file, select one explicitly
+in a repository-root `grafo.yaml` that is safe to commit:
+
+```yaml
+sql:
+  default_dialect: postgres
+  paths:
+    "desktop/**/*.sql": sqlite
+    "migrations/**/*.sql": postgres
+```
+
+Selection is deterministic: a matching path mapping wins, followed by a
+dialect-specific extension, the repository default, and finally syntax
+probing. Path patterns use `/` separators and support `*`, `?`, character
+classes, and `**` as a whole path segment. If patterns overlap, the one with
+more literal characters wins, then the one with fewer wildcards, then lexical
+order. A configured dialect must be installed; Grafo reports ambiguous syntax
+or an unavailable dialect instead of depending on parser registration order.
+
+The current distribution installs only the PostgreSQL dialect. The config
+example's `sqlite` mapping becomes valid when a SQLite dialect is installed.
+
 ## Design principles
 
 1. Structural answers come from ordered graph traversal, never top-k guessing.

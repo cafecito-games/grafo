@@ -14,7 +14,8 @@ storage can evolve independently.
       internal/graph       nodes, edges, facts, narrow repository ports
             ▲
             │
-  internal/parser/*        Go AST, TypeScript Tree-sitter, PostgreSQL AST, config mappers
+  internal/parser/*        Go AST, TypeScript Tree-sitter, SQL router, config mappers
+       └─ sql/*            dialect adapters such as PostgreSQL
   internal/storage/sqlite  Goose + sqlc adapter
 ```
 
@@ -64,9 +65,29 @@ Grafo does not require sqlc.
 
 - Add a language by implementing `parser.Parser` and registering it in the CLI
   composition root.
+- Add a SQL dialect by implementing `sql.Dialect` under `internal/parser/sql`
+  and passing it to the single SQL router in the CLI composition root. A
+  dialect declares only its unambiguous extensions; `.sql` always belongs to
+  the router. Dialects emit the shared table/view/column/index graph vocabulary,
+  while the router records the selected dialect in node metadata.
 - Add storage by implementing the small `IndexRepository`, `QueryRepository`,
   and `StatusRepository` ports.
 - Add new relationships as facts first; keep name/type resolution in the
   reconciliation stage so parsers remain syntactic.
 - Embeddings belong in a candidate-source port for natural-language discovery;
   they must not change structural edge traversal or ordering.
+
+## SQL routing
+
+SQL selection follows one fixed precedence: a `grafo.yaml` path mapping, a
+dialect-specific extension, `sql.default_dialect`, then syntax probes sorted by
+dialect name. Zero successful probes produce a diagnostic; multiple successful
+probes require explicit configuration. Path mappings are ranked by specificity,
+not declaration order, so neither router registration nor YAML map order changes
+the result.
+
+`grafo.yaml` is repository-level application configuration, separate from the
+generic YAML source parser. The SQL router's semantic cache key includes the
+configuration file, so changing a path mapping or default reparses unchanged
+SQL sources that may now select another dialect. Parser-contract changes also
+bump the semantic-index version.

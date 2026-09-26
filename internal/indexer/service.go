@@ -15,7 +15,7 @@ import (
 )
 
 const workspaceOwner = "__workspace__"
-const SemanticIndexVersion = "4"
+const SemanticIndexVersion = "5"
 
 type Options struct {
 	Force       bool
@@ -91,19 +91,28 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 			continue
 		}
 		current[path] = true
-		digest := sha256.Sum256(content)
-		hash := hex.EncodeToString(digest[:])
-		previous, exists := known[path]
-		if exists && previous.Hash == hash && !options.Force {
-			report.Unchanged++
-			continue
-		}
 		languageParser, ok := s.parsers.For(path)
 		if !ok {
 			continue
 		}
 		input := parserapi.Input{Root: project.Root, Path: path, Content: content,
 			Repository: project.Name, RepoID: project.ID, GoModule: project.GoModule}
+		digest := sha256.New()
+		_, _ = digest.Write(content)
+		if keyer, ok := languageParser.(parserapi.SemanticKeyer); ok {
+			semanticKey, keyErr := keyer.SemanticKey(ctx, input)
+			if keyErr != nil {
+				return report, fmt.Errorf("load parser configuration for %s: %w", path, keyErr)
+			}
+			_, _ = digest.Write([]byte{0})
+			_, _ = digest.Write([]byte(semanticKey))
+		}
+		hash := hex.EncodeToString(digest.Sum(nil))
+		previous, exists := known[path]
+		if exists && previous.Hash == hash && !options.Force {
+			report.Unchanged++
+			continue
+		}
 		parsed, parseErr := languageParser.Parse(ctx, input)
 		if parseErr != nil {
 			parsed.Diagnostics = append(parsed.Diagnostics, graph.Diagnostic{Path: path, Level: "error", Message: parseErr.Error()})
