@@ -5,3 +5,5 @@ CREATE TABLE public.events (
 
 CREATE VIEW public.recent_events AS
 SELECT id, payload FROM public.events;
+
+SET search_path TO public;
