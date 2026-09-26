@@ -17,7 +17,8 @@ storage can evolve independently.
       internal/graph       nodes, edges, facts, narrow repository ports
             ▲
             │
-  internal/parser/*        language ASTs, manifests, SQL router, config mappers
+  internal/parser/*        language AST adapters, manifests, SQL router, config mappers
+       ├─ gdscript/*       gdparser typed AST adapter
        └─ sql/*            dialect adapters such as PostgreSQL
   internal/storage/sqlite  Goose + sqlc adapter
 ```

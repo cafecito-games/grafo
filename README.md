@@ -5,9 +5,9 @@ can query from the command line. Source symbols, calls, imports, configuration,
 HTTP routes, and event-like publish/subscribe operations become nodes and edges.
 
 This repository is at the foundation stage. Go is parsed with the Go compiler
-AST, Python and TypeScript/TSX use Tree-sitter, and PostgreSQL SQL uses
-PostgreSQL's own parser. The index is local, incremental, branch-aware, and
-stored in SQLite.
+AST, GDScript uses `gdparser`, Python and TypeScript/TSX use Tree-sitter, and
+PostgreSQL SQL uses PostgreSQL's own parser. The index is local, incremental,
+branch-aware, and stored in SQLite.
 
 [Architecture and extension points](docs/architecture.md)
 
@@ -94,6 +94,10 @@ are marked `federated` and retain their original evidence.
 - Go modules, npm packages, and Python requirements from `go.mod`,
   `package.json`, and `requirements*.txt`, including version, scope, indirect,
   optional, and replacement metadata. Dependency edges resolve across repos.
+- Godot 4 GDScript script and inner classes, methods, fields, parameters, local
+  variables, enums, inheritance, resource loads, calls, basic
+  assignment/argument/return flow, environment reads, and signal declarations,
+  emissions, and connections.
 - `.env`, YAML, JSON, and Java `.properties` keys and value references.
 - Outbound Go `net/http`, Python Requests/HTTPX, and TypeScript `fetch`/Axios
   calls, linked to matching endpoint declarations locally or across repository
@@ -157,6 +161,12 @@ full-scan fallback.
 
 ```sh
 task check
+```
+
+To exercise GDScript extraction against a representative Godot project, run:
+
+```sh
+GRAFO_GDSCRIPT_CORPUS=/path/to/project go test ./internal/parser/gdscript -run TestCorpus -count=1
 ```
 
 After changing a migration or query, run `task generate` and commit the updated
