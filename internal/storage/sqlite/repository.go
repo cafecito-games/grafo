@@ -265,6 +265,7 @@ func resolveTargets(ctx context.Context, q *sqlcgen.Queries, fact graph.Fact) ([
 	if err != nil {
 		return nil, err
 	}
+	rows = filterCandidates(fact, rows)
 	if len(rows) == 0 {
 		simple := graph.SimpleName(fact.Target)
 		// A qualified but unresolved receiver (for example client.Send) is not
@@ -282,6 +283,7 @@ func resolveTargets(ctx context.Context, q *sqlcgen.Queries, fact graph.Fact) ([
 		if err != nil {
 			return nil, err
 		}
+		rows = filterCandidates(fact, rows)
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].QualifiedName == rows[j].QualifiedName {
@@ -294,6 +296,28 @@ func resolveTargets(ctx context.Context, q *sqlcgen.Queries, fact graph.Fact) ([
 		ids = append(ids, row.ID)
 	}
 	return ids, nil
+}
+
+func filterCandidates(fact graph.Fact, rows []sqlcgen.Node) []sqlcgen.Node {
+	if fact.TargetKind != "" {
+		return rows
+	}
+	allowed := func(kind graph.NodeKind) bool { return true }
+	switch fact.Kind {
+	case graph.EdgeCalls, graph.EdgePasses, graph.EdgeHandledBy:
+		allowed = func(kind graph.NodeKind) bool { return kind == graph.KindFunction || kind == graph.KindMethod }
+	case graph.EdgeExtends, graph.EdgeImplements, graph.EdgeEmbeds:
+		allowed = func(kind graph.NodeKind) bool {
+			return kind == graph.KindType || kind == graph.KindClass || kind == graph.KindInterface
+		}
+	}
+	result := rows[:0]
+	for _, row := range rows {
+		if allowed(graph.NodeKind(row.Kind)) {
+			result = append(result, row)
+		}
+	}
+	return result
 }
 
 func externalNode(fact graph.Fact) graph.Node {

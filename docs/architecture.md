@@ -21,6 +21,9 @@ cmd/grafo
 1. Discovery asks Git for tracked and non-ignored files, falling back to a
    filesystem walk outside Git repositories.
 2. SHA-256 content hashes select changed files. Only those files are parsed.
+   A semantic-index version forces a one-time rebuild when parser behavior or
+   graph meaning changes, so an upgraded binary never serves an old schema as
+   if it were current.
 3. A parser emits declaration nodes and unresolved relationship facts. It never
    talks to the database.
 4. The repository transactionally replaces the changed file's nodes and facts.

@@ -7,6 +7,7 @@ import (
 
 // IndexRepository is the narrow persistence port used by the indexing use case.
 type IndexRepository interface {
+	Meta(context.Context, string) (string, error)
 	SetMeta(context.Context, string, string) error
 	Files(context.Context) (map[string]FileRecord, error)
 	ReplaceFile(context.Context, FileRecord, ParseResult) error

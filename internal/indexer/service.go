@@ -15,6 +15,7 @@ import (
 )
 
 const workspaceOwner = "__workspace__"
+const SemanticIndexVersion = "2"
 
 type Options struct {
 	Force       bool
@@ -30,6 +31,7 @@ type Report struct {
 	Diagnostics []graph.Diagnostic `json:"diagnostics,omitempty"`
 	Counts      graph.Counts       `json:"counts"`
 	ElapsedMS   int64              `json:"elapsed_ms"`
+	Rebuild     string             `json:"rebuild_reason,omitempty"`
 }
 
 type Service struct {
@@ -47,6 +49,14 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 		options.MaxFileSize = 5 << 20
 	}
 	report := Report{Project: project, Updated: []string{}, Removed: []string{}}
+	indexedVersion, err := s.repository.Meta(ctx, "semantic_index_version")
+	if err != nil {
+		return report, fmt.Errorf("load semantic index version: %w", err)
+	}
+	if indexedVersion != SemanticIndexVersion {
+		options.Force = true
+		report.Rebuild = "semantic schema changed"
+	}
 	workspace := graph.ParseResult{Nodes: []graph.Node{{
 		ID: project.ID, Kind: graph.KindRepository, Name: project.Name,
 		QualifiedName: project.Name, OwnerFile: workspaceOwner,
@@ -132,6 +142,7 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 	for key, value := range map[string]string{
 		"root": project.Root, "branch": project.Branch, "commit": project.Commit,
 		"indexed_at": graph.NowUTC(), "schema_version": fmt.Sprint(graph.SchemaVersion),
+		"semantic_index_version": SemanticIndexVersion,
 	} {
 		if err := s.repository.SetMeta(ctx, key, value); err != nil {
 			return report, err

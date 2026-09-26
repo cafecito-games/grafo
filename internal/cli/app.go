@@ -277,7 +277,8 @@ func (a *App) neighbors(ctx context.Context, args parsedArguments, mode string) 
 	case "impact":
 		depthDefault, direction = 4, query.Incoming
 		relations = []graph.EdgeKind{graph.EdgeCalls, graph.EdgeHandledBy, graph.EdgeImports,
-			graph.EdgeExtends, graph.EdgeImplements, graph.EdgeEmbeds, graph.EdgeReferences}
+			graph.EdgeExtends, graph.EdgeImplements, graph.EdgeEmbeds, graph.EdgeReferences,
+			graph.EdgeAssigns, graph.EdgeReturns, graph.EdgePasses}
 	}
 	depth, err := intOption(args, "depth", depthDefault)
 	if err != nil {
@@ -364,6 +365,9 @@ func (a *App) printIndexReport(report indexer.Report, asJSON bool) error {
 	}
 	fmt.Fprintf(a.stdout, "indexed %s · branch %s\n", report.Project.Name, report.Project.Branch)
 	fmt.Fprintf(a.stdout, "%d updated · %d unchanged · %d removed · %d skipped\n", len(report.Updated), report.Unchanged, len(report.Removed), len(report.Skipped))
+	if report.Rebuild != "" {
+		fmt.Fprintf(a.stdout, "rebuild: %s\n", report.Rebuild)
+	}
 	fmt.Fprintf(a.stdout, "%d files · %d nodes · %d edges · %d unresolved · %dms\n",
 		report.Counts.Files, report.Counts.Nodes, report.Counts.Edges, report.Counts.External, report.ElapsedMS)
 	for _, diagnostic := range report.Diagnostics {
