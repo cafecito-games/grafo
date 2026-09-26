@@ -75,11 +75,11 @@ func TestServiceIndexesAndLinksGodotProjectSources(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	write(t, filepath.Join(root, "project.godot"), "config_version=5\n\n[application]\nrun/main_scene=\"res://scenes/main.tscn\"\n")
-	write(t, filepath.Join(root, "settings.gd"), "class_name Settings\nfunc main_scene():\n\treturn ProjectSettings.get_setting(\"application/run/main_scene\")\n")
+	write(t, filepath.Join(root, "settings.gd"), "class_name Settings\nfunc main_scene():\n\treturn ProjectSettings.get_setting(\"application/run/main_scene\")\nfunc bind_button():\n\treturn %StartButton\nfunc lookup_button():\n\treturn get_node(\"Main/StartButton\")\n")
 	if err := os.MkdirAll(filepath.Join(root, "scenes"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	write(t, filepath.Join(root, "scenes", "main.tscn"), "[gd_scene format=3]\n\n[node name=\"Main\" type=\"Node\"]\n")
+	write(t, filepath.Join(root, "scenes", "main.tscn"), "[gd_scene format=3]\n\n[node name=\"Main\" type=\"Node\"]\n\n[node name=\"StartButton\" type=\"Button\" parent=\".\" unique_name_in_owner=true]\n")
 
 	project, err := indexer.DiscoverProject(ctx, root)
 	if err != nil {
@@ -111,6 +111,16 @@ func TestServiceIndexesAndLinksGodotProjectSources(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertReached(t, reader, "config:project.godot:application/run/main_scene")
+	lookup, err := queries.Neighborhood(ctx, "Settings.bind_button", 1, query.Outgoing, nil, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertReached(t, lookup, "scenes/main:Main/StartButton")
+	lookup, err = queries.Neighborhood(ctx, "Settings.lookup_button", 1, query.Outgoing, nil, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertReached(t, lookup, "scenes/main:Main/StartButton")
 }
 
 func TestServiceReindexesSQLWhenDialectConfigurationChanges(t *testing.T) {

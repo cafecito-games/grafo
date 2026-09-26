@@ -1,30 +1,32 @@
 package godot
 
 import (
+	"path/filepath"
 	"strings"
 
-	projectast "github.com/cafecito-games/gdparser/projectconfig/ast"
+	configast "github.com/cafecito-games/gdparser/configfile/ast"
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 )
 
-func extractProject(input parserapi.Input, file *projectast.File) graph.ParseResult {
-	b := parserapi.NewBuilder(input, "godot-project")
+func extractConfig(input parserapi.Input, file *configast.File) graph.ParseResult {
+	b := parserapi.NewBuilder(input, "godot-config")
 	module := moduleName(input.Path)
+	format := configFormat(input.Path)
 	moduleID := b.Declare(b.FileID(), graph.Node{
 		Kind: graph.KindModule, Name: graph.SimpleName(module), QualifiedName: module,
-		Location: moduleLocation(input.Path), Properties: map[string]string{"format": "project.godot"},
+		Location: moduleLocation(input.Path), Properties: map[string]string{"format": format},
 	})
-	extractProjectAssignments(b, input, moduleID, "", file.Preamble)
+	extractConfigAssignments(b, input, moduleID, format, "", file.Preamble)
 	for _, section := range file.Sections {
-		extractProjectAssignments(b, input, moduleID, section.Name, section.Statements)
+		extractConfigAssignments(b, input, moduleID, format, section.Name, section.Statements)
 	}
 	return b.Finish()
 }
 
-func extractProjectAssignments(b *parserapi.Builder, input parserapi.Input, moduleID, section string, statements []projectast.Statement) {
+func extractConfigAssignments(b *parserapi.Builder, input parserapi.Input, moduleID, format, section string, statements []configast.Statement) {
 	for _, statement := range statements {
-		assignment, ok := statement.(*projectast.Assignment)
+		assignment, ok := statement.(*configast.Assignment)
 		if !ok {
 			continue
 		}
@@ -32,8 +34,8 @@ func extractProjectAssignments(b *parserapi.Builder, input parserapi.Input, modu
 		if section != "" {
 			key = section + "/" + key
 		}
-		loc := projectLocation(input.Path, assignment)
-		properties := map[string]string{"defined": "true", "format": "project.godot"}
+		loc := configLocation(input.Path, assignment)
+		properties := map[string]string{"defined": "true", "format": format}
 		if section != "" {
 			properties["section"] = section
 		}
@@ -42,26 +44,38 @@ func extractProjectAssignments(b *parserapi.Builder, input parserapi.Input, modu
 			Location: loc, Properties: properties,
 		})
 		b.AddFact(moduleID, graph.EdgeDefines, id, "", "", loc, nil)
-		projectast.Inspect(assignment.Value, func(node projectast.Node) bool {
-			literal, ok := node.(*projectast.StringLiteral)
+		configast.Inspect(assignment.Value, func(node configast.Node) bool {
+			literal, ok := node.(*configast.StringLiteral)
 			if !ok {
 				return true
 			}
 			value := strings.TrimPrefix(strings.TrimSpace(literal.Value), "*")
+			if strings.HasPrefix(value, "uid://") {
+				b.AddFact(id, graph.EdgeReferences, "", value, graph.KindConfigKey,
+					configLocation(input.Path, literal), map[string]string{"uid": value})
+				return true
+			}
 			if !strings.HasPrefix(value, "res://") && !strings.HasPrefix(value, "user://") {
 				return true
 			}
 			target := resourceModule(value)
 			if target != "" {
 				b.AddFact(id, graph.EdgeReferences, "", target, graph.KindModule,
-					projectLocation(input.Path, literal), map[string]string{"resource": literal.Value})
+					configLocation(input.Path, literal), map[string]string{"resource": literal.Value})
 			}
 			return true
 		})
 	}
 }
 
-func projectLocation(path string, node projectast.Node) graph.Location {
+func configFormat(path string) string {
+	if strings.EqualFold(filepath.Base(path), "project.godot") {
+		return "project.godot"
+	}
+	return strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
+}
+
+func configLocation(path string, node configast.Node) graph.Location {
 	span := node.Span()
 	return graph.Location{Path: path, Line: span.Start.Line, Column: span.Start.Column, EndLine: span.End.Line}
 }

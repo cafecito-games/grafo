@@ -17,7 +17,7 @@ import (
 )
 
 const workspaceOwner = "__workspace__"
-const SemanticIndexVersion = "9"
+const SemanticIndexVersion = "10"
 
 type Options struct {
 	Force       bool
