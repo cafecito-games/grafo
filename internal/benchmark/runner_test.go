@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/indexer"
 )
 
 func TestRunRejectsInvalidInputBeforeCreatingOutput(t *testing.T) {
@@ -36,13 +39,27 @@ func TestRunRejectsInvalidInputBeforeCreatingOutput(t *testing.T) {
 
 func TestRunRejectsOutputInsideSourceBeforeCreatingArtifacts(t *testing.T) {
 	repository := fixtureRepository(t)
-	output := filepath.Join(repository, "benchmark-output")
-	_, err := Run(context.Background(), Options{Repository: repository, Output: output})
-	if err == nil {
-		t.Fatal("expected unsafe output error")
+	alias := filepath.Join(t.TempDir(), "corpus-alias")
+	if err := os.Symlink(repository, alias); err != nil {
+		t.Fatal(err)
 	}
-	if _, statErr := os.Stat(output); !os.IsNotExist(statErr) {
-		t.Fatalf("unsafe output created: %v", statErr)
+	for name, output := range map[string]string{
+		"exact": repository,
+		"child": filepath.Join(repository, "benchmark-output"),
+		"alias": alias,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Run(context.Background(), Options{Repository: repository, Output: output})
+			if err == nil {
+				t.Fatal("expected unsafe output error")
+			}
+			if matches, globErr := filepath.Glob(filepath.Join(repository, "artifacts-*")); globErr != nil || len(matches) != 0 {
+				t.Fatalf("unsafe artifacts created: matches=%v err=%v", matches, globErr)
+			}
+			if _, statErr := os.Stat(filepath.Join(repository, ReportFileName)); !os.IsNotExist(statErr) {
+				t.Fatalf("unsafe report created: %v", statErr)
+			}
+		})
 	}
 }
 
@@ -53,6 +70,22 @@ func TestLoadBaselineRejectsIncompatibleVersions(t *testing.T) {
 	}
 	if _, err := loadBaseline(path); err == nil {
 		t.Fatal("expected incompatible baseline error")
+	}
+}
+
+func TestLoadBaselineRejectsFailedReport(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "baseline.json")
+	report := Report{SchemaVersion: ReportSchemaVersion, SemanticIndexVersion: indexer.SemanticIndexVersion,
+		GraphSchemaVersion: graph.SchemaVersion, Status: StatusFailed}
+	content, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadBaseline(path); err == nil {
+		t.Fatal("expected failed baseline rejection")
 	}
 }
 
@@ -86,7 +119,8 @@ func TestRunExercisesIncrementalScenariosWithoutChangingSource(t *testing.T) {
 	if report.Inputs.Unsupported.Files == 0 {
 		t.Fatalf("unsupported tracked files are not visible: %#v", report.Inputs)
 	}
-	if report.Inputs.Skipped.Files != 1 || len(report.Inputs.SkippedPaths) != 1 || report.Inputs.SkippedPaths[0] != "vendor/generated.go" {
+	if report.Inputs.Skipped.Files != 2 || !reflect.DeepEqual(report.Inputs.SkippedPaths, []string{"alias.go", "vendor/generated.go"}) ||
+		!reflect.DeepEqual(report.Inputs.SkippedSymlinks, []string{"alias.go"}) {
 		t.Fatalf("production-ignored tracked inputs are not visible: %#v", report.Inputs)
 	}
 
@@ -116,6 +150,9 @@ func TestRunExercisesIncrementalScenariosWithoutChangingSource(t *testing.T) {
 		t.Fatalf("resume left reconciliation work: %#v", scenarios["resume_unchanged"].Index)
 	}
 	cold := scenarios["cold"]
+	if cold.Index.Skipped != 1 || !reflect.DeepEqual(cold.Index.SkippedPaths, []string{"alias.go"}) {
+		t.Fatalf("tracked symlink was not surfaced as skipped: %#v", cold.Index)
+	}
 	if cold.Index.Counts.Facts == 0 {
 		t.Fatalf("fact count was not reported: %#v", cold.Index.Counts)
 	}
@@ -193,6 +230,9 @@ func fixtureRepository(t *testing.T) string {
 		}
 	}
 	if err := os.WriteFile(filepath.Join(root, "secret.env"), []byte("DO_NOT_READ=secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("main.go", filepath.Join(root, "alias.go")); err != nil {
 		t.Fatal(err)
 	}
 	runTestGit(t, root, "add", ".")

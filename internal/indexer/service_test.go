@@ -176,6 +176,38 @@ func TestServiceReindexesGoDependentsWhenTypeEvidenceChanges(t *testing.T) {
 	}
 }
 
+func TestServiceSurfacesTrackedSymlinksWithoutFollowingThem(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	runGit(t, root, "init", "-b", "main")
+	write(t, filepath.Join(root, "main.go"), "package sample\nfunc Value() int { return 1 }\n")
+	if err := os.Symlink("main.go", filepath.Join(root, "alias.go")); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "add", "main.go", "alias.go")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "fixture")
+
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	report, err := indexer.NewService(repository, parserapi.NewRegistry(golangparser.New())).Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Updated) != 1 || report.Updated[0] != "main.go" || len(report.Skipped) != 1 || report.Skipped[0] != "alias.go" {
+		t.Fatalf("unexpected symlink report: %#v", report)
+	}
+	if report.Counts.Files != 1 {
+		t.Fatalf("symlink was followed into the graph: %#v", report.Counts)
+	}
+}
+
 func TestServiceIndexesAndLinksGodotProjectSources(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

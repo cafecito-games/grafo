@@ -75,6 +75,7 @@ type InputStats struct {
 type InputCoverage struct {
 	Tracked          InputStats            `json:"tracked"`
 	Supported        InputStats            `json:"supported"`
+	Routed           InputStats            `json:"routed"`
 	Indexable        InputStats            `json:"indexable"`
 	ByLanguage       map[string]InputStats `json:"by_language"`
 	Unsupported      InputStats            `json:"unsupported"`
@@ -226,8 +227,8 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	}
 
 	cold, err := executeScenario(ctx, "cold", isolation, report.Artifacts.ColdDatabase, nil)
-	if err == nil && cold.Index.Updated+cold.Index.Skipped != coverage.Indexable.Files {
-		err = fmt.Errorf("cold scenario accounted for %d inputs, want %d", cold.Index.Updated+cold.Index.Skipped, coverage.Indexable.Files)
+	if err == nil && cold.Index.Updated+cold.Index.Skipped != coverage.Routed.Files {
+		err = fmt.Errorf("cold scenario accounted for %d inputs, want %d", cold.Index.Updated+cold.Index.Skipped, coverage.Routed.Files)
 		cold = withScenarioError(cold, err)
 	}
 	report.Scenarios = append(report.Scenarios, cold)
@@ -540,8 +541,13 @@ func prepareOutput(source, requested string) (string, error) {
 		return "", fmt.Errorf("resolve benchmark output: %w", err)
 	}
 	relative, err := filepath.Rel(source, absolute)
-	if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+	if err == nil && (relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)))) {
 		return "", fmt.Errorf("benchmark output must be outside the source checkout")
+	}
+	if sourceInfo, sourceErr := os.Stat(source); sourceErr == nil {
+		if outputInfo, outputErr := os.Stat(absolute); outputErr == nil && os.SameFile(sourceInfo, outputInfo) {
+			return "", fmt.Errorf("benchmark output must be outside the source checkout")
+		}
 	}
 	if err := os.MkdirAll(absolute, 0o755); err != nil {
 		return "", fmt.Errorf("create benchmark output: %w", err)
@@ -618,13 +624,19 @@ func collectCoverage(ctx context.Context, root string, registry *parserapi.Regis
 		coverage.ByLanguage[parser.Language()] = stats
 		coverage.Supported.Files++
 		coverage.Supported.Bytes += info.Size()
-		if ignored || isSymlink {
+		if ignored {
 			coverage.Skipped.Files++
 			coverage.Skipped.Bytes += info.Size()
 			coverage.SkippedPaths = append(coverage.SkippedPaths, path)
-			if isSymlink {
-				coverage.SkippedSymlinks = append(coverage.SkippedSymlinks, path)
-			}
+			continue
+		}
+		coverage.Routed.Files++
+		coverage.Routed.Bytes += info.Size()
+		if isSymlink {
+			coverage.Skipped.Files++
+			coverage.Skipped.Bytes += info.Size()
+			coverage.SkippedPaths = append(coverage.SkippedPaths, path)
+			coverage.SkippedSymlinks = append(coverage.SkippedSymlinks, path)
 			continue
 		}
 		coverage.Indexable.Files++
@@ -665,6 +677,9 @@ func loadBaseline(path string) (Baseline, error) {
 	}
 	if report.SchemaVersion != ReportSchemaVersion || report.SemanticIndexVersion != indexer.SemanticIndexVersion || report.GraphSchemaVersion != graph.SchemaVersion {
 		return Baseline{}, fmt.Errorf("baseline is incompatible: report/schema/semantic versions differ")
+	}
+	if report.Status != StatusPassed {
+		return Baseline{}, fmt.Errorf("baseline is invalid: report status is %q, want %q", report.Status, StatusPassed)
 	}
 	return Baseline{Path: absolute, SchemaVersion: report.SchemaVersion, GrafoCommit: report.GrafoCommit}, nil
 }

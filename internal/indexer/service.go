@@ -131,11 +131,13 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		return report, fmt.Errorf("load indexed files: %w", err)
 	}
 	discoveryStarted := time.Now()
-	paths, err := discoverFiles(ctx, project, s.parsers)
+	discovered, err := discoverFiles(ctx, project, s.parsers)
 	report.Phases.DiscoveryNS += time.Since(discoveryStarted).Nanoseconds()
 	if err != nil {
 		return report, fmt.Errorf("discover source files: %w", err)
 	}
+	paths := discovered.paths
+	report.Skipped = append(report.Skipped, discovered.skipped...)
 	workspaceSemanticKeys, err := s.parsers.WorkspaceSemanticKeys(ctx, parserapi.Input{
 		Root: project.Root, Repository: project.Name, RepoID: project.ID, GoModule: project.GoModule,
 	})
