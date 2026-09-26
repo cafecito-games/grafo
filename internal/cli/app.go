@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cafecito-games/grafo/internal/agentinstall"
 	"github.com/cafecito-games/grafo/internal/embedding/ollama"
 	"github.com/cafecito-games/grafo/internal/federation"
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -48,6 +49,8 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 	}
 	var runErr error
 	switch parsed.command {
+	case "install":
+		runErr = a.install(ctx, parsed)
 	case "index":
 		runErr = a.index(ctx, parsed)
 	case "watch":
@@ -88,6 +91,26 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		return 1
 	}
 	return 0
+}
+
+func (a *App) install(ctx context.Context, args parsedArguments) error {
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locate grafo executable: %w", err)
+	}
+	if strings.Contains(executable, string(os.PathSeparator)+"go-build") {
+		return fmt.Errorf("cannot install from a temporary 'go run' binary; install grafo with 'go install github.com/cafecito-games/grafo/cmd/grafo@latest' first")
+	}
+
+	results, installErr := agentinstall.Install(ctx, agentinstall.ExecRunner{}, executable, args.positionals)
+	for _, result := range results {
+		fmt.Fprintf(a.stdout, "configured grafo for %s (%s scope)\n", result.Agent, result.Scope)
+	}
+	if installErr != nil {
+		return installErr
+	}
+	fmt.Fprintln(a.stdout, "run 'grafo index .' once in each repository before using the MCP tools")
+	return nil
 }
 
 func (a *App) index(ctx context.Context, args parsedArguments) error {
@@ -726,6 +749,7 @@ func parseRelations(raw string) []graph.EdgeKind {
 const helpText = `Grafo builds a deterministic semantic graph of a repository.
 
 Usage:
+  grafo install [claude|codex|opencode|all]
   grafo index [path] [--force] [--json]
   grafo watch [path] [--interval 1s]
   grafo status [path] [--repos pathA,pathB] [--json]
