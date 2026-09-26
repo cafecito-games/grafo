@@ -18,6 +18,7 @@ import (
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	configparser "github.com/cafecito-games/grafo/internal/parser/config"
 	golangparser "github.com/cafecito-games/grafo/internal/parser/golang"
+	postgresparser "github.com/cafecito-games/grafo/internal/parser/postgres"
 	typescriptparser "github.com/cafecito-games/grafo/internal/parser/typescript"
 	"github.com/cafecito-games/grafo/internal/query"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
@@ -85,7 +86,7 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 }
 
 func registry() *parserapi.Registry {
-	return parserapi.NewRegistry(golangparser.New(), typescriptparser.New(), configparser.New())
+	return parserapi.NewRegistry(golangparser.New(), typescriptparser.New(), postgresparser.New(), configparser.New())
 }
 
 func (a *App) index(ctx context.Context, args parsedArguments) error {
@@ -286,7 +287,8 @@ func (a *App) neighbors(ctx context.Context, args parsedArguments, mode string) 
 		depthDefault, direction = 4, query.Incoming
 		relations = []graph.EdgeKind{graph.EdgeCalls, graph.EdgeHandledBy, graph.EdgeImports,
 			graph.EdgeExtends, graph.EdgeImplements, graph.EdgeEmbeds, graph.EdgeReferences,
-			graph.EdgeAssigns, graph.EdgeReturns, graph.EdgePasses, graph.EdgeRequests}
+			graph.EdgeReads, graph.EdgeWrites, graph.EdgeAssigns, graph.EdgeReturns,
+			graph.EdgePasses, graph.EdgeRequests}
 	}
 	depth, err := intOption(args, "depth", depthDefault)
 	if err != nil {

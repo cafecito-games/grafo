@@ -168,8 +168,9 @@ func (s *Service) getBlastRadius(ctx context.Context, _ *mcp.CallToolRequest, in
 	}
 	result, err := s.query.Neighborhood(ctx, input.Selector, depth, query.Incoming,
 		[]graph.EdgeKind{graph.EdgeCalls, graph.EdgeHandledBy, graph.EdgeImports, graph.EdgeExtends,
-			graph.EdgeImplements, graph.EdgeEmbeds, graph.EdgeReferences, graph.EdgeAssigns,
-			graph.EdgeReturns, graph.EdgePasses, graph.EdgeRequests}, input.Limit)
+			graph.EdgeImplements, graph.EdgeEmbeds, graph.EdgeReferences, graph.EdgeReads,
+			graph.EdgeWrites, graph.EdgeAssigns, graph.EdgeReturns, graph.EdgePasses,
+			graph.EdgeRequests}, input.Limit)
 	return nil, result, err
 }
 
