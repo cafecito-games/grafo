@@ -26,6 +26,7 @@ import (
 	typescriptparser "github.com/cafecito-games/grafo/internal/parser/typescript"
 	"github.com/cafecito-games/grafo/internal/query"
 	"github.com/cafecito-games/grafo/internal/semantic"
+	sourcecontext "github.com/cafecito-games/grafo/internal/source"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 )
 
@@ -70,6 +71,8 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		runErr = a.find(ctx, parsed)
 	case "show":
 		runErr = a.show(ctx, parsed)
+	case "source":
+		runErr = a.source(ctx, parsed)
 	case "neighbors", "query":
 		runErr = a.neighbors(ctx, parsed, "")
 	case "callers":
@@ -242,6 +245,11 @@ func (a *App) mcp(ctx context.Context, args parsedArguments) error {
 		}
 		return semanticService.Search(searchContext, text, limit)
 	})
+	sourceService, err := newSourceService(repository, projects)
+	if err != nil {
+		return err
+	}
+	service.WithSource(sourceService.Read)
 	return service.Run(ctx, Version)
 }
 
@@ -377,6 +385,52 @@ func (a *App) show(ctx context.Context, args parsedArguments) error {
 	}
 	a.printNodes([]graph.Node{node})
 	return nil
+}
+
+func (a *App) source(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) != 1 {
+		return fmt.Errorf("usage: grafo source <symbol-or-id> [--context-lines 2] [--max-lines 200]")
+	}
+	contextLines, err := nonNegativeIntOption(args, "context-lines", 2)
+	if err != nil {
+		return err
+	}
+	maxLines, err := intOption(args, "max-lines", 200)
+	if err != nil {
+		return err
+	}
+	repository, projects, closeRepository, err := openRead(ctx, args)
+	if err != nil {
+		return err
+	}
+	defer closeRepository()
+	service, err := newSourceService(repository, projects)
+	if err != nil {
+		return err
+	}
+	excerpt, err := service.Read(ctx, args.positionals[0], contextLines, maxLines)
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, excerpt)
+	}
+	fmt.Fprintf(a.stdout, "%s · %s · %s:%d-%d\n", excerpt.Repository, excerpt.Branch, excerpt.Path, excerpt.StartLine, excerpt.EndLine)
+	fmt.Fprintln(a.stdout, excerpt.Content)
+	if excerpt.Truncated {
+		fmt.Fprintln(a.stdout, "… truncated")
+	}
+	return nil
+}
+
+func newSourceService(repository graph.ReadRepository, projects []indexer.Project) (*sourcecontext.Service, error) {
+	if locator, ok := repository.(sourcecontext.ProjectLocator); ok {
+		return sourcecontext.NewService(repository, locator), nil
+	}
+	if len(projects) != 1 {
+		return nil, fmt.Errorf("cannot locate source repository")
+	}
+	return sourcecontext.NewService(repository, sourcecontext.NewSingleProjectLocator(repository, projects[0])), nil
 }
 
 func (a *App) neighbors(ctx context.Context, args parsedArguments, mode string) error {
@@ -574,7 +628,7 @@ var booleanOptions = map[string]bool{"json": true, "force": true, "help": true}
 var valueOptions = map[string]bool{
 	"repo": true, "repos": true, "depth": true, "direction": true, "relation": true,
 	"limit": true, "interval": true, "max-file-size": true, "model": true,
-	"ollama-url": true, "batch-size": true,
+	"ollama-url": true, "batch-size": true, "context-lines": true, "max-lines": true,
 }
 
 func parseArguments(arguments []string) (parsedArguments, error) {
@@ -642,6 +696,18 @@ func intOption(args parsedArguments, name string, fallback int) (int, error) {
 	return parsed, nil
 }
 
+func nonNegativeIntOption(args parsedArguments, name string, fallback int) (int, error) {
+	value := args.values[name]
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 {
+		return 0, fmt.Errorf("--%s must be a non-negative integer", name)
+	}
+	return parsed, nil
+}
+
 func int64Option(args parsedArguments, name string, fallback int64) (int64, error) {
 	value := args.values[name]
 	if value == "" {
@@ -678,6 +744,7 @@ Usage:
   grafo reusable <description> [--repo path | --repos pathA,pathB] [--limit 5] [--json]
   grafo find <text> [--limit 20] [--repo path | --repos pathA,pathB] [--json]
   grafo show <symbol-or-id> [--repo path | --repos pathA,pathB] [--json]
+  grafo source <symbol-or-id> [--context-lines 2] [--max-lines 200] [--json]
   grafo neighbors <symbol-or-id> [--depth 1] [--direction both]
   grafo callers <symbol-or-id> [--depth 3]
   grafo callees <symbol-or-id> [--depth 3]

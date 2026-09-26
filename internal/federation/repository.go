@@ -12,6 +12,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/indexer"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	"github.com/cafecito-games/grafo/internal/semantic"
+	sourcecontext "github.com/cafecito-games/grafo/internal/source"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 )
 
@@ -28,6 +29,7 @@ type Repository struct {
 
 var _ graph.ReadRepository = (*Repository)(nil)
 var _ semantic.Repository = (*Repository)(nil)
+var _ sourcecontext.ProjectLocator = (*Repository)(nil)
 
 func Open(ctx context.Context, paths []string) (*Repository, error) {
 	if len(paths) < 2 {
@@ -82,6 +84,15 @@ func (r *Repository) Projects() []indexer.Project {
 		result = append(result, item.project)
 	}
 	return result
+}
+
+func (r *Repository) ProjectForNode(ctx context.Context, id string) (indexer.Project, error) {
+	for _, item := range r.members {
+		if _, err := item.repository.Node(ctx, id); err == nil {
+			return item.project, nil
+		}
+	}
+	return indexer.Project{}, fmt.Errorf("node %s does not belong to this federation", id)
 }
 
 func (r *Repository) CandidateNodes(ctx context.Context) ([]graph.Node, error) {
