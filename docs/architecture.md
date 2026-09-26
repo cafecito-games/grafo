@@ -9,6 +9,7 @@ storage can evolve independently.
        ├─ internal/indexer changed-file indexing use case
        ├─ internal/query   deterministic traversal use case
        ├─ internal/semantic optional candidate-ranking use case
+       ├─ internal/source   bounded graph-addressed source retrieval
        ├─ internal/embedding/ollama provider adapter
        ├─ internal/mcpserver agent-facing stdio tools
        └─ internal/federation read-only multi-index graph
@@ -65,6 +66,13 @@ creates an edge or determines a path. Each selected node is resolved by stable
 ID and returned with a one-hop traversal from the graph repository. Similarity
 search can later move to a specialized vector index without changing graph
 parsers, traversal, or the MCP contract.
+
+## Source retrieval
+
+Source retrieval begins with normal deterministic node resolution; it never
+searches file text. The node's repository identity and indexed location select
+one active worktree and one bounded line span. Canonical path validation rejects
+absolute paths, traversal, and symlinks that resolve outside the repository.
 
 ## Persistence
 

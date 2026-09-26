@@ -20,6 +20,7 @@ grafo status
 grafo find "MyHandler"
 grafo neighbors "MyHandler" --depth 2
 grafo path "HandleCheckout" "Charge"
+grafo source "HandleCheckout"
 grafo watch
 grafo mcp
 ```
@@ -29,7 +30,13 @@ the complete command surface.
 
 `grafo mcp` starts a standards-compatible MCP server over stdio with tools for
 symbol discovery, node lookup, traversal, shortest paths, callers, callees,
-blast radius, reusable-code discovery, and index status.
+blast radius, graph-addressed source retrieval, reusable-code discovery, and
+index status.
+
+`grafo source` resolves a graph node first, then reads its exact bounded source
+span from the active worktree. In a federation, the node ID selects the correct
+repository even when several repos contain the same relative path. Reads are
+confined to the repository root and capped by line and byte limits.
 
 ### Semantic candidate discovery
 

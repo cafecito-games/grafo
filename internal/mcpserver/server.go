@@ -10,6 +10,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/indexer"
 	"github.com/cafecito-games/grafo/internal/query"
 	"github.com/cafecito-games/grafo/internal/semantic"
+	sourcecontext "github.com/cafecito-games/grafo/internal/source"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -19,6 +20,7 @@ type Service struct {
 	projects   []indexer.Project
 	refresh    func(context.Context) error
 	reusable   func(context.Context, string, int) (semantic.SearchResult, error)
+	source     func(context.Context, string, int, int) (sourcecontext.Excerpt, error)
 	refreshMu  sync.Mutex
 }
 
@@ -42,6 +44,11 @@ func (s *Service) WithReusable(search func(context.Context, string, int) (semant
 	return s
 }
 
+func (s *Service) WithSource(read func(context.Context, string, int, int) (sourcecontext.Excerpt, error)) *Service {
+	s.source = read
+	return s
+}
+
 func (s *Service) ready(ctx context.Context) error {
 	if s.refresh == nil {
 		return nil
@@ -58,6 +65,9 @@ func (s *Service) Server(version string) *mcp.Server {
 	annotations := &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: boolPointer(false)}
 	mcp.AddTool(server, &mcp.Tool{Name: "find_symbols", Title: "Find symbols", Description: "Find graph nodes by deterministic name matching. Use this to obtain an unambiguous qualified name or stable node ID.", Annotations: annotations}, s.findSymbols)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_node", Title: "Get node", Description: "Resolve one symbol or stable ID and return its graph metadata and source location.", Annotations: annotations}, s.getNode)
+	if s.source != nil {
+		mcp.AddTool(server, &mcp.Tool{Name: "get_source", Title: "Get source", Description: "Resolve a graph node and return its exact bounded source span from the correct worktree without text search.", Annotations: annotations}, s.getSource)
+	}
 	mcp.AddTool(server, &mcp.Tool{Name: "get_neighbors", Title: "Walk graph neighbors", Description: "Walk incoming, outgoing, or both edge directions from a symbol with deterministic breadth-first traversal.", Annotations: annotations}, s.getNeighbors)
 	mcp.AddTool(server, &mcp.Tool{Name: "find_path", Title: "Find graph path", Description: "Find the deterministic shortest structural path between two symbols.", Annotations: annotations}, s.findPath)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_callers", Title: "Get callers", Description: "Walk incoming call and handler edges to find callers of a symbol.", Annotations: annotations}, s.getCallers)
@@ -97,6 +107,20 @@ func (s *Service) findSymbols(ctx context.Context, _ *mcp.CallToolRequest, input
 
 type SelectorInput struct {
 	Selector string `json:"selector" jsonschema:"qualified symbol name or stable node ID"`
+}
+
+type SourceInput struct {
+	Selector     string `json:"selector" jsonschema:"qualified symbol name or stable node ID"`
+	ContextLines int    `json:"context_lines,omitempty" jsonschema:"surrounding lines from 0 to 20"`
+	MaxLines     int    `json:"max_lines,omitempty" jsonschema:"maximum returned lines; defaults to 200 and may not exceed 1000"`
+}
+
+func (s *Service) getSource(ctx context.Context, _ *mcp.CallToolRequest, input SourceInput) (*mcp.CallToolResult, sourcecontext.Excerpt, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, sourcecontext.Excerpt{}, err
+	}
+	result, err := s.source(ctx, input.Selector, input.ContextLines, input.MaxLines)
+	return nil, result, err
 }
 
 type NodeOutput struct {

@@ -51,6 +51,17 @@ func Routes() { router.Get("/charge", Handler) }
 	if len(result.Edges) != 1 || result.Edges[0].Properties["federated"] != "true" {
 		t.Fatalf("expected a federated request edge: %#v", result.Edges)
 	}
+	located, err := repository.ProjectForNode(ctx, result.Root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedClientRoot, err := filepath.EvalSymlinks(clientRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if located.Root != resolvedClientRoot {
+		t.Fatalf("source node mapped to %q, want %q", located.Root, resolvedClientRoot)
+	}
 	incoming, err := repository.EdgesTo(ctx, result.Nodes[1].Node.ID)
 	if err != nil {
 		t.Fatal(err)

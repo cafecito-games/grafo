@@ -10,6 +10,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/indexer"
 	"github.com/cafecito-games/grafo/internal/mcpserver"
 	"github.com/cafecito-games/grafo/internal/semantic"
+	sourcecontext "github.com/cafecito-games/grafo/internal/source"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -37,6 +38,9 @@ func TestServerListsAndCallsGraphTools(t *testing.T) {
 		WithReusable(func(_ context.Context, text string, _ int) (semantic.SearchResult, error) {
 			return semantic.SearchResult{Query: text, Model: "test"}, nil
 		}).
+		WithSource(func(_ context.Context, _ string, _, _ int) (sourcecontext.Excerpt, error) {
+			return sourcecontext.Excerpt{Path: "checkout.go", StartLine: 1, EndLine: 2, Content: "func Checkout() {}"}, nil
+		}).
 		Server("test").Connect(ctx, serverTransport, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -53,8 +57,8 @@ func TestServerListsAndCallsGraphTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Tools) != 9 {
-		t.Fatalf("expected 9 tools, got %d", len(listed.Tools))
+	if len(listed.Tools) != 10 {
+		t.Fatalf("expected 10 tools, got %d", len(listed.Tools))
 	}
 	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name: "find_symbols", Arguments: map[string]any{"query": "Checkout"},
@@ -90,6 +94,22 @@ func TestServerListsAndCallsGraphTools(t *testing.T) {
 		t.Fatalf("unexpected reusable result: %#v", reusable.StructuredContent)
 	}
 	if refreshes.Load() != 2 {
+		t.Fatalf("expected refresh before every tool call, got %d", refreshes.Load())
+	}
+	source, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "get_source", Arguments: map[string]any{"selector": "sample.Checkout"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.IsError {
+		t.Fatalf("source tool returned an error: %#v", source.Content)
+	}
+	structured, ok = source.StructuredContent.(map[string]any)
+	if !ok || structured["path"] != "checkout.go" || structured["content"] != "func Checkout() {}" {
+		t.Fatalf("unexpected source result: %#v", source.StructuredContent)
+	}
+	if refreshes.Load() != 3 {
 		t.Fatalf("expected refresh before every tool call, got %d", refreshes.Load())
 	}
 }
