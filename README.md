@@ -29,7 +29,29 @@ the complete command surface.
 
 `grafo mcp` starts a standards-compatible MCP server over stdio with tools for
 symbol discovery, node lookup, traversal, shortest paths, callers, callees,
-blast radius, and index status.
+blast radius, reusable-code discovery, and index status.
+
+### Semantic candidate discovery
+
+Embeddings are optional and only select candidates for natural-language reuse
+queries. Grafo then resolves each candidate's relationships from the graph and
+returns its deterministic one-hop structural context.
+
+With a local [Ollama](https://docs.ollama.com/capabilities/embeddings) instance:
+
+```sh
+ollama pull embeddinggemma
+grafo embed .
+grafo reusable "validate and normalize an incoming payment request"
+```
+
+`grafo embed` is incremental: only new or semantically changed symbol metadata
+is sent to the embedding provider. `grafo reusable` and the MCP
+`find_reusable_code` tool perform that sync automatically. Configure another
+Ollama-compatible location or model with `--ollama-url`, `--model`,
+`GRAFO_OLLAMA_URL`, and `GRAFO_EMBED_MODEL`. The defaults are
+`http://localhost:11434` and `embeddinggemma`. Use `grafo embed --force` after
+replacing a model under the same model name.
 
 To query several repositories as one graph, index each once and pass their
 paths to any query command or to the MCP server:
@@ -70,8 +92,8 @@ are marked `federated` and retain their original evidence.
   callees, blast-radius traversal, multi-repository federation, and MCP access.
 
 Grafo currently performs syntactic and name-based linking. It does not yet do
-type-checker-grade dispatch, full SSA data flow, or embedding-based natural
-language candidate discovery. Structural retrieval remains graph-based.
+type-checker-grade dispatch or full SSA data flow. Structural retrieval remains
+graph-based; vector similarity is confined to optional candidate discovery.
 
 ## SQL dialects
 
@@ -108,10 +130,12 @@ example's `sqlite` mapping becomes valid when a SQLite dialect is installed.
 4. Each Git branch/worktree has its own index and is never silently substituted.
 5. Unsupported syntax produces diagnostics instead of invented relationships.
 
-Index files live under `.grafo/indexes/` and should not be committed. Source
-never leaves the machine. Configuration values are used transiently to discover
-references such as `${DATABASE_HOST}` but are not persisted, so indexing an
-`.env` file does not copy its secrets into the graph.
+Index files live under `.grafo/indexes/` and should not be committed.
+Configuration values are used transiently to discover references such as
+`${DATABASE_HOST}` but are not persisted, so indexing an `.env` file does not
+copy its secrets into the graph. Normal indexing is entirely local. Semantic
+sync sends only generated symbol metadata and signatures—not source files—to
+the configured embedding endpoint; the default endpoint is local Ollama.
 
 ## Development
 

@@ -9,6 +9,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
 	"github.com/cafecito-games/grafo/internal/query"
+	"github.com/cafecito-games/grafo/internal/semantic"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -17,6 +18,7 @@ type Service struct {
 	query      *query.Service
 	projects   []indexer.Project
 	refresh    func(context.Context) error
+	reusable   func(context.Context, string, int) (semantic.SearchResult, error)
 	refreshMu  sync.Mutex
 }
 
@@ -35,6 +37,11 @@ func (s *Service) WithRefresh(refresh func(context.Context) error) *Service {
 	return s
 }
 
+func (s *Service) WithReusable(search func(context.Context, string, int) (semantic.SearchResult, error)) *Service {
+	s.reusable = search
+	return s
+}
+
 func (s *Service) ready(ctx context.Context) error {
 	if s.refresh == nil {
 		return nil
@@ -46,7 +53,7 @@ func (s *Service) ready(ctx context.Context) error {
 
 func (s *Service) Server(version string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "grafo", Version: version}, &mcp.ServerOptions{
-		Instructions: "Use Grafo tools for deterministic structural code retrieval. Resolve symbols first, then walk graph edges. Treat external nodes as explicit unresolved boundaries.",
+		Instructions: "Use Grafo tools for deterministic structural code retrieval. Resolve symbols first, then walk graph edges. Treat external nodes as explicit unresolved boundaries. Reusable-code search uses embeddings only to select candidates and includes graph-resolved context.",
 	})
 	annotations := &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: boolPointer(false)}
 	mcp.AddTool(server, &mcp.Tool{Name: "find_symbols", Title: "Find symbols", Description: "Find graph nodes by deterministic name matching. Use this to obtain an unambiguous qualified name or stable node ID.", Annotations: annotations}, s.findSymbols)
@@ -57,6 +64,10 @@ func (s *Service) Server(version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{Name: "get_callees", Title: "Get callees", Description: "Walk outgoing call and handler edges to find callees of a symbol.", Annotations: annotations}, s.getCallees)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_blast_radius", Title: "Get blast radius", Description: "Walk incoming dependency edges to identify code structurally affected by a symbol change.", Annotations: annotations}, s.getBlastRadius)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_index_status", Title: "Get index status", Description: "Return the active repository, branch, indexed commit, and graph counts.", Annotations: annotations}, s.getIndexStatus)
+	if s.reusable != nil {
+		semanticAnnotations := &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: true, OpenWorldHint: boolPointer(true)}
+		mcp.AddTool(server, &mcp.Tool{Name: "find_reusable_code", Title: "Find reusable code", Description: "Use embeddings to select natural-language code candidates, then return deterministic one-hop graph context for each candidate. This may update the local vector cache and contact the configured embedding endpoint.", Annotations: semanticAnnotations}, s.findReusableCode)
+	}
 	return server
 }
 
@@ -175,6 +186,22 @@ func (s *Service) getBlastRadius(ctx context.Context, _ *mcp.CallToolRequest, in
 }
 
 type StatusInput struct{}
+
+type FindReusableCodeInput struct {
+	Query string `json:"query" jsonschema:"natural-language description of code to reuse"`
+	Limit int    `json:"limit,omitempty" jsonschema:"maximum candidates; defaults to 5"`
+}
+
+func (s *Service) findReusableCode(ctx context.Context, _ *mcp.CallToolRequest, input FindReusableCodeInput) (*mcp.CallToolResult, semantic.SearchResult, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, semantic.SearchResult{}, err
+	}
+	if strings.TrimSpace(input.Query) == "" {
+		return nil, semantic.SearchResult{}, fmt.Errorf("query is required")
+	}
+	result, err := s.reusable(ctx, input.Query, input.Limit)
+	return nil, result, err
+}
 
 type StatusOutput struct {
 	Projects      []indexer.Project `json:"projects"`

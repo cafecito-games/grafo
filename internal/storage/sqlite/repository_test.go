@@ -65,3 +65,41 @@ func TestRepositoryMigratesAndReconcilesFacts(t *testing.T) {
 		t.Fatalf("unexpected unresolved node: %#v", target)
 	}
 }
+
+func TestRepositoryRestrictsSQLAccessToDataResources(t *testing.T) {
+	ctx := context.Background()
+	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+
+	reader := graph.Node{ID: "reader", Kind: graph.KindFunction, Name: "Load",
+		QualifiedName: "queries.Load", OwnerFile: "queries.sql"}
+	table := graph.Node{ID: "table", Kind: graph.KindTable, Name: "accounts",
+		QualifiedName: "public.accounts", OwnerFile: "schema.sql"}
+	function := graph.Node{ID: "function", Kind: graph.KindFunction, Name: "accounts",
+		QualifiedName: "public.accounts", OwnerFile: "functions.sql"}
+	if err := repository.ReplaceOwner(ctx, "queries.sql", graph.ParseResult{Nodes: []graph.Node{reader}, Facts: []graph.Fact{{
+		ID: "reads-accounts", FromID: reader.ID, Kind: graph.EdgeReads,
+		Target: "public.accounts", OwnerFile: "queries.sql",
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.ReplaceOwner(ctx, "schema.sql", graph.ParseResult{Nodes: []graph.Node{table}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.ReplaceOwner(ctx, "functions.sql", graph.ParseResult{Nodes: []graph.Node{function}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	edges, err := repository.EdgesFrom(ctx, reader.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edges) != 1 || edges[0].ToID != table.ID {
+		t.Fatalf("SQL read resolved outside data resources: %#v", edges)
+	}
+}

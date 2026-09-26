@@ -11,6 +11,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	"github.com/cafecito-games/grafo/internal/semantic"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 )
 
@@ -26,6 +27,7 @@ type Repository struct {
 }
 
 var _ graph.ReadRepository = (*Repository)(nil)
+var _ semantic.Repository = (*Repository)(nil)
 
 func Open(ctx context.Context, paths []string) (*Repository, error) {
 	if len(paths) < 2 {
@@ -80,6 +82,93 @@ func (r *Repository) Projects() []indexer.Project {
 		result = append(result, item.project)
 	}
 	return result
+}
+
+func (r *Repository) CandidateNodes(ctx context.Context) ([]graph.Node, error) {
+	var result []graph.Node
+	for _, item := range r.members {
+		repository, ok := item.repository.(semantic.Repository)
+		if !ok {
+			return nil, fmt.Errorf("repository %s does not support semantic candidates", item.project.Name)
+		}
+		nodes, err := repository.CandidateNodes(ctx)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, nodes...)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].QualifiedName != result[j].QualifiedName {
+			return result[i].QualifiedName < result[j].QualifiedName
+		}
+		return result[i].ID < result[j].ID
+	})
+	return result, nil
+}
+
+func (r *Repository) EmbeddingHashes(ctx context.Context, model string) (map[string]string, error) {
+	result := map[string]string{}
+	for _, item := range r.members {
+		repository, ok := item.repository.(semantic.Repository)
+		if !ok {
+			return nil, fmt.Errorf("repository %s does not support embeddings", item.project.Name)
+		}
+		hashes, err := repository.EmbeddingHashes(ctx, model)
+		if err != nil {
+			return nil, err
+		}
+		for id, hash := range hashes {
+			result[id] = hash
+		}
+	}
+	return result, nil
+}
+
+func (r *Repository) Embeddings(ctx context.Context, model string) ([]semantic.Embedding, error) {
+	var result []semantic.Embedding
+	for _, item := range r.members {
+		repository, ok := item.repository.(semantic.Repository)
+		if !ok {
+			return nil, fmt.Errorf("repository %s does not support embeddings", item.project.Name)
+		}
+		embeddings, err := repository.Embeddings(ctx, model)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, embeddings...)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].NodeID < result[j].NodeID })
+	return result, nil
+}
+
+func (r *Repository) UpsertEmbedding(ctx context.Context, embedding semantic.Embedding) error {
+	for _, item := range r.members {
+		if _, err := item.repository.Node(ctx, embedding.NodeID); err != nil {
+			continue
+		}
+		repository, ok := item.repository.(semantic.Repository)
+		if !ok {
+			return fmt.Errorf("repository %s does not support embeddings", item.project.Name)
+		}
+		return repository.UpsertEmbedding(ctx, embedding)
+	}
+	return fmt.Errorf("embedding node %s does not belong to this federation", embedding.NodeID)
+}
+
+func (r *Repository) DeleteStaleEmbeddings(ctx context.Context, model string) (int64, error) {
+	var removed int64
+	for _, item := range r.members {
+		repository, ok := item.repository.(semantic.Repository)
+		if !ok {
+			return removed, fmt.Errorf("repository %s does not support embeddings", item.project.Name)
+		}
+		count, err := repository.DeleteStaleEmbeddings(ctx, model)
+		if err != nil {
+			return removed, err
+		}
+		removed += count
+	}
+	return removed, nil
 }
 
 func (r *Repository) Refresh(ctx context.Context, parsers *parserapi.Registry) error {
@@ -278,8 +367,12 @@ func candidateAllowed(relation graph.EdgeKind, kind graph.NodeKind) bool {
 		return kind == graph.KindFunction || kind == graph.KindMethod
 	case graph.EdgeRequests:
 		return kind == graph.KindEndpoint
-	case graph.EdgeReadsConfig, graph.EdgeReferences:
+	case graph.EdgeReadsConfig:
 		return kind == graph.KindConfigKey
+	case graph.EdgeReads, graph.EdgeWrites:
+		return kind == graph.KindTable || kind == graph.KindView
+	case graph.EdgeReferences:
+		return kind == graph.KindConfigKey || kind == graph.KindTable || kind == graph.KindView
 	case graph.EdgeExtends, graph.EdgeImplements, graph.EdgeEmbeds:
 		return kind == graph.KindType || kind == graph.KindClass || kind == graph.KindInterface
 	case graph.EdgeImports:
