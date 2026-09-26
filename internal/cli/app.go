@@ -13,6 +13,7 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
+	"github.com/cafecito-games/grafo/internal/mcpserver"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	configparser "github.com/cafecito-games/grafo/internal/parser/config"
 	golangparser "github.com/cafecito-games/grafo/internal/parser/golang"
@@ -52,6 +53,8 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		runErr = a.watch(ctx, parsed)
 	case "status", "counts":
 		runErr = a.status(ctx, parsed)
+	case "mcp":
+		runErr = a.mcp(ctx, parsed)
 	case "find":
 		runErr = a.find(ctx, parsed)
 	case "show":
@@ -199,6 +202,18 @@ func (a *App) status(ctx context.Context, args parsedArguments) error {
 	fmt.Fprintf(a.stdout, "%d files · %d nodes · %d edges · %d unresolved\n", counts.Files, counts.Nodes, counts.Edges, counts.External)
 	fmt.Fprintf(a.stdout, "indexed %s\n", indexedAt)
 	return nil
+}
+
+func (a *App) mcp(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) != 0 {
+		return fmt.Errorf("usage: grafo mcp [--repo path]")
+	}
+	project, repository, err := openExisting(ctx, repoPath(args))
+	if err != nil {
+		return err
+	}
+	defer repository.Close()
+	return mcpserver.New(repository, project).Run(ctx, Version)
 }
 
 func (a *App) find(ctx context.Context, args parsedArguments) error {
@@ -491,6 +506,7 @@ Usage:
   grafo index [path] [--force] [--json]
   grafo watch [path] [--interval 1s]
   grafo status [path] [--json]
+  grafo mcp [--repo path]
   grafo find <text> [--limit 20] [--repo path] [--json]
   grafo show <symbol-or-id> [--repo path] [--json]
   grafo neighbors <symbol-or-id> [--depth 1] [--direction both]
