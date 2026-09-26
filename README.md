@@ -97,11 +97,14 @@ are marked `federated` and retain their original evidence.
 - Godot 4 GDScript script and inner classes, methods, fields, parameters, local
   variables, enums, inheritance, resource loads, calls, basic
   assignment/argument/return flow, environment and project-setting reads, and
-  signal declarations, emissions, and connections.
+  signal declarations, emissions, and connections. `$Node/Path`, `%UniqueName`,
+  and literal `get_node`-family lookups reference matching scene nodes when the
+  name is unambiguous.
 - Godot text scenes and resources (`.tscn`, `.tres`, and `.escn`), including
   scene nodes, subresources, properties, external resources, node paths, and
-  declarative signal connections; `project.godot` settings and resource paths;
-  and shader/include modules, uniforms, structs, functions, parameters, locals,
+  declarative signal connections; ConfigFile documents (`project.godot`,
+  `.cfg`, `.gdextension`, `.import`, and `.remap`) and `.uid` sidecars; and
+  shader/include modules, uniforms, structs, functions, parameters, locals,
   calls, global references, and `#include` relationships.
 - `.env`, YAML, JSON, and Java `.properties` keys and value references.
 - Outbound Go `net/http`, Python Requests/HTTPX, and TypeScript `fetch`/Axios

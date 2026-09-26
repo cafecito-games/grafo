@@ -12,16 +12,48 @@ import (
 
 func TestParserSupportsGodotSourceFormats(t *testing.T) {
 	parser := godotparser.New()
-	for _, path := range []string{"project.godot", "PROJECT.GODOT", "main.tscn", "data.TRES", "import.escn", "water.gdshader", "common.GDSHADERINC"} {
+	for _, path := range []string{
+		"project.godot", "PROJECT.GODOT", "export_presets.cfg", "example.GDEXTENSION",
+		"texture.png.import", "scene.tscn.remap", "player.gd.uid", "main.tscn", "data.TRES",
+		"import.escn", "water.gdshader", "common.GDSHADERINC",
+	} {
 		if !parser.Supports(path) {
 			t.Errorf("expected support for %s", path)
 		}
 	}
-	for _, path := range []string{"player.gd", "project.cfg", "level.scn", "asset.res"} {
+	for _, path := range []string{"player.gd", "level.scn", "asset.res"} {
 		if parser.Supports(path) {
 			t.Errorf("unexpected support for %s", path)
 		}
 	}
+}
+
+func TestParserExtractsConfigFilesResourcesAndUIDs(t *testing.T) {
+	result := parse(t, "addons/example/plugin.cfg", `[plugin]
+name="Example"
+script="res://addons/example/plugin_script.gd"
+identity="uid://c3m2k2i8we5da"
+
+[deploy]
+run_script="#!/usr/bin/env bash
+echo deploying"
+after="value"
+`)
+	module := assertNode(t, result.Nodes, graph.KindModule, "addons/example/plugin")
+	if module.Properties["format"] != "cfg" {
+		t.Fatalf("config module format = %q", module.Properties["format"])
+	}
+	assertNode(t, result.Nodes, graph.KindConfigKey, "config:addons/example/plugin.cfg:plugin/script")
+	assertNode(t, result.Nodes, graph.KindConfigKey, "config:addons/example/plugin.cfg:deploy/after")
+	assertFactTarget(t, result.Facts, graph.EdgeReferences, "addons/example/plugin_script")
+	assertFactTarget(t, result.Facts, graph.EdgeReferences, "uid://c3m2k2i8we5da")
+
+	uid := parse(t, "scripts/player.gd.uid", "uid://c3m2k2i8we5da\n")
+	uidNode := assertNode(t, uid.Nodes, graph.KindConfigKey, "uid://c3m2k2i8we5da")
+	if uidNode.Properties["resource"] != "scripts/player.gd" {
+		t.Fatalf("UID resource = %q", uidNode.Properties["resource"])
+	}
+	assertFactTarget(t, uid.Facts, graph.EdgeReferences, "scripts/player")
 }
 
 func TestParserExtractsProjectSettingsAndResources(t *testing.T) {
@@ -46,9 +78,9 @@ jump={"deadzone": 0.5, "events": []}
 }
 
 func TestParserExtractsSceneNodesResourcesPropertiesAndSignals(t *testing.T) {
-	result := parse(t, "scenes/main.tscn", `[gd_scene load_steps=3 format=3]
+	result := parse(t, "scenes/main.tscn", `[gd_scene load_steps=3 format=3 uid="uid://scene123"]
 
-[ext_resource type="Script" path="res://scripts/player.gd" id="1_script"]
+[ext_resource type="Script" uid="uid://script123" path="res://scripts/player.gd" id="1_script"]
 
 [sub_resource type="StyleBoxFlat" id="Style_button"]
 bg_color = Color(1, 0, 0, 1)
@@ -58,7 +90,7 @@ script = ExtResource("1_script")
 style = SubResource("Style_button")
 target = ^"Button"
 
-[node name="Button" type="Button" parent="."]
+[node name="Button" type="Button" parent="." unique_name_in_owner=true]
 text = "Play"
 
 [connection signal="pressed" from="Button" to="." method="_on_button_pressed"]
@@ -67,10 +99,15 @@ text = "Play"
 	assertNode(t, result.Nodes, graph.KindVariable, "scenes/main#Style_button")
 	player := assertNode(t, result.Nodes, graph.KindVariable, "scenes/main:Player")
 	button := assertNode(t, result.Nodes, graph.KindVariable, "scenes/main:Player/Button")
+	if button.Properties["unique_name_in_owner"] != "true" {
+		t.Fatalf("scene node unique_name_in_owner = %q", button.Properties["unique_name_in_owner"])
+	}
 	assertNode(t, result.Nodes, graph.KindField, "scenes/main:Player.script")
 	assertNode(t, result.Nodes, graph.KindEvent, "scenes/main:Player/Button.pressed")
 	assertFactTarget(t, result.Facts, graph.EdgeImports, "scripts/player")
 	assertFactTarget(t, result.Facts, graph.EdgeReferences, "scripts/player")
+	assertFactTarget(t, result.Facts, graph.EdgeReferences, "uid://scene123")
+	assertFactTarget(t, result.Facts, graph.EdgeReferences, "uid://script123")
 	assertFactToID(t, result.Facts, graph.EdgeDeclares, button.ID)
 	assertFactFromTo(t, result.Facts, graph.EdgeSubscribes, player.ID,
 		findNode(t, result.Nodes, graph.KindEvent, "scenes/main:Player/Button.pressed").ID)

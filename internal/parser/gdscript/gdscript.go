@@ -386,6 +386,13 @@ func (e *extractor) walkExpression(expression gdast.Expression, current scope) {
 	switch node := expression.(type) {
 	case *gdast.CallExpression:
 		e.parseCall(node, current)
+	case *gdast.NodePathExpression:
+		properties := map[string]string{"form": "node_path", "node_path": node.Path}
+		if node.Unique {
+			properties["unique"] = "true"
+			properties["form"] = "unique_name"
+		}
+		e.addNodeReference(current.currentID, node.Path, e.location(node), properties)
 	case *gdast.LambdaExpression:
 		lambdaScope := current
 		lambdaScope.symbols = cloneMap(current.symbols)
@@ -416,8 +423,15 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 	if method == "preload" || method == "load" {
 		if len(node.Arguments) > 0 {
 			if resource, ok := literalString(node.Arguments[0]); ok {
-				e.b.AddFact(e.b.FileID(), graph.EdgeImports, "", resourceModule(resource), graph.KindModule, loc,
-					map[string]string{"resource": resource})
+				target, targetKind := resourceModule(resource), graph.KindModule
+				properties := map[string]string{"resource": resource}
+				if strings.HasPrefix(strings.TrimSpace(resource), "uid://") {
+					target, targetKind = strings.TrimSpace(resource), graph.KindConfigKey
+					properties["uid"] = target
+				}
+				if target != "" {
+					e.b.AddFact(e.b.FileID(), graph.EdgeImports, "", target, targetKind, loc, properties)
+				}
 			}
 		}
 		return
@@ -441,6 +455,15 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 				e.b.AddFact(fromID, graph.EdgeReadsConfig, "", "input/"+action, graph.KindConfigKey, loc,
 					map[string]string{"source": "project.godot"})
 			}
+		}
+	}
+	if isNodeLookup(method) && len(node.Arguments) > 0 {
+		if nodePath, ok := literalString(node.Arguments[0]); ok {
+			properties := map[string]string{"form": "node_lookup", "lookup": method, "node_path": nodePath}
+			if strings.HasPrefix(strings.TrimSpace(nodePath), "%") {
+				properties["unique"] = "true"
+			}
+			e.addNodeReference(fromID, nodePath, e.location(node.Arguments[0]), properties)
 		}
 	}
 	if method == "emit_signal" && len(node.Arguments) > 0 {
@@ -468,6 +491,42 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 		}
 	}
 	e.b.AddFact(fromID, graph.EdgeCalls, "", callee, "", loc, nil)
+}
+
+func isNodeLookup(method string) bool {
+	switch method {
+	case "get_node", "get_node_or_null", "get_node_and_resource", "has_node":
+		return true
+	default:
+		return false
+	}
+}
+
+func (e *extractor) addNodeReference(fromID, nodePath string, loc graph.Location, properties map[string]string) {
+	if fromID == "" {
+		fromID = e.b.FileID()
+	}
+	target := nodeReferenceTarget(nodePath)
+	if target == "" {
+		return
+	}
+	e.b.AddFact(fromID, graph.EdgeReferences, "", target, graph.KindVariable, loc, properties)
+}
+
+func nodeReferenceTarget(nodePath string) string {
+	nodePath = strings.TrimSpace(nodePath)
+	nodePath = strings.TrimSpace(strings.TrimPrefix(nodePath, "%"))
+	if index := strings.IndexByte(nodePath, ':'); index >= 0 {
+		nodePath = nodePath[:index]
+	}
+	nodePath = strings.TrimRight(nodePath, "/")
+	if index := strings.LastIndexByte(nodePath, '/'); index >= 0 {
+		nodePath = nodePath[index+1:]
+	}
+	if nodePath == "." || nodePath == ".." {
+		return ""
+	}
+	return nodePath
 }
 
 func (e *extractor) addSignalFact(fromID string, kind graph.EdgeKind, name string, current scope, loc graph.Location) bool {
@@ -661,6 +720,9 @@ func literalString(expression gdast.Expression) (string, bool) {
 }
 
 func resourceModule(resource string) string {
+	if strings.HasPrefix(strings.TrimSpace(resource), "uid://") {
+		return ""
+	}
 	resource = strings.TrimPrefix(strings.TrimSpace(resource), "res://")
 	resource = strings.TrimPrefix(resource, "user://")
 	return parserapi.ModuleName(filepath.ToSlash(resource))

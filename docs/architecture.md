@@ -19,7 +19,7 @@ storage can evolve independently.
             │
   internal/parser/*        language AST adapters, manifests, SQL router, config mappers
        ├─ gdscript/*       gdparser GDScript AST adapter
-       ├─ godot/*          gdparser scene, resource, project, and shader adapters
+       ├─ godot/*          gdparser scene, resource, config, UID, and shader adapters
        └─ sql/*            dialect adapters such as PostgreSQL
   internal/storage/sqlite  Goose + sqlc adapter
 ```

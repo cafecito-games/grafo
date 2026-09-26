@@ -69,11 +69,27 @@ func (e *textResourceExtractor) documentProperties(document *textresource.Docume
 func (e *textResourceExtractor) prepare(document *textresource.Document) {
 	for _, item := range document.Items {
 		section, ok := item.(*textresource.Section)
-		if !ok || section.Type != "ext_resource" {
+		if !ok {
 			continue
 		}
-		id, target := sectionAttribute(section, "id"), resourceModule(sectionAttribute(section, "path"))
-		if id == "" || target == "" {
+		if (section.Type == "gd_scene" || section.Type == "gd_resource") && sectionAttribute(section, "uid") != "" {
+			uid := sectionAttribute(section, "uid")
+			e.b.AddFact(e.moduleID, graph.EdgeReferences, "", uid, graph.KindConfigKey,
+				textLocation(e.input.Path, section), map[string]string{"uid": uid})
+		}
+		if section.Type != "ext_resource" {
+			continue
+		}
+		id := sectionAttribute(section, "id")
+		if id == "" {
+			continue
+		}
+		if uid := sectionAttribute(section, "uid"); uid != "" {
+			e.b.AddFact(e.moduleID, graph.EdgeReferences, "", uid, graph.KindConfigKey,
+				textLocation(e.input.Path, section), map[string]string{"uid": uid, "id": id})
+		}
+		target := resourceModule(sectionAttribute(section, "path"))
+		if target == "" {
 			continue
 		}
 		e.extResources[id] = target
@@ -277,6 +293,8 @@ func sectionAttribute(section *textresource.Section, name string) string {
 			return strconv.FormatInt(current.Value, 10) + current.Suffix
 		}
 		return strconv.FormatInt(current.Value, 10)
+	case *textresource.BoolValue:
+		return strconv.FormatBool(current.Value)
 	default:
 		return ""
 	}

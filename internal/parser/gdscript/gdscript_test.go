@@ -15,6 +15,7 @@ func TestParserExtractsGodotSymbolsAndWiring(t *testing.T) {
 
 signal health_changed(value: int)
 const Enemy = preload('res://actors/enemy.gd')
+const EnemyUID = preload('uid://enemy123')
 @export var speed: float = 10.0
 var health: int = 100
 
@@ -43,6 +44,7 @@ func take_damage(amount: int) -> int:
 	assertHasNode(t, result.Nodes, graph.KindEvent, "health_changed")
 	assertHasFact(t, result.Facts, graph.EdgeExtends, "CharacterBody2D")
 	assertHasFact(t, result.Facts, graph.EdgeImports, "actors/enemy")
+	assertHasFact(t, result.Facts, graph.EdgeImports, "uid://enemy123")
 	assertHasFact(t, result.Facts, graph.EdgeCalls, "actors/enemy.attack")
 	assertHasFact(t, result.Facts, graph.EdgeReadsConfig, "GAME_MODE")
 	assertHasFactKind(t, result.Facts, graph.EdgeAssigns)
@@ -140,6 +142,28 @@ func load_main_scene() -> String:
 	assertHasFact(t, result.Facts, graph.EdgeReadsConfig, "input/jump")
 }
 
+func TestParserLinksNodePathAndRuntimeNodeLookups(t *testing.T) {
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "scripts/menu.gd", RepoID: "repo:sample", Content: []byte(`class_name Menu
+
+func bind_nodes() -> void:
+	var unique_button = %StartButton
+	var status = $Panel/Status
+	get_node("Panel/StartButton")
+	get_node_or_null(^"Panel/Optional")
+	has_node("Panel/Status:visible")
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasFactWithProperty(t, result.Facts, graph.EdgeReferences, "StartButton", "unique", "true")
+	assertHasFactWithProperty(t, result.Facts, graph.EdgeReferences, "StartButton", "lookup", "get_node")
+	assertHasFactWithProperty(t, result.Facts, graph.EdgeReferences, "Status", "form", "node_path")
+	assertHasFactWithProperty(t, result.Facts, graph.EdgeReferences, "Optional", "lookup", "get_node_or_null")
+	assertHasFactWithProperty(t, result.Facts, graph.EdgeReferences, "Status", "lookup", "has_node")
+}
+
 func assertHasFactKind(t *testing.T, facts []graph.Fact, kind graph.EdgeKind) {
 	t.Helper()
 	for _, fact := range facts {
@@ -178,4 +202,14 @@ func assertHasFact(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, target
 		}
 	}
 	t.Fatalf("missing %s fact to %q; got %#v", kind, target, facts)
+}
+
+func assertHasFactWithProperty(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, target, key, value string) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.Kind == kind && fact.Target == target && fact.Properties[key] == value {
+			return
+		}
+	}
+	t.Fatalf("missing %s fact to %q with %s=%q; got %#v", kind, target, key, value, facts)
 }
