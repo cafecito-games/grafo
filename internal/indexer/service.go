@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -28,6 +30,7 @@ type Report struct {
 	Unchanged   int                `json:"unchanged"`
 	Removed     []string           `json:"removed"`
 	Skipped     []string           `json:"skipped,omitempty"`
+	Checked     int                `json:"content_checked"`
 	Diagnostics []graph.Diagnostic `json:"diagnostics,omitempty"`
 	Counts      graph.Counts       `json:"counts"`
 	ElapsedMS   int64              `json:"elapsed_ms"`
@@ -57,6 +60,19 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 		options.Force = true
 		report.Rebuild = "semantic schema changed"
 	}
+	indexedCommit, err := s.repository.Meta(ctx, "commit")
+	if err != nil {
+		return report, fmt.Errorf("load indexed commit: %w", err)
+	}
+	previousDirtyRaw, err := s.repository.Meta(ctx, gitDirtyPathsMeta)
+	if err != nil {
+		return report, fmt.Errorf("load dirty paths: %w", err)
+	}
+	var previousDirty []string
+	previousDirtyValid := true
+	if previousDirtyRaw != "" {
+		previousDirtyValid = json.Unmarshal([]byte(previousDirtyRaw), &previousDirty) == nil
+	}
 	workspace := graph.ParseResult{Nodes: []graph.Node{{
 		ID: project.ID, Kind: graph.KindRepository, Name: project.Name,
 		QualifiedName: project.Name, OwnerFile: workspaceOwner,
@@ -73,8 +89,29 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 	if err != nil {
 		return report, fmt.Errorf("discover source files: %w", err)
 	}
+	var selected map[string]bool
+	var dirtyPaths []string
+	dirtyPathsValid := false
+	if project.GitManaged && project.Commit != "" {
+		baseCommit := indexedCommit
+		if baseCommit == "" {
+			baseCommit = project.Commit
+		}
+		changes, changeErr := detectGitChanges(ctx, project.Root, baseCommit)
+		if changeErr == nil {
+			dirtyPaths, dirtyPathsValid = changes.dirty, true
+			if !options.Force && indexedCommit != "" && previousDirtyValid {
+				selected = selectChangedPaths(paths, known, changes.changed, previousDirty, s.parsers)
+			}
+		}
+	}
 	current := make(map[string]bool, len(paths))
 	for _, path := range paths {
+		if selected != nil && !selected[path] {
+			current[path] = true
+			report.Unchanged++
+			continue
+		}
 		absolute := filepath.Join(project.Root, filepath.FromSlash(path))
 		info, err := os.Stat(absolute)
 		if err != nil {
@@ -90,6 +127,7 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 			report.Diagnostics = append(report.Diagnostics, graph.Diagnostic{Path: path, Level: "warning", Message: err.Error()})
 			continue
 		}
+		report.Checked++
 		current[path] = true
 		languageParser, ok := s.parsers.For(path)
 		if !ok {
@@ -157,10 +195,52 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 			return report, err
 		}
 	}
+	if dirtyPathsValid {
+		encoded, marshalErr := json.Marshal(dirtyPaths)
+		if marshalErr != nil {
+			return report, marshalErr
+		}
+		if err := s.repository.SetMeta(ctx, gitDirtyPathsMeta, string(encoded)); err != nil {
+			return report, err
+		}
+	}
 	report.Counts, err = s.repository.Counts(ctx)
 	if err != nil {
 		return report, err
 	}
 	report.ElapsedMS = time.Since(started).Milliseconds()
 	return report, nil
+}
+
+func selectChangedPaths(paths []string, known map[string]graph.FileRecord, changed, previousDirty []string, parsers *parserapi.Registry) map[string]bool {
+	selected := make(map[string]bool, len(changed)+len(previousDirty))
+	for _, path := range changed {
+		selected[path] = true
+	}
+	for _, path := range previousDirty {
+		selected[path] = true
+	}
+	for _, path := range paths {
+		if _, exists := known[path]; !exists {
+			selected[path] = true
+		}
+	}
+	for _, path := range paths {
+		languageParser, ok := parsers.For(path)
+		if !ok {
+			continue
+		}
+		provider, ok := languageParser.(parserapi.SemanticDependencyProvider)
+		if !ok {
+			continue
+		}
+		for _, dependency := range provider.SemanticDependencies() {
+			dependency = filepath.ToSlash(strings.TrimPrefix(dependency, "./"))
+			if selected[dependency] {
+				selected[path] = true
+				break
+			}
+		}
+	}
+	return selected
 }

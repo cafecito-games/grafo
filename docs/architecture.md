@@ -43,6 +43,15 @@ storage can evolve independently.
 Dirty-target tracking limits edge reconciliation to facts affected by changed
 declarations or owners. Unchanged files do not re-enter a parser.
 
+For Git worktrees, the indexer narrows content hashing to files changed since
+the indexed commit, current untracked files, and paths that were dirty during
+the previous run. Remembering the previous dirty set closes the restore case:
+if a dirty file was indexed and then restored to `HEAD`, it is still checked
+once before leaving that set. Parser-level semantic dependencies propagate
+configuration changes (for example `grafo.yaml`) to otherwise unchanged source
+files. Any Git detection failure safely falls back to hashing every supported
+file; non-Git directories always use that fallback.
+
 ## Federation
 
 Every declaration ID includes its repository identity. A federation opens the
