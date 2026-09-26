@@ -147,6 +147,12 @@ copy its secrets into the graph. Normal indexing is entirely local. Semantic
 sync sends only generated symbol metadata and signatures—not source files—to
 the configured embedding endpoint; the default endpoint is local Ollama.
 
+On Git worktrees, Grafo also avoids rereading every file to rediscover changes.
+It combines the indexed commit, Git's current tracked/untracked changes, and a
+persisted dirty-path set. The persisted set is what makes restoring a previously
+indexed dirty file detectable. Non-Git directories retain the content-hash
+full-scan fallback.
+
 ## Development
 
 ```sh

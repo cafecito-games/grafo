@@ -77,6 +77,8 @@ func New(dialects ...Dialect) *Router {
 
 func (*Router) Language() string { return "sql" }
 
+func (*Router) SemanticDependencies() []string { return []string{configFileName} }
+
 func (r *Router) Supports(filePath string) bool {
 	extension := strings.ToLower(filepath.Ext(filePath))
 	return extension == ".sql" || len(r.ext[extension]) > 0

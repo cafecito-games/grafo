@@ -581,6 +581,7 @@ func (a *App) printIndexReport(report indexer.Report, asJSON bool) error {
 	}
 	fmt.Fprintf(a.stdout, "indexed %s · branch %s\n", report.Project.Name, report.Project.Branch)
 	fmt.Fprintf(a.stdout, "%d updated · %d unchanged · %d removed · %d skipped\n", len(report.Updated), report.Unchanged, len(report.Removed), len(report.Skipped))
+	fmt.Fprintf(a.stdout, "%d file contents checked\n", report.Checked)
 	if report.Rebuild != "" {
 		fmt.Fprintf(a.stdout, "rebuild: %s\n", report.Rebuild)
 	}

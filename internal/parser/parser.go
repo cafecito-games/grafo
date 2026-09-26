@@ -32,6 +32,12 @@ type SemanticKeyer interface {
 	SemanticKey(context.Context, Input) (string, error)
 }
 
+// SemanticDependencyProvider identifies repository files whose changes can
+// alter this parser's output for otherwise unchanged source files.
+type SemanticDependencyProvider interface {
+	SemanticDependencies() []string
+}
+
 type Registry struct {
 	parsers []Parser
 }

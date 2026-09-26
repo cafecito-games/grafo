@@ -110,6 +110,80 @@ func TestServiceReindexesSQLWhenDialectConfigurationChanges(t *testing.T) {
 	}
 }
 
+func TestServiceTracksGitDirtyPathsAcrossRestore(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	runGit(t, root, "init", "-b", "main")
+	write(t, filepath.Join(root, "main.go"), "package sample\nfunc Value() int { return 1 }\n")
+	runGit(t, root, "add", "main.go")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	service := indexer.NewService(repository, parserapi.NewRegistry(golangparser.New()))
+	if report, err := service.Run(ctx, project, indexer.Options{}); err != nil || len(report.Updated) != 1 || report.Checked != 1 {
+		t.Fatalf("initial index: report=%#v err=%v", report, err)
+	}
+
+	write(t, filepath.Join(root, "main.go"), "package sample\nfunc Value() int { return 2 }\n")
+	if report, err := service.Run(ctx, project, indexer.Options{}); err != nil || len(report.Updated) != 1 || report.Checked != 1 {
+		t.Fatalf("dirty index: report=%#v err=%v", report, err)
+	}
+	runGit(t, root, "checkout", "--", "main.go")
+	restored, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(restored.Updated) != 1 || restored.Updated[0] != "main.go" || restored.Checked != 1 {
+		t.Fatalf("restored tracked file was not reindexed: %#v", restored)
+	}
+	stable, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stable.Updated) != 0 || stable.Unchanged != 1 || stable.Checked != 0 {
+		t.Fatalf("clean worktree was not an incremental no-op: %#v", stable)
+	}
+}
+
+func TestServicePropagatesGitConfigurationChanges(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	runGit(t, root, "init", "-b", "main")
+	write(t, filepath.Join(root, "schema.sql"), "CREATE TABLE events (id bigint PRIMARY KEY);\n")
+	runGit(t, root, "add", "schema.sql")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	service := indexer.NewService(repository, parserapi.NewRegistry(sqlparser.New(postgresparser.New()), configparser.New()))
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+
+	write(t, filepath.Join(root, "grafo.yaml"), "sql:\n  default_dialect: postgres\n")
+	reconfigured, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reconfigured.Updated) != 2 || reconfigured.Updated[0] != "grafo.yaml" || reconfigured.Updated[1] != "schema.sql" || reconfigured.Checked != 2 {
+		t.Fatalf("semantic dependency did not propagate through Git change selection: %#v", reconfigured)
+	}
+}
+
 func write(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
