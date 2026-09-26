@@ -1,3 +1,5 @@
+github.com/cafecito-games/gdparser v0.0.0-20260926204820-bcb291e39867 h1:b02aRndTeUw4ekSut1s4xdGas3pXAws73OryvzZ7w/M=
+github.com/cafecito-games/gdparser v0.0.0-20260926204820-bcb291e39867/go.mod h1:ekj7tvE0utDBNw+DJyE58HVla7zLuWzGERgTLBC0dFI=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/golang-jwt/jwt/v5 v5.3.1 h1:kYf81DTWFe7t+1VvL7eS+jKFVWaUnK9cB1qbwn63YCY=
