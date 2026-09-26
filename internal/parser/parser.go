@@ -25,6 +25,13 @@ type Parser interface {
 	Parse(context.Context, Input) (graph.ParseResult, error)
 }
 
+// SemanticKeyer lets a parser add repository-level configuration to a file's
+// incremental cache key. Parsers that do not depend on such configuration do
+// not need to implement it.
+type SemanticKeyer interface {
+	SemanticKey(context.Context, Input) (string, error)
+}
+
 type Registry struct {
 	parsers []Parser
 }

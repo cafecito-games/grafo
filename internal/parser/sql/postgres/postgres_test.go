@@ -6,7 +6,7 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
-	postgresparser "github.com/cafecito-games/grafo/internal/parser/postgres"
+	postgresparser "github.com/cafecito-games/grafo/internal/parser/sql/postgres"
 )
 
 func TestParserExtractsPostgreSQLSchemaAndDataAccess(t *testing.T) {
@@ -88,15 +88,14 @@ TRUNCATE public.account_archive;
 	assertFact(t, result.Facts, graph.EdgeReads, "public.incoming_accounts", "")
 }
 
-func TestParserSupportsPostgreSQLFileExtensions(t *testing.T) {
+func TestParserDeclaresPostgreSQLDialect(t *testing.T) {
 	parser := postgresparser.New()
-	for _, path := range []string{"schema.sql", "function.PGSQL", "console.psql"} {
-		if !parser.Supports(path) {
-			t.Errorf("expected support for %s", path)
-		}
+	if parser.Name() != "postgres" {
+		t.Fatalf("dialect name = %q", parser.Name())
 	}
-	if parser.Supports("schema.mysql") {
-		t.Fatal("unexpected support for a non-PostgreSQL extension")
+	extensions := parser.Extensions()
+	if len(extensions) != 2 || extensions[0] != ".pgsql" || extensions[1] != ".psql" {
+		t.Fatalf("unexpected PostgreSQL extensions: %#v", extensions)
 	}
 }
 

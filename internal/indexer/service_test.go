@@ -10,7 +10,8 @@ import (
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	configparser "github.com/cafecito-games/grafo/internal/parser/config"
 	golangparser "github.com/cafecito-games/grafo/internal/parser/golang"
-	postgresparser "github.com/cafecito-games/grafo/internal/parser/postgres"
+	sqlparser "github.com/cafecito-games/grafo/internal/parser/sql"
+	postgresparser "github.com/cafecito-games/grafo/internal/parser/sql/postgres"
 	typescriptparser "github.com/cafecito-games/grafo/internal/parser/typescript"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 )
@@ -33,7 +34,7 @@ func TestServiceIndexesOnlyChangedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer repository.Close()
-	registry := parserapi.NewRegistry(golangparser.New(), typescriptparser.New(), postgresparser.New(), configparser.New())
+	registry := parserapi.NewRegistry(golangparser.New(), typescriptparser.New(), sqlparser.New(postgresparser.New()), configparser.New())
 	service := indexer.NewService(repository, registry)
 
 	first, err := service.Run(ctx, project, indexer.Options{})
@@ -61,6 +62,49 @@ func TestServiceIndexesOnlyChangedFiles(t *testing.T) {
 	}
 	if len(third.Updated) != 1 || len(third.Removed) != 1 || third.Removed[0] != "web.ts" {
 		t.Fatalf("unexpected incremental update: %#v", third)
+	}
+}
+
+func TestServiceReindexesSQLWhenDialectConfigurationChanges(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	write(t, filepath.Join(root, "schema.sql"), "CREATE TABLE events (id bigint PRIMARY KEY);\n")
+
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	registry := parserapi.NewRegistry(sqlparser.New(postgresparser.New()), configparser.New())
+	service := indexer.NewService(repository, registry)
+
+	first, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Updated) != 1 || first.Updated[0] != "schema.sql" {
+		t.Fatalf("unexpected initial report: %#v", first)
+	}
+
+	write(t, filepath.Join(root, "grafo.yaml"), "sql:\n  default_dialect: postgres\n")
+	second, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Updated) != 2 || second.Updated[0] != "grafo.yaml" || second.Updated[1] != "schema.sql" {
+		t.Fatalf("expected config and unchanged SQL to be reindexed: %#v", second)
+	}
+
+	third, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(third.Updated) != 0 || third.Unchanged != 2 {
+		t.Fatalf("expected incremental no-op: %#v", third)
 	}
 }
 

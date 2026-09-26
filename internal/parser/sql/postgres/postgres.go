@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -18,16 +17,17 @@ import (
 // the same grammar as the database rather than with text matching.
 type Parser struct{}
 
-func New() *Parser               { return &Parser{} }
-func (*Parser) Language() string { return "postgresql" }
+func New() *Parser                   { return &Parser{} }
+func (*Parser) Name() string         { return "postgres" }
+func (*Parser) Language() string     { return "postgresql" }
+func (*Parser) Extensions() []string { return []string{".pgsql", ".psql"} }
 
-func (*Parser) Supports(path string) bool {
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".sql", ".pgsql", ".psql":
-		return true
-	default:
-		return false
+func (*Parser) Probe(ctx context.Context, input parserapi.Input) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
+	_, err := pg_query.Parse(string(input.Content))
+	return err
 }
 
 type extractor struct {
