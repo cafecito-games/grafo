@@ -6,8 +6,9 @@ HTTP routes, and event-like publish/subscribe operations become nodes and edges.
 
 This repository is at the foundation stage. Go is parsed with the Go compiler
 AST, Godot source formats use `gdparser`, Python and TypeScript/TSX use
-Tree-sitter, and PostgreSQL SQL uses PostgreSQL's own parser. The index is
-local, incremental, branch-aware, and stored in SQLite.
+Tree-sitter, PostgreSQL SQL uses PostgreSQL's own parser, and SQLite SQL uses
+Meyer's SQLite grammar. The index is local, incremental, branch-aware, and
+stored in SQLite.
 
 [Architecture and extension points](docs/architecture.md)
 
@@ -102,6 +103,9 @@ are marked `federated` and retain their original evidence.
 - PostgreSQL tables, views, columns, indexes, functions, procedures, and the
   relations read or written by DDL and DML statements in `.sql`, `.pgsql`, and
   `.psql` files.
+- SQLite tables, virtual tables, views, columns, indexes, triggers, foreign-key
+  references, and the relations read or written by DDL and DML statements in
+  `.sql` files.
 - Python modules, functions, classes, methods, fields, parameters, local
   variables, type annotations, basic assignment/argument/return flow, imports,
   calls, inheritance, environment reads, framework route decorators, outbound
@@ -135,10 +139,12 @@ graph-based; vector similarity is confined to optional candidate discovery.
 ## SQL dialects
 
 One SQL router owns `.sql` files and delegates them to installed dialects.
-PostgreSQL also owns the unambiguous `.pgsql` and `.psql` extensions. Plain
-`.sql` remains configuration-free when exactly one installed dialect accepts
-its syntax. When multiple dialects accept the same file, select one explicitly
-in a repository-root `grafo.yaml` that is safe to commit:
+PostgreSQL also owns the unambiguous `.pgsql` and `.psql` extensions. SQLite
+does not claim `.sqlite`, `.sqlite3`, or `.db`, because those normally contain
+binary databases rather than SQL source. Plain `.sql` remains
+configuration-free when exactly one installed dialect accepts its syntax.
+When multiple dialects accept the same file, select one explicitly in a
+repository-root `grafo.yaml` that is safe to commit:
 
 ```yaml
 sql:
@@ -156,8 +162,9 @@ more literal characters wins, then the one with fewer wildcards, then lexical
 order. A configured dialect must be installed; Grafo reports ambiguous syntax
 or an unavailable dialect instead of depending on parser registration order.
 
-The current distribution installs only the PostgreSQL dialect. The config
-example's `sqlite` mapping becomes valid when a SQLite dialect is installed.
+The distribution installs PostgreSQL and SQLite dialects. Files containing
+portable SQL that both parsers accept therefore need a default or path mapping;
+dialect-specific syntax can still be selected by probing.
 
 ## Design principles
 

@@ -12,6 +12,7 @@ import (
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	sqlparser "github.com/cafecito-games/grafo/internal/parser/sql"
 	postgresparser "github.com/cafecito-games/grafo/internal/parser/sql/postgres"
+	sqliteparser "github.com/cafecito-games/grafo/internal/parser/sql/sqlite"
 )
 
 type fakeDialect struct {
@@ -134,6 +135,34 @@ func TestRouterKeepsPlainSQLUsableWithOnlyPostgreSQLInstalled(t *testing.T) {
 		if node.Properties["dialect"] != "postgres" {
 			t.Fatalf("node dialect = %q, want postgres", node.Properties["dialect"])
 		}
+	}
+}
+
+func TestRouterSelectsSQLiteSpecificSyntax(t *testing.T) {
+	router := sqlparser.New(postgresparser.New(), sqliteparser.New())
+	result, err := router.Parse(context.Background(), parserapi.Input{
+		Path: "schema.sql", Content: []byte("CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT) STRICT;"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := declaredTable(result); got != "events" {
+		t.Fatalf("declared table = %q, want events", got)
+	}
+	for _, node := range result.Nodes {
+		if node.Properties["dialect"] != "sqlite" {
+			t.Fatalf("node dialect = %q, want sqlite", node.Properties["dialect"])
+		}
+	}
+}
+
+func TestRouterRequiresConfigurationForPortableSQL(t *testing.T) {
+	router := sqlparser.New(postgresparser.New(), sqliteparser.New())
+	_, err := router.Parse(context.Background(), parserapi.Input{
+		Path: "schema.sql", Content: []byte("CREATE TABLE events (id INTEGER PRIMARY KEY);"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "ambiguous between postgres, sqlite") {
+		t.Fatalf("expected portable SQL to require a configured dialect, got %v", err)
 	}
 }
 

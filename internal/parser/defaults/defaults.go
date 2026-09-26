@@ -12,12 +12,13 @@ import (
 	pythonparser "github.com/cafecito-games/grafo/internal/parser/python"
 	sqlparser "github.com/cafecito-games/grafo/internal/parser/sql"
 	postgresparser "github.com/cafecito-games/grafo/internal/parser/sql/postgres"
+	sqliteparser "github.com/cafecito-games/grafo/internal/parser/sql/sqlite"
 	typescriptparser "github.com/cafecito-games/grafo/internal/parser/typescript"
 )
 
 func NewRegistry() *parserapi.Registry {
 	return parserapi.NewRegistry(
 		gdscriptparser.New(), godotparser.New(), golangparser.New(), pythonparser.New(), typescriptparser.New(),
-		manifestparser.New(), sqlparser.New(postgresparser.New()), configparser.New(),
+		manifestparser.New(), sqlparser.New(postgresparser.New(), sqliteparser.New()), configparser.New(),
 	)
 }
