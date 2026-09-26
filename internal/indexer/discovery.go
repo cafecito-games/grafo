@@ -60,13 +60,13 @@ func discoverFiles(ctx context.Context, project Project, registry *parserapi.Reg
 	result := make([]string, 0, len(candidates))
 	seen := map[string]bool{}
 	for _, path := range candidates {
-		if seen[path] || ignoredPath(path) || ignoredFiles[strings.ToLower(filepath.Base(path))] {
+		if seen[path] || PathIgnored(path) {
 			continue
 		}
 		if _, ok := registry.For(path); !ok {
 			continue
 		}
-		info, err := os.Stat(filepath.Join(project.Root, filepath.FromSlash(path)))
+		info, err := os.Lstat(filepath.Join(project.Root, filepath.FromSlash(path)))
 		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
@@ -84,4 +84,10 @@ func ignoredPath(path string) bool {
 		}
 	}
 	return false
+}
+
+// PathIgnored reports whether the production indexer excludes a repository
+// path before parser routing.
+func PathIgnored(path string) bool {
+	return ignoredPath(path) || ignoredFiles[strings.ToLower(filepath.Base(path))]
 }

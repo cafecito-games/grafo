@@ -244,29 +244,41 @@ func insertParseResult(ctx context.Context, q *sqlcgen.Queries, parsed graph.Par
 }
 
 func (r *Repository) Reconcile(ctx context.Context) error {
+	_, err := r.ReconcileWithStats(ctx, nil)
+	return err
+}
+
+func (r *Repository) ReconcileWithStats(ctx context.Context, observer graph.ReconciliationObserver) (graph.ReconciliationStats, error) {
+	var stats graph.ReconciliationStats
 	if err := r.queueDirtyFacts(ctx); err != nil {
-		return fmt.Errorf("queue dirty facts: %w", err)
+		return stats, fmt.Errorf("queue dirty facts: %w", err)
 	}
 
 	resolved := newResolutionCache(resolutionCacheSize)
 	for {
 		processed, err := r.reconcileBatch(ctx, resolved)
 		if err != nil {
-			return fmt.Errorf("reconcile fact batch: %w", err)
+			return stats, fmt.Errorf("reconcile fact batch: %w", err)
 		}
 		if processed == 0 {
 			break
 		}
+		stats.Batches++
+		if observer != nil {
+			if err := observer(stats); err != nil {
+				return stats, err
+			}
+		}
 		if err := r.checkpoint(ctx, false); err != nil {
-			return err
+			return stats, err
 		}
 	}
 	cleanupPending, err := r.queries.ReconciliationCleanupPending(ctx)
 	if err != nil {
-		return fmt.Errorf("check reconciliation cleanup: %w", err)
+		return stats, fmt.Errorf("check reconciliation cleanup: %w", err)
 	}
 	if !cleanupPending {
-		return nil
+		return stats, nil
 	}
 	if err := r.inTransaction(ctx, func(q *sqlcgen.Queries) error {
 		if err := q.DeleteOrphanExternalNodes(ctx); err != nil {
@@ -274,9 +286,9 @@ func (r *Repository) Reconcile(ctx context.Context) error {
 		}
 		return q.ClearReconciliationCleanup(ctx)
 	}); err != nil {
-		return fmt.Errorf("remove orphan external nodes: %w", err)
+		return stats, fmt.Errorf("remove orphan external nodes: %w", err)
 	}
-	return r.checkpoint(ctx, true)
+	return stats, r.checkpoint(ctx, true)
 }
 
 func (r *Repository) queueDirtyFacts(ctx context.Context) error {
@@ -541,6 +553,10 @@ func (r *Repository) Counts(ctx context.Context) (graph.Counts, error) {
 	if err != nil {
 		return result, err
 	}
+	facts, err := r.queries.CountFacts(ctx)
+	if err != nil {
+		return result, err
+	}
 	edges, err := r.queries.CountEdges(ctx)
 	if err != nil {
 		return result, err
@@ -549,7 +565,7 @@ func (r *Repository) Counts(ctx context.Context) (graph.Counts, error) {
 	if err != nil {
 		return result, err
 	}
-	result.Files, result.Nodes, result.Edges, result.External = int(files), int(nodes), int(edges), int(external)
+	result.Files, result.Nodes, result.Facts, result.Edges, result.External = int(files), int(nodes), int(facts), int(edges), int(external)
 	nodeKinds, err := r.queries.CountNodesByKind(ctx)
 	if err != nil {
 		return result, err

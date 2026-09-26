@@ -9,6 +9,17 @@ import (
 	"context"
 )
 
+const countFacts = `-- name: CountFacts :one
+SELECT COUNT(*) FROM facts
+`
+
+func (q *Queries) CountFacts(ctx context.Context) (int64, error) {
+	row := q.queryRow(ctx, q.countFactsStmt, countFacts)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteFactsByOwner = `-- name: DeleteFactsByOwner :exec
 DELETE FROM facts WHERE owner_file = ?
 `

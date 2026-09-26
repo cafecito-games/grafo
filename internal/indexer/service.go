@@ -23,20 +23,52 @@ const SemanticIndexVersion = "14"
 type Options struct {
 	Force       bool
 	MaxFileSize int64
+	Boundary    BoundaryHook
+}
+
+type BoundaryKind string
+
+const (
+	BoundaryFilePersisted       BoundaryKind = "file_persisted"
+	BoundaryWorkspacePersisted  BoundaryKind = "workspace_persisted"
+	BoundaryFilesRemoved        BoundaryKind = "files_removed"
+	BoundaryReconciliationBatch BoundaryKind = "reconciliation_batch"
+	BoundaryMetadataPersisted   BoundaryKind = "metadata_persisted"
+)
+
+// Boundary identifies a durable indexing boundary suitable for observation or
+// deterministic cancellation.
+type Boundary struct {
+	Kind      BoundaryKind `json:"kind"`
+	Path      string       `json:"path,omitempty"`
+	Completed int          `json:"completed"`
+}
+
+type BoundaryHook func(Boundary) error
+
+type PhaseDurations struct {
+	DiscoveryNS      int64 `json:"discovery_ns"`
+	ReadHashNS       int64 `json:"read_hash_ns"`
+	ParseNS          int64 `json:"parse_ns"`
+	PersistenceNS    int64 `json:"persistence_ns"`
+	ReconciliationNS int64 `json:"reconciliation_ns"`
+	TotalNS          int64 `json:"total_ns"`
 }
 
 type Report struct {
-	Project     Project            `json:"project"`
-	Updated     []string           `json:"updated"`
-	Unchanged   int                `json:"unchanged"`
-	Removed     []string           `json:"removed"`
-	Skipped     []string           `json:"skipped,omitempty"`
-	Checked     int                `json:"content_checked"`
-	Diagnostics []graph.Diagnostic `json:"diagnostics,omitempty"`
-	Counts      graph.Counts       `json:"counts"`
-	ElapsedMS   int64              `json:"elapsed_ms"`
-	ReconcileMS int64              `json:"reconciliation_ms"`
-	Rebuild     string             `json:"rebuild_reason,omitempty"`
+	Project               Project            `json:"project"`
+	Updated               []string           `json:"updated"`
+	Unchanged             int                `json:"unchanged"`
+	Removed               []string           `json:"removed"`
+	Skipped               []string           `json:"skipped,omitempty"`
+	Checked               int                `json:"content_checked"`
+	Diagnostics           []graph.Diagnostic `json:"diagnostics,omitempty"`
+	Counts                graph.Counts       `json:"counts"`
+	Phases                PhaseDurations     `json:"phases"`
+	ReconciliationBatches int                `json:"reconciliation_batches"`
+	ElapsedMS             int64              `json:"elapsed_ms"`
+	ReconcileMS           int64              `json:"reconciliation_ms"`
+	Rebuild               string             `json:"rebuild_reason,omitempty"`
 }
 
 type Service struct {
@@ -48,12 +80,16 @@ func NewService(repository graph.IndexRepository, parsers *parserapi.Registry) *
 	return &Service{repository: repository, parsers: parsers}
 }
 
-func (s *Service) Run(ctx context.Context, project Project, options Options) (Report, error) {
+func (s *Service) Run(ctx context.Context, project Project, options Options) (report Report, runErr error) {
 	started := time.Now()
 	if options.MaxFileSize <= 0 {
 		options.MaxFileSize = 5 << 20
 	}
-	report := Report{Project: project, Updated: []string{}, Removed: []string{}}
+	report = Report{Project: project, Updated: []string{}, Removed: []string{}}
+	defer func() {
+		report.Phases.TotalNS = time.Since(started).Nanoseconds()
+		report.ElapsedMS = time.Since(started).Milliseconds()
+	}()
 	indexedVersion, err := s.repository.Meta(ctx, "semantic_index_version")
 	if err != nil {
 		return report, fmt.Errorf("load semantic index version: %w", err)
@@ -80,14 +116,23 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 		QualifiedName: project.Name, OwnerFile: workspaceOwner,
 		Properties: map[string]string{"root": project.Root, "branch": project.Branch},
 	}}}
+	persistenceStarted := time.Now()
 	if err := s.repository.ReplaceOwner(ctx, workspaceOwner, workspace); err != nil {
 		return report, fmt.Errorf("store workspace: %w", err)
 	}
+	if options.Boundary != nil {
+		if err := options.Boundary(Boundary{Kind: BoundaryWorkspacePersisted, Completed: 1}); err != nil {
+			return report, fmt.Errorf("workspace persistence boundary: %w", err)
+		}
+	}
 	known, err := s.repository.Files(ctx)
+	report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
 	if err != nil {
 		return report, fmt.Errorf("load indexed files: %w", err)
 	}
+	discoveryStarted := time.Now()
 	paths, err := discoverFiles(ctx, project, s.parsers)
+	report.Phases.DiscoveryNS += time.Since(discoveryStarted).Nanoseconds()
 	if err != nil {
 		return report, fmt.Errorf("discover source files: %w", err)
 	}
@@ -151,12 +196,14 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 			continue
 		}
 		absolute := filepath.Join(project.Root, filepath.FromSlash(path))
+		readStarted := time.Now()
 		info, err := os.Stat(absolute)
 		if err != nil {
 			report.Diagnostics = append(report.Diagnostics, graph.Diagnostic{Path: path, Level: "warning", Message: err.Error()})
 			continue
 		}
 		if info.Size() > options.MaxFileSize {
+			report.Phases.ReadHashNS += time.Since(readStarted).Nanoseconds()
 			report.Skipped = append(report.Skipped, path)
 			continue
 		}
@@ -192,12 +239,15 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 			input.SemanticKey = semanticKey
 		}
 		hash := hex.EncodeToString(digest.Sum(nil))
+		report.Phases.ReadHashNS += time.Since(readStarted).Nanoseconds()
 		previous, exists := known[path]
 		if exists && previous.Hash == hash && !options.Force {
 			report.Unchanged++
 			continue
 		}
+		parseStarted := time.Now()
 		parsed, parseErr := languageParser.Parse(ctx, input)
+		report.Phases.ParseNS += time.Since(parseStarted).Nanoseconds()
 		if parseErr != nil {
 			parsed.Diagnostics = append(parsed.Diagnostics, graph.Diagnostic{Path: path, Level: "error", Message: parseErr.Error()})
 		}
@@ -209,11 +259,18 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 		})
 		record := graph.FileRecord{Path: path, Hash: hash, Language: languageParser.Language(),
 			Size: info.Size(), ModifiedNS: info.ModTime().UnixNano(), IndexedAt: graph.NowUTC()}
+		persistenceStarted := time.Now()
 		if err := s.repository.ReplaceFile(ctx, record, parsed); err != nil {
 			return report, fmt.Errorf("store %s: %w", path, err)
 		}
+		report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
 		report.Updated = append(report.Updated, path)
 		report.Diagnostics = append(report.Diagnostics, parsed.Diagnostics...)
+		if options.Boundary != nil {
+			if err := options.Boundary(Boundary{Kind: BoundaryFilePersisted, Path: path, Completed: len(report.Updated)}); err != nil {
+				return report, fmt.Errorf("file persistence boundary %s: %w", path, err)
+			}
+		}
 	}
 	for path := range known {
 		if !current[path] {
@@ -221,14 +278,36 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 		}
 	}
 	sort.Strings(report.Removed)
+	persistenceStarted = time.Now()
 	if err := s.repository.RemoveFiles(ctx, report.Removed); err != nil {
 		return report, fmt.Errorf("remove deleted files: %w", err)
 	}
+	if options.Boundary != nil && len(report.Removed) > 0 {
+		if err := options.Boundary(Boundary{Kind: BoundaryFilesRemoved, Completed: len(report.Removed)}); err != nil {
+			return report, fmt.Errorf("file removal boundary: %w", err)
+		}
+	}
+	report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
 	reconcileStarted := time.Now()
-	if err := s.repository.Reconcile(ctx); err != nil {
+	if instrumented, ok := s.repository.(graph.InstrumentedIndexRepository); ok {
+		stats, err := instrumented.ReconcileWithStats(ctx, func(stats graph.ReconciliationStats) error {
+			if options.Boundary == nil {
+				return nil
+			}
+			return options.Boundary(Boundary{Kind: BoundaryReconciliationBatch, Completed: stats.Batches})
+		})
+		report.ReconciliationBatches = stats.Batches
+		report.ReconcileMS = time.Since(reconcileStarted).Milliseconds()
+		report.Phases.ReconciliationNS = time.Since(reconcileStarted).Nanoseconds()
+		if err != nil {
+			return report, fmt.Errorf("resolve graph edges: %w", err)
+		}
+	} else if err := s.repository.Reconcile(ctx); err != nil {
 		return report, fmt.Errorf("resolve graph edges: %w", err)
 	}
 	report.ReconcileMS = time.Since(reconcileStarted).Milliseconds()
+	report.Phases.ReconciliationNS = time.Since(reconcileStarted).Nanoseconds()
+	persistenceStarted = time.Now()
 	if err := s.repository.SetMeta(ctx, "repository_id", project.ID); err != nil {
 		return report, err
 	}
@@ -253,11 +332,16 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 			return report, err
 		}
 	}
+	if options.Boundary != nil {
+		if err := options.Boundary(Boundary{Kind: BoundaryMetadataPersisted, Completed: 1}); err != nil {
+			return report, fmt.Errorf("metadata persistence boundary: %w", err)
+		}
+	}
 	report.Counts, err = s.repository.Counts(ctx)
+	report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
 	if err != nil {
 		return report, err
 	}
-	report.ElapsedMS = time.Since(started).Milliseconds()
 	return report, nil
 }
 

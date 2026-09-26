@@ -1,0 +1,905 @@
+// Package benchmark runs the opt-in production indexing acceptance harness.
+package benchmark
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"runtime"
+	"runtime/debug"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/indexer"
+	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	parserdefaults "github.com/cafecito-games/grafo/internal/parser/defaults"
+	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/version"
+)
+
+const (
+	ReportSchemaVersion = 1
+	ReportFileName      = "report.json"
+	StatusPassed        = "passed"
+	StatusFailed        = "failed"
+)
+
+var errRequestedInterruption = errors.New("benchmark requested durable interruption")
+
+type Options struct {
+	Repository  string
+	Output      string
+	Baseline    string
+	MaxWALBytes int64
+	MaxRSSBytes int64
+}
+
+type Report struct {
+	SchemaVersion        int              `json:"schema_version"`
+	SemanticIndexVersion string           `json:"semantic_index_version"`
+	GraphSchemaVersion   int              `json:"graph_schema_version"`
+	GrafoVersion         string           `json:"grafo_version"`
+	GrafoCommit          string           `json:"grafo_commit"`
+	GrafoDirty           bool             `json:"grafo_dirty"`
+	GeneratedAt          string           `json:"generated_at"`
+	Status               string           `json:"status"`
+	Error                string           `json:"error,omitempty"`
+	Corpus               Corpus           `json:"corpus"`
+	Inputs               InputCoverage    `json:"inputs"`
+	Scenarios            []ScenarioReport `json:"scenarios"`
+	Artifacts            Artifacts        `json:"artifacts"`
+	Baseline             *Baseline        `json:"baseline,omitempty"`
+}
+
+type Corpus struct {
+	Path   string `json:"path"`
+	Commit string `json:"commit"`
+	Branch string `json:"branch"`
+}
+
+type InputStats struct {
+	Files int   `json:"files"`
+	Bytes int64 `json:"bytes"`
+}
+
+type InputCoverage struct {
+	Tracked          InputStats            `json:"tracked"`
+	Supported        InputStats            `json:"supported"`
+	Indexable        InputStats            `json:"indexable"`
+	ByLanguage       map[string]InputStats `json:"by_language"`
+	Unsupported      InputStats            `json:"unsupported"`
+	UnsupportedPaths []string              `json:"unsupported_paths"`
+	Skipped          InputStats            `json:"skipped"`
+	SkippedPaths     []string              `json:"skipped_paths"`
+	SkippedSymlinks  []string              `json:"skipped_symlinks,omitempty"`
+}
+
+type ScenarioReport struct {
+	Name      string          `json:"name"`
+	Status    string          `json:"status"`
+	Error     string          `json:"error,omitempty"`
+	Index     IndexReport     `json:"index"`
+	Resources ResourceMetrics `json:"resources"`
+}
+
+type IndexReport struct {
+	Updated               int                    `json:"updated"`
+	UpdatedPaths          []string               `json:"updated_paths"`
+	ContentChecked        int                    `json:"content_checked"`
+	Unchanged             int                    `json:"unchanged"`
+	Removed               int                    `json:"removed"`
+	RemovedPaths          []string               `json:"removed_paths"`
+	Skipped               int                    `json:"skipped"`
+	SkippedPaths          []string               `json:"skipped_paths,omitempty"`
+	Counts                graph.Counts           `json:"counts"`
+	Phases                indexer.PhaseDurations `json:"phases"`
+	ReconciliationBatches int                    `json:"reconciliation_batches"`
+}
+
+type OptionalBytes struct {
+	Supported bool   `json:"supported"`
+	Value     *int64 `json:"bytes"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+type ResourceMetrics struct {
+	PeakWALBytes  OptionalBytes `json:"peak_wal"`
+	FinalWALBytes OptionalBytes `json:"final_wal"`
+	PeakRSSBytes  OptionalBytes `json:"peak_rss"`
+}
+
+type Artifacts struct {
+	OutputDirectory  string `json:"output_directory"`
+	Report           string `json:"report"`
+	ColdDatabase     string `json:"cold_database"`
+	ResumeDatabase   string `json:"resume_database"`
+	IsolatedCheckout string `json:"isolated_checkout,omitempty"`
+}
+
+type Baseline struct {
+	Path          string `json:"path"`
+	SchemaVersion int    `json:"schema_version"`
+	GrafoCommit   string `json:"grafo_commit"`
+}
+
+type sourceSnapshot struct {
+	commit string
+	branch string
+	status string
+}
+
+func Run(ctx context.Context, options Options) (report Report, resultErr error) {
+	source, snapshot, err := inspectSource(ctx, options.Repository)
+	if err != nil {
+		return Report{}, err
+	}
+	output, err := prepareOutput(source, options.Output)
+	if err != nil {
+		return Report{}, err
+	}
+	artifactDirectory, err := os.MkdirTemp(output, "artifacts-")
+	if err != nil {
+		return Report{}, fmt.Errorf("create artifact directory: %w", err)
+	}
+	grafoCommit, grafoDirty := buildProvenance()
+	report = Report{
+		SchemaVersion: ReportSchemaVersion, SemanticIndexVersion: indexer.SemanticIndexVersion,
+		GraphSchemaVersion: graph.SchemaVersion, GrafoVersion: version.Value, GrafoCommit: grafoCommit, GrafoDirty: grafoDirty,
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano), Status: StatusFailed,
+		Corpus:    Corpus{Path: source, Commit: snapshot.commit, Branch: snapshot.branch},
+		Scenarios: []ScenarioReport{},
+		Artifacts: Artifacts{OutputDirectory: output, Report: filepath.Join(output, ReportFileName),
+			ColdDatabase:   filepath.Join(artifactDirectory, "cold.sqlite"),
+			ResumeDatabase: filepath.Join(artifactDirectory, "resume.sqlite")},
+	}
+	defer func() {
+		if resultErr != nil {
+			report.Status = StatusFailed
+			report.Error = resultErr.Error()
+		}
+		if writeErr := writeReport(report.Artifacts.Report, report); writeErr != nil && resultErr == nil {
+			resultErr = writeErr
+			report.Status = StatusFailed
+			report.Error = writeErr.Error()
+		}
+	}()
+	if options.Baseline != "" {
+		baseline, err := loadBaseline(options.Baseline)
+		if err != nil {
+			return report, err
+		}
+		report.Baseline = &baseline
+	}
+
+	isolation := filepath.Join(artifactDirectory, "corpus")
+	report.Artifacts.IsolatedCheckout = isolation
+	cleanupIsolation := false
+	defer func() {
+		if !cleanupIsolation {
+			return
+		}
+		if err := os.RemoveAll(isolation); err != nil && resultErr == nil {
+			resultErr = fmt.Errorf("clean isolated checkout %s: %w", isolation, err)
+			report.Artifacts.IsolatedCheckout = isolation
+		} else if err == nil {
+			report.Artifacts.IsolatedCheckout = ""
+		}
+	}()
+	if err := runGit(ctx, "", "clone", "--no-hardlinks", "--no-checkout", "--", source, isolation); err != nil {
+		return report, fmt.Errorf("isolate corpus: %w", err)
+	}
+	if err := runGit(ctx, isolation, "switch", "--detach", snapshot.commit); err != nil {
+		return report, fmt.Errorf("checkout corpus commit: %w", err)
+	}
+	if err := runGit(ctx, isolation, "switch", "-c", "grafo-benchmark-base"); err != nil {
+		return report, fmt.Errorf("create isolated base branch: %w", err)
+	}
+	if err := runGit(ctx, isolation, "config", "user.name", "Grafo Benchmark"); err != nil {
+		return report, err
+	}
+	if err := runGit(ctx, isolation, "config", "user.email", "grafo-benchmark@example.invalid"); err != nil {
+		return report, err
+	}
+	registry := parserdefaults.NewRegistry()
+	coverage, supportedPaths, err := collectCoverage(ctx, isolation, registry)
+	if err != nil {
+		return report, err
+	}
+	report.Inputs = coverage
+	if len(supportedPaths) == 0 {
+		return report, fmt.Errorf("corpus has no tracked inputs supported by the production parser registry")
+	}
+	target := chooseMutationTarget(supportedPaths)
+	original, err := os.ReadFile(filepath.Join(isolation, filepath.FromSlash(target)))
+	if err != nil {
+		return report, fmt.Errorf("read scenario target %s: %w", target, err)
+	}
+
+	cold, err := executeScenario(ctx, "cold", isolation, report.Artifacts.ColdDatabase, nil)
+	if err == nil && cold.Index.Updated+cold.Index.Skipped != coverage.Indexable.Files {
+		err = fmt.Errorf("cold scenario accounted for %d inputs, want %d", cold.Index.Updated+cold.Index.Skipped, coverage.Indexable.Files)
+		cold = withScenarioError(cold, err)
+	}
+	report.Scenarios = append(report.Scenarios, cold)
+	if err != nil {
+		return report, err
+	}
+	unchanged, err := executeScenario(ctx, "unchanged", isolation, report.Artifacts.ColdDatabase, nil)
+	if err == nil {
+		err = requireUnchanged(unchanged, cold.Index.Counts)
+	}
+	report.Scenarios = append(report.Scenarios, withScenarioError(unchanged, err))
+	if err != nil {
+		return report, err
+	}
+	if err := removeSQLiteDatabase(report.Artifacts.ColdDatabase); err != nil {
+		return report, fmt.Errorf("remove completed control database: %w", err)
+	}
+	report.Artifacts.ColdDatabase = ""
+
+	interrupted, interruptErr := executeScenario(ctx, "interrupted", isolation, report.Artifacts.ResumeDatabase,
+		func(boundary indexer.Boundary) error {
+			if boundary.Kind == indexer.BoundaryFilePersisted && boundary.Completed == 1 {
+				return errRequestedInterruption
+			}
+			return nil
+		})
+	if !errors.Is(interruptErr, errRequestedInterruption) {
+		if interruptErr == nil {
+			interruptErr = fmt.Errorf("interruption scenario did not stop at the requested durable boundary")
+		}
+		report.Scenarios = append(report.Scenarios, withScenarioError(interrupted, interruptErr))
+		return report, interruptErr
+	}
+	interrupted.Status, interrupted.Error = StatusPassed, ""
+	report.Scenarios = append(report.Scenarios, interrupted)
+	resumed, err := executeScenario(ctx, "resumed", isolation, report.Artifacts.ResumeDatabase, nil)
+	if err == nil && !reflect.DeepEqual(cold.Index.Counts, resumed.Index.Counts) {
+		err = fmt.Errorf("resumed graph counts differ from uninterrupted cold index")
+	}
+	report.Scenarios = append(report.Scenarios, withScenarioError(resumed, err))
+	if err != nil {
+		return report, err
+	}
+	resumeUnchanged, err := executeScenario(ctx, "resume_unchanged", isolation, report.Artifacts.ResumeDatabase, nil)
+	if err == nil {
+		err = requireUnchanged(resumeUnchanged, cold.Index.Counts)
+	}
+	if err == nil && resumeUnchanged.Index.ReconciliationBatches != 0 {
+		err = fmt.Errorf("resumed database retained reconciliation work")
+	}
+	report.Scenarios = append(report.Scenarios, withScenarioError(resumeUnchanged, err))
+	if err != nil {
+		return report, err
+	}
+
+	if err := os.WriteFile(filepath.Join(isolation, filepath.FromSlash(target)), append(append([]byte{}, original...), '\n'), 0o644); err != nil {
+		return report, err
+	}
+	if err := runMutationPair(ctx, &report, "edit", "edit_unchanged", isolation, report.Artifacts.ResumeDatabase, target, 1, 0, cold.Index.Counts, false); err != nil {
+		return report, err
+	}
+	if err := os.Remove(filepath.Join(isolation, filepath.FromSlash(target))); err != nil {
+		return report, err
+	}
+	deleted, err := executeScenario(ctx, "delete", isolation, report.Artifacts.ResumeDatabase, nil)
+	if err == nil && (deleted.Index.Removed != 1 || len(deleted.Index.RemovedPaths) != 1 || deleted.Index.RemovedPaths[0] != target) {
+		err = fmt.Errorf("delete scenario changed unexpected paths: %v", deleted.Index.RemovedPaths)
+	}
+	report.Scenarios = append(report.Scenarios, withScenarioError(deleted, err))
+	if err != nil {
+		return report, err
+	}
+	if err := os.WriteFile(filepath.Join(isolation, filepath.FromSlash(target)), original, 0o644); err != nil {
+		return report, err
+	}
+	if err := runMutationPair(ctx, &report, "restore", "restore_unchanged", isolation, report.Artifacts.ResumeDatabase, target, 1, 0, cold.Index.Counts, true); err != nil {
+		return report, err
+	}
+
+	if err := runGit(ctx, isolation, "switch", "-c", "grafo-benchmark-branch"); err != nil {
+		return report, err
+	}
+	if err := os.WriteFile(filepath.Join(isolation, filepath.FromSlash(target)), append(append([]byte{}, original...), '\n'), 0o644); err != nil {
+		return report, err
+	}
+	if err := runGit(ctx, isolation, "add", "--", target); err != nil {
+		return report, err
+	}
+	if err := runGit(ctx, isolation, "commit", "-m", "benchmark branch mutation"); err != nil {
+		return report, err
+	}
+	branchSwitch, err := executeScenario(ctx, "branch_switch", isolation, report.Artifacts.ResumeDatabase, nil)
+	if err == nil {
+		err = requireUpdatedPath(branchSwitch, target)
+	}
+	report.Scenarios = append(report.Scenarios, withScenarioError(branchSwitch, err))
+	if err != nil {
+		return report, err
+	}
+	if err := runGit(ctx, isolation, "switch", "grafo-benchmark-base"); err != nil {
+		return report, err
+	}
+	branchRestore, err := executeScenario(ctx, "branch_restore", isolation, report.Artifacts.ResumeDatabase, nil)
+	if err == nil {
+		err = requireUpdatedPath(branchRestore, target)
+	}
+	report.Scenarios = append(report.Scenarios, withScenarioError(branchRestore, err))
+	if err != nil {
+		return report, err
+	}
+	branchUnchanged, err := executeScenario(ctx, "branch_unchanged", isolation, report.Artifacts.ResumeDatabase, nil)
+	if err == nil {
+		err = requireUnchanged(branchUnchanged, cold.Index.Counts)
+	}
+	report.Scenarios = append(report.Scenarios, withScenarioError(branchUnchanged, err))
+	if err != nil {
+		return report, err
+	}
+
+	if err := enforceBudgets(report.Scenarios, options); err != nil {
+		return report, err
+	}
+	after, err := snapshotSource(ctx, source)
+	if err != nil {
+		return report, err
+	}
+	if snapshot != after {
+		return report, fmt.Errorf("source checkout changed during benchmark")
+	}
+	report.Status = StatusPassed
+	report.Error = ""
+	cleanupIsolation = true
+	return report, nil
+}
+
+func executeScenario(ctx context.Context, name, root, database string, hook indexer.BoundaryHook) (scenario ScenarioReport, resultErr error) {
+	scenario = ScenarioReport{Name: name, Status: StatusFailed}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			resultErr = fmt.Errorf("scenario %s panicked: %v", name, recovered)
+			scenario = withScenarioError(scenario, resultErr)
+		}
+	}()
+	return executeScenarioRun(ctx, scenario, root, database, hook)
+}
+
+func executeScenarioRun(ctx context.Context, scenario ScenarioReport, root, database string, hook indexer.BoundaryHook) (ScenarioReport, error) {
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		return withScenarioError(scenario, err), err
+	}
+	project.IndexPath = database
+	sampler := newResourceSampler(ctx, database)
+	sampler.start()
+	defer func() { sampler.stop() }()
+	repository, err := sqlite.Open(ctx, database)
+	if err != nil {
+		return withScenarioError(scenario, err), err
+	}
+	closed := false
+	defer func() {
+		if !closed {
+			_ = repository.Close()
+		}
+	}()
+	sampler.sample()
+	wrappedHook := func(boundary indexer.Boundary) error {
+		sampler.sampleWAL()
+		if hook != nil {
+			return hook(boundary)
+		}
+		return nil
+	}
+	indexed, runErr := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{Boundary: wrappedHook})
+	if runErr != nil {
+		if counts, countErr := repository.Counts(context.WithoutCancel(ctx)); countErr == nil {
+			indexed.Counts = counts
+		}
+	}
+	closeErr := repository.Close()
+	closed = true
+	sampler.stop()
+	scenario.Index = summarizeIndex(indexed)
+	scenario.Resources = sampler.metrics()
+	err = errors.Join(runErr, closeErr)
+	if err != nil {
+		return withScenarioError(scenario, err), err
+	}
+	scenario.Status = StatusPassed
+	return scenario, nil
+}
+
+func summarizeIndex(report indexer.Report) IndexReport {
+	return IndexReport{Updated: len(report.Updated), UpdatedPaths: report.Updated, ContentChecked: report.Checked,
+		Unchanged: report.Unchanged, Removed: len(report.Removed), RemovedPaths: report.Removed,
+		Skipped: len(report.Skipped), SkippedPaths: report.Skipped, Counts: report.Counts,
+		Phases: report.Phases, ReconciliationBatches: report.ReconciliationBatches}
+}
+
+func runMutationPair(ctx context.Context, report *Report, changedName, stableName, root, database, target string, updated, removed int, expectedCounts graph.Counts, zeroReadStable bool) error {
+	changed, err := executeScenario(ctx, changedName, root, database, nil)
+	if err == nil && (changed.Index.Updated != updated || changed.Index.Removed != removed) {
+		err = fmt.Errorf("%s changed updated=%d removed=%d, want %d/%d", changedName, changed.Index.Updated, changed.Index.Removed, updated, removed)
+	}
+	if err == nil && updated == 1 {
+		err = requireUpdatedPath(changed, target)
+	}
+	report.Scenarios = append(report.Scenarios, withScenarioError(changed, err))
+	if err != nil {
+		return err
+	}
+	stable, err := executeScenario(ctx, stableName, root, database, nil)
+	if err == nil && (stable.Index.Updated != 0 || stable.Index.Removed != 0) {
+		err = fmt.Errorf("%s did not converge", stableName)
+	}
+	if err == nil && !reflect.DeepEqual(stable.Index.Counts, expectedCounts) {
+		err = fmt.Errorf("%s did not converge to control graph counts", stableName)
+	}
+	if err == nil && zeroReadStable {
+		err = requireUnchanged(stable, expectedCounts)
+	}
+	report.Scenarios = append(report.Scenarios, withScenarioError(stable, err))
+	return err
+}
+
+func requireUpdatedPath(scenario ScenarioReport, path string) error {
+	if scenario.Index.Updated != 1 || len(scenario.Index.UpdatedPaths) != 1 || scenario.Index.UpdatedPaths[0] != path {
+		return fmt.Errorf("%s updated unexpected paths: %v", scenario.Name, scenario.Index.UpdatedPaths)
+	}
+	return nil
+}
+
+func requireUnchanged(scenario ScenarioReport, counts graph.Counts) error {
+	if scenario.Index.ContentChecked != 0 || scenario.Index.Updated != 0 || scenario.Index.Removed != 0 {
+		return fmt.Errorf("%s was not a zero-read unchanged refresh", scenario.Name)
+	}
+	if !reflect.DeepEqual(scenario.Index.Counts, counts) {
+		return fmt.Errorf("%s changed graph counts", scenario.Name)
+	}
+	return nil
+}
+
+func withScenarioError(scenario ScenarioReport, err error) ScenarioReport {
+	if err == nil {
+		return scenario
+	}
+	scenario.Status = StatusFailed
+	scenario.Error = err.Error()
+	return scenario
+}
+
+func inspectSource(ctx context.Context, path string) (string, sourceSnapshot, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", sourceSnapshot{}, fmt.Errorf("GRAFO_BENCH_REPO is required")
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", sourceSnapshot{}, fmt.Errorf("resolve corpus path: %w", err)
+	}
+	info, err := os.Stat(absolute)
+	if err != nil || !info.IsDir() {
+		return "", sourceSnapshot{}, fmt.Errorf("GRAFO_BENCH_REPO must name an existing directory")
+	}
+	root, err := gitOutput(ctx, absolute, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", sourceSnapshot{}, fmt.Errorf("GRAFO_BENCH_REPO must be a Git worktree: %w", err)
+	}
+	root, err = filepath.EvalSymlinks(strings.TrimSpace(root))
+	if err != nil {
+		return "", sourceSnapshot{}, fmt.Errorf("resolve Git root: %w", err)
+	}
+	snapshot, err := snapshotSource(ctx, root)
+	return root, snapshot, err
+}
+
+func snapshotSource(ctx context.Context, root string) (sourceSnapshot, error) {
+	commit, err := gitOutput(ctx, root, "rev-parse", "HEAD")
+	if err != nil {
+		return sourceSnapshot{}, fmt.Errorf("read corpus commit: %w", err)
+	}
+	branch, err := gitOutput(ctx, root, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if err != nil {
+		short, shortErr := gitOutput(ctx, root, "rev-parse", "--short=12", "HEAD")
+		if shortErr != nil {
+			return sourceSnapshot{}, fmt.Errorf("read corpus branch: %w", err)
+		}
+		branch = "detached-" + strings.TrimSpace(short)
+	}
+	status, err := gitOutput(ctx, root, "status", "--porcelain=v1", "--untracked-files=all")
+	if err != nil {
+		return sourceSnapshot{}, fmt.Errorf("read corpus status: %w", err)
+	}
+	return sourceSnapshot{commit: strings.TrimSpace(commit), branch: strings.TrimSpace(branch), status: status}, nil
+}
+
+func prepareOutput(source, requested string) (string, error) {
+	if requested == "" {
+		path, err := os.MkdirTemp("", "grafo-benchmark-")
+		if err != nil {
+			return "", fmt.Errorf("create benchmark output: %w", err)
+		}
+		return path, nil
+	}
+	absolute, err := filepath.Abs(requested)
+	if err != nil {
+		return "", err
+	}
+	absolute, err = canonicalDestination(absolute)
+	if err != nil {
+		return "", fmt.Errorf("resolve benchmark output: %w", err)
+	}
+	relative, err := filepath.Rel(source, absolute)
+	if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("benchmark output must be outside the source checkout")
+	}
+	if err := os.MkdirAll(absolute, 0o755); err != nil {
+		return "", fmt.Errorf("create benchmark output: %w", err)
+	}
+	return absolute, nil
+}
+
+func canonicalDestination(path string) (string, error) {
+	current := path
+	var suffix []string
+	for {
+		if _, err := os.Lstat(current); err == nil {
+			resolved, err := filepath.EvalSymlinks(current)
+			if err != nil {
+				return "", err
+			}
+			for index := len(suffix) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, suffix[index])
+			}
+			return resolved, nil
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", fmt.Errorf("no existing ancestor for %s", path)
+		}
+		suffix = append(suffix, filepath.Base(current))
+		current = parent
+	}
+}
+
+func collectCoverage(ctx context.Context, root string, registry *parserapi.Registry) (InputCoverage, []string, error) {
+	output, err := gitOutputBytes(ctx, root, "ls-files", "-z")
+	if err != nil {
+		return InputCoverage{}, nil, fmt.Errorf("list tracked corpus files: %w", err)
+	}
+	coverage := InputCoverage{ByLanguage: map[string]InputStats{}, UnsupportedPaths: []string{}, SkippedPaths: []string{}}
+	var indexable []string
+	for _, raw := range bytes.Split(output, []byte{0}) {
+		if len(raw) == 0 {
+			continue
+		}
+		path := filepath.ToSlash(string(raw))
+		info, err := os.Lstat(filepath.Join(root, filepath.FromSlash(path)))
+		if err != nil {
+			return coverage, nil, fmt.Errorf("inspect tracked input %s: %w", path, err)
+		}
+		isSymlink := info.Mode()&os.ModeSymlink != 0
+		if !isSymlink && !info.Mode().IsRegular() {
+			continue
+		}
+		coverage.Tracked.Files++
+		coverage.Tracked.Bytes += info.Size()
+		ignored := indexer.PathIgnored(path)
+		parser, ok := registry.For(path)
+		if !ok {
+			coverage.Unsupported.Files++
+			coverage.Unsupported.Bytes += info.Size()
+			coverage.UnsupportedPaths = append(coverage.UnsupportedPaths, path)
+			if ignored || isSymlink {
+				coverage.Skipped.Files++
+				coverage.Skipped.Bytes += info.Size()
+				coverage.SkippedPaths = append(coverage.SkippedPaths, path)
+			}
+			if isSymlink {
+				coverage.SkippedSymlinks = append(coverage.SkippedSymlinks, path)
+			}
+			continue
+		}
+		stats := coverage.ByLanguage[parser.Language()]
+		stats.Files++
+		stats.Bytes += info.Size()
+		coverage.ByLanguage[parser.Language()] = stats
+		coverage.Supported.Files++
+		coverage.Supported.Bytes += info.Size()
+		if ignored || isSymlink {
+			coverage.Skipped.Files++
+			coverage.Skipped.Bytes += info.Size()
+			coverage.SkippedPaths = append(coverage.SkippedPaths, path)
+			if isSymlink {
+				coverage.SkippedSymlinks = append(coverage.SkippedSymlinks, path)
+			}
+			continue
+		}
+		coverage.Indexable.Files++
+		coverage.Indexable.Bytes += info.Size()
+		indexable = append(indexable, path)
+	}
+	sort.Strings(coverage.UnsupportedPaths)
+	sort.Strings(coverage.SkippedPaths)
+	sort.Strings(coverage.SkippedSymlinks)
+	sort.Strings(indexable)
+	return coverage, indexable, nil
+}
+
+func chooseMutationTarget(paths []string) string {
+	preferences := []string{".go", ".gd", ".py", ".ts", ".tsx", ".sql", ".yaml", ".yml", ".json"}
+	for _, extension := range preferences {
+		for _, path := range paths {
+			if strings.EqualFold(filepath.Ext(path), extension) {
+				return path
+			}
+		}
+	}
+	return paths[0]
+}
+
+func loadBaseline(path string) (Baseline, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return Baseline{}, err
+	}
+	content, err := os.ReadFile(absolute)
+	if err != nil {
+		return Baseline{}, fmt.Errorf("read baseline: %w", err)
+	}
+	var report Report
+	if err := json.Unmarshal(content, &report); err != nil {
+		return Baseline{}, fmt.Errorf("decode baseline: %w", err)
+	}
+	if report.SchemaVersion != ReportSchemaVersion || report.SemanticIndexVersion != indexer.SemanticIndexVersion || report.GraphSchemaVersion != graph.SchemaVersion {
+		return Baseline{}, fmt.Errorf("baseline is incompatible: report/schema/semantic versions differ")
+	}
+	return Baseline{Path: absolute, SchemaVersion: report.SchemaVersion, GrafoCommit: report.GrafoCommit}, nil
+}
+
+func enforceBudgets(scenarios []ScenarioReport, options Options) error {
+	for _, scenario := range scenarios {
+		if options.MaxWALBytes > 0 {
+			if !scenario.Resources.PeakWALBytes.Supported || scenario.Resources.PeakWALBytes.Value == nil {
+				return fmt.Errorf("cannot enforce WAL budget: metric unsupported in %s", scenario.Name)
+			}
+			if *scenario.Resources.PeakWALBytes.Value > options.MaxWALBytes {
+				return fmt.Errorf("%s peak WAL %d exceeds budget %d", scenario.Name, *scenario.Resources.PeakWALBytes.Value, options.MaxWALBytes)
+			}
+		}
+		if options.MaxRSSBytes > 0 {
+			if !scenario.Resources.PeakRSSBytes.Supported || scenario.Resources.PeakRSSBytes.Value == nil {
+				return fmt.Errorf("cannot enforce RSS budget: metric unsupported in %s", scenario.Name)
+			}
+			if *scenario.Resources.PeakRSSBytes.Value > options.MaxRSSBytes {
+				return fmt.Errorf("%s peak RSS %d exceeds budget %d", scenario.Name, *scenario.Resources.PeakRSSBytes.Value, options.MaxRSSBytes)
+			}
+		}
+	}
+	return nil
+}
+
+func buildProvenance() (string, bool) {
+	info, ok := debug.ReadBuildInfo()
+	commit := "unknown"
+	dirty := false
+	if ok {
+		for _, setting := range info.Settings {
+			if setting.Key == "vcs.revision" && setting.Value != "" {
+				commit = setting.Value
+			}
+			if setting.Key == "vcs.modified" {
+				dirty = setting.Value == "true"
+			}
+		}
+	}
+	if commit != "unknown" {
+		return commit, dirty
+	}
+	_, sourceFile, _, callerOK := runtime.Caller(0)
+	if !callerOK || !filepath.IsAbs(sourceFile) {
+		return commit, dirty
+	}
+	rootOutput, err := gitOutput(context.Background(), filepath.Dir(sourceFile), "rev-parse", "--show-toplevel")
+	if err != nil {
+		return commit, dirty
+	}
+	root := strings.TrimSpace(rootOutput)
+	module, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil || !bytes.Contains(module, []byte("module github.com/cafecito-games/grafo")) {
+		return commit, dirty
+	}
+	commitOutput, err := gitOutput(context.Background(), root, "rev-parse", "HEAD")
+	if err != nil {
+		return commit, dirty
+	}
+	status, err := gitOutput(context.Background(), root, "status", "--porcelain=v1", "--untracked-files=all")
+	if err != nil {
+		return strings.TrimSpace(commitOutput), dirty
+	}
+	commit = strings.TrimSpace(commitOutput)
+	dirty = strings.TrimSpace(status) != ""
+	return commit, dirty
+}
+
+func writeReport(path string, report Report) error {
+	content, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode benchmark report: %w", err)
+	}
+	content = append(content, '\n')
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".report-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create report temporary file: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	removeTemporary := true
+	defer func() {
+		if removeTemporary {
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+	if err := temporary.Chmod(0o644); err != nil {
+		temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(content); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("replace benchmark report: %w", err)
+	}
+	removeTemporary = false
+	return nil
+}
+
+func runGit(ctx context.Context, root string, arguments ...string) error {
+	_, err := gitOutputBytes(ctx, root, arguments...)
+	return err
+}
+
+func gitOutput(ctx context.Context, root string, arguments ...string) (string, error) {
+	output, err := gitOutputBytes(ctx, root, arguments...)
+	return string(output), err
+}
+
+func gitOutputBytes(ctx context.Context, root string, arguments ...string) ([]byte, error) {
+	commandArguments := arguments
+	if root != "" {
+		commandArguments = append([]string{"-C", root}, arguments...)
+	}
+	command := exec.CommandContext(ctx, "git", commandArguments...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(arguments, " "), err, strings.TrimSpace(string(output)))
+	}
+	return output, nil
+}
+
+type resourceSampler struct {
+	ctx      context.Context
+	database string
+	stopOnce sync.Once
+	stopCh   chan struct{}
+	doneCh   chan struct{}
+	mu       sync.Mutex
+	peakWAL  int64
+	finalWAL int64
+	peakRSS  int64
+	rssOK    bool
+}
+
+func newResourceSampler(ctx context.Context, database string) *resourceSampler {
+	return &resourceSampler{ctx: ctx, database: database, stopCh: make(chan struct{}), doneCh: make(chan struct{})}
+}
+
+func (s *resourceSampler) start() {
+	s.sample()
+	go func() {
+		defer close(s.doneCh)
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				s.sample()
+			case <-s.stopCh:
+				return
+			case <-s.ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+func (s *resourceSampler) stop() {
+	s.stopOnce.Do(func() {
+		close(s.stopCh)
+		<-s.doneCh
+		s.sample()
+		s.mu.Lock()
+		s.finalWAL = fileSize(s.database + "-wal")
+		s.mu.Unlock()
+	})
+}
+
+func (s *resourceSampler) sample() {
+	s.sampleWAL()
+	command := exec.CommandContext(s.ctx, "ps", "-o", "rss=", "-p", strconv.Itoa(os.Getpid()))
+	output, err := command.Output()
+	if err != nil {
+		return
+	}
+	kibibytes, err := strconv.ParseInt(strings.TrimSpace(string(output)), 10, 64)
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	s.rssOK = true
+	if bytes := kibibytes * 1024; bytes > s.peakRSS {
+		s.peakRSS = bytes
+	}
+	s.mu.Unlock()
+}
+
+func (s *resourceSampler) sampleWAL() {
+	bytes := fileSize(s.database + "-wal")
+	s.mu.Lock()
+	if bytes > s.peakWAL {
+		s.peakWAL = bytes
+	}
+	s.mu.Unlock()
+}
+
+func (s *resourceSampler) metrics() ResourceMetrics {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	peakWAL, finalWAL := s.peakWAL, s.finalWAL
+	metrics := ResourceMetrics{
+		PeakWALBytes:  OptionalBytes{Supported: true, Value: &peakWAL},
+		FinalWALBytes: OptionalBytes{Supported: true, Value: &finalWAL},
+		PeakRSSBytes:  OptionalBytes{Supported: false, Reason: "ps RSS sampling unavailable"},
+	}
+	if s.rssOK {
+		peakRSS := s.peakRSS
+		metrics.PeakRSSBytes = OptionalBytes{Supported: true, Value: &peakRSS}
+	}
+	return metrics
+}
+
+func fileSize(path string) int64 {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+func removeSQLiteDatabase(path string) error {
+	for _, candidate := range []string{path, path + "-wal", path + "-shm"} {
+		if err := os.Remove(candidate); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}

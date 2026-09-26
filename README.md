@@ -250,6 +250,34 @@ The non-GDScript Godot formats can be checked against the same project with:
 GRAFO_GODOT_CORPUS=/path/to/project go test ./internal/parser/godot -run TestCorpus -count=1
 ```
 
+### End-to-end corpus benchmark
+
+The opt-in benchmark exercises the production parser registry, indexer, and
+SQLite repository across cold, interrupted/resumed, unchanged, edit,
+delete/restore, and branch-switch scenarios:
+
+```sh
+GRAFO_BENCH_REPO=~/CafecitoGames/uzir task bench:corpus
+```
+
+Set `GRAFO_BENCH_OUTPUT=/path/outside/the/corpus` to retain artifacts at a
+specific location. Otherwise the command creates and prints a temporary output
+directory. `GRAFO_BENCH_BASELINE` accepts a prior report and rejects incompatible
+report, graph-schema, or semantic-index versions. Optional absolute resource
+gates use `GRAFO_BENCH_MAX_WAL_BYTES` and `GRAFO_BENCH_MAX_RSS_BYTES`; timing
+measurements remain reported baselines rather than committed machine-sensitive
+budgets.
+
+The harness validates the input before creating an index, checks out only the
+tracked files from the selected commit in an isolated clone, and stores every
+database and report outside the supplied repository. It never reads the
+corpus's untracked or ignored files, creates `.grafo` in the corpus, uploads
+artifacts, or changes the source checkout's branch, HEAD, or worktree.
+Unsupported tracked paths and platform metrics are explicit in the versioned
+JSON report. A failed run keeps its isolated checkout and current database for
+diagnosis; a successful run removes the checkout and duplicate control database
+while retaining the converged database and atomic `report.json`.
+
 After changing a migration or query, run `task generate` and commit the updated
 sqlc output.
 

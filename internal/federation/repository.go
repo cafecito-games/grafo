@@ -311,6 +311,7 @@ func (r *Repository) Counts(ctx context.Context) (graph.Counts, error) {
 		}
 		result.Files += counts.Files
 		result.Nodes += counts.Nodes
+		result.Facts += counts.Facts
 		result.Edges += counts.Edges
 		result.External += counts.External
 		for kind, count := range counts.ByKind {
