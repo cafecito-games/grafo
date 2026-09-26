@@ -14,7 +14,7 @@ storage can evolve independently.
       internal/graph       nodes, edges, facts, narrow repository ports
             ▲
             │
-  internal/parser/*        Go AST, TypeScript Tree-sitter, SQL router, config mappers
+  internal/parser/*        Go AST, Python/TypeScript Tree-sitter, SQL router, config mappers
        └─ sql/*            dialect adapters such as PostgreSQL
   internal/storage/sqlite  Goose + sqlc adapter
 ```

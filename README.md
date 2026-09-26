@@ -5,8 +5,9 @@ can query from the command line. Source symbols, calls, imports, configuration,
 HTTP routes, and event-like publish/subscribe operations become nodes and edges.
 
 This repository is at the foundation stage. Go is parsed with the Go compiler
-AST, TypeScript/TSX with Tree-sitter, and PostgreSQL SQL with PostgreSQL's own
-parser. The index is local, incremental, branch-aware, and stored in SQLite.
+AST, Python and TypeScript/TSX use Tree-sitter, and PostgreSQL SQL uses
+PostgreSQL's own parser. The index is local, incremental, branch-aware, and
+stored in SQLite.
 
 [Architecture and extension points](docs/architecture.md)
 
@@ -57,9 +58,14 @@ are marked `federated` and retain their original evidence.
 - PostgreSQL tables, views, columns, indexes, functions, procedures, and the
   relations read or written by DDL and DML statements in `.sql`, `.pgsql`, and
   `.psql` files.
+- Python modules, functions, classes, methods, fields, parameters, local
+  variables, type annotations, basic assignment/argument/return flow, imports,
+  calls, inheritance, environment reads, framework route decorators, outbound
+  HTTP requests, and common publish/subscribe calls.
 - `.env`, YAML, JSON, and Java `.properties` keys and value references.
-- Outbound Go `net/http` and TypeScript `fetch`/Axios calls, linked to matching
-  endpoint declarations locally or across repository boundaries.
+- Outbound Go `net/http`, Python Requests/HTTPX, and TypeScript `fetch`/Axios
+  calls, linked to matching endpoint declarations locally or across repository
+  boundaries.
 - Deterministic symbol lookup, neighborhood traversal, shortest paths, callers,
   callees, blast-radius traversal, multi-repository federation, and MCP access.
 
