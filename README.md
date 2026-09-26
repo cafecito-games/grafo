@@ -20,10 +20,15 @@ grafo find "MyHandler"
 grafo neighbors "MyHandler" --depth 2
 grafo path "HandleCheckout" "Charge"
 grafo watch
+grafo mcp
 ```
 
 Every query supports `--json` for agent-friendly output. Run `grafo help` for
 the complete command surface.
+
+`grafo mcp` starts a standards-compatible MCP server over stdio with tools for
+symbol discovery, node lookup, traversal, shortest paths, callers, callees,
+blast radius, and index status.
 
 ## What the first slice understands
 
