@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cafecito-games/grafo/internal/embedding/ollama"
 	"github.com/cafecito-games/grafo/internal/federation"
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
@@ -23,6 +24,7 @@ import (
 	postgresparser "github.com/cafecito-games/grafo/internal/parser/sql/postgres"
 	typescriptparser "github.com/cafecito-games/grafo/internal/parser/typescript"
 	"github.com/cafecito-games/grafo/internal/query"
+	"github.com/cafecito-games/grafo/internal/semantic"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 )
 
@@ -59,6 +61,10 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		runErr = a.status(ctx, parsed)
 	case "mcp":
 		runErr = a.mcp(ctx, parsed)
+	case "embed":
+		runErr = a.embed(ctx, parsed)
+	case "reusable", "find-reusable-code":
+		runErr = a.reusable(ctx, parsed)
 	case "find":
 		runErr = a.find(ctx, parsed)
 	case "show":
@@ -224,7 +230,107 @@ func (a *App) mcp(ctx context.Context, args parsedArguments) error {
 	service := mcpserver.NewFederated(repository, projects).WithRefresh(func(refreshContext context.Context) error {
 		return refreshRead(refreshContext, repository, projects)
 	})
+	semanticService, err := newSemanticService(repository, args)
+	if err != nil {
+		return err
+	}
+	service.WithReusable(func(searchContext context.Context, text string, limit int) (semantic.SearchResult, error) {
+		if _, err := semanticService.Sync(searchContext); err != nil {
+			return semantic.SearchResult{}, err
+		}
+		return semanticService.Search(searchContext, text, limit)
+	})
 	return service.Run(ctx, Version)
+}
+
+func (a *App) embed(ctx context.Context, args parsedArguments) error {
+	root, err := optionalPath(args.positionals)
+	if err != nil {
+		return fmt.Errorf("usage: grafo embed [path] [--model name] [--ollama-url url] [--force]")
+	}
+	project, repository, err := openExisting(ctx, root)
+	if err != nil {
+		return err
+	}
+	defer repository.Close()
+	service, err := newSemanticService(repository, args)
+	if err != nil {
+		return err
+	}
+	report, err := service.Sync(ctx)
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, report)
+	}
+	fmt.Fprintf(a.stdout, "embedded %s · branch %s · model %s\n", project.Name, project.Branch, report.Model)
+	fmt.Fprintf(a.stdout, "%d updated · %d unchanged · %d removed · %d candidates\n",
+		report.Updated, report.Unchanged, report.Removed, report.Candidates)
+	return nil
+}
+
+func (a *App) reusable(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) == 0 {
+		return fmt.Errorf("usage: grafo reusable <description> [--repo path | --repos pathA,pathB] [--limit 5]")
+	}
+	limit, err := intOption(args, "limit", 5)
+	if err != nil {
+		return err
+	}
+	repository, _, closeRepository, err := openRead(ctx, args)
+	if err != nil {
+		return err
+	}
+	defer closeRepository()
+	service, err := newSemanticService(repository, args)
+	if err != nil {
+		return err
+	}
+	if _, err := service.Sync(ctx); err != nil {
+		return err
+	}
+	result, err := service.Search(ctx, strings.Join(args.positionals, " "), limit)
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, result)
+	}
+	for _, match := range result.Matches {
+		fmt.Fprintf(a.stdout, "%.4f  %-12s  %-48s  %s · %d connected nodes\n",
+			match.Score, match.Node.Kind, match.Node.QualifiedName, formatLocation(match.Node.Location), len(match.Context.Nodes)-1)
+	}
+	return nil
+}
+
+func newSemanticService(repository graph.ReadRepository, args parsedArguments) (*semantic.Service, error) {
+	semanticRepository, ok := repository.(semantic.Repository)
+	if !ok {
+		return nil, fmt.Errorf("repository does not support semantic candidate discovery")
+	}
+	model := firstValue(args.values["model"], os.Getenv("GRAFO_EMBED_MODEL"), ollama.DefaultModel)
+	baseURL := firstValue(args.values["ollama-url"], os.Getenv("GRAFO_OLLAMA_URL"), ollama.DefaultURL)
+	embedder, err := ollama.New(baseURL, model)
+	if err != nil {
+		return nil, err
+	}
+	batchSize, err := intOption(args, "batch-size", 32)
+	if err != nil {
+		return nil, err
+	}
+	return semantic.NewService(semanticRepository, repository, embedder).
+		WithBatchSize(batchSize).
+		WithForce(args.command == "embed" && args.flags["force"]), nil
+}
+
+func firstValue(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (a *App) find(ctx context.Context, args parsedArguments) error {
@@ -465,7 +571,8 @@ type parsedArguments struct {
 var booleanOptions = map[string]bool{"json": true, "force": true, "help": true}
 var valueOptions = map[string]bool{
 	"repo": true, "repos": true, "depth": true, "direction": true, "relation": true,
-	"limit": true, "interval": true, "max-file-size": true,
+	"limit": true, "interval": true, "max-file-size": true, "model": true,
+	"ollama-url": true, "batch-size": true,
 }
 
 func parseArguments(arguments []string) (parsedArguments, error) {
@@ -564,7 +671,9 @@ Usage:
   grafo index [path] [--force] [--json]
   grafo watch [path] [--interval 1s]
   grafo status [path] [--repos pathA,pathB] [--json]
-  grafo mcp [--repo path | --repos pathA,pathB]
+  grafo mcp [--repo path | --repos pathA,pathB] [--model embeddinggemma]
+  grafo embed [path] [--model embeddinggemma] [--ollama-url http://localhost:11434] [--force]
+  grafo reusable <description> [--repo path | --repos pathA,pathB] [--limit 5] [--json]
   grafo find <text> [--limit 20] [--repo path | --repos pathA,pathB] [--json]
   grafo show <symbol-or-id> [--repo path | --repos pathA,pathB] [--json]
   grafo neighbors <symbol-or-id> [--depth 1] [--direction both]

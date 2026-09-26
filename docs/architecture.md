@@ -8,6 +8,8 @@ storage can evolve independently.
   └─ internal/cli          composition and presentation
        ├─ internal/indexer changed-file indexing use case
        ├─ internal/query   deterministic traversal use case
+       ├─ internal/semantic optional candidate-ranking use case
+       ├─ internal/embedding/ollama provider adapter
        ├─ internal/mcpserver agent-facing stdio tools
        └─ internal/federation read-only multi-index graph
             │
@@ -50,6 +52,20 @@ adapter synthesizes a deterministic edge marked `federated=true`. It neither
 copies databases nor guesses from similarity. Both one-shot CLI queries and
 long-running MCP tool calls incrementally refresh their indexes first.
 
+## Semantic discovery
+
+`semantic.Embedder` isolates vector generation from the candidate-selection use
+case, and `semantic.Repository` isolates vector persistence. SQLite stores one
+normalized vector per node and model. A SHA-256 hash of the stable semantic
+document means unchanged candidates are never embedded again; deleted nodes are
+pruned on the next sync.
+
+Cosine similarity may rank candidates for `find_reusable_code`, but it never
+creates an edge or determines a path. Each selected node is resolved by stable
+ID and returned with a one-hop traversal from the graph repository. Similarity
+search can later move to a specialized vector index without changing graph
+parsers, traversal, or the MCP contract.
+
 ## Persistence
 
 Each branch has a separate SQLite file under `.grafo/indexes`. The database is
@@ -74,8 +90,8 @@ Grafo does not require sqlc.
   and `StatusRepository` ports.
 - Add new relationships as facts first; keep name/type resolution in the
   reconciliation stage so parsers remain syntactic.
-- Embeddings belong in a candidate-source port for natural-language discovery;
-  they must not change structural edge traversal or ordering.
+- Replace the current portable vector scan with a specialized vector index at
+  very large candidate counts; keep the `semantic.Repository` port stable.
 
 ## SQL routing
 

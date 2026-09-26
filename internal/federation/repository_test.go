@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/federation"
@@ -12,6 +13,7 @@ import (
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	golangparser "github.com/cafecito-games/grafo/internal/parser/golang"
 	"github.com/cafecito-games/grafo/internal/query"
+	"github.com/cafecito-games/grafo/internal/semantic"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 )
 
@@ -61,6 +63,38 @@ func Routes() { router.Get("/charge", Handler) }
 	if !foundIncoming {
 		t.Fatalf("incoming federated edge missing: %#v", incoming)
 	}
+
+	semanticService := semantic.NewService(repository, repository, handlerEmbedder{})
+	report, err := semanticService.Sync(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Candidates < 3 || report.Updated != report.Candidates {
+		t.Fatalf("federated embeddings were not distributed to member indexes: %#v", report)
+	}
+	matches, err := semanticService.Search(ctx, "find a request handler", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches.Matches) != 1 || matches.Matches[0].Node.Name != "Handler" {
+		t.Fatalf("unexpected federated semantic match: %#v", matches.Matches)
+	}
+}
+
+type handlerEmbedder struct{}
+
+func (handlerEmbedder) Model() string { return "federation-test" }
+
+func (handlerEmbedder) Embed(_ context.Context, inputs []string) ([][]float32, error) {
+	result := make([][]float32, 0, len(inputs))
+	for _, input := range inputs {
+		if strings.Contains(strings.ToLower(input), "handler") {
+			result = append(result, []float32{1, 0})
+		} else {
+			result = append(result, []float32{0, 1})
+		}
+	}
+	return result, nil
 }
 
 func index(t *testing.T, ctx context.Context, root string) {

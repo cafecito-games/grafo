@@ -26,6 +26,7 @@ type Querier interface {
 	DeleteFile(ctx context.Context, path string) error
 	DeleteNodesByOwner(ctx context.Context, ownerFile string) error
 	DeleteOrphanExternalNodes(ctx context.Context) error
+	DeleteStaleEmbeddings(ctx context.Context, model string) (int64, error)
 	FindNodesByName(ctx context.Context, name string) ([]Node, error)
 	FindNodesByNameKind(ctx context.Context, arg FindNodesByNameKindParams) ([]Node, error)
 	FindNodesExact(ctx context.Context, arg FindNodesExactParams) ([]Node, error)
@@ -36,9 +37,12 @@ type Querier interface {
 	ListDirtyFacts(ctx context.Context) ([]Fact, error)
 	ListEdgesFrom(ctx context.Context, fromID string) ([]Edge, error)
 	ListEdgesTo(ctx context.Context, toID string) ([]Edge, error)
+	ListEmbeddingHashesByModel(ctx context.Context, model string) ([]ListEmbeddingHashesByModelRow, error)
+	ListEmbeddingsByModel(ctx context.Context, model string) ([]Embedding, error)
 	ListExternalEdgesMatching(ctx context.Context, arg ListExternalEdgesMatchingParams) ([]Edge, error)
 	ListFacts(ctx context.Context) ([]Fact, error)
 	ListFiles(ctx context.Context) ([]File, error)
+	ListSemanticCandidateNodes(ctx context.Context) ([]Node, error)
 	MarkDirtyNode(ctx context.Context, nodeID string) error
 	MarkDirtyOwner(ctx context.Context, ownerFile string) error
 	MarkDirtyTarget(ctx context.Context, arg MarkDirtyTargetParams) error
@@ -46,6 +50,7 @@ type Querier interface {
 	MarkOwnedNodesDirty(ctx context.Context, ownerFile string) error
 	SearchNodes(ctx context.Context, arg SearchNodesParams) ([]Node, error)
 	SetMeta(ctx context.Context, arg SetMetaParams) error
+	UpsertEmbedding(ctx context.Context, arg UpsertEmbeddingParams) error
 	UpsertFact(ctx context.Context, arg UpsertFactParams) error
 	UpsertFile(ctx context.Context, arg UpsertFileParams) error
 	UpsertNode(ctx context.Context, arg UpsertNodeParams) error

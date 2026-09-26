@@ -9,6 +9,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
 	"github.com/cafecito-games/grafo/internal/mcpserver"
+	"github.com/cafecito-games/grafo/internal/semantic"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -33,6 +34,9 @@ func TestServerListsAndCallsGraphTools(t *testing.T) {
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	serverSession, err := mcpserver.New(repository, indexer.Project{Name: "sample", Branch: "main"}).
 		WithRefresh(func(context.Context) error { refreshes.Add(1); return nil }).
+		WithReusable(func(_ context.Context, text string, _ int) (semantic.SearchResult, error) {
+			return semantic.SearchResult{Query: text, Model: "test"}, nil
+		}).
 		Server("test").Connect(ctx, serverTransport, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -49,8 +53,8 @@ func TestServerListsAndCallsGraphTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Tools) != 8 {
-		t.Fatalf("expected 8 tools, got %d", len(listed.Tools))
+	if len(listed.Tools) != 9 {
+		t.Fatalf("expected 9 tools, got %d", len(listed.Tools))
 	}
 	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name: "find_symbols", Arguments: map[string]any{"query": "Checkout"},
@@ -71,5 +75,21 @@ func TestServerListsAndCallsGraphTools(t *testing.T) {
 	}
 	if refreshes.Load() != 1 {
 		t.Fatalf("expected one pre-query refresh, got %d", refreshes.Load())
+	}
+	reusable, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "find_reusable_code", Arguments: map[string]any{"query": "charge a card"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reusable.IsError {
+		t.Fatalf("reusable tool returned an error: %#v", reusable.Content)
+	}
+	structured, ok = reusable.StructuredContent.(map[string]any)
+	if !ok || structured["query"] != "charge a card" || structured["model"] != "test" {
+		t.Fatalf("unexpected reusable result: %#v", reusable.StructuredContent)
+	}
+	if refreshes.Load() != 2 {
+		t.Fatalf("expected refresh before every tool call, got %d", refreshes.Load())
 	}
 }
