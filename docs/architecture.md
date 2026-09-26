@@ -18,6 +18,7 @@ storage can evolve independently.
             ▲
             │
   internal/parser/*        language AST adapters, manifests, SQL router, config mappers
+       ├─ defaults/*       production registry shared by CLI and evaluation
        ├─ gdscript/*       gdparser GDScript AST adapter
        ├─ godot/*          gdparser scene, resource, config, UID, and shader adapters
        └─ sql/*            dialect adapters such as PostgreSQL
@@ -113,8 +114,8 @@ Grafo does not require sqlc.
 
 ## Extension seams
 
-- Add a language by implementing `parser.Parser` and registering it in the CLI
-  composition root.
+- Add a language by implementing `parser.Parser` and registering it in the
+  shared production registry under `internal/parser/defaults`.
 - Add a SQL dialect by implementing `sql.Dialect` under `internal/parser/sql`
   and passing it to the single SQL router in the CLI composition root. A
   dialect declares only its unambiguous extensions; `.sql` always belongs to

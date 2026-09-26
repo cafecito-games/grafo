@@ -11,6 +11,16 @@ tasks:
     cmds:
       - go test ./...
 
+  eval:resolution:
+    desc: Run the deterministic parser-to-query resolution corpus
+    cmds:
+      - go test ./internal/eval/... -run TestResolutionCorpus -count=1
+
+  eval:update:
+    desc: Atomically update resolution corpus expectations after a reviewed graph change
+    cmds:
+      - go run ./internal/eval/cmd/grafo-eval -update ./internal/eval/testdata
+
   vet:
     desc: Run Go static analysis
     cmds:

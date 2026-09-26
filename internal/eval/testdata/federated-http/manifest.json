@@ -1,0 +1,433 @@
+{
+  "schema_version": 1,
+  "case_id": "federated-http",
+  "repositories": [
+    {
+      "id": "client",
+      "path": "repos/client"
+    },
+    {
+      "id": "server",
+      "path": "repos/server"
+    }
+  ],
+  "expect": {
+    "nodes": [
+      {
+        "repo": "client",
+        "kind": "endpoint",
+        "qualified_name": "GET /charge",
+        "external": true
+      },
+      {
+        "repo": "client",
+        "kind": "file",
+        "qualified_name": "client.go"
+      },
+      {
+        "repo": "client",
+        "kind": "file",
+        "qualified_name": "go.mod"
+      },
+      {
+        "repo": "client",
+        "kind": "function",
+        "qualified_name": "example.com/client.Call"
+      },
+      {
+        "repo": "client",
+        "kind": "module",
+        "qualified_name": "example.com/client"
+      },
+      {
+        "repo": "client",
+        "kind": "module",
+        "qualified_name": "example.com/server",
+        "external": true
+      },
+      {
+        "repo": "client",
+        "kind": "module",
+        "qualified_name": "net/http",
+        "external": true
+      },
+      {
+        "repo": "client",
+        "kind": "repository",
+        "qualified_name": "client"
+      },
+      {
+        "repo": "server",
+        "kind": "endpoint",
+        "qualified_name": "endpoint:GET /charge@server.go:6"
+      },
+      {
+        "repo": "server",
+        "kind": "file",
+        "qualified_name": "go.mod"
+      },
+      {
+        "repo": "server",
+        "kind": "file",
+        "qualified_name": "server.go"
+      },
+      {
+        "repo": "server",
+        "kind": "function",
+        "qualified_name": "example.com/server.Handler"
+      },
+      {
+        "repo": "server",
+        "kind": "function",
+        "qualified_name": "example.com/server.Routes"
+      },
+      {
+        "repo": "server",
+        "kind": "module",
+        "qualified_name": "example.com/server"
+      },
+      {
+        "repo": "server",
+        "kind": "repository",
+        "qualified_name": "server"
+      }
+    ],
+    "edges": [
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "client.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.Call"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 5,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "client.go"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "client",
+          "kind": "module",
+          "qualified_name": "net/http",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 3,
+          "column": 8
+        },
+        "properties": {
+          "alias": "http"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "go.mod"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "module",
+          "qualified_name": "example.com/client"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.Call"
+        },
+        "relation": "requests",
+        "to": {
+          "repo": "server",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /charge@server.go:6"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 6,
+          "column": 2
+        },
+        "properties": {
+          "federated": "true"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "module",
+          "qualified_name": "example.com/client"
+        },
+        "relation": "depends_on",
+        "to": {
+          "repo": "server",
+          "kind": "module",
+          "qualified_name": "example.com/server"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 5,
+          "column": 1
+        },
+        "properties": {
+          "ecosystem": "go",
+          "federated": "true",
+          "scope": "runtime",
+          "version": "v0.0.0"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "repository",
+          "qualified_name": "client"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "client.go"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "repository",
+          "qualified_name": "client"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "go.mod"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /charge@server.go:6"
+        },
+        "relation": "handled_by",
+        "to": {
+          "repo": "server",
+          "kind": "function",
+          "qualified_name": "example.com/server.Handler"
+        },
+        "source": {
+          "path": "server.go",
+          "line": 6,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "file",
+          "qualified_name": "go.mod"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "server",
+          "kind": "module",
+          "qualified_name": "example.com/server"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "file",
+          "qualified_name": "server.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "server",
+          "kind": "function",
+          "qualified_name": "example.com/server.Handler"
+        },
+        "source": {
+          "path": "server.go",
+          "line": 3,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "file",
+          "qualified_name": "server.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "server",
+          "kind": "function",
+          "qualified_name": "example.com/server.Routes"
+        },
+        "source": {
+          "path": "server.go",
+          "line": 5,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "function",
+          "qualified_name": "example.com/server.Routes"
+        },
+        "relation": "exposes",
+        "to": {
+          "repo": "server",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /charge@server.go:6"
+        },
+        "source": {
+          "path": "server.go",
+          "line": 6,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "repository",
+          "qualified_name": "server"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "server",
+          "kind": "file",
+          "qualified_name": "go.mod"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "repository",
+          "qualified_name": "server"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "server",
+          "kind": "file",
+          "qualified_name": "server.go"
+        },
+        "source": {
+          "path": "server.go",
+          "line": 1,
+          "column": 1
+        }
+      }
+    ],
+    "queries": [
+      {
+        "id": "client-to-server-handler",
+        "from": "example.com/client.Call",
+        "to": "example.com/server.Handler",
+        "direction": "outgoing",
+        "relations": [
+          "requests",
+          "handled_by"
+        ],
+        "nodes": [
+          {
+            "repo": "client",
+            "kind": "function",
+            "qualified_name": "example.com/client.Call"
+          },
+          {
+            "repo": "server",
+            "kind": "endpoint",
+            "qualified_name": "endpoint:GET /charge@server.go:6"
+          },
+          {
+            "repo": "server",
+            "kind": "function",
+            "qualified_name": "example.com/server.Handler"
+          }
+        ],
+        "edges": [
+          {
+            "from": {
+              "repo": "client",
+              "kind": "function",
+              "qualified_name": "example.com/client.Call"
+            },
+            "relation": "requests",
+            "to": {
+              "repo": "server",
+              "kind": "endpoint",
+              "qualified_name": "endpoint:GET /charge@server.go:6"
+            },
+            "source": {
+              "path": "client.go",
+              "line": 6,
+              "column": 2
+            },
+            "properties": {
+              "federated": "true"
+            }
+          },
+          {
+            "from": {
+              "repo": "server",
+              "kind": "endpoint",
+              "qualified_name": "endpoint:GET /charge@server.go:6"
+            },
+            "relation": "handled_by",
+            "to": {
+              "repo": "server",
+              "kind": "function",
+              "qualified_name": "example.com/server.Handler"
+            },
+            "source": {
+              "path": "server.go",
+              "line": 6,
+              "column": 2
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

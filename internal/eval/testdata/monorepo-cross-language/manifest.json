@@ -1,0 +1,327 @@
+{
+  "schema_version": 1,
+  "case_id": "monorepo-cross-language",
+  "repositories": [
+    {
+      "id": "monorepo",
+      "path": "repos/monorepo"
+    }
+  ],
+  "expect": {
+    "nodes": [
+      {
+        "repo": "monorepo",
+        "kind": "endpoint",
+        "qualified_name": "endpoint:POST /orders@services/server.py:1"
+      },
+      {
+        "repo": "monorepo",
+        "kind": "file",
+        "qualified_name": "services/client.ts"
+      },
+      {
+        "repo": "monorepo",
+        "kind": "file",
+        "qualified_name": "services/server.py"
+      },
+      {
+        "repo": "monorepo",
+        "kind": "function",
+        "qualified_name": "services.server.create_order"
+      },
+      {
+        "repo": "monorepo",
+        "kind": "function",
+        "qualified_name": "services/client.submit"
+      },
+      {
+        "repo": "monorepo",
+        "kind": "parameter",
+        "qualified_name": "services.server.create_order.order_id"
+      },
+      {
+        "repo": "monorepo",
+        "kind": "parameter",
+        "qualified_name": "services/client.submit.orderId"
+      },
+      {
+        "repo": "monorepo",
+        "kind": "repository",
+        "qualified_name": "monorepo"
+      }
+    ],
+    "edges": [
+      {
+        "from": {
+          "repo": "monorepo",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:POST /orders@services/server.py:1"
+        },
+        "relation": "handled_by",
+        "to": {
+          "repo": "monorepo",
+          "kind": "function",
+          "qualified_name": "services.server.create_order"
+        },
+        "source": {
+          "path": "services/server.py",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "handler": "services.server.create_order"
+        }
+      },
+      {
+        "from": {
+          "repo": "monorepo",
+          "kind": "file",
+          "qualified_name": "services/client.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "monorepo",
+          "kind": "function",
+          "qualified_name": "services/client.submit"
+        },
+        "source": {
+          "path": "services/client.ts",
+          "line": 1,
+          "column": 8
+        }
+      },
+      {
+        "from": {
+          "repo": "monorepo",
+          "kind": "file",
+          "qualified_name": "services/server.py"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "monorepo",
+          "kind": "function",
+          "qualified_name": "services.server.create_order"
+        },
+        "source": {
+          "path": "services/server.py",
+          "line": 2,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "monorepo",
+          "kind": "function",
+          "qualified_name": "services.server.create_order"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "monorepo",
+          "kind": "parameter",
+          "qualified_name": "services.server.create_order.order_id"
+        },
+        "source": {
+          "path": "services/server.py",
+          "line": 2,
+          "column": 24
+        }
+      },
+      {
+        "from": {
+          "repo": "monorepo",
+          "kind": "function",
+          "qualified_name": "services.server.create_order"
+        },
+        "relation": "exposes",
+        "to": {
+          "repo": "monorepo",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:POST /orders@services/server.py:1"
+        },
+        "source": {
+          "path": "services/server.py",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "monorepo",
+          "kind": "function",
+          "qualified_name": "services/client.submit"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "monorepo",
+          "kind": "parameter",
+          "qualified_name": "services/client.submit.orderId"
+        },
+        "source": {
+          "path": "services/client.ts",
+          "line": 1,
+          "column": 30
+        }
+      },
+      {
+        "from": {
+          "repo": "monorepo",
+          "kind": "function",
+          "qualified_name": "services/client.submit"
+        },
+        "relation": "requests",
+        "to": {
+          "repo": "monorepo",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:POST /orders@services/server.py:1"
+        },
+        "source": {
+          "path": "services/client.ts",
+          "line": 2,
+          "column": 10
+        }
+      },
+      {
+        "from": {
+          "repo": "monorepo",
+          "kind": "parameter",
+          "qualified_name": "services.server.create_order.order_id"
+        },
+        "relation": "returns",
+        "to": {
+          "repo": "monorepo",
+          "kind": "function",
+          "qualified_name": "services.server.create_order"
+        },
+        "source": {
+          "path": "services/server.py",
+          "line": 3,
+          "column": 5
+        }
+      },
+      {
+        "from": {
+          "repo": "monorepo",
+          "kind": "parameter",
+          "qualified_name": "services/client.submit.orderId"
+        },
+        "relation": "returns",
+        "to": {
+          "repo": "monorepo",
+          "kind": "function",
+          "qualified_name": "services/client.submit"
+        },
+        "source": {
+          "path": "services/client.ts",
+          "line": 2,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "monorepo",
+          "kind": "repository",
+          "qualified_name": "monorepo"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "monorepo",
+          "kind": "file",
+          "qualified_name": "services/client.ts"
+        },
+        "source": {
+          "path": "services/client.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "monorepo",
+          "kind": "repository",
+          "qualified_name": "monorepo"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "monorepo",
+          "kind": "file",
+          "qualified_name": "services/server.py"
+        },
+        "source": {
+          "path": "services/server.py",
+          "line": 1,
+          "column": 1
+        }
+      }
+    ],
+    "queries": [
+      {
+        "id": "typescript-to-python-handler",
+        "from": "services/client.submit",
+        "to": "services.server.create_order",
+        "direction": "outgoing",
+        "relations": [
+          "requests",
+          "handled_by"
+        ],
+        "nodes": [
+          {
+            "repo": "monorepo",
+            "kind": "function",
+            "qualified_name": "services/client.submit"
+          },
+          {
+            "repo": "monorepo",
+            "kind": "endpoint",
+            "qualified_name": "endpoint:POST /orders@services/server.py:1"
+          },
+          {
+            "repo": "monorepo",
+            "kind": "function",
+            "qualified_name": "services.server.create_order"
+          }
+        ],
+        "edges": [
+          {
+            "from": {
+              "repo": "monorepo",
+              "kind": "function",
+              "qualified_name": "services/client.submit"
+            },
+            "relation": "requests",
+            "to": {
+              "repo": "monorepo",
+              "kind": "endpoint",
+              "qualified_name": "endpoint:POST /orders@services/server.py:1"
+            },
+            "source": {
+              "path": "services/client.ts",
+              "line": 2,
+              "column": 10
+            }
+          },
+          {
+            "from": {
+              "repo": "monorepo",
+              "kind": "endpoint",
+              "qualified_name": "endpoint:POST /orders@services/server.py:1"
+            },
+            "relation": "handled_by",
+            "to": {
+              "repo": "monorepo",
+              "kind": "function",
+              "qualified_name": "services.server.create_order"
+            },
+            "source": {
+              "path": "services/server.py",
+              "line": 1,
+              "column": 1
+            },
+            "properties": {
+              "handler": "services.server.create_order"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
