@@ -4,6 +4,11 @@
 
 package sqlcgen
 
+type DirtyFact struct {
+	FactID    string `json:"fact_id"`
+	OwnerFile string `json:"owner_file"`
+}
+
 type DirtyNode struct {
 	NodeID string `json:"node_id"`
 }
@@ -81,4 +86,8 @@ type Node struct {
 	Properties    string `json:"properties"`
 	OwnerFile     string `json:"owner_file"`
 	External      int64  `json:"external"`
+}
+
+type ReconciliationCleanup struct {
+	ID int64 `json:"id"`
 }

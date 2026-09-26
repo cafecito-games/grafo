@@ -17,6 +17,50 @@ SELECT nodes.name, nodes.kind FROM nodes WHERE nodes.owner_file = ?
 UNION
 SELECT nodes.qualified_name, nodes.kind FROM nodes WHERE nodes.owner_file = ?;
 
+-- name: PruneDirtyFacts :exec
+DELETE FROM dirty_facts
+WHERE NOT EXISTS (SELECT 1 FROM facts WHERE facts.id = dirty_facts.fact_id);
+
+-- name: EnqueueDirtyFacts :exec
+INSERT OR IGNORE INTO dirty_facts(fact_id, owner_file)
+SELECT facts.id, facts.owner_file
+FROM dirty_owners
+CROSS JOIN facts INDEXED BY facts_owner
+WHERE facts.owner_file = dirty_owners.owner_file
+UNION ALL
+SELECT facts.id, facts.owner_file
+FROM dirty_nodes
+CROSS JOIN facts INDEXED BY facts_target_id
+WHERE facts.target_id = dirty_nodes.node_id
+UNION ALL
+SELECT facts.id, facts.owner_file
+FROM dirty_targets
+CROSS JOIN facts INDEXED BY facts_target
+WHERE facts.target = dirty_targets.target
+  AND (facts.target_kind = '' OR facts.target_kind = dirty_targets.target_kind);
+
+-- name: DeleteDirtyFactBatch :exec
+DELETE FROM dirty_facts
+WHERE fact_id IN (
+    SELECT fact_id
+    FROM dirty_facts INDEXED BY dirty_facts_order
+    ORDER BY owner_file, fact_id
+    LIMIT ?
+);
+
+-- name: CountDirtyFacts :one
+SELECT COUNT(*) FROM dirty_facts;
+
+-- name: MarkReconciliationCleanup :exec
+INSERT OR IGNORE INTO reconciliation_cleanup(id)
+SELECT 1 WHERE EXISTS (SELECT 1 FROM dirty_facts);
+
+-- name: ReconciliationCleanupPending :one
+SELECT EXISTS (SELECT 1 FROM reconciliation_cleanup);
+
+-- name: ClearReconciliationCleanup :exec
+DELETE FROM reconciliation_cleanup;
+
 -- name: ClearDirtyOwners :exec
 DELETE FROM dirty_owners;
 

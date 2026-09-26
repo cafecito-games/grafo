@@ -14,7 +14,7 @@ SELECT COUNT(*) FROM edges
 `
 
 func (q *Queries) CountEdges(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countEdges)
+	row := q.queryRow(ctx, q.countEdgesStmt, countEdges)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -30,7 +30,7 @@ type CountEdgesByKindRow struct {
 }
 
 func (q *Queries) CountEdgesByKind(ctx context.Context) ([]CountEdgesByKindRow, error) {
-	rows, err := q.db.QueryContext(ctx, countEdgesByKind)
+	rows, err := q.query(ctx, q.countEdgesByKindStmt, countEdgesByKind)
 	if err != nil {
 		return nil, err
 	}
@@ -57,16 +57,22 @@ DELETE FROM edges
 `
 
 func (q *Queries) DeleteAllEdges(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, deleteAllEdges)
+	_, err := q.exec(ctx, q.deleteAllEdgesStmt, deleteAllEdges)
 	return err
 }
 
-const deleteEdgesByFact = `-- name: DeleteEdgesByFact :exec
-DELETE FROM edges WHERE fact_id = ?
+const deleteEdgesByDirtyFactBatch = `-- name: DeleteEdgesByDirtyFactBatch :exec
+DELETE FROM edges
+WHERE fact_id IN (
+    SELECT fact_id
+    FROM dirty_facts INDEXED BY dirty_facts_order
+    ORDER BY owner_file, fact_id
+    LIMIT ?
+)
 `
 
-func (q *Queries) DeleteEdgesByFact(ctx context.Context, factID string) error {
-	_, err := q.db.ExecContext(ctx, deleteEdgesByFact, factID)
+func (q *Queries) DeleteEdgesByDirtyFactBatch(ctx context.Context, limit int64) error {
+	_, err := q.exec(ctx, q.deleteEdgesByDirtyFactBatchStmt, deleteEdgesByDirtyFactBatch, limit)
 	return err
 }
 
@@ -75,7 +81,7 @@ DELETE FROM edges WHERE fact_id IN (SELECT id FROM facts WHERE owner_file = ?)
 `
 
 func (q *Queries) DeleteEdgesByOwnerFacts(ctx context.Context, ownerFile string) error {
-	_, err := q.db.ExecContext(ctx, deleteEdgesByOwnerFacts, ownerFile)
+	_, err := q.exec(ctx, q.deleteEdgesByOwnerFactsStmt, deleteEdgesByOwnerFacts, ownerFile)
 	return err
 }
 
@@ -99,7 +105,7 @@ type InsertEdgeParams struct {
 }
 
 func (q *Queries) InsertEdge(ctx context.Context, arg InsertEdgeParams) error {
-	_, err := q.db.ExecContext(ctx, insertEdge,
+	_, err := q.exec(ctx, q.insertEdgeStmt, insertEdge,
 		arg.ID,
 		arg.FactID,
 		arg.FromID,
@@ -119,7 +125,7 @@ SELECT id, fact_id, from_id, to_id, kind, path, line, column_no, end_line, prope
 `
 
 func (q *Queries) ListEdgesFrom(ctx context.Context, fromID string) ([]Edge, error) {
-	rows, err := q.db.QueryContext(ctx, listEdgesFrom, fromID)
+	rows, err := q.query(ctx, q.listEdgesFromStmt, listEdgesFrom, fromID)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +163,7 @@ SELECT id, fact_id, from_id, to_id, kind, path, line, column_no, end_line, prope
 `
 
 func (q *Queries) ListEdgesTo(ctx context.Context, toID string) ([]Edge, error) {
-	rows, err := q.db.QueryContext(ctx, listEdgesTo, toID)
+	rows, err := q.query(ctx, q.listEdgesToStmt, listEdgesTo, toID)
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +216,7 @@ type ListExternalEdgesMatchingParams struct {
 }
 
 func (q *Queries) ListExternalEdgesMatching(ctx context.Context, arg ListExternalEdgesMatchingParams) ([]Edge, error) {
-	rows, err := q.db.QueryContext(ctx, listExternalEdgesMatching, arg.QualifiedName, arg.Name)
+	rows, err := q.query(ctx, q.listExternalEdgesMatchingStmt, listExternalEdgesMatching, arg.QualifiedName, arg.Name)
 	if err != nil {
 		return nil, err
 	}

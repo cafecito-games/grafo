@@ -14,7 +14,7 @@ DELETE FROM dirty_nodes
 `
 
 func (q *Queries) ClearDirtyNodes(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, clearDirtyNodes)
+	_, err := q.exec(ctx, q.clearDirtyNodesStmt, clearDirtyNodes)
 	return err
 }
 
@@ -23,7 +23,7 @@ DELETE FROM dirty_owners
 `
 
 func (q *Queries) ClearDirtyOwners(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, clearDirtyOwners)
+	_, err := q.exec(ctx, q.clearDirtyOwnersStmt, clearDirtyOwners)
 	return err
 }
 
@@ -32,7 +32,66 @@ DELETE FROM dirty_targets
 `
 
 func (q *Queries) ClearDirtyTargets(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, clearDirtyTargets)
+	_, err := q.exec(ctx, q.clearDirtyTargetsStmt, clearDirtyTargets)
+	return err
+}
+
+const clearReconciliationCleanup = `-- name: ClearReconciliationCleanup :exec
+DELETE FROM reconciliation_cleanup
+`
+
+func (q *Queries) ClearReconciliationCleanup(ctx context.Context) error {
+	_, err := q.exec(ctx, q.clearReconciliationCleanupStmt, clearReconciliationCleanup)
+	return err
+}
+
+const countDirtyFacts = `-- name: CountDirtyFacts :one
+SELECT COUNT(*) FROM dirty_facts
+`
+
+func (q *Queries) CountDirtyFacts(ctx context.Context) (int64, error) {
+	row := q.queryRow(ctx, q.countDirtyFactsStmt, countDirtyFacts)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const deleteDirtyFactBatch = `-- name: DeleteDirtyFactBatch :exec
+DELETE FROM dirty_facts
+WHERE fact_id IN (
+    SELECT fact_id
+    FROM dirty_facts INDEXED BY dirty_facts_order
+    ORDER BY owner_file, fact_id
+    LIMIT ?
+)
+`
+
+func (q *Queries) DeleteDirtyFactBatch(ctx context.Context, limit int64) error {
+	_, err := q.exec(ctx, q.deleteDirtyFactBatchStmt, deleteDirtyFactBatch, limit)
+	return err
+}
+
+const enqueueDirtyFacts = `-- name: EnqueueDirtyFacts :exec
+INSERT OR IGNORE INTO dirty_facts(fact_id, owner_file)
+SELECT facts.id, facts.owner_file
+FROM dirty_owners
+CROSS JOIN facts INDEXED BY facts_owner
+WHERE facts.owner_file = dirty_owners.owner_file
+UNION ALL
+SELECT facts.id, facts.owner_file
+FROM dirty_nodes
+CROSS JOIN facts INDEXED BY facts_target_id
+WHERE facts.target_id = dirty_nodes.node_id
+UNION ALL
+SELECT facts.id, facts.owner_file
+FROM dirty_targets
+CROSS JOIN facts INDEXED BY facts_target
+WHERE facts.target = dirty_targets.target
+  AND (facts.target_kind = '' OR facts.target_kind = dirty_targets.target_kind)
+`
+
+func (q *Queries) EnqueueDirtyFacts(ctx context.Context) error {
+	_, err := q.exec(ctx, q.enqueueDirtyFactsStmt, enqueueDirtyFacts)
 	return err
 }
 
@@ -41,7 +100,7 @@ INSERT OR IGNORE INTO dirty_nodes(node_id) VALUES (?)
 `
 
 func (q *Queries) MarkDirtyNode(ctx context.Context, nodeID string) error {
-	_, err := q.db.ExecContext(ctx, markDirtyNode, nodeID)
+	_, err := q.exec(ctx, q.markDirtyNodeStmt, markDirtyNode, nodeID)
 	return err
 }
 
@@ -50,7 +109,7 @@ INSERT OR IGNORE INTO dirty_owners(owner_file) VALUES (?)
 `
 
 func (q *Queries) MarkDirtyOwner(ctx context.Context, ownerFile string) error {
-	_, err := q.db.ExecContext(ctx, markDirtyOwner, ownerFile)
+	_, err := q.exec(ctx, q.markDirtyOwnerStmt, markDirtyOwner, ownerFile)
 	return err
 }
 
@@ -64,7 +123,7 @@ type MarkDirtyTargetParams struct {
 }
 
 func (q *Queries) MarkDirtyTarget(ctx context.Context, arg MarkDirtyTargetParams) error {
-	_, err := q.db.ExecContext(ctx, markDirtyTarget, arg.Target, arg.TargetKind)
+	_, err := q.exec(ctx, q.markDirtyTargetStmt, markDirtyTarget, arg.Target, arg.TargetKind)
 	return err
 }
 
@@ -81,7 +140,7 @@ type MarkOwnedNamesDirtyParams struct {
 }
 
 func (q *Queries) MarkOwnedNamesDirty(ctx context.Context, arg MarkOwnedNamesDirtyParams) error {
-	_, err := q.db.ExecContext(ctx, markOwnedNamesDirty, arg.OwnerFile, arg.OwnerFile_2)
+	_, err := q.exec(ctx, q.markOwnedNamesDirtyStmt, markOwnedNamesDirty, arg.OwnerFile, arg.OwnerFile_2)
 	return err
 }
 
@@ -91,6 +150,37 @@ SELECT nodes.id FROM nodes WHERE nodes.owner_file = ?
 `
 
 func (q *Queries) MarkOwnedNodesDirty(ctx context.Context, ownerFile string) error {
-	_, err := q.db.ExecContext(ctx, markOwnedNodesDirty, ownerFile)
+	_, err := q.exec(ctx, q.markOwnedNodesDirtyStmt, markOwnedNodesDirty, ownerFile)
 	return err
+}
+
+const markReconciliationCleanup = `-- name: MarkReconciliationCleanup :exec
+INSERT OR IGNORE INTO reconciliation_cleanup(id)
+SELECT 1 WHERE EXISTS (SELECT 1 FROM dirty_facts)
+`
+
+func (q *Queries) MarkReconciliationCleanup(ctx context.Context) error {
+	_, err := q.exec(ctx, q.markReconciliationCleanupStmt, markReconciliationCleanup)
+	return err
+}
+
+const pruneDirtyFacts = `-- name: PruneDirtyFacts :exec
+DELETE FROM dirty_facts
+WHERE NOT EXISTS (SELECT 1 FROM facts WHERE facts.id = dirty_facts.fact_id)
+`
+
+func (q *Queries) PruneDirtyFacts(ctx context.Context) error {
+	_, err := q.exec(ctx, q.pruneDirtyFactsStmt, pruneDirtyFacts)
+	return err
+}
+
+const reconciliationCleanupPending = `-- name: ReconciliationCleanupPending :one
+SELECT EXISTS (SELECT 1 FROM reconciliation_cleanup)
+`
+
+func (q *Queries) ReconciliationCleanupPending(ctx context.Context) (bool, error) {
+	row := q.queryRow(ctx, q.reconciliationCleanupPendingStmt, reconciliationCleanupPending)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }

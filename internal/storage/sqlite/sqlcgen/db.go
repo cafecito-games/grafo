@@ -7,6 +7,7 @@ package sqlcgen
 import (
 	"context"
 	"database/sql"
+	"fmt"
 )
 
 type DBTX interface {
@@ -20,12 +21,548 @@ func New(db DBTX) *Queries {
 	return &Queries{db: db}
 }
 
+func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
+	q := Queries{db: db}
+	var err error
+	if q.clearDirtyNodesStmt, err = db.PrepareContext(ctx, clearDirtyNodes); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearDirtyNodes: %w", err)
+	}
+	if q.clearDirtyOwnersStmt, err = db.PrepareContext(ctx, clearDirtyOwners); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearDirtyOwners: %w", err)
+	}
+	if q.clearDirtyTargetsStmt, err = db.PrepareContext(ctx, clearDirtyTargets); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearDirtyTargets: %w", err)
+	}
+	if q.clearReconciliationCleanupStmt, err = db.PrepareContext(ctx, clearReconciliationCleanup); err != nil {
+		return nil, fmt.Errorf("error preparing query ClearReconciliationCleanup: %w", err)
+	}
+	if q.countDirtyFactsStmt, err = db.PrepareContext(ctx, countDirtyFacts); err != nil {
+		return nil, fmt.Errorf("error preparing query CountDirtyFacts: %w", err)
+	}
+	if q.countEdgesStmt, err = db.PrepareContext(ctx, countEdges); err != nil {
+		return nil, fmt.Errorf("error preparing query CountEdges: %w", err)
+	}
+	if q.countEdgesByKindStmt, err = db.PrepareContext(ctx, countEdgesByKind); err != nil {
+		return nil, fmt.Errorf("error preparing query CountEdgesByKind: %w", err)
+	}
+	if q.countExternalNodesStmt, err = db.PrepareContext(ctx, countExternalNodes); err != nil {
+		return nil, fmt.Errorf("error preparing query CountExternalNodes: %w", err)
+	}
+	if q.countFilesStmt, err = db.PrepareContext(ctx, countFiles); err != nil {
+		return nil, fmt.Errorf("error preparing query CountFiles: %w", err)
+	}
+	if q.countNodesStmt, err = db.PrepareContext(ctx, countNodes); err != nil {
+		return nil, fmt.Errorf("error preparing query CountNodes: %w", err)
+	}
+	if q.countNodesByKindStmt, err = db.PrepareContext(ctx, countNodesByKind); err != nil {
+		return nil, fmt.Errorf("error preparing query CountNodesByKind: %w", err)
+	}
+	if q.deleteAllEdgesStmt, err = db.PrepareContext(ctx, deleteAllEdges); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteAllEdges: %w", err)
+	}
+	if q.deleteDirtyFactBatchStmt, err = db.PrepareContext(ctx, deleteDirtyFactBatch); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteDirtyFactBatch: %w", err)
+	}
+	if q.deleteEdgesByDirtyFactBatchStmt, err = db.PrepareContext(ctx, deleteEdgesByDirtyFactBatch); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteEdgesByDirtyFactBatch: %w", err)
+	}
+	if q.deleteEdgesByOwnerFactsStmt, err = db.PrepareContext(ctx, deleteEdgesByOwnerFacts); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteEdgesByOwnerFacts: %w", err)
+	}
+	if q.deleteExternalNodesStmt, err = db.PrepareContext(ctx, deleteExternalNodes); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteExternalNodes: %w", err)
+	}
+	if q.deleteFactsByOwnerStmt, err = db.PrepareContext(ctx, deleteFactsByOwner); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteFactsByOwner: %w", err)
+	}
+	if q.deleteFileStmt, err = db.PrepareContext(ctx, deleteFile); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteFile: %w", err)
+	}
+	if q.deleteNodesByOwnerStmt, err = db.PrepareContext(ctx, deleteNodesByOwner); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteNodesByOwner: %w", err)
+	}
+	if q.deleteOrphanExternalNodesStmt, err = db.PrepareContext(ctx, deleteOrphanExternalNodes); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteOrphanExternalNodes: %w", err)
+	}
+	if q.deleteStaleEmbeddingsStmt, err = db.PrepareContext(ctx, deleteStaleEmbeddings); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteStaleEmbeddings: %w", err)
+	}
+	if q.enqueueDirtyFactsStmt, err = db.PrepareContext(ctx, enqueueDirtyFacts); err != nil {
+		return nil, fmt.Errorf("error preparing query EnqueueDirtyFacts: %w", err)
+	}
+	if q.findNodesExactStmt, err = db.PrepareContext(ctx, findNodesExact); err != nil {
+		return nil, fmt.Errorf("error preparing query FindNodesExact: %w", err)
+	}
+	if q.findNodesExactKindStmt, err = db.PrepareContext(ctx, findNodesExactKind); err != nil {
+		return nil, fmt.Errorf("error preparing query FindNodesExactKind: %w", err)
+	}
+	if q.getMetaStmt, err = db.PrepareContext(ctx, getMeta); err != nil {
+		return nil, fmt.Errorf("error preparing query GetMeta: %w", err)
+	}
+	if q.getNodeStmt, err = db.PrepareContext(ctx, getNode); err != nil {
+		return nil, fmt.Errorf("error preparing query GetNode: %w", err)
+	}
+	if q.insertEdgeStmt, err = db.PrepareContext(ctx, insertEdge); err != nil {
+		return nil, fmt.Errorf("error preparing query InsertEdge: %w", err)
+	}
+	if q.listDirtyFactBatchStmt, err = db.PrepareContext(ctx, listDirtyFactBatch); err != nil {
+		return nil, fmt.Errorf("error preparing query ListDirtyFactBatch: %w", err)
+	}
+	if q.listEdgesFromStmt, err = db.PrepareContext(ctx, listEdgesFrom); err != nil {
+		return nil, fmt.Errorf("error preparing query ListEdgesFrom: %w", err)
+	}
+	if q.listEdgesToStmt, err = db.PrepareContext(ctx, listEdgesTo); err != nil {
+		return nil, fmt.Errorf("error preparing query ListEdgesTo: %w", err)
+	}
+	if q.listEmbeddingHashesByModelStmt, err = db.PrepareContext(ctx, listEmbeddingHashesByModel); err != nil {
+		return nil, fmt.Errorf("error preparing query ListEmbeddingHashesByModel: %w", err)
+	}
+	if q.listEmbeddingsByModelStmt, err = db.PrepareContext(ctx, listEmbeddingsByModel); err != nil {
+		return nil, fmt.Errorf("error preparing query ListEmbeddingsByModel: %w", err)
+	}
+	if q.listExternalEdgesMatchingStmt, err = db.PrepareContext(ctx, listExternalEdgesMatching); err != nil {
+		return nil, fmt.Errorf("error preparing query ListExternalEdgesMatching: %w", err)
+	}
+	if q.listFilesStmt, err = db.PrepareContext(ctx, listFiles); err != nil {
+		return nil, fmt.Errorf("error preparing query ListFiles: %w", err)
+	}
+	if q.listSemanticCandidateNodesStmt, err = db.PrepareContext(ctx, listSemanticCandidateNodes); err != nil {
+		return nil, fmt.Errorf("error preparing query ListSemanticCandidateNodes: %w", err)
+	}
+	if q.markDirtyNodeStmt, err = db.PrepareContext(ctx, markDirtyNode); err != nil {
+		return nil, fmt.Errorf("error preparing query MarkDirtyNode: %w", err)
+	}
+	if q.markDirtyOwnerStmt, err = db.PrepareContext(ctx, markDirtyOwner); err != nil {
+		return nil, fmt.Errorf("error preparing query MarkDirtyOwner: %w", err)
+	}
+	if q.markDirtyTargetStmt, err = db.PrepareContext(ctx, markDirtyTarget); err != nil {
+		return nil, fmt.Errorf("error preparing query MarkDirtyTarget: %w", err)
+	}
+	if q.markOwnedNamesDirtyStmt, err = db.PrepareContext(ctx, markOwnedNamesDirty); err != nil {
+		return nil, fmt.Errorf("error preparing query MarkOwnedNamesDirty: %w", err)
+	}
+	if q.markOwnedNodesDirtyStmt, err = db.PrepareContext(ctx, markOwnedNodesDirty); err != nil {
+		return nil, fmt.Errorf("error preparing query MarkOwnedNodesDirty: %w", err)
+	}
+	if q.markReconciliationCleanupStmt, err = db.PrepareContext(ctx, markReconciliationCleanup); err != nil {
+		return nil, fmt.Errorf("error preparing query MarkReconciliationCleanup: %w", err)
+	}
+	if q.pruneDirtyFactsStmt, err = db.PrepareContext(ctx, pruneDirtyFacts); err != nil {
+		return nil, fmt.Errorf("error preparing query PruneDirtyFacts: %w", err)
+	}
+	if q.reconciliationCleanupPendingStmt, err = db.PrepareContext(ctx, reconciliationCleanupPending); err != nil {
+		return nil, fmt.Errorf("error preparing query ReconciliationCleanupPending: %w", err)
+	}
+	if q.searchNodesStmt, err = db.PrepareContext(ctx, searchNodes); err != nil {
+		return nil, fmt.Errorf("error preparing query SearchNodes: %w", err)
+	}
+	if q.setMetaStmt, err = db.PrepareContext(ctx, setMeta); err != nil {
+		return nil, fmt.Errorf("error preparing query SetMeta: %w", err)
+	}
+	if q.upsertEmbeddingStmt, err = db.PrepareContext(ctx, upsertEmbedding); err != nil {
+		return nil, fmt.Errorf("error preparing query UpsertEmbedding: %w", err)
+	}
+	if q.upsertFactStmt, err = db.PrepareContext(ctx, upsertFact); err != nil {
+		return nil, fmt.Errorf("error preparing query UpsertFact: %w", err)
+	}
+	if q.upsertFileStmt, err = db.PrepareContext(ctx, upsertFile); err != nil {
+		return nil, fmt.Errorf("error preparing query UpsertFile: %w", err)
+	}
+	if q.upsertNodeStmt, err = db.PrepareContext(ctx, upsertNode); err != nil {
+		return nil, fmt.Errorf("error preparing query UpsertNode: %w", err)
+	}
+	return &q, nil
+}
+
+func (q *Queries) Close() error {
+	var err error
+	if q.clearDirtyNodesStmt != nil {
+		if cerr := q.clearDirtyNodesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearDirtyNodesStmt: %w", cerr)
+		}
+	}
+	if q.clearDirtyOwnersStmt != nil {
+		if cerr := q.clearDirtyOwnersStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearDirtyOwnersStmt: %w", cerr)
+		}
+	}
+	if q.clearDirtyTargetsStmt != nil {
+		if cerr := q.clearDirtyTargetsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearDirtyTargetsStmt: %w", cerr)
+		}
+	}
+	if q.clearReconciliationCleanupStmt != nil {
+		if cerr := q.clearReconciliationCleanupStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing clearReconciliationCleanupStmt: %w", cerr)
+		}
+	}
+	if q.countDirtyFactsStmt != nil {
+		if cerr := q.countDirtyFactsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countDirtyFactsStmt: %w", cerr)
+		}
+	}
+	if q.countEdgesStmt != nil {
+		if cerr := q.countEdgesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countEdgesStmt: %w", cerr)
+		}
+	}
+	if q.countEdgesByKindStmt != nil {
+		if cerr := q.countEdgesByKindStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countEdgesByKindStmt: %w", cerr)
+		}
+	}
+	if q.countExternalNodesStmt != nil {
+		if cerr := q.countExternalNodesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countExternalNodesStmt: %w", cerr)
+		}
+	}
+	if q.countFilesStmt != nil {
+		if cerr := q.countFilesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countFilesStmt: %w", cerr)
+		}
+	}
+	if q.countNodesStmt != nil {
+		if cerr := q.countNodesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countNodesStmt: %w", cerr)
+		}
+	}
+	if q.countNodesByKindStmt != nil {
+		if cerr := q.countNodesByKindStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countNodesByKindStmt: %w", cerr)
+		}
+	}
+	if q.deleteAllEdgesStmt != nil {
+		if cerr := q.deleteAllEdgesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteAllEdgesStmt: %w", cerr)
+		}
+	}
+	if q.deleteDirtyFactBatchStmt != nil {
+		if cerr := q.deleteDirtyFactBatchStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteDirtyFactBatchStmt: %w", cerr)
+		}
+	}
+	if q.deleteEdgesByDirtyFactBatchStmt != nil {
+		if cerr := q.deleteEdgesByDirtyFactBatchStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteEdgesByDirtyFactBatchStmt: %w", cerr)
+		}
+	}
+	if q.deleteEdgesByOwnerFactsStmt != nil {
+		if cerr := q.deleteEdgesByOwnerFactsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteEdgesByOwnerFactsStmt: %w", cerr)
+		}
+	}
+	if q.deleteExternalNodesStmt != nil {
+		if cerr := q.deleteExternalNodesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteExternalNodesStmt: %w", cerr)
+		}
+	}
+	if q.deleteFactsByOwnerStmt != nil {
+		if cerr := q.deleteFactsByOwnerStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteFactsByOwnerStmt: %w", cerr)
+		}
+	}
+	if q.deleteFileStmt != nil {
+		if cerr := q.deleteFileStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteFileStmt: %w", cerr)
+		}
+	}
+	if q.deleteNodesByOwnerStmt != nil {
+		if cerr := q.deleteNodesByOwnerStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteNodesByOwnerStmt: %w", cerr)
+		}
+	}
+	if q.deleteOrphanExternalNodesStmt != nil {
+		if cerr := q.deleteOrphanExternalNodesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteOrphanExternalNodesStmt: %w", cerr)
+		}
+	}
+	if q.deleteStaleEmbeddingsStmt != nil {
+		if cerr := q.deleteStaleEmbeddingsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteStaleEmbeddingsStmt: %w", cerr)
+		}
+	}
+	if q.enqueueDirtyFactsStmt != nil {
+		if cerr := q.enqueueDirtyFactsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing enqueueDirtyFactsStmt: %w", cerr)
+		}
+	}
+	if q.findNodesExactStmt != nil {
+		if cerr := q.findNodesExactStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing findNodesExactStmt: %w", cerr)
+		}
+	}
+	if q.findNodesExactKindStmt != nil {
+		if cerr := q.findNodesExactKindStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing findNodesExactKindStmt: %w", cerr)
+		}
+	}
+	if q.getMetaStmt != nil {
+		if cerr := q.getMetaStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getMetaStmt: %w", cerr)
+		}
+	}
+	if q.getNodeStmt != nil {
+		if cerr := q.getNodeStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getNodeStmt: %w", cerr)
+		}
+	}
+	if q.insertEdgeStmt != nil {
+		if cerr := q.insertEdgeStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing insertEdgeStmt: %w", cerr)
+		}
+	}
+	if q.listDirtyFactBatchStmt != nil {
+		if cerr := q.listDirtyFactBatchStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listDirtyFactBatchStmt: %w", cerr)
+		}
+	}
+	if q.listEdgesFromStmt != nil {
+		if cerr := q.listEdgesFromStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listEdgesFromStmt: %w", cerr)
+		}
+	}
+	if q.listEdgesToStmt != nil {
+		if cerr := q.listEdgesToStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listEdgesToStmt: %w", cerr)
+		}
+	}
+	if q.listEmbeddingHashesByModelStmt != nil {
+		if cerr := q.listEmbeddingHashesByModelStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listEmbeddingHashesByModelStmt: %w", cerr)
+		}
+	}
+	if q.listEmbeddingsByModelStmt != nil {
+		if cerr := q.listEmbeddingsByModelStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listEmbeddingsByModelStmt: %w", cerr)
+		}
+	}
+	if q.listExternalEdgesMatchingStmt != nil {
+		if cerr := q.listExternalEdgesMatchingStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listExternalEdgesMatchingStmt: %w", cerr)
+		}
+	}
+	if q.listFilesStmt != nil {
+		if cerr := q.listFilesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listFilesStmt: %w", cerr)
+		}
+	}
+	if q.listSemanticCandidateNodesStmt != nil {
+		if cerr := q.listSemanticCandidateNodesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listSemanticCandidateNodesStmt: %w", cerr)
+		}
+	}
+	if q.markDirtyNodeStmt != nil {
+		if cerr := q.markDirtyNodeStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing markDirtyNodeStmt: %w", cerr)
+		}
+	}
+	if q.markDirtyOwnerStmt != nil {
+		if cerr := q.markDirtyOwnerStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing markDirtyOwnerStmt: %w", cerr)
+		}
+	}
+	if q.markDirtyTargetStmt != nil {
+		if cerr := q.markDirtyTargetStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing markDirtyTargetStmt: %w", cerr)
+		}
+	}
+	if q.markOwnedNamesDirtyStmt != nil {
+		if cerr := q.markOwnedNamesDirtyStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing markOwnedNamesDirtyStmt: %w", cerr)
+		}
+	}
+	if q.markOwnedNodesDirtyStmt != nil {
+		if cerr := q.markOwnedNodesDirtyStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing markOwnedNodesDirtyStmt: %w", cerr)
+		}
+	}
+	if q.markReconciliationCleanupStmt != nil {
+		if cerr := q.markReconciliationCleanupStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing markReconciliationCleanupStmt: %w", cerr)
+		}
+	}
+	if q.pruneDirtyFactsStmt != nil {
+		if cerr := q.pruneDirtyFactsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing pruneDirtyFactsStmt: %w", cerr)
+		}
+	}
+	if q.reconciliationCleanupPendingStmt != nil {
+		if cerr := q.reconciliationCleanupPendingStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing reconciliationCleanupPendingStmt: %w", cerr)
+		}
+	}
+	if q.searchNodesStmt != nil {
+		if cerr := q.searchNodesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing searchNodesStmt: %w", cerr)
+		}
+	}
+	if q.setMetaStmt != nil {
+		if cerr := q.setMetaStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing setMetaStmt: %w", cerr)
+		}
+	}
+	if q.upsertEmbeddingStmt != nil {
+		if cerr := q.upsertEmbeddingStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing upsertEmbeddingStmt: %w", cerr)
+		}
+	}
+	if q.upsertFactStmt != nil {
+		if cerr := q.upsertFactStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing upsertFactStmt: %w", cerr)
+		}
+	}
+	if q.upsertFileStmt != nil {
+		if cerr := q.upsertFileStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing upsertFileStmt: %w", cerr)
+		}
+	}
+	if q.upsertNodeStmt != nil {
+		if cerr := q.upsertNodeStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing upsertNodeStmt: %w", cerr)
+		}
+	}
+	return err
+}
+
+func (q *Queries) exec(ctx context.Context, stmt *sql.Stmt, query string, args ...interface{}) (sql.Result, error) {
+	switch {
+	case stmt != nil && q.tx != nil:
+		return q.tx.StmtContext(ctx, stmt).ExecContext(ctx, args...)
+	case stmt != nil:
+		return stmt.ExecContext(ctx, args...)
+	default:
+		return q.db.ExecContext(ctx, query, args...)
+	}
+}
+
+func (q *Queries) query(ctx context.Context, stmt *sql.Stmt, query string, args ...interface{}) (*sql.Rows, error) {
+	switch {
+	case stmt != nil && q.tx != nil:
+		return q.tx.StmtContext(ctx, stmt).QueryContext(ctx, args...)
+	case stmt != nil:
+		return stmt.QueryContext(ctx, args...)
+	default:
+		return q.db.QueryContext(ctx, query, args...)
+	}
+}
+
+func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, args ...interface{}) *sql.Row {
+	switch {
+	case stmt != nil && q.tx != nil:
+		return q.tx.StmtContext(ctx, stmt).QueryRowContext(ctx, args...)
+	case stmt != nil:
+		return stmt.QueryRowContext(ctx, args...)
+	default:
+		return q.db.QueryRowContext(ctx, query, args...)
+	}
+}
+
 type Queries struct {
-	db DBTX
+	db                               DBTX
+	tx                               *sql.Tx
+	clearDirtyNodesStmt              *sql.Stmt
+	clearDirtyOwnersStmt             *sql.Stmt
+	clearDirtyTargetsStmt            *sql.Stmt
+	clearReconciliationCleanupStmt   *sql.Stmt
+	countDirtyFactsStmt              *sql.Stmt
+	countEdgesStmt                   *sql.Stmt
+	countEdgesByKindStmt             *sql.Stmt
+	countExternalNodesStmt           *sql.Stmt
+	countFilesStmt                   *sql.Stmt
+	countNodesStmt                   *sql.Stmt
+	countNodesByKindStmt             *sql.Stmt
+	deleteAllEdgesStmt               *sql.Stmt
+	deleteDirtyFactBatchStmt         *sql.Stmt
+	deleteEdgesByDirtyFactBatchStmt  *sql.Stmt
+	deleteEdgesByOwnerFactsStmt      *sql.Stmt
+	deleteExternalNodesStmt          *sql.Stmt
+	deleteFactsByOwnerStmt           *sql.Stmt
+	deleteFileStmt                   *sql.Stmt
+	deleteNodesByOwnerStmt           *sql.Stmt
+	deleteOrphanExternalNodesStmt    *sql.Stmt
+	deleteStaleEmbeddingsStmt        *sql.Stmt
+	enqueueDirtyFactsStmt            *sql.Stmt
+	findNodesExactStmt               *sql.Stmt
+	findNodesExactKindStmt           *sql.Stmt
+	getMetaStmt                      *sql.Stmt
+	getNodeStmt                      *sql.Stmt
+	insertEdgeStmt                   *sql.Stmt
+	listDirtyFactBatchStmt           *sql.Stmt
+	listEdgesFromStmt                *sql.Stmt
+	listEdgesToStmt                  *sql.Stmt
+	listEmbeddingHashesByModelStmt   *sql.Stmt
+	listEmbeddingsByModelStmt        *sql.Stmt
+	listExternalEdgesMatchingStmt    *sql.Stmt
+	listFilesStmt                    *sql.Stmt
+	listSemanticCandidateNodesStmt   *sql.Stmt
+	markDirtyNodeStmt                *sql.Stmt
+	markDirtyOwnerStmt               *sql.Stmt
+	markDirtyTargetStmt              *sql.Stmt
+	markOwnedNamesDirtyStmt          *sql.Stmt
+	markOwnedNodesDirtyStmt          *sql.Stmt
+	markReconciliationCleanupStmt    *sql.Stmt
+	pruneDirtyFactsStmt              *sql.Stmt
+	reconciliationCleanupPendingStmt *sql.Stmt
+	searchNodesStmt                  *sql.Stmt
+	setMetaStmt                      *sql.Stmt
+	upsertEmbeddingStmt              *sql.Stmt
+	upsertFactStmt                   *sql.Stmt
+	upsertFileStmt                   *sql.Stmt
+	upsertNodeStmt                   *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db: tx,
+		db:                               tx,
+		tx:                               tx,
+		clearDirtyNodesStmt:              q.clearDirtyNodesStmt,
+		clearDirtyOwnersStmt:             q.clearDirtyOwnersStmt,
+		clearDirtyTargetsStmt:            q.clearDirtyTargetsStmt,
+		clearReconciliationCleanupStmt:   q.clearReconciliationCleanupStmt,
+		countDirtyFactsStmt:              q.countDirtyFactsStmt,
+		countEdgesStmt:                   q.countEdgesStmt,
+		countEdgesByKindStmt:             q.countEdgesByKindStmt,
+		countExternalNodesStmt:           q.countExternalNodesStmt,
+		countFilesStmt:                   q.countFilesStmt,
+		countNodesStmt:                   q.countNodesStmt,
+		countNodesByKindStmt:             q.countNodesByKindStmt,
+		deleteAllEdgesStmt:               q.deleteAllEdgesStmt,
+		deleteDirtyFactBatchStmt:         q.deleteDirtyFactBatchStmt,
+		deleteEdgesByDirtyFactBatchStmt:  q.deleteEdgesByDirtyFactBatchStmt,
+		deleteEdgesByOwnerFactsStmt:      q.deleteEdgesByOwnerFactsStmt,
+		deleteExternalNodesStmt:          q.deleteExternalNodesStmt,
+		deleteFactsByOwnerStmt:           q.deleteFactsByOwnerStmt,
+		deleteFileStmt:                   q.deleteFileStmt,
+		deleteNodesByOwnerStmt:           q.deleteNodesByOwnerStmt,
+		deleteOrphanExternalNodesStmt:    q.deleteOrphanExternalNodesStmt,
+		deleteStaleEmbeddingsStmt:        q.deleteStaleEmbeddingsStmt,
+		enqueueDirtyFactsStmt:            q.enqueueDirtyFactsStmt,
+		findNodesExactStmt:               q.findNodesExactStmt,
+		findNodesExactKindStmt:           q.findNodesExactKindStmt,
+		getMetaStmt:                      q.getMetaStmt,
+		getNodeStmt:                      q.getNodeStmt,
+		insertEdgeStmt:                   q.insertEdgeStmt,
+		listDirtyFactBatchStmt:           q.listDirtyFactBatchStmt,
+		listEdgesFromStmt:                q.listEdgesFromStmt,
+		listEdgesToStmt:                  q.listEdgesToStmt,
+		listEmbeddingHashesByModelStmt:   q.listEmbeddingHashesByModelStmt,
+		listEmbeddingsByModelStmt:        q.listEmbeddingsByModelStmt,
+		listExternalEdgesMatchingStmt:    q.listExternalEdgesMatchingStmt,
+		listFilesStmt:                    q.listFilesStmt,
+		listSemanticCandidateNodesStmt:   q.listSemanticCandidateNodesStmt,
+		markDirtyNodeStmt:                q.markDirtyNodeStmt,
+		markDirtyOwnerStmt:               q.markDirtyOwnerStmt,
+		markDirtyTargetStmt:              q.markDirtyTargetStmt,
+		markOwnedNamesDirtyStmt:          q.markOwnedNamesDirtyStmt,
+		markOwnedNodesDirtyStmt:          q.markOwnedNodesDirtyStmt,
+		markReconciliationCleanupStmt:    q.markReconciliationCleanupStmt,
+		pruneDirtyFactsStmt:              q.pruneDirtyFactsStmt,
+		reconciliationCleanupPendingStmt: q.reconciliationCleanupPendingStmt,
+		searchNodesStmt:                  q.searchNodesStmt,
+		setMetaStmt:                      q.setMetaStmt,
+		upsertEmbeddingStmt:              q.upsertEmbeddingStmt,
+		upsertFactStmt:                   q.upsertFactStmt,
+		upsertFileStmt:                   q.upsertFileStmt,
+		upsertNodeStmt:                   q.upsertNodeStmt,
 	}
 }

@@ -34,6 +34,7 @@ type Report struct {
 	Diagnostics []graph.Diagnostic `json:"diagnostics,omitempty"`
 	Counts      graph.Counts       `json:"counts"`
 	ElapsedMS   int64              `json:"elapsed_ms"`
+	ReconcileMS int64              `json:"reconciliation_ms"`
 	Rebuild     string             `json:"rebuild_reason,omitempty"`
 }
 
@@ -56,8 +57,8 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 	if err != nil {
 		return report, fmt.Errorf("load semantic index version: %w", err)
 	}
-	if indexedVersion != SemanticIndexVersion {
-		options.Force = true
+	schemaChanged := indexedVersion != SemanticIndexVersion
+	if schemaChanged {
 		report.Rebuild = "semantic schema changed"
 	}
 	indexedCommit, err := s.repository.Meta(ctx, "commit")
@@ -100,7 +101,7 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 		changes, changeErr := detectGitChanges(ctx, project.Root, baseCommit)
 		if changeErr == nil {
 			dirtyPaths, dirtyPathsValid = changes.dirty, true
-			if !options.Force && indexedCommit != "" && previousDirtyValid {
+			if !options.Force && !schemaChanged && indexedCommit != "" && previousDirtyValid {
 				selected = selectChangedPaths(paths, known, changes.changed, previousDirty, s.parsers)
 			}
 		}
@@ -137,6 +138,8 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 			Repository: project.Name, RepoID: project.ID, GoModule: project.GoModule}
 		digest := sha256.New()
 		_, _ = digest.Write(content)
+		_, _ = digest.Write([]byte{0})
+		_, _ = digest.Write([]byte(SemanticIndexVersion))
 		if keyer, ok := languageParser.(parserapi.SemanticKeyer); ok {
 			semanticKey, keyErr := keyer.SemanticKey(ctx, input)
 			if keyErr != nil {
@@ -178,11 +181,11 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 	if err := s.repository.RemoveFiles(ctx, report.Removed); err != nil {
 		return report, fmt.Errorf("remove deleted files: %w", err)
 	}
-	if len(report.Updated) > 0 || len(report.Removed) > 0 {
-		if err := s.repository.Reconcile(ctx); err != nil {
-			return report, fmt.Errorf("resolve graph edges: %w", err)
-		}
+	reconcileStarted := time.Now()
+	if err := s.repository.Reconcile(ctx); err != nil {
+		return report, fmt.Errorf("resolve graph edges: %w", err)
 	}
+	report.ReconcileMS = time.Since(reconcileStarted).Milliseconds()
 	if err := s.repository.SetMeta(ctx, "repository_id", project.ID); err != nil {
 		return report, err
 	}

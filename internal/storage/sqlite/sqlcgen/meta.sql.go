@@ -14,7 +14,7 @@ SELECT value FROM meta WHERE key = ?
 `
 
 func (q *Queries) GetMeta(ctx context.Context, key string) (string, error) {
-	row := q.db.QueryRowContext(ctx, getMeta, key)
+	row := q.queryRow(ctx, q.getMetaStmt, getMeta, key)
 	var value string
 	err := row.Scan(&value)
 	return value, err
@@ -31,6 +31,6 @@ type SetMetaParams struct {
 }
 
 func (q *Queries) SetMeta(ctx context.Context, arg SetMetaParams) error {
-	_, err := q.db.ExecContext(ctx, setMeta, arg.Key, arg.Value)
+	_, err := q.exec(ctx, q.setMetaStmt, setMeta, arg.Key, arg.Value)
 	return err
 }

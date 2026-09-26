@@ -186,6 +186,36 @@ func TestServicePropagatesGitConfigurationChanges(t *testing.T) {
 	}
 }
 
+func TestServiceResumesSemanticRebuildWithoutReplacingCompletedFiles(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	write(t, filepath.Join(root, "main.go"), "package sample\nfunc Value() int { return 1 }\n")
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	service := indexer.NewService(repository, parserapi.NewRegistry(golangparser.New()))
+	if report, err := service.Run(ctx, project, indexer.Options{}); err != nil || len(report.Updated) != 1 {
+		t.Fatalf("initial index: report=%#v err=%v", report, err)
+	}
+	if err := repository.SetMeta(ctx, "semantic_index_version", "interrupted-version"); err != nil {
+		t.Fatal(err)
+	}
+
+	resumed, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.Rebuild == "" || len(resumed.Updated) != 0 || resumed.Unchanged != 1 || resumed.Checked != 1 {
+		t.Fatalf("semantic rebuild did not resume from per-file hashes: %#v", resumed)
+	}
+}
+
 func write(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
