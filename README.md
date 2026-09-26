@@ -14,7 +14,8 @@ local, incremental, branch-aware, and stored in SQLite.
 ## Quick start
 
 ```sh
-go install ./cmd/grafo
+go install github.com/cafecito-games/grafo/cmd/grafo@latest
+grafo install
 grafo index .
 grafo status
 grafo find "MyHandler"
@@ -24,6 +25,20 @@ grafo source "HandleCheckout"
 grafo watch
 grafo mcp
 ```
+
+`grafo install` detects Claude Code, Codex, and OpenCode on `PATH` and adds
+Grafo to each one as a user-level MCP server. To configure only selected
+agents, name them explicitly:
+
+```sh
+grafo install claude codex
+```
+
+The generated MCP configuration uses the absolute path of the installed Grafo
+binary, so agents do not depend on their launch environment's `PATH`. Re-run
+the command after moving the binary. Each repository still needs an initial
+`grafo index .`; subsequent MCP queries refresh its active branch index
+incrementally.
 
 Every query supports `--json` for agent-friendly output. Run `grafo help` for
 the complete command surface.
