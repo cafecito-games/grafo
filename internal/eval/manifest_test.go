@@ -93,3 +93,20 @@ func TestLoadManifestRejectsUnsafeAndDuplicateRepositories(t *testing.T) {
 		})
 	}
 }
+
+func TestSnapshotsTreatNullAndEmptyCollectionsEqually(t *testing.T) {
+	manifest, err := LoadManifest("manifest.json", strings.NewReader(`{
+  "schema_version": 1,
+  "case_id": "queryless",
+  "repositories": [{"id": "app", "path": "repos/app"}],
+  "expect": {"nodes": null, "edges": null}
+}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := Snapshot{Nodes: manifest.Expect.Nodes, Edges: manifest.Expect.Edges, Queries: manifest.Expect.Queries}
+	actual := Snapshot{Nodes: []NodeRef{}, Edges: []EdgeRef{}, Queries: []QuerySpec{}}
+	if err := compareSnapshots("queryless", expected, actual); err != nil {
+		t.Fatal(err)
+	}
+}

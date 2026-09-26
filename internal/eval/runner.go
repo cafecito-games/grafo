@@ -448,16 +448,29 @@ func nodeRefMatches(pattern, actual NodeRef) bool {
 }
 
 func compareSnapshots(label string, expected, actual Snapshot) error {
-	if !reflect.DeepEqual(expected.Nodes, actual.Nodes) {
+	if !equalSlices(expected.Nodes, actual.Nodes) {
 		return focusedSliceDiff(label+" nodes", expected.Nodes, actual.Nodes)
 	}
-	if !reflect.DeepEqual(expected.Edges, actual.Edges) {
+	if !equalSlices(expected.Edges, actual.Edges) {
 		return focusedSliceDiff(label+" edges", expected.Edges, actual.Edges)
 	}
-	if !reflect.DeepEqual(expected.Queries, actual.Queries) {
+	if !equalSlices(expected.Queries, actual.Queries) {
 		return focusedSliceDiff(label+" queries", expected.Queries, actual.Queries)
 	}
 	return nil
+}
+
+func equalSlices(expected, actual any) bool {
+	expectedValue, actualValue := reflect.ValueOf(expected), reflect.ValueOf(actual)
+	if expectedValue.Len() != actualValue.Len() {
+		return false
+	}
+	for index := range expectedValue.Len() {
+		if !reflect.DeepEqual(expectedValue.Index(index).Interface(), actualValue.Index(index).Interface()) {
+			return false
+		}
+	}
+	return true
 }
 
 func focusedSliceDiff(label string, expected, actual any) error {
@@ -474,6 +487,9 @@ func focusedSliceDiff(label string, expected, actual any) error {
 	if expectedValue.Len() > common {
 		expectedJSON, _ := json.MarshalIndent(expectedValue.Index(common).Interface(), "", "  ")
 		return fmt.Errorf("%s missing item at index %d (expected %d, actual %d):\n%s", label, common, expectedValue.Len(), actualValue.Len(), expectedJSON)
+	}
+	if actualValue.Len() == common {
+		return fmt.Errorf("%s differ only in representation (expected %d, actual %d)", label, expectedValue.Len(), actualValue.Len())
 	}
 	actualJSON, _ := json.MarshalIndent(actualValue.Index(common).Interface(), "", "  ")
 	return fmt.Errorf("%s has unexpected item at index %d (expected %d, actual %d):\n%s", label, common, expectedValue.Len(), actualValue.Len(), actualJSON)
