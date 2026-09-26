@@ -4,10 +4,12 @@ Grafo is split into domain, use-case, and adapter layers so language support and
 storage can evolve independently.
 
 ```text
-cmd/grafo
+  cmd/grafo
   └─ internal/cli          composition and presentation
        ├─ internal/indexer changed-file indexing use case
-       └─ internal/query   deterministic traversal use case
+       ├─ internal/query   deterministic traversal use case
+       ├─ internal/mcpserver agent-facing stdio tools
+       └─ internal/federation read-only multi-index graph
             │
       internal/graph       nodes, edges, facts, narrow repository ports
             ▲
@@ -27,16 +29,25 @@ cmd/grafo
 3. A parser emits declaration nodes and unresolved relationship facts. It never
    talks to the database.
 4. The repository transactionally replaces the changed file's nodes and facts.
-5. Reconciliation deterministically resolves facts against declarations and
-   materializes adjacency-indexed edges. When evidence is insufficient, the
-   target remains an explicit `external` node rather than a guessed edge.
+5. Reconciliation deterministically resolves only dirty facts against
+   declarations and materializes adjacency-indexed edges. When evidence is
+   insufficient, the target remains an explicit `external` node rather than a
+   guessed edge.
 6. Queries walk ordered incoming or outgoing adjacency lists. Node IDs, edge
    IDs, ordering, and breadth-first tie-breaking are stable.
 
-Reconciliation currently scans facts after changed files are parsed. This is
-not a source re-index: unchanged files never re-enter a parser. A later storage
-migration can add a dirty-target table to make edge reconciliation local too,
-without changing parser or query contracts.
+Dirty-target tracking limits edge reconciliation to facts affected by changed
+declarations or owners. Unchanged files do not re-enter a parser.
+
+## Federation
+
+Every declaration ID includes its repository identity. A federation opens the
+current branch index for each requested worktree and presents them through the
+same read-only repository port used by normal traversal. When an explicit
+external fact exactly matches a compatible declaration in a peer index, the
+adapter synthesizes a deterministic edge marked `federated=true`. It neither
+copies databases nor guesses from similarity. Both one-shot CLI queries and
+long-running MCP tool calls incrementally refresh their indexes first.
 
 ## Persistence
 
@@ -57,7 +68,5 @@ Grafo does not require sqlc.
   and `StatusRepository` ports.
 - Add new relationships as facts first; keep name/type resolution in the
   reconciliation stage so parsers remain syntactic.
-- Cross-repository federation should namespace stable IDs by repository and
-  merge resolved protocol/config facts, not copy source text between indexes.
 - Embeddings belong in a candidate-source port for natural-language discovery;
   they must not change structural edge traversal or ordering.

@@ -406,6 +406,16 @@ func (r *Repository) EdgesTo(ctx context.Context, id string) ([]graph.Edge, erro
 	return edgesFromRows(rows), nil
 }
 
+func (r *Repository) ExternalEdgesTo(ctx context.Context, node graph.Node) ([]graph.Edge, error) {
+	rows, err := r.queries.ListExternalEdgesMatching(ctx, sqlcgen.ListExternalEdgesMatchingParams{
+		QualifiedName: node.QualifiedName, Name: node.Name,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return edgesFromRows(rows), nil
+}
+
 func (r *Repository) inTransaction(ctx context.Context, fn func(*sqlcgen.Queries) error) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {

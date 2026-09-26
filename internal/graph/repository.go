@@ -25,10 +25,21 @@ type QueryRepository interface {
 	EdgesTo(context.Context, string) ([]Edge, error)
 }
 
+// ExternalEdgeRepository exposes unresolved edge targets for cross-repository
+// federation. It remains separate so traversal use cases do not require it.
+type ExternalEdgeRepository interface {
+	ExternalEdgesTo(context.Context, Node) ([]Edge, error)
+}
+
 // StatusRepository exposes only metadata and aggregate counts.
 type StatusRepository interface {
 	Meta(context.Context, string) (string, error)
 	Counts(context.Context) (Counts, error)
+}
+
+type ReadRepository interface {
+	QueryRepository
+	StatusRepository
 }
 
 // Repository is the complete port implemented by a storage adapter. Services

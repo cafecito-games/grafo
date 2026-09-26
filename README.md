@@ -30,6 +30,21 @@ the complete command surface.
 symbol discovery, node lookup, traversal, shortest paths, callers, callees,
 blast radius, and index status.
 
+To query several repositories as one graph, index each once and pass their
+paths to any query command or to the MCP server:
+
+```sh
+grafo index ../checkout-api
+grafo index ../payments
+grafo path "Checkout" "POST /charge" --repos ../checkout-api,../payments
+grafo mcp --repos ../checkout-api,../payments
+```
+
+Grafo refreshes each active branch index incrementally before a query. Explicit
+HTTP targets, imports, configuration references, and other unresolved facts are
+resolved against exact declarations in the other indexes; synthesized edges
+are marked `federated` and retain their original evidence.
+
 ## What the first slice understands
 
 - Go packages, functions, methods, types, fields, parameters, local variables,
@@ -40,13 +55,14 @@ blast radius, and index status.
   calls, inheritance, `process.env`, Express-style routes, and common
   publish/subscribe calls.
 - `.env`, YAML, JSON, and Java `.properties` keys and value references.
+- Outbound Go `net/http` and TypeScript `fetch`/Axios calls, linked to matching
+  endpoint declarations locally or across repository boundaries.
 - Deterministic symbol lookup, neighborhood traversal, shortest paths, callers,
-  callees, and blast-radius traversal.
+  callees, blast-radius traversal, multi-repository federation, and MCP access.
 
 Grafo currently performs syntactic and name-based linking. It does not yet do
-type-checker-grade dispatch, SSA data flow, embeddings, cross-repository graph
-federation, or expose an MCP server. Those belong in later layers; the storage,
-parser, fact-resolution, and traversal boundaries are designed for them.
+type-checker-grade dispatch, full SSA data flow, or embedding-based natural
+language candidate discovery. Structural retrieval remains graph-based.
 
 ## Design principles
 

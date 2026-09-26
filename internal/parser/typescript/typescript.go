@@ -280,6 +280,15 @@ func (e *extractor) parseCall(node *treesitter.Node, current scope) {
 	loc := e.location(node)
 	args := namedArguments(node.ChildByFieldName("arguments"))
 	method := strings.ToLower(graph.SimpleName(strings.TrimSuffix(callee, "?")))
+	if len(args) > 0 && isStringNode(args[0]) && (callee == "fetch" || strings.HasPrefix(callee, "axios.") || strings.HasSuffix(callee, ".request")) {
+		route := parserapi.Unquote(e.text(args[0]))
+		httpMethod := strings.ToUpper(method)
+		if callee == "fetch" || httpMethod == "REQUEST" {
+			httpMethod = "ANY"
+		}
+		e.b.AddFact(fromID, graph.EdgeRequests, "", httpMethod+" "+route, graph.KindEndpoint, loc, nil)
+		return
+	}
 	if isHTTPMethod(method) && len(args) > 1 {
 		route := parserapi.Unquote(e.text(args[0]))
 		if isStringNode(args[0]) && strings.HasPrefix(route, "/") {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
@@ -12,13 +13,35 @@ import (
 )
 
 type Service struct {
-	repository graph.Repository
+	repository graph.ReadRepository
 	query      *query.Service
-	project    indexer.Project
+	projects   []indexer.Project
+	refresh    func(context.Context) error
+	refreshMu  sync.Mutex
 }
 
 func New(repository graph.Repository, project indexer.Project) *Service {
-	return &Service{repository: repository, query: query.NewService(repository), project: project}
+	return NewFederated(repository, []indexer.Project{project})
+}
+
+func NewFederated(repository graph.ReadRepository, projects []indexer.Project) *Service {
+	return &Service{repository: repository, query: query.NewService(repository), projects: projects}
+}
+
+// WithRefresh configures a synchronization hook that runs before every tool
+// call. It keeps a long-lived MCP session aligned with the active worktrees.
+func (s *Service) WithRefresh(refresh func(context.Context) error) *Service {
+	s.refresh = refresh
+	return s
+}
+
+func (s *Service) ready(ctx context.Context) error {
+	if s.refresh == nil {
+		return nil
+	}
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+	return s.refresh(ctx)
 }
 
 func (s *Service) Server(version string) *mcp.Server {
@@ -51,6 +74,9 @@ type FindSymbolsOutput struct {
 }
 
 func (s *Service) findSymbols(ctx context.Context, _ *mcp.CallToolRequest, input FindSymbolsInput) (*mcp.CallToolResult, FindSymbolsOutput, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, FindSymbolsOutput{}, err
+	}
 	if strings.TrimSpace(input.Query) == "" {
 		return nil, FindSymbolsOutput{}, fmt.Errorf("query is required")
 	}
@@ -67,6 +93,9 @@ type NodeOutput struct {
 }
 
 func (s *Service) getNode(ctx context.Context, _ *mcp.CallToolRequest, input SelectorInput) (*mcp.CallToolResult, NodeOutput, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, NodeOutput{}, err
+	}
 	node, err := s.query.Resolve(ctx, input.Selector)
 	return nil, NodeOutput{Node: node}, err
 }
@@ -80,6 +109,9 @@ type TraversalInput struct {
 }
 
 func (s *Service) getNeighbors(ctx context.Context, _ *mcp.CallToolRequest, input TraversalInput) (*mcp.CallToolResult, query.Traversal, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.Traversal{}, err
+	}
 	result, err := s.query.Neighborhood(ctx, input.Selector, input.Depth, query.Direction(input.Direction), edgeKinds(input.Relations), input.Limit)
 	return nil, result, err
 }
@@ -93,11 +125,17 @@ type PathInput struct {
 }
 
 func (s *Service) findPath(ctx context.Context, _ *mcp.CallToolRequest, input PathInput) (*mcp.CallToolResult, query.Path, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.Path{}, err
+	}
 	result, err := s.query.ShortestPath(ctx, input.From, input.To, query.Direction(input.Direction), edgeKinds(input.Relations), input.Limit)
 	return nil, result, err
 }
 
 func (s *Service) getCallers(ctx context.Context, _ *mcp.CallToolRequest, input TraversalInput) (*mcp.CallToolResult, query.Traversal, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.Traversal{}, err
+	}
 	depth := input.Depth
 	if depth == 0 {
 		depth = 3
@@ -108,6 +146,9 @@ func (s *Service) getCallers(ctx context.Context, _ *mcp.CallToolRequest, input 
 }
 
 func (s *Service) getCallees(ctx context.Context, _ *mcp.CallToolRequest, input TraversalInput) (*mcp.CallToolResult, query.Traversal, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.Traversal{}, err
+	}
 	depth := input.Depth
 	if depth == 0 {
 		depth = 3
@@ -118,6 +159,9 @@ func (s *Service) getCallees(ctx context.Context, _ *mcp.CallToolRequest, input 
 }
 
 func (s *Service) getBlastRadius(ctx context.Context, _ *mcp.CallToolRequest, input TraversalInput) (*mcp.CallToolResult, query.Traversal, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.Traversal{}, err
+	}
 	depth := input.Depth
 	if depth == 0 {
 		depth = 4
@@ -125,20 +169,23 @@ func (s *Service) getBlastRadius(ctx context.Context, _ *mcp.CallToolRequest, in
 	result, err := s.query.Neighborhood(ctx, input.Selector, depth, query.Incoming,
 		[]graph.EdgeKind{graph.EdgeCalls, graph.EdgeHandledBy, graph.EdgeImports, graph.EdgeExtends,
 			graph.EdgeImplements, graph.EdgeEmbeds, graph.EdgeReferences, graph.EdgeAssigns,
-			graph.EdgeReturns, graph.EdgePasses}, input.Limit)
+			graph.EdgeReturns, graph.EdgePasses, graph.EdgeRequests}, input.Limit)
 	return nil, result, err
 }
 
 type StatusInput struct{}
 
 type StatusOutput struct {
-	Project       indexer.Project `json:"project"`
-	IndexedAt     string          `json:"indexed_at"`
-	IndexedCommit string          `json:"indexed_commit,omitempty"`
-	Counts        graph.Counts    `json:"counts"`
+	Projects      []indexer.Project `json:"projects"`
+	IndexedAt     string            `json:"indexed_at"`
+	IndexedCommit string            `json:"indexed_commit,omitempty"`
+	Counts        graph.Counts      `json:"counts"`
 }
 
 func (s *Service) getIndexStatus(ctx context.Context, _ *mcp.CallToolRequest, _ StatusInput) (*mcp.CallToolResult, StatusOutput, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, StatusOutput{}, err
+	}
 	counts, err := s.repository.Counts(ctx)
 	if err != nil {
 		return nil, StatusOutput{}, err
@@ -151,7 +198,7 @@ func (s *Service) getIndexStatus(ctx context.Context, _ *mcp.CallToolRequest, _ 
 	if err != nil {
 		return nil, StatusOutput{}, err
 	}
-	return nil, StatusOutput{Project: s.project, IndexedAt: indexedAt, IndexedCommit: commit, Counts: counts}, nil
+	return nil, StatusOutput{Projects: s.projects, IndexedAt: indexedAt, IndexedCommit: commit, Counts: counts}, nil
 }
 
 func edgeKinds(values []string) []graph.EdgeKind {

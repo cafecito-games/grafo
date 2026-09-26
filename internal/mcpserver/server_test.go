@@ -3,6 +3,7 @@ package mcpserver_test
 import (
 	"context"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -28,8 +29,11 @@ func TestServerListsAndCallsGraphTools(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var refreshes atomic.Int32
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
-	serverSession, err := mcpserver.New(repository, indexer.Project{Name: "sample", Branch: "main"}).Server("test").Connect(ctx, serverTransport, nil)
+	serverSession, err := mcpserver.New(repository, indexer.Project{Name: "sample", Branch: "main"}).
+		WithRefresh(func(context.Context) error { refreshes.Add(1); return nil }).
+		Server("test").Connect(ctx, serverTransport, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,5 +68,8 @@ func TestServerListsAndCallsGraphTools(t *testing.T) {
 	matches, ok := structured["matches"].([]any)
 	if !ok || len(matches) != 1 {
 		t.Fatalf("unexpected matches: %#v", structured["matches"])
+	}
+	if refreshes.Load() != 1 {
+		t.Fatalf("expected one pre-query refresh, got %d", refreshes.Load())
 	}
 }

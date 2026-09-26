@@ -15,7 +15,7 @@ import (
 )
 
 const workspaceOwner = "__workspace__"
-const SemanticIndexVersion = "2"
+const SemanticIndexVersion = "3"
 
 type Options struct {
 	Force       bool
@@ -108,7 +108,7 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 		if parseErr != nil {
 			parsed.Diagnostics = append(parsed.Diagnostics, graph.Diagnostic{Path: path, Level: "error", Message: parseErr.Error()})
 		}
-		fileID := graph.NodeID(graph.KindFile, project.Name+":"+path)
+		fileID := graph.NodeID(graph.KindFile, project.ID+":"+path)
 		parsed.Facts = append(parsed.Facts, graph.Fact{
 			ID:     graph.FactID(path, project.ID, graph.EdgeContains, fileID, 1, 0),
 			FromID: project.ID, Kind: graph.EdgeContains, TargetID: fileID,

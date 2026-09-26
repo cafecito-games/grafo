@@ -189,3 +189,56 @@ func (q *Queries) ListEdgesTo(ctx context.Context, toID string) ([]Edge, error) 
 	}
 	return items, nil
 }
+
+const listExternalEdgesMatching = `-- name: ListExternalEdgesMatching :many
+SELECT edges.id, edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.path, edges.line, edges.column_no, edges.end_line, edges.properties
+FROM edges
+JOIN nodes ON nodes.id = edges.to_id
+WHERE nodes.external = 1
+  AND (
+      nodes.qualified_name = ?1
+      OR nodes.qualified_name = ?2
+      OR nodes.name = ?1
+      OR nodes.name = ?2
+  )
+ORDER BY edges.kind, edges.from_id, edges.id
+`
+
+type ListExternalEdgesMatchingParams struct {
+	QualifiedName string `json:"qualified_name"`
+	Name          string `json:"name"`
+}
+
+func (q *Queries) ListExternalEdgesMatching(ctx context.Context, arg ListExternalEdgesMatchingParams) ([]Edge, error) {
+	rows, err := q.db.QueryContext(ctx, listExternalEdgesMatching, arg.QualifiedName, arg.Name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Edge{}
+	for rows.Next() {
+		var i Edge
+		if err := rows.Scan(
+			&i.ID,
+			&i.FactID,
+			&i.FromID,
+			&i.ToID,
+			&i.Kind,
+			&i.Path,
+			&i.Line,
+			&i.ColumnNo,
+			&i.EndLine,
+			&i.Properties,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

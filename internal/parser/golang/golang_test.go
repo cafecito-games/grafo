@@ -25,6 +25,7 @@ func (s *Server) Start(input string) string {
   token := os.Getenv("API_TOKEN")
   _ = token
   http.HandleFunc("/health", health)
+  http.Get("/ready")
   publish("user.created")
   return copy
 }
@@ -43,6 +44,7 @@ func health(http.ResponseWriter, *http.Request) {}
 	assertHasNode(t, result.Nodes, graph.KindEndpoint, "ANY /health")
 	assertHasFact(t, result.Facts, graph.EdgeReadsConfig, "API_TOKEN")
 	assertHasFact(t, result.Facts, graph.EdgePublishes, "user.created")
+	assertHasFact(t, result.Facts, graph.EdgeRequests, "GET /ready")
 	assertHasFactKind(t, result.Facts, graph.EdgeAssigns)
 	assertHasFactKind(t, result.Facts, graph.EdgeReturns)
 	assertHasFact(t, result.Facts, graph.EdgePasses, "example.com/sample/api.Server.deliver")
