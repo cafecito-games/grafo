@@ -1,8 +1,14 @@
 -- name: DeleteAllEdges :exec
 DELETE FROM edges;
 
--- name: DeleteEdgesByFact :exec
-DELETE FROM edges WHERE fact_id = ?;
+-- name: DeleteEdgesByDirtyFactBatch :exec
+DELETE FROM edges
+WHERE fact_id IN (
+    SELECT fact_id
+    FROM dirty_facts INDEXED BY dirty_facts_order
+    ORDER BY owner_file, fact_id
+    LIMIT ?
+);
 
 -- name: DeleteEdgesByOwnerFacts :exec
 DELETE FROM edges WHERE fact_id IN (SELECT id FROM facts WHERE owner_file = ?);

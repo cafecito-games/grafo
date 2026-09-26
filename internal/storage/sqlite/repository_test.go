@@ -2,6 +2,8 @@ package sqlite_test
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -66,6 +68,46 @@ func TestRepositoryMigratesAndReconcilesFacts(t *testing.T) {
 	}
 }
 
+func TestRepositoryReconcilesMoreThanOneBatchAndTruncatesWAL(t *testing.T) {
+	ctx := context.Background()
+	databasePath := filepath.Join(t.TempDir(), "graph.sqlite")
+	repository, err := sqlite.Open(ctx, databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+
+	caller := graph.Node{ID: "caller", Kind: graph.KindFunction, Name: "Caller",
+		QualifiedName: "sample.Caller", OwnerFile: "large.go"}
+	target := graph.Node{ID: "target", Kind: graph.KindFunction, Name: "Target",
+		QualifiedName: "sample.Target", OwnerFile: "large.go"}
+	facts := make([]graph.Fact, 10_205)
+	for index := range facts {
+		facts[index] = graph.Fact{ID: fmt.Sprintf("call-%04d", index), FromID: caller.ID,
+			Kind: graph.EdgeCalls, TargetID: target.ID, OwnerFile: "large.go"}
+	}
+	if err := repository.ReplaceOwner(ctx, "large.go", graph.ParseResult{
+		Nodes: []graph.Node{caller, target}, Facts: facts,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	edges, err := repository.EdgesFrom(ctx, caller.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edges) != len(facts) {
+		t.Fatalf("reconciled %d edges, want %d", len(edges), len(facts))
+	}
+	if info, err := os.Stat(databasePath + "-wal"); err == nil && info.Size() != 0 {
+		t.Fatalf("WAL was not truncated after reconciliation: %d bytes", info.Size())
+	} else if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+}
+
 func TestRepositoryRestrictsSQLAccessToDataResources(t *testing.T) {
 	ctx := context.Background()
 	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
@@ -101,5 +143,50 @@ func TestRepositoryRestrictsSQLAccessToDataResources(t *testing.T) {
 	}
 	if len(edges) != 1 || edges[0].ToID != table.ID {
 		t.Fatalf("SQL read resolved outside data resources: %#v", edges)
+	}
+}
+
+func TestRepositoryKeepsAmbiguousSymbolicTargetsUnresolved(t *testing.T) {
+	ctx := context.Background()
+	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+
+	caller := graph.Node{ID: "caller", Kind: graph.KindFunction, Name: "Caller",
+		QualifiedName: "sample.Caller", OwnerFile: "caller.go"}
+	first := graph.Node{ID: "first", Kind: graph.KindFunction, Name: "String",
+		QualifiedName: "first.String", OwnerFile: "first.go"}
+	second := graph.Node{ID: "second", Kind: graph.KindFunction, Name: "String",
+		QualifiedName: "second.String", OwnerFile: "second.go"}
+	if err := repository.ReplaceOwner(ctx, "caller.go", graph.ParseResult{
+		Nodes: []graph.Node{caller}, Facts: []graph.Fact{{ID: "ambiguous-call", FromID: caller.ID,
+			Kind: graph.EdgeCalls, Target: "String", OwnerFile: "caller.go"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.ReplaceOwner(ctx, "first.go", graph.ParseResult{Nodes: []graph.Node{first}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.ReplaceOwner(ctx, "second.go", graph.ParseResult{Nodes: []graph.Node{second}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	edges, err := repository.EdgesFrom(ctx, caller.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edges) != 1 || edges[0].ToID == first.ID || edges[0].ToID == second.ID {
+		t.Fatalf("ambiguous call invented declaration edges: %#v", edges)
+	}
+	target, err := repository.Node(ctx, edges[0].ToID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !target.External || target.QualifiedName != "String" {
+		t.Fatalf("ambiguous target was not explicit: %#v", target)
 	}
 }

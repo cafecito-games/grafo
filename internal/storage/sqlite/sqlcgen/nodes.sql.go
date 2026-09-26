@@ -14,7 +14,7 @@ SELECT COUNT(*) FROM nodes WHERE external = 1
 `
 
 func (q *Queries) CountExternalNodes(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countExternalNodes)
+	row := q.queryRow(ctx, q.countExternalNodesStmt, countExternalNodes)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -25,7 +25,7 @@ SELECT COUNT(*) FROM nodes
 `
 
 func (q *Queries) CountNodes(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countNodes)
+	row := q.queryRow(ctx, q.countNodesStmt, countNodes)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -41,7 +41,7 @@ type CountNodesByKindRow struct {
 }
 
 func (q *Queries) CountNodesByKind(ctx context.Context) ([]CountNodesByKindRow, error) {
-	rows, err := q.db.QueryContext(ctx, countNodesByKind)
+	rows, err := q.query(ctx, q.countNodesByKindStmt, countNodesByKind)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +68,7 @@ DELETE FROM nodes WHERE owner_file = '__external__'
 `
 
 func (q *Queries) DeleteExternalNodes(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, deleteExternalNodes)
+	_, err := q.exec(ctx, q.deleteExternalNodesStmt, deleteExternalNodes)
 	return err
 }
 
@@ -77,7 +77,7 @@ DELETE FROM nodes WHERE owner_file = ?
 `
 
 func (q *Queries) DeleteNodesByOwner(ctx context.Context, ownerFile string) error {
-	_, err := q.db.ExecContext(ctx, deleteNodesByOwner, ownerFile)
+	_, err := q.exec(ctx, q.deleteNodesByOwnerStmt, deleteNodesByOwner, ownerFile)
 	return err
 }
 
@@ -88,133 +88,36 @@ WHERE external = 1
 `
 
 func (q *Queries) DeleteOrphanExternalNodes(ctx context.Context) error {
-	_, err := q.db.ExecContext(ctx, deleteOrphanExternalNodes)
+	_, err := q.exec(ctx, q.deleteOrphanExternalNodesStmt, deleteOrphanExternalNodes)
 	return err
 }
 
-const findNodesByName = `-- name: FindNodesByName :many
-SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, owner_file, external FROM nodes
-WHERE external = 0 AND name = ?
-ORDER BY qualified_name, id
-`
-
-func (q *Queries) FindNodesByName(ctx context.Context, name string) ([]Node, error) {
-	rows, err := q.db.QueryContext(ctx, findNodesByName, name)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Node{}
-	for rows.Next() {
-		var i Node
-		if err := rows.Scan(
-			&i.ID,
-			&i.Kind,
-			&i.Name,
-			&i.QualifiedName,
-			&i.Language,
-			&i.Path,
-			&i.Line,
-			&i.ColumnNo,
-			&i.EndLine,
-			&i.Properties,
-			&i.OwnerFile,
-			&i.External,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const findNodesByNameKind = `-- name: FindNodesByNameKind :many
-SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, owner_file, external FROM nodes
-WHERE external = 0 AND name = ? AND kind = ?
-ORDER BY qualified_name, id
-`
-
-type FindNodesByNameKindParams struct {
-	Name string `json:"name"`
-	Kind string `json:"kind"`
-}
-
-func (q *Queries) FindNodesByNameKind(ctx context.Context, arg FindNodesByNameKindParams) ([]Node, error) {
-	rows, err := q.db.QueryContext(ctx, findNodesByNameKind, arg.Name, arg.Kind)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Node{}
-	for rows.Next() {
-		var i Node
-		if err := rows.Scan(
-			&i.ID,
-			&i.Kind,
-			&i.Name,
-			&i.QualifiedName,
-			&i.Language,
-			&i.Path,
-			&i.Line,
-			&i.ColumnNo,
-			&i.EndLine,
-			&i.Properties,
-			&i.OwnerFile,
-			&i.External,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const findNodesExact = `-- name: FindNodesExact :many
-SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, owner_file, external FROM nodes
-WHERE external = 0 AND (qualified_name = ? OR name = ?)
-ORDER BY qualified_name, id
+SELECT nodes.id, nodes.kind, nodes.qualified_name
+FROM nodes INDEXED BY nodes_qualified_resolve
+WHERE nodes.qualified_name = ?1 AND nodes.external = 0
+UNION ALL
+SELECT nodes.id, nodes.kind, nodes.qualified_name
+FROM nodes INDEXED BY nodes_name_resolve
+WHERE nodes.name = ?1 AND nodes.external = 0 AND nodes.qualified_name != ?1
 `
 
-type FindNodesExactParams struct {
+type FindNodesExactRow struct {
+	ID            string `json:"id"`
+	Kind          string `json:"kind"`
 	QualifiedName string `json:"qualified_name"`
-	Name          string `json:"name"`
 }
 
-func (q *Queries) FindNodesExact(ctx context.Context, arg FindNodesExactParams) ([]Node, error) {
-	rows, err := q.db.QueryContext(ctx, findNodesExact, arg.QualifiedName, arg.Name)
+func (q *Queries) FindNodesExact(ctx context.Context, target string) ([]FindNodesExactRow, error) {
+	rows, err := q.query(ctx, q.findNodesExactStmt, findNodesExact, target)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Node{}
+	items := []FindNodesExactRow{}
 	for rows.Next() {
-		var i Node
-		if err := rows.Scan(
-			&i.ID,
-			&i.Kind,
-			&i.Name,
-			&i.QualifiedName,
-			&i.Language,
-			&i.Path,
-			&i.Line,
-			&i.ColumnNo,
-			&i.EndLine,
-			&i.Properties,
-			&i.OwnerFile,
-			&i.External,
-		); err != nil {
+		var i FindNodesExactRow
+		if err := rows.Scan(&i.ID, &i.Kind, &i.QualifiedName); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -229,42 +132,36 @@ func (q *Queries) FindNodesExact(ctx context.Context, arg FindNodesExactParams) 
 }
 
 const findNodesExactKind = `-- name: FindNodesExactKind :many
-SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, owner_file, external FROM nodes
-WHERE external = 0
-  AND (qualified_name = ? OR name = ?)
-  AND kind = ?
-ORDER BY qualified_name, id
+SELECT nodes.id, nodes.kind, nodes.qualified_name
+FROM nodes INDEXED BY nodes_qualified_resolve
+WHERE nodes.qualified_name = ?1 AND nodes.external = 0 AND nodes.kind = ?2
+UNION ALL
+SELECT nodes.id, nodes.kind, nodes.qualified_name
+FROM nodes INDEXED BY nodes_name_resolve
+WHERE nodes.name = ?1 AND nodes.external = 0 AND nodes.kind = ?2 AND nodes.qualified_name != ?1
 `
 
 type FindNodesExactKindParams struct {
-	QualifiedName string `json:"qualified_name"`
-	Name          string `json:"name"`
-	Kind          string `json:"kind"`
+	Target string `json:"target"`
+	Kind   string `json:"kind"`
 }
 
-func (q *Queries) FindNodesExactKind(ctx context.Context, arg FindNodesExactKindParams) ([]Node, error) {
-	rows, err := q.db.QueryContext(ctx, findNodesExactKind, arg.QualifiedName, arg.Name, arg.Kind)
+type FindNodesExactKindRow struct {
+	ID            string `json:"id"`
+	Kind          string `json:"kind"`
+	QualifiedName string `json:"qualified_name"`
+}
+
+func (q *Queries) FindNodesExactKind(ctx context.Context, arg FindNodesExactKindParams) ([]FindNodesExactKindRow, error) {
+	rows, err := q.query(ctx, q.findNodesExactKindStmt, findNodesExactKind, arg.Target, arg.Kind)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Node{}
+	items := []FindNodesExactKindRow{}
 	for rows.Next() {
-		var i Node
-		if err := rows.Scan(
-			&i.ID,
-			&i.Kind,
-			&i.Name,
-			&i.QualifiedName,
-			&i.Language,
-			&i.Path,
-			&i.Line,
-			&i.ColumnNo,
-			&i.EndLine,
-			&i.Properties,
-			&i.OwnerFile,
-			&i.External,
-		); err != nil {
+		var i FindNodesExactKindRow
+		if err := rows.Scan(&i.ID, &i.Kind, &i.QualifiedName); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -283,7 +180,7 @@ SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line
 `
 
 func (q *Queries) GetNode(ctx context.Context, id string) (Node, error) {
-	row := q.db.QueryRowContext(ctx, getNode, id)
+	row := q.queryRow(ctx, q.getNodeStmt, getNode, id)
 	var i Node
 	err := row.Scan(
 		&i.ID,
@@ -317,7 +214,7 @@ type SearchNodesParams struct {
 }
 
 func (q *Queries) SearchNodes(ctx context.Context, arg SearchNodesParams) ([]Node, error) {
-	rows, err := q.db.QueryContext(ctx, searchNodes, arg.Term, arg.MaxResults)
+	rows, err := q.query(ctx, q.searchNodesStmt, searchNodes, arg.Term, arg.MaxResults)
 	if err != nil {
 		return nil, err
 	}
@@ -387,7 +284,7 @@ type UpsertNodeParams struct {
 }
 
 func (q *Queries) UpsertNode(ctx context.Context, arg UpsertNodeParams) error {
-	_, err := q.db.ExecContext(ctx, upsertNode,
+	_, err := q.exec(ctx, q.upsertNodeStmt, upsertNode,
 		arg.ID,
 		arg.Kind,
 		arg.Name,

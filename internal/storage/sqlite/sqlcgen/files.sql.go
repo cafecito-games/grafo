@@ -14,7 +14,7 @@ SELECT COUNT(*) FROM files
 `
 
 func (q *Queries) CountFiles(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countFiles)
+	row := q.queryRow(ctx, q.countFilesStmt, countFiles)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -25,7 +25,7 @@ DELETE FROM files WHERE path = ?
 `
 
 func (q *Queries) DeleteFile(ctx context.Context, path string) error {
-	_, err := q.db.ExecContext(ctx, deleteFile, path)
+	_, err := q.exec(ctx, q.deleteFileStmt, deleteFile, path)
 	return err
 }
 
@@ -34,7 +34,7 @@ SELECT path, hash, language, size, modified_ns, indexed_at FROM files ORDER BY p
 `
 
 func (q *Queries) ListFiles(ctx context.Context) ([]File, error) {
-	rows, err := q.db.QueryContext(ctx, listFiles)
+	rows, err := q.query(ctx, q.listFilesStmt, listFiles)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +84,7 @@ type UpsertFileParams struct {
 }
 
 func (q *Queries) UpsertFile(ctx context.Context, arg UpsertFileParams) error {
-	_, err := q.db.ExecContext(ctx, upsertFile,
+	_, err := q.exec(ctx, q.upsertFileStmt, upsertFile,
 		arg.Path,
 		arg.Hash,
 		arg.Language,

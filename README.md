@@ -157,6 +157,12 @@ persisted dirty-path set. The persisted set is what makes restoring a previously
 indexed dirty file detectable. Non-Git directories retain the content-hash
 full-scan fallback.
 
+Edge reconciliation is restartable and bounded. A durable SQLite queue is
+resolved in committed batches, with WAL checkpoints between batches; an
+interrupted initial index resumes completed file hashes and pending facts.
+Ambiguous symbolic names remain explicit unresolved nodes instead of producing
+speculative edges to every declaration with the same name.
+
 ## Development
 
 ```sh

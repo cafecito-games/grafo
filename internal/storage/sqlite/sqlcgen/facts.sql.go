@@ -14,68 +14,45 @@ DELETE FROM facts WHERE owner_file = ?
 `
 
 func (q *Queries) DeleteFactsByOwner(ctx context.Context, ownerFile string) error {
-	_, err := q.db.ExecContext(ctx, deleteFactsByOwner, ownerFile)
+	_, err := q.exec(ctx, q.deleteFactsByOwnerStmt, deleteFactsByOwner, ownerFile)
 	return err
 }
 
-const listDirtyFacts = `-- name: ListDirtyFacts :many
-SELECT DISTINCT facts.id, facts.from_id, facts.kind, facts.target_id, facts.target, facts.target_kind, facts.path, facts.line, facts.column_no, facts.end_line, facts.properties, facts.owner_file
-FROM facts
-WHERE owner_file IN (SELECT owner_file FROM dirty_owners)
-   OR target_id IN (SELECT node_id FROM dirty_nodes)
-   OR target IN (SELECT target FROM dirty_targets)
-ORDER BY owner_file, id
+const listDirtyFactBatch = `-- name: ListDirtyFactBatch :many
+SELECT facts.id, facts.from_id, facts.kind, facts.target_id, facts.target, facts.target_kind, facts.path, facts.line, facts.column_no, facts.end_line, facts.properties, facts.owner_file, CASE WHEN facts.target_id = '' OR target_node.id IS NOT NULL THEN 1 ELSE 0 END AS target_exists
+FROM dirty_facts INDEXED BY dirty_facts_order
+CROSS JOIN facts
+LEFT JOIN nodes AS target_node ON target_node.id = facts.target_id
+WHERE facts.id = dirty_facts.fact_id
+ORDER BY dirty_facts.owner_file, dirty_facts.fact_id
+LIMIT ?
 `
 
-func (q *Queries) ListDirtyFacts(ctx context.Context) ([]Fact, error) {
-	rows, err := q.db.QueryContext(ctx, listDirtyFacts)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Fact{}
-	for rows.Next() {
-		var i Fact
-		if err := rows.Scan(
-			&i.ID,
-			&i.FromID,
-			&i.Kind,
-			&i.TargetID,
-			&i.Target,
-			&i.TargetKind,
-			&i.Path,
-			&i.Line,
-			&i.ColumnNo,
-			&i.EndLine,
-			&i.Properties,
-			&i.OwnerFile,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+type ListDirtyFactBatchRow struct {
+	ID           string `json:"id"`
+	FromID       string `json:"from_id"`
+	Kind         string `json:"kind"`
+	TargetID     string `json:"target_id"`
+	Target       string `json:"target"`
+	TargetKind   string `json:"target_kind"`
+	Path         string `json:"path"`
+	Line         int64  `json:"line"`
+	ColumnNo     int64  `json:"column_no"`
+	EndLine      int64  `json:"end_line"`
+	Properties   string `json:"properties"`
+	OwnerFile    string `json:"owner_file"`
+	TargetExists int64  `json:"target_exists"`
 }
 
-const listFacts = `-- name: ListFacts :many
-SELECT id, from_id, kind, target_id, target, target_kind, path, line, column_no, end_line, properties, owner_file FROM facts ORDER BY owner_file, id
-`
-
-func (q *Queries) ListFacts(ctx context.Context) ([]Fact, error) {
-	rows, err := q.db.QueryContext(ctx, listFacts)
+func (q *Queries) ListDirtyFactBatch(ctx context.Context, limit int64) ([]ListDirtyFactBatchRow, error) {
+	rows, err := q.query(ctx, q.listDirtyFactBatchStmt, listDirtyFactBatch, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Fact{}
+	items := []ListDirtyFactBatchRow{}
 	for rows.Next() {
-		var i Fact
+		var i ListDirtyFactBatchRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.FromID,
@@ -89,6 +66,7 @@ func (q *Queries) ListFacts(ctx context.Context) ([]Fact, error) {
 			&i.EndLine,
 			&i.Properties,
 			&i.OwnerFile,
+			&i.TargetExists,
 		); err != nil {
 			return nil, err
 		}
@@ -138,7 +116,7 @@ type UpsertFactParams struct {
 }
 
 func (q *Queries) UpsertFact(ctx context.Context, arg UpsertFactParams) error {
-	_, err := q.db.ExecContext(ctx, upsertFact,
+	_, err := q.exec(ctx, q.upsertFactStmt, upsertFact,
 		arg.ID,
 		arg.FromID,
 		arg.Kind,

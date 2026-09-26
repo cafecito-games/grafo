@@ -19,7 +19,7 @@ WHERE model = ? AND node_id NOT IN (
 `
 
 func (q *Queries) DeleteStaleEmbeddings(ctx context.Context, model string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteStaleEmbeddings, model)
+	result, err := q.exec(ctx, q.deleteStaleEmbeddingsStmt, deleteStaleEmbeddings, model)
 	if err != nil {
 		return 0, err
 	}
@@ -36,7 +36,7 @@ type ListEmbeddingHashesByModelRow struct {
 }
 
 func (q *Queries) ListEmbeddingHashesByModel(ctx context.Context, model string) ([]ListEmbeddingHashesByModelRow, error) {
-	rows, err := q.db.QueryContext(ctx, listEmbeddingHashesByModel, model)
+	rows, err := q.query(ctx, q.listEmbeddingHashesByModelStmt, listEmbeddingHashesByModel, model)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ SELECT node_id, model, content_hash, dimensions, vector_json, updated_at FROM em
 `
 
 func (q *Queries) ListEmbeddingsByModel(ctx context.Context, model string) ([]Embedding, error) {
-	rows, err := q.db.QueryContext(ctx, listEmbeddingsByModel, model)
+	rows, err := q.query(ctx, q.listEmbeddingsByModelStmt, listEmbeddingsByModel, model)
 	if err != nil {
 		return nil, err
 	}
@@ -100,7 +100,7 @@ ORDER BY qualified_name, id
 `
 
 func (q *Queries) ListSemanticCandidateNodes(ctx context.Context) ([]Node, error) {
-	rows, err := q.db.QueryContext(ctx, listSemanticCandidateNodes)
+	rows, err := q.query(ctx, q.listSemanticCandidateNodesStmt, listSemanticCandidateNodes)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +155,7 @@ type UpsertEmbeddingParams struct {
 }
 
 func (q *Queries) UpsertEmbedding(ctx context.Context, arg UpsertEmbeddingParams) error {
-	_, err := q.db.ExecContext(ctx, upsertEmbedding,
+	_, err := q.exec(ctx, q.upsertEmbeddingStmt, upsertEmbedding,
 		arg.NodeID,
 		arg.Model,
 		arg.ContentHash,

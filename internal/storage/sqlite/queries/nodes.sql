@@ -31,26 +31,22 @@ WHERE external = 1
 SELECT * FROM nodes WHERE id = ?;
 
 -- name: FindNodesExact :many
-SELECT * FROM nodes
-WHERE external = 0 AND (qualified_name = ? OR name = ?)
-ORDER BY qualified_name, id;
+SELECT nodes.id, nodes.kind, nodes.qualified_name
+FROM nodes INDEXED BY nodes_qualified_resolve
+WHERE nodes.qualified_name = @target AND nodes.external = 0
+UNION ALL
+SELECT nodes.id, nodes.kind, nodes.qualified_name
+FROM nodes INDEXED BY nodes_name_resolve
+WHERE nodes.name = @target AND nodes.external = 0 AND nodes.qualified_name != @target;
 
 -- name: FindNodesExactKind :many
-SELECT * FROM nodes
-WHERE external = 0
-  AND (qualified_name = ? OR name = ?)
-  AND kind = ?
-ORDER BY qualified_name, id;
-
--- name: FindNodesByName :many
-SELECT * FROM nodes
-WHERE external = 0 AND name = ?
-ORDER BY qualified_name, id;
-
--- name: FindNodesByNameKind :many
-SELECT * FROM nodes
-WHERE external = 0 AND name = ? AND kind = ?
-ORDER BY qualified_name, id;
+SELECT nodes.id, nodes.kind, nodes.qualified_name
+FROM nodes INDEXED BY nodes_qualified_resolve
+WHERE nodes.qualified_name = @target AND nodes.external = 0 AND nodes.kind = @kind
+UNION ALL
+SELECT nodes.id, nodes.kind, nodes.qualified_name
+FROM nodes INDEXED BY nodes_name_resolve
+WHERE nodes.name = @target AND nodes.external = 0 AND nodes.kind = @kind AND nodes.qualified_name != @target;
 
 -- name: SearchNodes :many
 SELECT * FROM nodes

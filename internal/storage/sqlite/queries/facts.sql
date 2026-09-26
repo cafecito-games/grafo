@@ -19,13 +19,11 @@ ON CONFLICT(id) DO UPDATE SET
 -- name: DeleteFactsByOwner :exec
 DELETE FROM facts WHERE owner_file = ?;
 
--- name: ListFacts :many
-SELECT * FROM facts ORDER BY owner_file, id;
-
--- name: ListDirtyFacts :many
-SELECT DISTINCT facts.*
-FROM facts
-WHERE owner_file IN (SELECT owner_file FROM dirty_owners)
-   OR target_id IN (SELECT node_id FROM dirty_nodes)
-   OR target IN (SELECT target FROM dirty_targets)
-ORDER BY owner_file, id;
+-- name: ListDirtyFactBatch :many
+SELECT facts.*, CASE WHEN facts.target_id = '' OR target_node.id IS NOT NULL THEN 1 ELSE 0 END AS target_exists
+FROM dirty_facts INDEXED BY dirty_facts_order
+CROSS JOIN facts
+LEFT JOIN nodes AS target_node ON target_node.id = facts.target_id
+WHERE facts.id = dirty_facts.fact_id
+ORDER BY dirty_facts.owner_file, dirty_facts.fact_id
+LIMIT ?;

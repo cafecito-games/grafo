@@ -44,6 +44,21 @@ storage can evolve independently.
 Dirty-target tracking limits edge reconciliation to facts affected by changed
 declarations or owners. Unchanged files do not re-enter a parser.
 
+Affected facts are first materialized in a durable SQLite queue, then resolved
+in bounded transactions. Each committed batch checkpoints the WAL, and the
+queue entry is removed in the same transaction as its replacement edges. An
+interrupted index therefore resumes pending facts without holding one
+repository-sized transaction or retaining a repository-sized fact slice in
+memory. The semantic schema version is part of every file hash, so a restarted
+schema rebuild also skips files already converted to that version. Indexes on
+`edges.fact_id` and dirty lookup keys keep replacement work proportional to the
+affected graph.
+
+Symbolic resolution creates a declaration edge only when exactly one candidate
+matches the parser's target and edge-kind constraints. Ambiguous names remain
+explicit external nodes until a parser can supply a qualified target; Grafo
+does not turn uncertainty into speculative fan-out.
+
 For Git worktrees, the indexer narrows content hashing to files changed since
 the indexed commit, current untracked files, and paths that were dirty during
 the previous run. Remembering the previous dirty set closes the restore case:

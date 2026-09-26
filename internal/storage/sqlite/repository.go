@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"container/list"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -25,6 +26,11 @@ type Repository struct {
 	path    string
 }
 
+const (
+	reconciliationBatchSize = 10_000
+	resolutionCacheSize     = 50_000
+)
+
 var _ graph.Repository = (*Repository)(nil)
 var _ semantic.Repository = (*Repository)(nil)
 
@@ -37,7 +43,7 @@ func Open(ctx context.Context, path string) (*Repository, error) {
 		return nil, fmt.Errorf("open graph: %w", err)
 	}
 	db.SetMaxOpenConns(1)
-	for _, pragma := range []string{"PRAGMA journal_mode=WAL", "PRAGMA synchronous=NORMAL", "PRAGMA busy_timeout=5000"} {
+	for _, pragma := range []string{"PRAGMA journal_mode=WAL", "PRAGMA synchronous=NORMAL", "PRAGMA busy_timeout=5000", "PRAGMA wal_autocheckpoint=1000"} {
 		if _, err := db.ExecContext(ctx, pragma); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("configure SQLite: %w", err)
@@ -52,15 +58,20 @@ func Open(ctx context.Context, path string) (*Repository, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate graph database: %w", err)
 	}
-	repository := &Repository{db: db, queries: sqlcgen.New(db), path: path}
-	if err := repository.SetMeta(ctx, "schema_version", fmt.Sprint(graph.SchemaVersion)); err != nil {
+	queries, err := sqlcgen.Prepare(ctx, db)
+	if err != nil {
 		db.Close()
+		return nil, fmt.Errorf("prepare graph queries: %w", err)
+	}
+	repository := &Repository{db: db, queries: queries, path: path}
+	if err := repository.SetMeta(ctx, "schema_version", fmt.Sprint(graph.SchemaVersion)); err != nil {
+		repository.Close()
 		return nil, err
 	}
 	return repository, nil
 }
 
-func (r *Repository) Close() error { return r.db.Close() }
+func (r *Repository) Close() error { return errors.Join(r.queries.Close(), r.db.Close()) }
 func (r *Repository) Path() string { return r.path }
 
 func (r *Repository) SetMeta(ctx context.Context, key, value string) error {
@@ -233,37 +244,50 @@ func insertParseResult(ctx context.Context, q *sqlcgen.Queries, parsed graph.Par
 }
 
 func (r *Repository) Reconcile(ctx context.Context) error {
-	return r.inTransaction(ctx, func(q *sqlcgen.Queries) error {
-		facts, err := q.ListDirtyFacts(ctx)
+	if err := r.queueDirtyFacts(ctx); err != nil {
+		return fmt.Errorf("queue dirty facts: %w", err)
+	}
+
+	resolved := newResolutionCache(resolutionCacheSize)
+	for {
+		processed, err := r.reconcileBatch(ctx, resolved)
 		if err != nil {
+			return fmt.Errorf("reconcile fact batch: %w", err)
+		}
+		if processed == 0 {
+			break
+		}
+		if err := r.checkpoint(ctx, false); err != nil {
 			return err
 		}
-		for _, row := range facts {
-			fact := factFromRow(row)
-			if err := q.DeleteEdgesByFact(ctx, fact.ID); err != nil {
-				return err
-			}
-			targets, err := resolveTargets(ctx, q, fact)
-			if err != nil {
-				return err
-			}
-			if len(targets) == 0 {
-				external := externalNode(fact)
-				if err := q.UpsertNode(ctx, nodeParams(external, 1)); err != nil {
-					return err
-				}
-				targets = []string{external.ID}
-			}
-			for _, target := range targets {
-				edge := graph.Edge{ID: graph.EdgeID(fact.ID, target), FactID: fact.ID,
-					FromID: fact.FromID, ToID: target, Kind: fact.Kind, Location: fact.Location,
-					Properties: fact.Properties}
-				if err := q.InsertEdge(ctx, edgeParams(edge)); err != nil {
-					return err
-				}
-			}
-		}
+	}
+	cleanupPending, err := r.queries.ReconciliationCleanupPending(ctx)
+	if err != nil {
+		return fmt.Errorf("check reconciliation cleanup: %w", err)
+	}
+	if !cleanupPending {
+		return nil
+	}
+	if err := r.inTransaction(ctx, func(q *sqlcgen.Queries) error {
 		if err := q.DeleteOrphanExternalNodes(ctx); err != nil {
+			return err
+		}
+		return q.ClearReconciliationCleanup(ctx)
+	}); err != nil {
+		return fmt.Errorf("remove orphan external nodes: %w", err)
+	}
+	return r.checkpoint(ctx, true)
+}
+
+func (r *Repository) queueDirtyFacts(ctx context.Context) error {
+	return r.inTransaction(ctx, func(q *sqlcgen.Queries) error {
+		if err := q.PruneDirtyFacts(ctx); err != nil {
+			return err
+		}
+		if err := q.EnqueueDirtyFacts(ctx); err != nil {
+			return err
+		}
+		if err := q.MarkReconciliationCleanup(ctx); err != nil {
 			return err
 		}
 		if err := q.ClearDirtyOwners(ctx); err != nil {
@@ -274,6 +298,53 @@ func (r *Repository) Reconcile(ctx context.Context) error {
 		}
 		return q.ClearDirtyTargets(ctx)
 	})
+}
+
+func (r *Repository) reconcileBatch(ctx context.Context, resolved *resolutionCache) (int, error) {
+	processed := 0
+	err := r.inTransaction(ctx, func(q *sqlcgen.Queries) error {
+		facts, err := q.ListDirtyFactBatch(ctx, reconciliationBatchSize)
+		if err != nil {
+			return err
+		}
+		if len(facts) == 0 {
+			return nil
+		}
+		if err := q.DeleteEdgesByDirtyFactBatch(ctx, reconciliationBatchSize); err != nil {
+			return err
+		}
+		for _, row := range facts {
+			processed++
+			fact := factFromDirtyRow(row)
+			targets, err := resolveTargets(ctx, q, fact, row.TargetExists != 0, resolved)
+			if err != nil {
+				return err
+			}
+			for _, target := range targets {
+				edge := graph.Edge{ID: graph.EdgeID(fact.ID, target), FactID: fact.ID,
+					FromID: fact.FromID, ToID: target, Kind: fact.Kind, Location: fact.Location,
+					Properties: fact.Properties}
+				if err := q.InsertEdge(ctx, edgeParams(edge)); err != nil {
+					return err
+				}
+			}
+		}
+		return q.DeleteDirtyFactBatch(ctx, reconciliationBatchSize)
+	})
+	return processed, err
+}
+
+func (r *Repository) checkpoint(ctx context.Context, truncate bool) error {
+	statement := "PRAGMA wal_checkpoint(PASSIVE)"
+	if truncate {
+		statement = "PRAGMA wal_checkpoint(TRUNCATE)"
+	}
+	var busy, logFrames, checkpointedFrames int
+	row := r.db.QueryRowContext(ctx, statement)
+	if err := row.Scan(&busy, &logFrames, &checkpointedFrames); err != nil {
+		return fmt.Errorf("checkpoint SQLite WAL: %w", err)
+	}
+	return nil
 }
 
 func markOwnerDirty(ctx context.Context, q *sqlcgen.Queries, owner string) error {
@@ -301,65 +372,122 @@ func markNodeDirty(ctx context.Context, q *sqlcgen.Queries, node graph.Node) err
 	return nil
 }
 
-func resolveTargets(ctx context.Context, q *sqlcgen.Queries, fact graph.Fact) ([]string, error) {
-	if fact.TargetID != "" {
-		node, err := q.GetNode(ctx, fact.TargetID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		return []string{node.ID}, nil
-	}
-	if fact.Target == "" {
-		return nil, nil
-	}
-	var rows []sqlcgen.Node
-	var err error
-	if fact.TargetKind == "" {
-		rows, err = q.FindNodesExact(ctx, sqlcgen.FindNodesExactParams{QualifiedName: fact.Target, Name: fact.Target})
-	} else {
-		rows, err = q.FindNodesExactKind(ctx, sqlcgen.FindNodesExactKindParams{
-			QualifiedName: fact.Target, Name: fact.Target, Kind: string(fact.TargetKind)})
-	}
-	if err != nil {
-		return nil, err
-	}
-	rows = filterCandidates(fact, rows)
-	if len(rows) == 0 {
-		simple := graph.SimpleName(fact.Target)
-		// A qualified but unresolved receiver (for example client.Send) is not
-		// enough evidence to link every Send method in the repository. Parsers
-		// qualify receivers when they can prove their type; otherwise preserve an
-		// explicit external node instead of inventing fan-out.
-		if simple != fact.Target {
-			return nil, nil
-		}
-		if fact.TargetKind == "" {
-			rows, err = q.FindNodesByName(ctx, simple)
-		} else {
-			rows, err = q.FindNodesByNameKind(ctx, sqlcgen.FindNodesByNameKindParams{Name: simple, Kind: string(fact.TargetKind)})
-		}
-		if err != nil {
-			return nil, err
-		}
-		rows = filterCandidates(fact, rows)
-	}
-	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].QualifiedName == rows[j].QualifiedName {
-			return rows[i].ID < rows[j].ID
-		}
-		return rows[i].QualifiedName < rows[j].QualifiedName
-	})
-	ids := make([]string, 0, len(rows))
-	for _, row := range rows {
-		ids = append(ids, row.ID)
-	}
-	return ids, nil
+type resolutionKey struct {
+	target     string
+	targetKind graph.NodeKind
+	edgeKind   graph.EdgeKind
 }
 
-func filterCandidates(fact graph.Fact, rows []sqlcgen.Node) []sqlcgen.Node {
+type resolutionCacheEntry struct {
+	key     resolutionKey
+	targets []string
+}
+
+type resolutionCache struct {
+	capacity int
+	entries  map[resolutionKey]*list.Element
+	recent   *list.List
+}
+
+func newResolutionCache(capacity int) *resolutionCache {
+	return &resolutionCache{capacity: capacity, entries: make(map[resolutionKey]*list.Element, capacity), recent: list.New()}
+}
+
+func (c *resolutionCache) get(key resolutionKey) ([]string, bool) {
+	element, ok := c.entries[key]
+	if !ok {
+		return nil, false
+	}
+	c.recent.MoveToFront(element)
+	return element.Value.(resolutionCacheEntry).targets, true
+}
+
+func (c *resolutionCache) set(key resolutionKey, targets []string) {
+	if element, ok := c.entries[key]; ok {
+		element.Value = resolutionCacheEntry{key: key, targets: targets}
+		c.recent.MoveToFront(element)
+		return
+	}
+	element := c.recent.PushFront(resolutionCacheEntry{key: key, targets: targets})
+	c.entries[key] = element
+	if c.recent.Len() <= c.capacity {
+		return
+	}
+	oldest := c.recent.Back()
+	delete(c.entries, oldest.Value.(resolutionCacheEntry).key)
+	c.recent.Remove(oldest)
+}
+
+type resolutionCandidate struct {
+	id            string
+	kind          graph.NodeKind
+	qualifiedName string
+}
+
+func resolveTargets(ctx context.Context, q *sqlcgen.Queries, fact graph.Fact, targetExists bool, cache *resolutionCache) ([]string, error) {
+	if fact.TargetID != "" {
+		if targetExists {
+			return []string{fact.TargetID}, nil
+		}
+		external := externalNode(fact)
+		if err := q.UpsertNode(ctx, nodeParams(external, 1)); err != nil {
+			return nil, err
+		}
+		return []string{external.ID}, nil
+	}
+	key := resolutionKey{target: fact.Target, targetKind: fact.TargetKind, edgeKind: fact.Kind}
+	if targets, ok := cache.get(key); ok {
+		return targets, nil
+	}
+	var targets []string
+	var rows []resolutionCandidate
+	if fact.Target != "" {
+		if fact.TargetKind == "" {
+			found, err := q.FindNodesExact(ctx, fact.Target)
+			if err != nil {
+				return nil, err
+			}
+			rows = make([]resolutionCandidate, 0, len(found))
+			for _, row := range found {
+				rows = append(rows, resolutionCandidate{id: row.ID, kind: graph.NodeKind(row.Kind), qualifiedName: row.QualifiedName})
+			}
+		} else {
+			found, err := q.FindNodesExactKind(ctx, sqlcgen.FindNodesExactKindParams{
+				Target: fact.Target, Kind: string(fact.TargetKind)})
+			if err != nil {
+				return nil, err
+			}
+			rows = make([]resolutionCandidate, 0, len(found))
+			for _, row := range found {
+				rows = append(rows, resolutionCandidate{id: row.ID, kind: graph.NodeKind(row.Kind), qualifiedName: row.QualifiedName})
+			}
+		}
+		rows = filterCandidates(fact, rows)
+		sort.Slice(rows, func(i, j int) bool {
+			if rows[i].qualifiedName == rows[j].qualifiedName {
+				return rows[i].id < rows[j].id
+			}
+			return rows[i].qualifiedName < rows[j].qualifiedName
+		})
+		// A name shared by multiple declarations is not enough evidence to
+		// invent a fan-out edge. Preserve one explicit unresolved target and
+		// let a parser provide a qualified name when it can prove the binding.
+		if len(rows) == 1 {
+			targets = []string{rows[0].id}
+		}
+	}
+	if len(targets) == 0 {
+		external := externalNode(fact)
+		if err := q.UpsertNode(ctx, nodeParams(external, 1)); err != nil {
+			return nil, err
+		}
+		targets = []string{external.ID}
+	}
+	cache.set(key, targets)
+	return targets, nil
+}
+
+func filterCandidates(fact graph.Fact, rows []resolutionCandidate) []resolutionCandidate {
 	if fact.TargetKind != "" {
 		return rows
 	}
@@ -382,7 +510,7 @@ func filterCandidates(fact graph.Fact, rows []sqlcgen.Node) []sqlcgen.Node {
 	}
 	result := rows[:0]
 	for _, row := range rows {
-		if allowed(graph.NodeKind(row.Kind)) {
+		if allowed(row.kind) {
 			result = append(result, row)
 		}
 	}
@@ -524,7 +652,7 @@ func nodeFromRow(n sqlcgen.Node) graph.Node {
 		Properties: graph.UnmarshalProperties(n.Properties), OwnerFile: n.OwnerFile, External: n.External != 0}
 }
 
-func factFromRow(f sqlcgen.Fact) graph.Fact {
+func factFromDirtyRow(f sqlcgen.ListDirtyFactBatchRow) graph.Fact {
 	return graph.Fact{ID: f.ID, FromID: f.FromID, Kind: graph.EdgeKind(f.Kind), TargetID: f.TargetID,
 		Target: f.Target, TargetKind: graph.NodeKind(f.TargetKind),
 		Location:   graph.Location{Path: f.Path, Line: int(f.Line), Column: int(f.ColumnNo), EndLine: int(f.EndLine)},
