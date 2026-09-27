@@ -22,6 +22,7 @@ func TestRegistryRoutesEverySupportedFixtureFormat(t *testing.T) {
 		"Worker.java":                "java",
 		"service.py":                 "python",
 		"types.pyi":                  "python",
+		"schema.proto":               "protobuf",
 		"Service.swift":              "swift",
 		"worker.ts":                  "typescript",
 		"view.tsx":                   "typescript",

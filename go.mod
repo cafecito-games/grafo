@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/bufbuild/protocompile v0.14.1
 	github.com/cafecito-games/gdparser v0.0.0-20260926231848-07997740011c
 	github.com/cockroachdb/pebble/v2 v2.1.7
 	github.com/modelcontextprotocol/go-sdk v1.8.0
