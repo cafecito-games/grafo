@@ -109,6 +109,8 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		runErr = a.neighbors(ctx, parsed, "callees")
 	case "impact", "blast-radius":
 		runErr = a.impact(ctx, parsed)
+	case "failure-flow", "get-failure-flow":
+		runErr = a.failureFlow(ctx, parsed)
 	case "search":
 		runErr = a.search(ctx, parsed)
 	case "path":
@@ -829,6 +831,83 @@ func (a *App) impact(ctx context.Context, args parsedArguments) error {
 	}
 	a.printImpactReport(report)
 	return nil
+}
+
+func (a *App) failureFlow(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) != 1 {
+		return fmt.Errorf("usage: grafo %s <function-method-error-or-id> [--kind function] [--direction both] [--limit 1000]", args.command)
+	}
+	kind, err := nodeKindOption(args)
+	if err != nil {
+		return err
+	}
+	direction, err := directionOption(args)
+	if err != nil {
+		return err
+	}
+	limit, err := intOption(args, "limit", 1000)
+	if err != nil {
+		return err
+	}
+	repository, _, closeRepository, err := openRead(ctx, args)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = closeRepository() }()
+	report, err := query.NewService(repository).FailureFlow(ctx, args.positionals[0], query.FailureFlowOptions{
+		Kind: kind, Direction: direction, Limit: limit,
+	})
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, report)
+	}
+	a.printFailureFlow(report)
+	return nil
+}
+
+func (a *App) printFailureFlow(report query.FailureFlow) {
+	a.printf("%s [%s] %s\n", report.Root.QualifiedName, report.Root.Kind, formatLocation(report.Root.Location))
+	for _, section := range []struct {
+		label string
+		facts []query.FailureFlowFact
+	}{
+		{label: "error returns", facts: report.ErrorReturns},
+		{label: "escaping failures", facts: report.Escaping},
+		{label: "handled failures", facts: report.Handled},
+		{label: "panics", facts: report.Panics},
+		{label: "recoveries", facts: report.Recoveries},
+		{label: "deferred cleanup", facts: report.DeferredCleanup},
+	} {
+		if len(section.facts) == 0 {
+			continue
+		}
+		a.printf("\n%s (%d)\n", section.label, len(section.facts))
+		for _, fact := range section.facts {
+			marker := ""
+			if fact.Form != "" {
+				marker += " · " + fact.Form
+			}
+			if fact.Conditional {
+				marker += " · conditional"
+			}
+			if fact.Unresolved {
+				marker += " · unresolved"
+			}
+			if fact.Federated {
+				marker += " · federated"
+			}
+			a.printf("  %s --%s--> %s [%s]%s %s\n", fact.Direction, fact.Edge.Kind,
+				fact.Node.QualifiedName, fact.Node.Kind, marker, formatLocation(fact.Edge.Location))
+		}
+	}
+	if report.Unresolved > 0 {
+		a.printf("\nunresolved facts: %d\n", report.Unresolved)
+	}
+	if report.Truncated {
+		a.println("\ntruncated")
+	}
 }
 
 func (a *App) godotComposition(ctx context.Context, args parsedArguments) error {
@@ -1704,6 +1783,7 @@ Usage:
   grafo impact <symbol-or-id> [--kind method] [--depth 4] [--upstream-depth n] [--downstream-depth n]
                               [--upstream-limit n] [--downstream-limit n]
                               [--source] [--context-lines 2] [--max-lines 200] [--source-limit 10]
+  grafo failure-flow <function-method-error-or-id> [--kind function] [--direction both] [--limit 1000]
   grafo godot composition <scene-resource-script-or-autoload> [--kind godot_scene]
                           [--depth 8] [--limit 1000]
   grafo godot interactions <scene-node-script-action-group-or-signal>
@@ -1774,7 +1854,10 @@ missing wiring is visible rather than absent.
 
 'grafo impact' reports both directions: what depends on the symbol and what it
 depends on, plus impacted files, cross-repository hops, and config, data, and
-event relationships. 'grafo search' reads only files that belong to a refreshed
+event relationships. 'grafo failure-flow' separates typed error-return
+declarations, escaping and wrapped errors, handlers, panics and recoveries,
+and deferred cleanup while keeping conditional and unresolved evidence explicit.
+'grafo search' reads only files that belong to a refreshed
 index and never persists source text.
 
 The catalog commands accept --repo-name to restrict results to one indexed

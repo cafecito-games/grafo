@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const SchemaVersion = 5
+const SchemaVersion = 6
 
 type NodeKind string
 
@@ -121,6 +121,21 @@ const (
 	EdgeRequests    EdgeKind = "requests"
 	EdgeDependsOn   EdgeKind = "depends_on"
 	EdgeDocuments   EdgeKind = "documents"
+
+	// Failure-flow relations are language-neutral even though Go is currently
+	// their only producer. returns_error describes a callable's typed result
+	// contract; propagates_error and wraps_error describe actual exits;
+	// handles_error records a consuming conditional action. panics, recovers,
+	// and defers keep abrupt exits and cleanup separate from ordinary calls.
+	// Recognition details such as return, join, comparison, switch, or recovery
+	// live in the edge's "form" property.
+	EdgeReturnsError    EdgeKind = "returns_error"
+	EdgePropagatesError EdgeKind = "propagates_error"
+	EdgeHandlesError    EdgeKind = "handles_error"
+	EdgeWrapsError      EdgeKind = "wraps_error"
+	EdgePanics          EdgeKind = "panics"
+	EdgeRecovers        EdgeKind = "recovers"
+	EdgeDefers          EdgeKind = "defers"
 
 	// Godot composition relations. instantiates records a scene instance
 	// (nested or inherited) and is deliberately distinct from extends so

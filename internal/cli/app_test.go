@@ -170,6 +170,19 @@ func TestImpactReportsBothDirections(t *testing.T) {
 	}
 }
 
+func TestFailureFlowReportsTypedEscapes(t *testing.T) {
+	root := indexedRepository(t)
+	stdout, stderr, code := output(t, "failure-flow", "sample.Checkout", "--repo", root)
+	if code != 0 {
+		t.Fatalf("failure-flow exited with %d: %s", code, stderr)
+	}
+	for _, expected := range []string{"error returns", "escaping failures", "sample.Charge", "returns_error", "propagates_error"} {
+		if !strings.Contains(stdout, expected) {
+			t.Fatalf("missing %q in failure-flow output:\n%s", expected, stdout)
+		}
+	}
+}
+
 func TestSearchFindsIndexedContentOnly(t *testing.T) {
 	root := indexedRepository(t)
 

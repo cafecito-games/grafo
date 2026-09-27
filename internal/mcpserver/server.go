@@ -91,6 +91,7 @@ func (s *Service) Server(version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{Name: "get_callees", Title: "Get callees", Description: "Walk outgoing call and handler edges to find callees of a symbol.", Annotations: annotations}, s.getCallees)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_godot_composition", Title: "Get Godot composition", Description: "Return Godot runtime composition for a scene, scene node, resource, script, or autoload: which scenes it instantiates, which scenes instantiate it, attached scripts, and autoload availability, each with its original resource evidence.", Annotations: annotations}, s.getGodotComposition)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_godot_interactions", Title: "Get Godot interactions", Description: "Return Godot gameplay wiring for a scene, scene node, script symbol, input action, node group, or signal: the input actions it uses, the node groups it joins, inspects, and dispatches to, and the signal routes it takes part in, whether a scene declared them or a script established them. Filter by action, group, or signal and by direction; unresolved actions, groups, and signals stay in the report and are counted so missing wiring is visible.", Annotations: annotations}, s.getGodotInteractions)
+	mcp.AddTool(server, &mcp.Tool{Name: "get_failure_flow", Title: "Get failure flow", Description: "Return typed error-return declarations, escaping and wrapped errors, handlers, panic and recovery sites, and deferred cleanup. Every fact includes its source and recognition evidence; conditional and unresolved facts remain explicit.", Annotations: annotations}, s.getFailureFlow)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_blast_radius", Title: "Get change impact", Description: "Return a bounded bidirectional change-impact report: what depends on the symbol, what it depends on, impacted files, cross-repository hops, and config, data, and event relationships.", Annotations: annotations}, s.getBlastRadius)
 	if s.search != nil {
 		mcp.AddTool(server, &mcp.Tool{Name: "search_source", Title: "Search indexed source", Description: "Search literal text or RE2 patterns across files belonging to the refreshed indexes. Use graph tools first when the question is structural; use this for content questions the graph does not model.", Annotations: annotations}, s.searchSource)
@@ -483,6 +484,48 @@ func (s *Service) getGodotInteractions(ctx context.Context, _ *mcp.CallToolReque
 	})
 	report, err := firstValue(results, batched)
 	return nil, GodotInteractionsOutput{GodotInteractions: report, Results: results}, err
+}
+
+type FailureFlowInput struct {
+	Selector  string   `json:"selector,omitempty" jsonschema:"qualified function, method, error identity, callee, or stable node ID"`
+	Selectors []string `json:"selectors,omitempty" jsonschema:"batch of selectors reported in caller order"`
+	Kind      string   `json:"kind,omitempty" jsonschema:"optional node kind the selector must resolve to, such as function, method, type, or variable"`
+	Direction string   `json:"direction,omitempty" jsonschema:"outgoing, incoming, or both; defaults to both"`
+	Limit     int      `json:"limit,omitempty" jsonschema:"maximum facts per report section; defaults to 1000"`
+}
+
+type FailureFlowOutput struct {
+	query.FailureFlow
+	Results []ResultEnvelope[query.FailureFlow] `json:"results,omitempty"`
+}
+
+func (s *Service) getFailureFlow(ctx context.Context, _ *mcp.CallToolRequest, input FailureFlowInput) (*mcp.CallToolResult, FailureFlowOutput, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, FailureFlowOutput{}, err
+	}
+	selectors, batched, err := batchInputs("selector", input.Selector, input.Selectors)
+	if err != nil {
+		return nil, FailureFlowOutput{}, err
+	}
+	kind, err := graph.ParseNodeKind(input.Kind)
+	if err != nil {
+		return nil, FailureFlowOutput{}, err
+	}
+	direction := query.Both
+	switch trimmed := strings.TrimSpace(input.Direction); trimmed {
+	case "":
+	case string(query.Outgoing), string(query.Incoming), string(query.Both):
+		direction = query.Direction(trimmed)
+	default:
+		return nil, FailureFlowOutput{}, fmt.Errorf("unknown direction %q; expected %s, %s, or %s",
+			input.Direction, query.Outgoing, query.Incoming, query.Both)
+	}
+	options := query.FailureFlowOptions{Kind: kind, Direction: direction, Limit: input.Limit}
+	results := runBatch(ctx, selectors, func(reportContext context.Context, selector string) (query.FailureFlow, error) {
+		return s.query.FailureFlow(reportContext, selector, options)
+	})
+	report, err := firstValue(results, batched)
+	return nil, FailureFlowOutput{FailureFlow: report, Results: results}, err
 }
 
 func (s *Service) getBlastRadius(ctx context.Context, _ *mcp.CallToolRequest, input ImpactInput) (*mcp.CallToolResult, ImpactOutput, error) {
