@@ -30,6 +30,10 @@ grafo data-usage "orders"
 grafo config-keys
 grafo events
 grafo orphaned-events
+grafo endpoints
+grafo outbound-requests
+grafo find-handler --route /orders
+grafo service-topology --mermaid
 grafo watch
 grafo mcp
 ```
@@ -462,6 +466,40 @@ relation look empty. Event names that no declaration
 resolves are always `unknown`, because nothing in the index bounds where they
 are published or consumed. Federation applies the same contract: a producer in
 one repository and a consumer in another clear the orphan.
+
+## Endpoint and service topology
+
+Endpoint queries turn HTTP and event wiring into task-shaped results while
+keeping the graph evidence authoritative:
+
+```sh
+grafo endpoints --method GET --route /orders --json
+grafo outbound-requests --repo-name checkout --json
+grafo find-handler --event order.placed --json
+grafo service-topology --direction outgoing --json
+grafo service-topology --mermaid
+```
+
+The MCP equivalents are `list_endpoints`, `list_outbound_requests`,
+`find_handler`, and `get_service_topology`. Every query supports explicit
+bounds and repository/service filtering; HTTP queries additionally filter by
+exact method and literal route fragment, while handler and topology queries can
+filter by event. Service topology also supports incoming, outgoing, or both
+directions relative to a selected service.
+
+Each indexed repository is one stable service identity. Endpoint and event
+nodes, source components, edge IDs, fact IDs, locations, and federation markers
+remain in the structured response beneath those service boundaries. A request
+resolves only when exactly one endpoint has the same method and route. No match
+stays an external destination, while several exact declarations are returned as
+ambiguous candidates and create no confirmed service link. Handler results use
+only `handled_by` evidence and likewise distinguish resolved, unresolved,
+ambiguous, and missing handlers.
+
+`service-topology --mermaid` is an escaped, deterministic rendering of the
+structured result; it never replaces the node and edge evidence. Explicit
+federation refreshes all member indexes before answering, so a failed refresh
+returns no mixed-freshness topology.
 
 ## SQL dialects
 
