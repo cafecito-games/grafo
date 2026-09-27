@@ -18,7 +18,7 @@ import (
 
 const workspaceOwner = "__workspace__"
 const workspaceSemanticKeysMeta = "parser_workspace_semantic_keys"
-const SemanticIndexVersion = "14"
+const SemanticIndexVersion = "15"
 
 type Options struct {
 	Force       bool

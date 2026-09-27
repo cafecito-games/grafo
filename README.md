@@ -5,8 +5,8 @@ can query from the command line. Source symbols, calls, imports, configuration,
 HTTP routes, and event-like publish/subscribe operations become nodes and edges.
 
 This repository is at the foundation stage. Go is parsed with the Go compiler
-AST, Godot source formats use `gdparser`, Python, Swift, and TypeScript/TSX use
-Tree-sitter, PostgreSQL SQL uses PostgreSQL's own parser, and SQLite SQL uses
+AST, Godot source formats use `gdparser`, Java, Python, Swift, and TypeScript/TSX
+use Tree-sitter, PostgreSQL SQL uses PostgreSQL's own parser, and SQLite SQL uses
 Meyer's SQLite grammar. The index is local, incremental, branch-aware, and
 stored in SQLite.
 
@@ -100,6 +100,11 @@ are marked `federated` and retain their original evidence.
   parameters, local variables, basic assignment/argument/return flow, imports,
   calls, inheritance, `process.env`, Express-style routes, and common
   publish/subscribe calls.
+- Java packages, imports, classes, interfaces, records, enums, annotations,
+  methods, constructors, fields, parameters, local variables, inheritance and
+  interface implementation, basic assignment/argument/return flow,
+  `System.getenv`/`getProperty`, Spring and JAX-RS routes, common outbound HTTP
+  client calls, and publish/subscribe calls.
 - PostgreSQL tables, views, columns, indexes, functions, procedures, and the
   relations read or written by DDL and DML statements in `.sql`, `.pgsql`, and
   `.psql` files.

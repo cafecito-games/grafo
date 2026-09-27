@@ -23,6 +23,11 @@
       {
         "repo": "matrix",
         "kind": "class",
+        "qualified_name": "example.worker.JavaWorker"
+      },
+      {
+        "repo": "matrix",
+        "kind": "class",
         "qualified_name": "web/worker.BaseWorker"
       },
       {
@@ -49,6 +54,12 @@
         "repo": "matrix",
         "kind": "column",
         "qualified_name": "public.psql_events.id"
+      },
+      {
+        "repo": "matrix",
+        "kind": "config_key",
+        "qualified_name": "JAVA_API_TOKEN",
+        "external": true
       },
       {
         "repo": "matrix",
@@ -113,6 +124,12 @@
       {
         "repo": "matrix",
         "kind": "event",
+        "qualified_name": "java.jobs.ready",
+        "external": true
+      },
+      {
+        "repo": "matrix",
+        "kind": "event",
         "qualified_name": "jobs.ready",
         "external": true
       },
@@ -164,6 +181,11 @@
         "repo": "matrix",
         "kind": "file",
         "qualified_name": ".env.local"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "JavaWorker.java"
       },
       {
         "repo": "matrix",
@@ -338,6 +360,11 @@
       {
         "repo": "matrix",
         "kind": "interface",
+        "qualified_name": "example.worker.Job"
+      },
+      {
+        "repo": "matrix",
+        "kind": "interface",
         "qualified_name": "swift_worker.SwiftRunnable"
       },
       {
@@ -359,6 +386,16 @@
         "repo": "matrix",
         "kind": "method",
         "qualified_name": "Player.on_finished"
+      },
+      {
+        "repo": "matrix",
+        "kind": "method",
+        "qualified_name": "example.worker.JavaWorker.run"
+      },
+      {
+        "repo": "matrix",
+        "kind": "method",
+        "qualified_name": "example.worker.Job.run"
       },
       {
         "repo": "matrix",
@@ -461,6 +498,16 @@
       {
         "repo": "matrix",
         "kind": "parameter",
+        "qualified_name": "example.worker.JavaWorker.run.payload"
+      },
+      {
+        "repo": "matrix",
+        "kind": "parameter",
+        "qualified_name": "example.worker.Job.run.payload"
+      },
+      {
+        "repo": "matrix",
+        "kind": "parameter",
         "qualified_name": "swift_worker.SwiftRunnable.run.value"
       },
       {
@@ -497,6 +544,11 @@
         "repo": "matrix",
         "kind": "type",
         "qualified_name": "swift_worker.SwiftWorker"
+      },
+      {
+        "repo": "matrix",
+        "kind": "variable",
+        "qualified_name": "example.worker.JavaWorker.run.token@9"
       },
       {
         "repo": "matrix",
@@ -624,6 +676,42 @@
           "path": "scripts/player.gd",
           "line": 1,
           "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "class",
+          "qualified_name": "example.worker.JavaWorker"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "example.worker.JavaWorker.run"
+        },
+        "source": {
+          "path": "JavaWorker.java",
+          "line": 8,
+          "column": 5
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "class",
+          "qualified_name": "example.worker.JavaWorker"
+        },
+        "relation": "implements",
+        "to": {
+          "repo": "matrix",
+          "kind": "interface",
+          "qualified_name": "example.worker.Job"
+        },
+        "source": {
+          "path": "JavaWorker.java",
+          "line": 7,
+          "column": 18
         }
       },
       {
@@ -796,6 +884,42 @@
         "source": {
           "path": ".env",
           "line": 2,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "JavaWorker.java"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "class",
+          "qualified_name": "example.worker.JavaWorker"
+        },
+        "source": {
+          "path": "JavaWorker.java",
+          "line": 7,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "JavaWorker.java"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "interface",
+          "qualified_name": "example.worker.Job"
+        },
+        "source": {
+          "path": "JavaWorker.java",
+          "line": 3,
           "column": 1
         }
       },
@@ -1634,6 +1758,24 @@
         "from": {
           "repo": "matrix",
           "kind": "interface",
+          "qualified_name": "example.worker.Job"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "example.worker.Job.run"
+        },
+        "source": {
+          "path": "JavaWorker.java",
+          "line": 4,
+          "column": 5
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "interface",
           "qualified_name": "swift_worker.SwiftRunnable"
         },
         "relation": "declares",
@@ -1745,6 +1887,98 @@
           "path": "scripts/player.gd",
           "line": 14,
           "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "example.worker.JavaWorker.run"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "parameter",
+          "qualified_name": "example.worker.JavaWorker.run.payload"
+        },
+        "source": {
+          "path": "JavaWorker.java",
+          "line": 8,
+          "column": 23
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "example.worker.JavaWorker.run"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "variable",
+          "qualified_name": "example.worker.JavaWorker.run.token@9"
+        },
+        "source": {
+          "path": "JavaWorker.java",
+          "line": 9,
+          "column": 16
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "example.worker.JavaWorker.run"
+        },
+        "relation": "publishes",
+        "to": {
+          "repo": "matrix",
+          "kind": "event",
+          "qualified_name": "java.jobs.ready",
+          "external": true
+        },
+        "source": {
+          "path": "JavaWorker.java",
+          "line": 10,
+          "column": 9
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "example.worker.JavaWorker.run"
+        },
+        "relation": "reads_config",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "JAVA_API_TOKEN",
+          "external": true
+        },
+        "source": {
+          "path": "JavaWorker.java",
+          "line": 9,
+          "column": 24
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "example.worker.Job.run"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "parameter",
+          "qualified_name": "example.worker.Job.run.payload"
+        },
+        "source": {
+          "path": "JavaWorker.java",
+          "line": 4,
+          "column": 16
         }
       },
       {
@@ -2044,6 +2278,24 @@
         "from": {
           "repo": "matrix",
           "kind": "parameter",
+          "qualified_name": "example.worker.JavaWorker.run.payload"
+        },
+        "relation": "returns",
+        "to": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "example.worker.JavaWorker.run"
+        },
+        "source": {
+          "path": "JavaWorker.java",
+          "line": 11,
+          "column": 9
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "parameter",
           "qualified_name": "swift_worker.SwiftWorker.run.value"
         },
         "relation": "assigns",
@@ -2090,6 +2342,24 @@
         },
         "source": {
           "path": ".env",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "JavaWorker.java"
+        },
+        "source": {
+          "path": "JavaWorker.java",
           "line": 1,
           "column": 1
         }
