@@ -48,6 +48,40 @@ func TestRepositoryMatchesSQLiteResolutionAndQueries(t *testing.T) {
 	}
 }
 
+func TestRepositoryExplicitTargetKindMatchesSQLite(t *testing.T) {
+	ctx := context.Background()
+	for _, engine := range []Engine{EngineBolt, EnginePebble} {
+		t.Run(string(engine), func(t *testing.T) {
+			control, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "control.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer control.Close()
+			candidate, err := Open(ctx, engine, filepath.Join(t.TempDir(), "candidate"), Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer candidate.Close()
+
+			source := testNode("source", graph.KindFunction, "pkg.Source", "source.go")
+			target := testNode("target", graph.KindVariable, "pkg.Target", "target.go")
+			fact := testFact("reference", source.ID, graph.EdgeReferences, target.QualifiedName, graph.KindVariable, "", "source.go")
+			for _, repository := range []graph.Repository{control, candidate} {
+				if err := repository.ReplaceFile(ctx, testFile("source.go"), graph.ParseResult{Nodes: []graph.Node{source}, Facts: []graph.Fact{fact}}); err != nil {
+					t.Fatal(err)
+				}
+				if err := repository.ReplaceFile(ctx, testFile("target.go"), graph.ParseResult{Nodes: []graph.Node{target}}); err != nil {
+					t.Fatal(err)
+				}
+				if err := repository.Reconcile(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			assertEquivalent(t, control, candidate)
+		})
+	}
+}
+
 func TestRepositoryRestartResumesCommittedReconciliationBatches(t *testing.T) {
 	ctx := context.Background()
 	for _, engine := range []Engine{EngineBolt, EnginePebble} {

@@ -414,7 +414,8 @@ func (r *Repository) resolveTargets(tx transaction, fact graph.Fact) ([]string, 
 			return nil, err
 		}
 		for _, node := range nodes {
-			if node.External || fact.TargetKind != "" && node.Kind != fact.TargetKind || !allowsKind(fact.Kind, node.Kind) {
+			if node.External || fact.TargetKind != "" && node.Kind != fact.TargetKind ||
+				fact.TargetKind == "" && !allowsKind(fact.Kind, node.Kind) {
 				continue
 			}
 			candidates[node.ID] = node
@@ -507,7 +508,7 @@ func (r *Repository) Counts(ctx context.Context) (graph.Counts, error) {
 }
 
 func (r *Repository) SearchNodes(ctx context.Context, term string, limit int) ([]graph.Node, error) {
-	var nodes []graph.Node
+	nodes := make([]graph.Node, 0)
 	needle := strings.ToLower(term)
 	err := r.store.view(ctx, func(tx transaction) error {
 		return tx.scan(prefix("node"), func(_ []byte, value []byte) error {
@@ -803,7 +804,7 @@ func factsFromIndex(tx transaction, p []byte) ([]graph.Fact, error) {
 	return result, err
 }
 func edgesFromIndex(tx transaction, p []byte) ([]graph.Edge, error) {
-	var result []graph.Edge
+	result := make([]graph.Edge, 0)
 	err := tx.scan(p, func(_, value []byte) error {
 		edge, err := getEdge(tx, string(value))
 		if err == nil {
