@@ -23,6 +23,7 @@ func emitSyntaxFailureFlow(b *parserapi.Builder, fset *token.FileSet, input pars
 	body := declaration.Body
 	executableClosures := map[*goast.FuncLit]bool{}
 	asyncClosures := map[*goast.FuncLit]bool{}
+	deferredClosures := deferredFunctionLiterals(body)
 	goast.Inspect(body, func(node goast.Node) bool {
 		switch value := node.(type) {
 		case *goast.GoStmt:
@@ -45,7 +46,7 @@ func emitSyntaxFailureFlow(b *parserapi.Builder, fset *token.FileSet, input pars
 			if target != "" {
 				b.AddFact(functionID, graph.EdgeDefers, "", target, targetKind,
 					location(input.Path, fset, value.Pos(), value.End()),
-					map[string]string{"form": "defer", "evidence": "go/ast", "resolution": "syntax", "conditional": conditional})
+					map[string]string{"form": "defer", "evidence": "go/ast", "resolution": "syntax", "unresolved": "true", "conditional": conditional})
 			}
 		case *goast.CallExpr:
 			if closure := calledFunctionLiteral(value); closure != nil && !asyncClosures[closure] {
@@ -63,6 +64,9 @@ func emitSyntaxFailureFlow(b *parserapi.Builder, fset *token.FileSet, input pars
 				b.AddFact(functionID, graph.EdgePanics, "", target, graph.KindExternal, loc,
 					map[string]string{"form": "panic", "evidence": "go/ast", "resolution": "syntax", "unresolved": "true", "conditional": conditional})
 			case "recover":
+				if closure := innermostFunctionLiteral(body, value.Pos()); closure != nil && !deferredClosures[closure] {
+					return true
+				}
 				b.AddFact(functionID, graph.EdgeRecovers, "", "builtin.recover", "", loc,
 					map[string]string{"form": "recover", "evidence": "go/ast", "resolution": "syntax", "conditional": conditional})
 			}

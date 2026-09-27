@@ -405,6 +405,7 @@ func (e failureExtractor) handlersFromCondition(functionName string, condition g
 func (e failureExtractor) collectAbruptAndDeferred(body *goast.BlockStmt, functionName string, origins map[types.Object][]failureTarget) {
 	executableClosures := map[*goast.FuncLit]bool{}
 	asyncClosures := map[*goast.FuncLit]bool{}
+	deferredClosures := deferredFunctionLiterals(body)
 	goast.Inspect(body, func(node goast.Node) bool {
 		switch value := node.(type) {
 		case *goast.GoStmt:
@@ -438,6 +439,9 @@ func (e failureExtractor) collectAbruptAndDeferred(body *goast.BlockStmt, functi
 					})
 				}
 			case "builtin.recover":
+				if closure := innermostFunctionLiteral(body, value.Pos()); closure != nil && !deferredClosures[closure] {
+					return true
+				}
 				e.add(functionName, graph.EdgeRecovers, failureTarget{name: "builtin.recover"},
 					e.location(value.Pos(), value.End()), map[string]string{
 						"form": "recover", "conditional": strconv.FormatBool(nodeWithinConditional(body, value.Pos())),
@@ -462,6 +466,36 @@ func calledFunctionLiteral(call *goast.CallExpr) *goast.FuncLit {
 	}
 	closure, _ := expression.(*goast.FuncLit)
 	return closure
+}
+
+func deferredFunctionLiterals(body *goast.BlockStmt) map[*goast.FuncLit]bool {
+	result := map[*goast.FuncLit]bool{}
+	goast.Inspect(body, func(node goast.Node) bool {
+		statement, ok := node.(*goast.DeferStmt)
+		if !ok {
+			return true
+		}
+		if closure := calledFunctionLiteral(statement.Call); closure != nil {
+			result[closure] = true
+		}
+		return true
+	})
+	return result
+}
+
+func innermostFunctionLiteral(body *goast.BlockStmt, position token.Pos) *goast.FuncLit {
+	var result *goast.FuncLit
+	goast.Inspect(body, func(node goast.Node) bool {
+		closure, ok := node.(*goast.FuncLit)
+		if !ok || position < closure.Pos() || position > closure.End() {
+			return true
+		}
+		if result == nil || closure.End()-closure.Pos() < result.End()-result.Pos() {
+			result = closure
+		}
+		return true
+	})
+	return result
 }
 
 func (e failureExtractor) expressionTargets(expression goast.Expr, origins map[types.Object][]failureTarget, functionName string) []failureTarget {

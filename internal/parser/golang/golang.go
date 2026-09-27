@@ -115,7 +115,10 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 		packageName = semantic.PackagePath
 	}
 	imports := map[string]string{}
-	packageShadowedBuiltins := syntaxPackageShadowedBuiltins(input, file)
+	var packageShadowedBuiltins map[string]bool
+	if !semantic.Available {
+		packageShadowedBuiltins = syntaxPackageShadowedBuiltins(input, file)
+	}
 	for _, spec := range file.Imports {
 		importPath, unquoteErr := strconv.Unquote(spec.Path.Value)
 		if unquoteErr != nil {

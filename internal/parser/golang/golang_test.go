@@ -110,6 +110,7 @@ func Register(func()) {}
 func Guard(value any) {
 	if value != nil { defer cleanup(); panic(value) }
 	Register(func() { defer callbackCleanup(); panic(value) })
+	func() { _ = recover() }()
 	_ = recover()
 }
 `)
@@ -123,10 +124,15 @@ func Guard(value any) {
 	if panicFact.Properties["conditional"] != "true" || panicFact.Properties["evidence"] != "go/ast" {
 		t.Fatalf("syntax panic evidence = %#v", panicFact)
 	}
-	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeDefers,
-		"example.com/sample.Guard", "example.com/sample.cleanup", "defer")
+	deferFact := assertFailureFactFrom(t, result.Nodes, result.Facts, graph.EdgeDefers, "example.com/sample.Guard")
+	if deferFact.Target != "example.com/sample.cleanup" || deferFact.Properties["unresolved"] != "true" {
+		t.Fatalf("syntax defer must keep its syntactic target and unresolved evidence: %#v", deferFact)
+	}
 	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeRecovers,
 		"example.com/sample.Guard", "builtin.recover", "recover")
+	if count := failureFactCountFrom(t, result.Nodes, result.Facts, graph.EdgeRecovers, "example.com/sample.Guard"); count != 1 {
+		t.Fatalf("syntax recover facts = %d, want only the named function site", count)
+	}
 	assertNoFailureTarget(t, result.Facts, graph.EdgeDefers, "example.com/sample.callbackCleanup")
 	panicCount := 0
 	guardID := graph.NodeID(graph.KindFunction, "example.com/sample.Guard", "repo", "safe.go")
@@ -435,6 +441,7 @@ func Guard(value any, cleaner Cleaner) {
 	defer cleanup()
 	defer cleaner.Close()
 	defer func() { _ = recover() }()
+	func() { _ = recover() }()
 	Register(func() { defer callbackCleanup(); panic(ErrSentinel) })
 	go worker()
 	panic(value)
@@ -476,6 +483,9 @@ func Guard(value any, cleaner Cleaner) {
 	assertNoFailureTarget(t, result.Facts, graph.EdgeDefers, "example.com/failures.callbackCleanup")
 	assertNoFailureTarget(t, result.Facts, graph.EdgePanics, "example.com/failures.ErrSentinel")
 	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeKind("recovers"), "example.com/failures.Guard", "builtin.recover", "recover")
+	if count := failureFactCountFrom(t, result.Nodes, result.Facts, graph.EdgeRecovers, "example.com/failures.Guard"); count != 1 {
+		t.Fatalf("semantic recover facts = %d, want only the deferred recovery closure", count)
+	}
 	panicFact := assertFailureFactFrom(t, result.Nodes, result.Facts, graph.EdgeKind("panics"), "example.com/failures.Guard")
 	if panicFact.TargetKind != graph.KindExternal || panicFact.Properties["unresolved"] != "true" {
 		t.Fatalf("dynamic panic payload must stay unresolved: %#v", panicFact)
@@ -631,6 +641,18 @@ func assertNoFailureFactFrom(t *testing.T, nodes []graph.Node, facts []graph.Fac
 			t.Fatalf("unexpected %s fact from %q: %#v", kind, from, fact)
 		}
 	}
+}
+
+func failureFactCountFrom(t *testing.T, nodes []graph.Node, facts []graph.Fact, kind graph.EdgeKind, from string) int {
+	t.Helper()
+	fromID := nodeIDByQualified(t, nodes, from)
+	count := 0
+	for _, fact := range facts {
+		if fact.Kind == kind && fact.FromID == fromID {
+			count++
+		}
+	}
+	return count
 }
 
 func assertNoFailureFact(t *testing.T, nodes []graph.Node, facts []graph.Fact, kind graph.EdgeKind, from, target string) {
