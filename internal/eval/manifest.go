@@ -31,10 +31,19 @@ type RepositorySpec struct {
 type Expectations struct {
 	Nodes          []NodeRef       `json:"nodes"`
 	Edges          []EdgeRef       `json:"edges"`
+	Diagnostics    []DiagnosticRef `json:"diagnostics,omitempty"`
 	Queries        []QuerySpec     `json:"queries,omitempty"`
 	Ambiguities    []AmbiguitySpec `json:"ambiguities,omitempty"`
 	ForbiddenEdges []EdgePattern   `json:"forbidden_edges,omitempty"`
 	ForbiddenPaths []PathPattern   `json:"forbidden_paths,omitempty"`
+}
+
+type DiagnosticRef struct {
+	Repo    string `json:"repo"`
+	Path    string `json:"path"`
+	Line    int    `json:"line,omitempty"`
+	Level   string `json:"level"`
+	Message string `json:"message"`
 }
 
 type NodeRef struct {
@@ -271,6 +280,14 @@ func validateManifest(manifest Manifest) error {
 	for _, edge := range manifest.Expect.ForbiddenEdges {
 		if err := validateEdge(edge.From, edge.Relation, edge.To, repositories); err != nil {
 			return err
+		}
+	}
+	for _, diagnostic := range manifest.Expect.Diagnostics {
+		if !repositories[diagnostic.Repo] {
+			return fmt.Errorf("diagnostic has unknown repository %q", diagnostic.Repo)
+		}
+		if diagnostic.Path == "" || diagnostic.Level == "" || diagnostic.Message == "" {
+			return fmt.Errorf("diagnostic repo, path, level, and message are required")
 		}
 	}
 	queryIDs := map[string]bool{}

@@ -124,13 +124,13 @@
       {
         "repo": "matrix",
         "kind": "external",
-        "qualified_name": "reflect.ValueOf",
+        "qualified_name": "reflect.Value.Call",
         "external": true
       },
       {
         "repo": "matrix",
         "kind": "external",
-        "qualified_name": "reflect.ValueOf(name).Call",
+        "qualified_name": "reflect.ValueOf",
         "external": true
       },
       {
@@ -1290,13 +1290,16 @@
         "to": {
           "repo": "matrix",
           "kind": "external",
-          "qualified_name": "reflect.ValueOf(name).Call",
+          "qualified_name": "reflect.Value.Call",
           "external": true
         },
         "source": {
           "path": "main.go",
           "line": 17,
           "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
         }
       },
       {
@@ -1316,6 +1319,9 @@
           "path": "main.go",
           "line": 17,
           "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
         }
       },
       {
@@ -1352,6 +1358,9 @@
           "path": "main.go",
           "line": 9,
           "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
         }
       },
       {
@@ -2393,6 +2402,15 @@
         }
       }
     ],
+    "diagnostics": [
+      {
+        "repo": "matrix",
+        "path": "main.go",
+        "line": 10,
+        "level": "warning",
+        "message": "undefined: publish"
+      }
+    ],
     "queries": [
       {
         "id": "go-local-call",
@@ -2431,6 +2449,9 @@
               "path": "main.go",
               "line": 9,
               "column": 2
+            },
+            "properties": {
+              "resolution": "go/types"
             }
           }
         ]

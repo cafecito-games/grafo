@@ -1,0 +1,1637 @@
+{
+  "schema_version": 1,
+  "case_id": "go-semantic",
+  "repositories": [
+    {
+      "id": "semantic",
+      "path": "repos/semantic"
+    }
+  ],
+  "expect": {
+    "nodes": [
+      {
+        "repo": "semantic",
+        "kind": "external",
+        "qualified_name": "dependency.Call",
+        "external": true
+      },
+      {
+        "repo": "semantic",
+        "kind": "external",
+        "qualified_name": "example.com/semantic/broken.missing",
+        "external": true
+      },
+      {
+        "repo": "semantic",
+        "kind": "external",
+        "qualified_name": "reflect.Value.Call",
+        "external": true
+      },
+      {
+        "repo": "semantic",
+        "kind": "external",
+        "qualified_name": "reflect.Value.MethodByName",
+        "external": true
+      },
+      {
+        "repo": "semantic",
+        "kind": "external",
+        "qualified_name": "reflect.ValueOf",
+        "external": true
+      },
+      {
+        "repo": "semantic",
+        "kind": "file",
+        "qualified_name": "broken/broken.go"
+      },
+      {
+        "repo": "semantic",
+        "kind": "file",
+        "qualified_name": "excluded.go"
+      },
+      {
+        "repo": "semantic",
+        "kind": "file",
+        "qualified_name": "go.mod"
+      },
+      {
+        "repo": "semantic",
+        "kind": "file",
+        "qualified_name": "semantic.go"
+      },
+      {
+        "repo": "semantic",
+        "kind": "file",
+        "qualified_name": "unavailable/unavailable.go"
+      },
+      {
+        "repo": "semantic",
+        "kind": "function",
+        "qualified_name": "example.com/semantic.Dispatch"
+      },
+      {
+        "repo": "semantic",
+        "kind": "function",
+        "qualified_name": "example.com/semantic.Dynamic"
+      },
+      {
+        "repo": "semantic",
+        "kind": "function",
+        "qualified_name": "example.com/semantic.Generic"
+      },
+      {
+        "repo": "semantic",
+        "kind": "function",
+        "qualified_name": "example.com/semantic.Invoke"
+      },
+      {
+        "repo": "semantic",
+        "kind": "function",
+        "qualified_name": "example.com/semantic.Touch"
+      },
+      {
+        "repo": "semantic",
+        "kind": "function",
+        "qualified_name": "example.com/semantic.helper"
+      },
+      {
+        "repo": "semantic",
+        "kind": "function",
+        "qualified_name": "example.com/semantic/broken.Run"
+      },
+      {
+        "repo": "semantic",
+        "kind": "function",
+        "qualified_name": "example.com/semantic/broken.helper"
+      },
+      {
+        "repo": "semantic",
+        "kind": "function",
+        "qualified_name": "example.com/semantic/unavailable.Run"
+      },
+      {
+        "repo": "semantic",
+        "kind": "interface",
+        "qualified_name": "example.com/semantic.AlsoRunner"
+      },
+      {
+        "repo": "semantic",
+        "kind": "interface",
+        "qualified_name": "example.com/semantic.Runner"
+      },
+      {
+        "repo": "semantic",
+        "kind": "method",
+        "qualified_name": "example.com/semantic.AlsoRunner.Run"
+      },
+      {
+        "repo": "semantic",
+        "kind": "method",
+        "qualified_name": "example.com/semantic.Alternative.Run"
+      },
+      {
+        "repo": "semantic",
+        "kind": "method",
+        "qualified_name": "example.com/semantic.Base.Promoted"
+      },
+      {
+        "repo": "semantic",
+        "kind": "method",
+        "qualified_name": "example.com/semantic.Left.Touch"
+      },
+      {
+        "repo": "semantic",
+        "kind": "method",
+        "qualified_name": "example.com/semantic.Right.Touch"
+      },
+      {
+        "repo": "semantic",
+        "kind": "method",
+        "qualified_name": "example.com/semantic.Runner.Run"
+      },
+      {
+        "repo": "semantic",
+        "kind": "method",
+        "qualified_name": "example.com/semantic.Worker.Run"
+      },
+      {
+        "repo": "semantic",
+        "kind": "module",
+        "qualified_name": "example.com/semantic"
+      },
+      {
+        "repo": "semantic",
+        "kind": "module",
+        "qualified_name": "example.invalid/grafo-missing-module",
+        "external": true
+      },
+      {
+        "repo": "semantic",
+        "kind": "module",
+        "qualified_name": "reflect",
+        "external": true
+      },
+      {
+        "repo": "semantic",
+        "kind": "parameter",
+        "qualified_name": "example.com/semantic.Dispatch.r"
+      },
+      {
+        "repo": "semantic",
+        "kind": "parameter",
+        "qualified_name": "example.com/semantic.Dynamic.value"
+      },
+      {
+        "repo": "semantic",
+        "kind": "parameter",
+        "qualified_name": "example.com/semantic.Invoke.left"
+      },
+      {
+        "repo": "semantic",
+        "kind": "parameter",
+        "qualified_name": "example.com/semantic.Invoke.r"
+      },
+      {
+        "repo": "semantic",
+        "kind": "parameter",
+        "qualified_name": "example.com/semantic.Invoke.worker"
+      },
+      {
+        "repo": "semantic",
+        "kind": "parameter",
+        "qualified_name": "example.com/semantic.Touch.left"
+      },
+      {
+        "repo": "semantic",
+        "kind": "repository",
+        "qualified_name": "semantic"
+      },
+      {
+        "repo": "semantic",
+        "kind": "type",
+        "qualified_name": "example.com/semantic.Alias"
+      },
+      {
+        "repo": "semantic",
+        "kind": "type",
+        "qualified_name": "example.com/semantic.Alternative"
+      },
+      {
+        "repo": "semantic",
+        "kind": "type",
+        "qualified_name": "example.com/semantic.Base"
+      },
+      {
+        "repo": "semantic",
+        "kind": "type",
+        "qualified_name": "example.com/semantic.Left"
+      },
+      {
+        "repo": "semantic",
+        "kind": "type",
+        "qualified_name": "example.com/semantic.Right"
+      },
+      {
+        "repo": "semantic",
+        "kind": "type",
+        "qualified_name": "example.com/semantic.Worker"
+      },
+      {
+        "repo": "semantic",
+        "kind": "variable",
+        "qualified_name": "example.com/semantic.Invoke.alias@60"
+      },
+      {
+        "repo": "semantic",
+        "kind": "variable",
+        "qualified_name": "example.com/semantic.Invoke.method@57"
+      }
+    ],
+    "edges": [
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "broken/broken.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic/broken.Run"
+        },
+        "source": {
+          "path": "broken/broken.go",
+          "line": 5,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "broken/broken.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic/broken.helper"
+        },
+        "source": {
+          "path": "broken/broken.go",
+          "line": 3,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "go.mod"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "module",
+          "qualified_name": "example.com/semantic"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "semantic.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Dispatch"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 41,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "semantic.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Dynamic"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 49,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "semantic.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Generic"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 37,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "semantic.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Invoke"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 53,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "semantic.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Touch"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 45,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "semantic.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.helper"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 39,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "semantic.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "interface",
+          "qualified_name": "example.com/semantic.AlsoRunner"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 9,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "semantic.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "interface",
+          "qualified_name": "example.com/semantic.Runner"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 5,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "semantic.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "method",
+          "qualified_name": "example.com/semantic.Alternative.Run"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 27,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "semantic.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "method",
+          "qualified_name": "example.com/semantic.Base.Promoted"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 15,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "semantic.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "method",
+          "qualified_name": "example.com/semantic.Left.Touch"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 31,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "semantic.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "method",
+          "qualified_name": "example.com/semantic.Right.Touch"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 35,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "semantic.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "method",
+          "qualified_name": "example.com/semantic.Worker.Run"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 21,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "semantic.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "type",
+          "qualified_name": "example.com/semantic.Alias"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 23,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "semantic.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "type",
+          "qualified_name": "example.com/semantic.Alternative"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 25,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "semantic.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "type",
+          "qualified_name": "example.com/semantic.Base"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 13,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "semantic.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "type",
+          "qualified_name": "example.com/semantic.Left"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 29,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "semantic.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "type",
+          "qualified_name": "example.com/semantic.Right"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 33,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "semantic.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "type",
+          "qualified_name": "example.com/semantic.Worker"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 17,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "semantic.go"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "semantic",
+          "kind": "module",
+          "qualified_name": "reflect",
+          "external": true
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 3,
+          "column": 8
+        },
+        "properties": {
+          "alias": "reflect"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "unavailable/unavailable.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic/unavailable.Run"
+        },
+        "source": {
+          "path": "unavailable/unavailable.go",
+          "line": 5,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "unavailable/unavailable.go"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "semantic",
+          "kind": "module",
+          "qualified_name": "example.invalid/grafo-missing-module",
+          "external": true
+        },
+        "source": {
+          "path": "unavailable/unavailable.go",
+          "line": 3,
+          "column": 8
+        },
+        "properties": {
+          "alias": "dependency"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Dispatch"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "method",
+          "qualified_name": "example.com/semantic.Runner.Run"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 42,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Dispatch"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "parameter",
+          "qualified_name": "example.com/semantic.Dispatch.r"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 41,
+          "column": 15
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Dynamic"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "external",
+          "qualified_name": "reflect.Value.Call",
+          "external": true
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 50,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Dynamic"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "external",
+          "qualified_name": "reflect.Value.MethodByName",
+          "external": true
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 50,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Dynamic"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "external",
+          "qualified_name": "reflect.ValueOf",
+          "external": true
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 50,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Dynamic"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "parameter",
+          "qualified_name": "example.com/semantic.Dynamic.value"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 49,
+          "column": 14
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Invoke"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "external",
+          "qualified_name": "reflect.Value.Call",
+          "external": true
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 64,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Invoke"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "external",
+          "qualified_name": "reflect.Value.MethodByName",
+          "external": true
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 64,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Invoke"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "external",
+          "qualified_name": "reflect.ValueOf",
+          "external": true
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 64,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Invoke"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Generic"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 63,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Invoke"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.helper"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 54,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Invoke"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "method",
+          "qualified_name": "example.com/semantic.Base.Promoted"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 56,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Invoke"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "method",
+          "qualified_name": "example.com/semantic.Left.Touch"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 62,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Invoke"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "method",
+          "qualified_name": "example.com/semantic.Runner.Run"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 55,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Invoke"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "method",
+          "qualified_name": "example.com/semantic.Worker.Run"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 58,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Invoke"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "method",
+          "qualified_name": "example.com/semantic.Worker.Run"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 59,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Invoke"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "method",
+          "qualified_name": "example.com/semantic.Worker.Run"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 61,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Invoke"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "parameter",
+          "qualified_name": "example.com/semantic.Invoke.left"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 53,
+          "column": 44
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Invoke"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "parameter",
+          "qualified_name": "example.com/semantic.Invoke.r"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 53,
+          "column": 13
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Invoke"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "parameter",
+          "qualified_name": "example.com/semantic.Invoke.worker"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 53,
+          "column": 23
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Invoke"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "variable",
+          "qualified_name": "example.com/semantic.Invoke.alias@60"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 60,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Invoke"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "variable",
+          "qualified_name": "example.com/semantic.Invoke.method@57"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 57,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Touch"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "method",
+          "qualified_name": "example.com/semantic.Left.Touch"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 46,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Touch"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "semantic",
+          "kind": "parameter",
+          "qualified_name": "example.com/semantic.Touch.left"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 45,
+          "column": 12
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic/broken.Run"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "external",
+          "qualified_name": "example.com/semantic/broken.missing",
+          "external": true
+        },
+        "source": {
+          "path": "broken/broken.go",
+          "line": 7,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic/broken.Run"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic/broken.helper"
+        },
+        "source": {
+          "path": "broken/broken.go",
+          "line": 6,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic/unavailable.Run"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "external",
+          "qualified_name": "dependency.Call",
+          "external": true
+        },
+        "source": {
+          "path": "unavailable/unavailable.go",
+          "line": 6,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "interface",
+          "qualified_name": "example.com/semantic.AlsoRunner"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "semantic",
+          "kind": "method",
+          "qualified_name": "example.com/semantic.AlsoRunner.Run"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 10,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "interface",
+          "qualified_name": "example.com/semantic.Runner"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "semantic",
+          "kind": "method",
+          "qualified_name": "example.com/semantic.Runner.Run"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 6,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "parameter",
+          "qualified_name": "example.com/semantic.Dynamic.value"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "semantic",
+          "kind": "external",
+          "qualified_name": "reflect.ValueOf",
+          "external": true
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 50,
+          "column": 2
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "parameter",
+          "qualified_name": "example.com/semantic.Invoke.worker"
+        },
+        "relation": "assigns",
+        "to": {
+          "repo": "semantic",
+          "kind": "variable",
+          "qualified_name": "example.com/semantic.Invoke.method@57"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 57,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "parameter",
+          "qualified_name": "example.com/semantic.Invoke.worker"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "semantic",
+          "kind": "external",
+          "qualified_name": "reflect.ValueOf",
+          "external": true
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 64,
+          "column": 2
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "parameter",
+          "qualified_name": "example.com/semantic.Invoke.worker"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "semantic",
+          "kind": "method",
+          "qualified_name": "example.com/semantic.Worker.Run"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 59,
+          "column": 2
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "repository",
+          "qualified_name": "semantic"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "broken/broken.go"
+        },
+        "source": {
+          "path": "broken/broken.go",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "repository",
+          "qualified_name": "semantic"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "excluded.go"
+        },
+        "source": {
+          "path": "excluded.go",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "repository",
+          "qualified_name": "semantic"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "go.mod"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "repository",
+          "qualified_name": "semantic"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "semantic.go"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "repository",
+          "qualified_name": "semantic"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "semantic",
+          "kind": "file",
+          "qualified_name": "unavailable/unavailable.go"
+        },
+        "source": {
+          "path": "unavailable/unavailable.go",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "type",
+          "qualified_name": "example.com/semantic.Alternative"
+        },
+        "relation": "implements",
+        "to": {
+          "repo": "semantic",
+          "kind": "interface",
+          "qualified_name": "example.com/semantic.AlsoRunner"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 25,
+          "column": 6
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "type",
+          "qualified_name": "example.com/semantic.Alternative"
+        },
+        "relation": "implements",
+        "to": {
+          "repo": "semantic",
+          "kind": "interface",
+          "qualified_name": "example.com/semantic.Runner"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 25,
+          "column": 6
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "type",
+          "qualified_name": "example.com/semantic.Worker"
+        },
+        "relation": "embeds",
+        "to": {
+          "repo": "semantic",
+          "kind": "type",
+          "qualified_name": "example.com/semantic.Base"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 18,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "type",
+          "qualified_name": "example.com/semantic.Worker"
+        },
+        "relation": "implements",
+        "to": {
+          "repo": "semantic",
+          "kind": "interface",
+          "qualified_name": "example.com/semantic.AlsoRunner"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 17,
+          "column": 6
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "type",
+          "qualified_name": "example.com/semantic.Worker"
+        },
+        "relation": "implements",
+        "to": {
+          "repo": "semantic",
+          "kind": "interface",
+          "qualified_name": "example.com/semantic.Runner"
+        },
+        "source": {
+          "path": "semantic.go",
+          "line": 17,
+          "column": 6
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      }
+    ],
+    "diagnostics": [
+      {
+        "repo": "semantic",
+        "path": "broken/broken.go",
+        "line": 7,
+        "level": "warning",
+        "message": "undefined: missing"
+      },
+      {
+        "repo": "semantic",
+        "path": "unavailable/unavailable.go",
+        "line": 3,
+        "level": "warning",
+        "message": "could not import example.invalid/grafo-missing-module (invalid package name: \"\")"
+      }
+    ],
+    "forbidden_edges": [
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Dispatch"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "method",
+          "qualified_name": "example.com/semantic.Worker.Run"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Dispatch"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "method",
+          "qualified_name": "example.com/semantic.Alternative.Run"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Dynamic"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "method",
+          "qualified_name": "example.com/semantic.Worker.Run"
+        }
+      },
+      {
+        "from": {
+          "repo": "semantic",
+          "kind": "function",
+          "qualified_name": "example.com/semantic.Touch"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "semantic",
+          "kind": "method",
+          "qualified_name": "example.com/semantic.Right.Touch"
+        }
+      }
+    ]
+  }
+}

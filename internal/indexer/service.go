@@ -17,7 +17,8 @@ import (
 )
 
 const workspaceOwner = "__workspace__"
-const SemanticIndexVersion = "12"
+const workspaceSemanticKeysMeta = "parser_workspace_semantic_keys"
+const SemanticIndexVersion = "13"
 
 type Options struct {
 	Force       bool
@@ -90,6 +91,35 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 	if err != nil {
 		return report, fmt.Errorf("discover source files: %w", err)
 	}
+	workspaceSemanticKeys, err := s.parsers.WorkspaceSemanticKeys(ctx, parserapi.Input{
+		Root: project.Root, Repository: project.Name, RepoID: project.ID, GoModule: project.GoModule,
+	})
+	if err != nil {
+		return report, err
+	}
+	workspaceSemanticKeysJSON, err := json.Marshal(workspaceSemanticKeys)
+	if err != nil {
+		return report, err
+	}
+	indexedWorkspaceSemanticKeys, err := s.repository.Meta(ctx, workspaceSemanticKeysMeta)
+	if err != nil {
+		return report, fmt.Errorf("load parser workspace semantic keys: %w", err)
+	}
+	changedSemanticLanguages := map[string]bool{}
+	if indexedWorkspaceSemanticKeys != "" && indexedWorkspaceSemanticKeys != string(workspaceSemanticKeysJSON) {
+		var previous map[string]string
+		if json.Unmarshal([]byte(indexedWorkspaceSemanticKeys), &previous) != nil {
+			for language := range workspaceSemanticKeys {
+				changedSemanticLanguages[language] = true
+			}
+		} else {
+			for language, key := range workspaceSemanticKeys {
+				if previous[language] != key {
+					changedSemanticLanguages[language] = true
+				}
+			}
+		}
+	}
 	var selected map[string]bool
 	var dirtyPaths []string
 	dirtyPathsValid := false
@@ -103,6 +133,13 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 			dirtyPaths, dirtyPathsValid = changes.dirty, true
 			if !options.Force && !schemaChanged && indexedCommit != "" && previousDirtyValid {
 				selected = selectChangedPaths(paths, known, changes.changed, previousDirty, s.parsers)
+			}
+		}
+	}
+	if selected != nil && len(changedSemanticLanguages) > 0 {
+		for _, path := range paths {
+			if languageParser, ok := s.parsers.For(path); ok && changedSemanticLanguages[languageParser.Language()] {
+				selected[path] = true
 			}
 		}
 	}
@@ -140,13 +177,19 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 		_, _ = digest.Write(content)
 		_, _ = digest.Write([]byte{0})
 		_, _ = digest.Write([]byte(SemanticIndexVersion))
-		if keyer, ok := languageParser.(parserapi.SemanticKeyer); ok {
+		if _, ok := languageParser.(parserapi.WorkspaceSemanticKeyer); ok {
+			semanticKey := workspaceSemanticKeys[languageParser.Language()]
+			_, _ = digest.Write([]byte{0})
+			_, _ = digest.Write([]byte(semanticKey))
+			input.SemanticKey = semanticKey
+		} else if keyer, ok := languageParser.(parserapi.SemanticKeyer); ok {
 			semanticKey, keyErr := keyer.SemanticKey(ctx, input)
 			if keyErr != nil {
 				return report, fmt.Errorf("load parser configuration for %s: %w", path, keyErr)
 			}
 			_, _ = digest.Write([]byte{0})
 			_, _ = digest.Write([]byte(semanticKey))
+			input.SemanticKey = semanticKey
 		}
 		hash := hex.EncodeToString(digest.Sum(nil))
 		previous, exists := known[path]
@@ -198,6 +241,9 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (Re
 			return report, err
 		}
 	}
+	if err := s.repository.SetMeta(ctx, workspaceSemanticKeysMeta, string(workspaceSemanticKeysJSON)); err != nil {
+		return report, err
+	}
 	if dirtyPathsValid {
 		encoded, marshalErr := json.Marshal(dirtyPaths)
 		if marshalErr != nil {
@@ -227,6 +273,13 @@ func selectChangedPaths(paths []string, known map[string]graph.FileRecord, chang
 		if _, exists := known[path]; !exists {
 			selected[path] = true
 		}
+	}
+	changedPaths := make([]string, 0, len(selected))
+	for path := range selected {
+		changedPaths = append(changedPaths, path)
+	}
+	for _, path := range parsers.SemanticAffectedPaths(paths, changedPaths) {
+		selected[path] = true
 	}
 	for _, path := range paths {
 		languageParser, ok := parsers.For(path)

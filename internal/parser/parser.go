@@ -11,12 +11,13 @@ import (
 )
 
 type Input struct {
-	Root       string
-	Path       string
-	Content    []byte
-	Repository string
-	RepoID     string
-	GoModule   string
+	Root        string
+	Path        string
+	Content     []byte
+	Repository  string
+	RepoID      string
+	GoModule    string
+	SemanticKey string
 }
 
 type Parser interface {
@@ -32,10 +33,22 @@ type SemanticKeyer interface {
 	SemanticKey(context.Context, Input) (string, error)
 }
 
+// WorkspaceSemanticKeyer marks a semantic key that is shared by every source
+// file in one indexing run, allowing the indexer to compute it once.
+type WorkspaceSemanticKeyer interface {
+	WorkspaceSemanticKey(context.Context, Input) (string, error)
+}
+
 // SemanticDependencyProvider identifies repository files whose changes can
 // alter this parser's output for otherwise unchanged source files.
 type SemanticDependencyProvider interface {
 	SemanticDependencies() []string
+}
+
+// SemanticChangeProvider expands incremental invalidation when a source or
+// configuration edit can change otherwise untouched parser output.
+type SemanticChangeProvider interface {
+	SemanticAffectedPaths(allPaths, changedPaths []string) []string
 }
 
 type Registry struct {
@@ -60,6 +73,44 @@ func (r *Registry) Languages() []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+func (r *Registry) SemanticAffectedPaths(paths, changed []string) []string {
+	seen := map[string]bool{}
+	for _, path := range changed {
+		seen[path] = true
+	}
+	for _, languageParser := range r.parsers {
+		provider, ok := languageParser.(SemanticChangeProvider)
+		if !ok {
+			continue
+		}
+		for _, path := range provider.SemanticAffectedPaths(paths, changed) {
+			seen[path] = true
+		}
+	}
+	result := make([]string, 0, len(seen))
+	for path := range seen {
+		result = append(result, path)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func (r *Registry) WorkspaceSemanticKeys(ctx context.Context, input Input) (map[string]string, error) {
+	result := map[string]string{}
+	for _, languageParser := range r.parsers {
+		keyer, ok := languageParser.(WorkspaceSemanticKeyer)
+		if !ok {
+			continue
+		}
+		key, err := keyer.WorkspaceSemanticKey(ctx, input)
+		if err != nil {
+			return nil, fmt.Errorf("%s workspace semantic key: %w", languageParser.Language(), err)
+		}
+		result[languageParser.Language()] = key
+	}
+	return result, nil
 }
 
 func FileNode(input Input, language string) graph.Node {

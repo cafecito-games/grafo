@@ -2,12 +2,23 @@ package golang_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	golangparser "github.com/cafecito-games/grafo/internal/parser/golang"
 )
+
+type fakeSemanticLoader struct {
+	view golangparser.SemanticView
+}
+
+func (f fakeSemanticLoader) Load(context.Context, parserapi.Input) (golangparser.SemanticView, error) {
+	return f.view, nil
+}
 
 func TestParserExtractsSymbolsAndWiring(t *testing.T) {
 	content := []byte(`package api
@@ -52,6 +63,178 @@ func health(http.ResponseWriter, *http.Request) {}
 	assertHasFact(t, result.Facts, graph.EdgeCalls, "example.com/client.Client.Send")
 }
 
+func TestParserPrefersInjectedSemanticCallAndImplementationEvidence(t *testing.T) {
+	content := []byte(`package sample
+type Runner interface { Run() }
+type Worker struct{}
+func (Worker) Run() {}
+func invoke(value Runner) { value.Run() }
+`)
+	callOffset := strings.Index(string(content), "value.Run") + len("value.Run")
+	parser := golangparser.NewWithSemanticLoader(fakeSemanticLoader{view: golangparser.SemanticView{
+		Available:    true,
+		Included:     true,
+		BuildContext: "goos=test;goarch=test",
+		Calls: map[int]golangparser.SemanticCall{
+			callOffset: {Target: "example.com/sample.Runner.Run"},
+		},
+		Implementations: []golangparser.SemanticImplementation{{
+			Concrete: "example.com/sample.Worker", Interface: "example.com/sample.Runner",
+		}},
+	}})
+	result, err := parser.Parse(context.Background(), parserapi.Input{
+		Path: "sample.go", Content: content, Repository: "sample", GoModule: "example.com/sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "example.com/sample.Runner.Run")
+	assertHasFact(t, result.Facts, graph.EdgeImplements, "example.com/sample.Runner")
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeCalls && fact.Target == "example.com/sample.Worker.Run" {
+			t.Fatalf("interface dispatch fanned out to concrete implementation: %#v", fact)
+		}
+	}
+	for _, node := range result.Nodes {
+		if node.Kind == graph.KindFile && node.Properties["go_build_context"] != "goos=test;goarch=test" {
+			t.Fatalf("build context not recorded on file node: %#v", node)
+		}
+	}
+}
+
+func TestPackageSemanticLoaderResolvesTypedCalls(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26\n")
+	content := []byte(`package sample
+import "reflect"
+type Runner interface { Run() }
+type Base struct{}
+func (Base) Promoted() {}
+type Worker struct{ Base }
+func (*Worker) Run() {}
+type Alias = Worker
+type Left struct{}
+func (Left) Touch() {}
+type Right struct{}
+func (Right) Touch() {}
+func Generic[T any](T) {}
+func invoke(r Runner, w *Worker, left Left, right Right) {
+	r.Run()
+	w.Promoted()
+	method := w.Run
+	method()
+	(*Worker).Run(w)
+	var alias *Alias = w
+	alias.Run()
+	left.Touch()
+	right.Touch()
+	Generic[int](1)
+	println("ok")
+	_ = string([]byte("ok"))
+	reflect.ValueOf(w).MethodByName("Run").Call(nil)
+}
+`)
+	writeFile(t, filepath.Join(root, "sample.go"), string(content))
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "sample.go", Content: content, Repository: "sample", RepoID: "repo", GoModule: "example.com/sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{
+		"example.com/sample.Runner.Run",
+		"example.com/sample.Base.Promoted",
+		"example.com/sample.Worker.Run",
+		"example.com/sample.Left.Touch",
+		"example.com/sample.Right.Touch",
+		"example.com/sample.Generic",
+		"builtin.println",
+		"reflect.ValueOf",
+		"reflect.Value.MethodByName",
+		"reflect.Value.Call",
+	} {
+		assertHasFact(t, result.Facts, graph.EdgeCalls, target)
+	}
+	assertHasFact(t, result.Facts, graph.EdgeImplements, "example.com/sample.Runner")
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeCalls && fact.Target == "example.com/sample.string" {
+			t.Fatalf("type conversion emitted a call edge: %#v", fact)
+		}
+	}
+}
+
+func TestPackageSemanticLoaderExcludesInactiveBuildTaggedFile(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/buildtag\n\ngo 1.26\n")
+	writeFile(t, filepath.Join(root, "active.go"), "package buildtag\nfunc Active() {}\n")
+	content := []byte("//go:build grafo_never_enabled\n\npackage buildtag\nfunc Excluded() {}\n")
+	writeFile(t, filepath.Join(root, "excluded.go"), string(content))
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "excluded.go", Content: content, Repository: "buildtag", RepoID: "repo", GoModule: "example.com/buildtag",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Nodes) != 1 || result.Nodes[0].Kind != graph.KindFile || result.Nodes[0].Properties["go_build_excluded"] != "true" {
+		t.Fatalf("excluded file emitted declarations or omitted context: %#v", result.Nodes)
+	}
+}
+
+func TestPackageSemanticLoaderDoesNotResolveOrDownloadMissingModule(t *testing.T) {
+	root := t.TempDir()
+	modulePath := filepath.Join(root, "go.mod")
+	moduleContent := "module example.com/missing-test\n\ngo 1.26\n"
+	writeFile(t, modulePath, moduleContent)
+	content := []byte("package missingtest\nimport missing \"example.invalid/not-present\"\nfunc Run() { missing.Call() }\n")
+	writeFile(t, filepath.Join(root, "main.go"), string(content))
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "main.go", Content: content, Repository: "missing-test", RepoID: "repo", GoModule: "example.com/missing-test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Diagnostics) == 0 {
+		t.Fatal("expected unavailable-dependency diagnostic")
+	}
+	after, err := os.ReadFile(modulePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != moduleContent {
+		t.Fatalf("semantic load modified go.mod:\n%s", after)
+	}
+	if _, err := os.Stat(filepath.Join(root, "go.sum")); !os.IsNotExist(err) {
+		t.Fatalf("semantic load created go.sum: %v", err)
+	}
+}
+
+func TestPackageSemanticLoaderRetainsProvenFactsForBrokenPackage(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/broken\n\ngo 1.26\n")
+	content := []byte("package broken\nfunc helper() {}\nfunc run() { helper(); missing() }\n")
+	writeFile(t, filepath.Join(root, "broken.go"), string(content))
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "broken.go", Content: content, Repository: "broken", RepoID: "repo", GoModule: "example.com/broken",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "example.com/broken.helper")
+	if len(result.Diagnostics) == 0 {
+		t.Fatal("expected type-checking diagnostic")
+	}
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func assertHasFactKind(t *testing.T, facts []graph.Fact, kind graph.EdgeKind) {
 	t.Helper()
 	for _, fact := range facts {
@@ -74,10 +257,14 @@ func assertHasNode(t *testing.T, nodes []graph.Node, kind graph.NodeKind, name s
 
 func assertHasFact(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, target string) {
 	t.Helper()
+	var available []string
 	for _, fact := range facts {
 		if fact.Kind == kind && fact.Target == target {
 			return
 		}
+		if fact.Kind == kind {
+			available = append(available, fact.Target)
+		}
 	}
-	t.Fatalf("missing %s fact to %q", kind, target)
+	t.Fatalf("missing %s fact to %q; available targets: %v", kind, target, available)
 }
