@@ -1,8 +1,6 @@
 package indexer
 
 import (
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -10,7 +8,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/projectconfig"
 )
 
-func componentWorkspace(project Project, declared []projectconfig.Component, paths []string, maxFileSize int64) (graph.ParseResult, []graph.Diagnostic) {
+func componentWorkspace(project Project, declared []projectconfig.Component, paths []string) (graph.ParseResult, []graph.Diagnostic) {
 	result := graph.ParseResult{Nodes: []graph.Node{{
 		ID: project.ID, Kind: graph.KindRepository, Name: project.Name,
 		QualifiedName: project.Name, OwnerFile: workspaceOwner,
@@ -18,7 +16,8 @@ func componentWorkspace(project Project, declared []projectconfig.Component, pat
 	}}}
 	components := append([]projectconfig.Component(nil), declared...)
 	sort.Slice(components, func(i, j int) bool { return components[i].Name < components[j].Name })
-	eligible := componentEligiblePaths(project.Root, paths, maxFileSize)
+	eligible := append([]string(nil), paths...)
+	sort.Strings(eligible)
 	var diagnostics []graph.Diagnostic
 	for _, component := range components {
 		componentID := graph.NodeID(graph.KindComponent, project.ID+":"+component.Name)
@@ -58,19 +57,6 @@ func componentWorkspace(project Project, declared []projectconfig.Component, pat
 		}
 	}
 	return result, diagnostics
-}
-
-func componentEligiblePaths(root string, paths []string, maxFileSize int64) []string {
-	result := make([]string, 0, len(paths))
-	for _, path := range paths {
-		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(path)))
-		if err != nil || !info.Mode().IsRegular() || info.Size() > maxFileSize {
-			continue
-		}
-		result = append(result, path)
-	}
-	sort.Strings(result)
-	return result
 }
 
 func matchingComponentRoot(roots []projectconfig.ComponentRoot, filePath string) (projectconfig.ComponentRoot, bool) {

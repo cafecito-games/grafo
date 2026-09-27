@@ -106,8 +106,6 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	}
 	paths := discovered.paths
 	report.Skipped = append(report.Skipped, discovered.skipped...)
-	workspace, workspaceDiagnostics := componentWorkspace(project, configuration.Components, paths, options.MaxFileSize)
-	report.Diagnostics = append(report.Diagnostics, workspaceDiagnostics...)
 	indexedVersion, err := s.repository.Meta(ctx, "semantic_index_version")
 	if err != nil {
 		return report, fmt.Errorf("load semantic index version: %w", err)
@@ -130,14 +128,6 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		previousDirtyValid = json.Unmarshal([]byte(previousDirtyRaw), &previousDirty) == nil
 	}
 	persistenceStarted := time.Now()
-	if err := s.repository.ReplaceOwner(ctx, workspaceOwner, workspace); err != nil {
-		return report, fmt.Errorf("store workspace: %w", err)
-	}
-	if options.Boundary != nil {
-		if err := options.Boundary(Boundary{Kind: BoundaryWorkspacePersisted, Completed: 1}); err != nil {
-			return report, fmt.Errorf("workspace persistence boundary: %w", err)
-		}
-	}
 	known, err := s.repository.Files(ctx)
 	report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
 	if err != nil {
@@ -279,6 +269,23 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 			}
 		}
 	}
+	membershipPaths := make([]string, 0, len(current))
+	for path := range current {
+		membershipPaths = append(membershipPaths, path)
+	}
+	sort.Strings(membershipPaths)
+	workspace, workspaceDiagnostics := componentWorkspace(project, configuration.Components, membershipPaths)
+	report.Diagnostics = append(report.Diagnostics, workspaceDiagnostics...)
+	persistenceStarted = time.Now()
+	if err := s.repository.ReplaceOwner(ctx, workspaceOwner, workspace); err != nil {
+		return report, fmt.Errorf("store workspace: %w", err)
+	}
+	if options.Boundary != nil {
+		if err := options.Boundary(Boundary{Kind: BoundaryWorkspacePersisted, Completed: 1}); err != nil {
+			return report, fmt.Errorf("workspace persistence boundary: %w", err)
+		}
+	}
+	report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
 	for path := range known {
 		if !current[path] {
 			report.Removed = append(report.Removed, path)

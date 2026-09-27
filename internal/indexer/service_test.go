@@ -26,6 +26,19 @@ import (
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 )
 
+type deletingParser struct{}
+
+func (deletingParser) Language() string          { return "deleting-test" }
+func (deletingParser) Supports(path string) bool { return strings.HasSuffix(path, ".race") }
+func (deletingParser) Parse(_ context.Context, input parserapi.Input) (graph.ParseResult, error) {
+	if input.Path == "app/a.race" {
+		if err := os.Remove(filepath.Join(input.Root, "app", "b.race")); err != nil {
+			return graph.ParseResult{}, err
+		}
+	}
+	return parserapi.NewBuilder(input, "deleting-test").Finish(), nil
+}
+
 func TestServiceLinksDocumentationSectionsToCode(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -719,6 +732,38 @@ func TestServiceRejectsInvalidComponentEditBeforeMutation(t *testing.T) {
 	persisted, err := repository.Node(ctx, api.ID)
 	if err != nil || persisted.QualifiedName != project.Name+"/api" {
 		t.Fatalf("last valid component was not preserved: node=%#v err=%v", persisted, err)
+	}
+}
+
+func TestServiceDoesNotPersistMembershipForFileLostAfterDiscovery(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "grafo.yaml"), "components:\n  - name: app\n    roots: [app]\n")
+	write(t, filepath.Join(root, "app", "a.race"), "a")
+	write(t, filepath.Join(root, "app", "b.race"), "b")
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	report, err := indexer.NewService(repository, parserapi.NewRegistry(deletingParser{})).Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Updated) != 1 || report.Updated[0] != "app/a.race" || report.Counts.Files != 1 {
+		t.Fatalf("lost file remained indexed: %#v", report)
+	}
+	component := componentNode(t, ctx, repository, project.Name+"/app")
+	assertOutgoingQualifiedSet(t, ctx, repository, component.ID, graph.EdgeContains, []string{"app/a.race"})
+	if report.Counts.External != 0 {
+		t.Fatalf("lost file produced an external placeholder: %#v", report.Counts)
 	}
 }
 
