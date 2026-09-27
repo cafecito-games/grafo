@@ -523,9 +523,17 @@ speculative edges to every declaration with the same name.
 ## Development
 
 ```sh
+task hooks:install
 task check
 task eval:resolution
 ```
+
+Grafo uses [prek](https://prek.j178.dev/) for commit-time formatting,
+dependency tidiness, generated-code freshness, and lint checks. Install `prek`
+using one of its supported installation methods, then run `task hooks:install`
+once per clone. Use `task hooks:run` to check the whole repository manually.
+The golangci-lint hook is pinned in `.pre-commit-config.yaml`, and CI runs that
+same hook so local and pull-request lint results use the same version.
 
 The resolution corpus is the parser-to-storage correctness gate for structural
 changes. See [Deterministic resolution corpus](docs/evaluation.md) before

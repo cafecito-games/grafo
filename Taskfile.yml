@@ -27,9 +27,19 @@ tasks:
       - go vet ./...
 
   lint:
-    desc: Run golangci-lint (same configuration as CI)
+    desc: Run the pinned golangci-lint hook (same version and configuration as CI)
     cmds:
-      - golangci-lint run ./...
+      - prek run golangci-lint-full --all-files
+
+  hooks:install:
+    desc: Install the prek Git hooks
+    cmds:
+      - prek install
+
+  hooks:run:
+    desc: Run all prek pre-commit hooks against the repository
+    cmds:
+      - prek run --all-files
 
   generate:
     desc: Regenerate the type-safe SQLite repository with sqlc
@@ -41,6 +51,12 @@ tasks:
       - internal/storage/sqlite/sqlcgen/*.go
     cmds:
       - sqlc generate
+
+  generate:check:
+    desc: Verify the generated SQLite repository is up to date
+    cmds:
+      - sqlc generate
+      - git diff --exit-code -- internal/storage/sqlite/sqlcgen
 
   check:
     desc: Generate, test, vet, and build
