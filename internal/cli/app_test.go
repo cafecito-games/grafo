@@ -229,3 +229,76 @@ func TestUnknownCommandStillFails(t *testing.T) {
 		t.Fatalf("unknown command should exit 1, got %d", code)
 	}
 }
+
+func TestInstallOptionsSelectArtifactKinds(t *testing.T) {
+	args, err := parseArguments([]string{"install", "--all", "--mcp-only", "--hooks", "--refresh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := installTargets(args)
+	if !options.MCPOnly || !options.Hooks || !options.Refresh {
+		t.Fatalf("unexpected options: %#v", options)
+	}
+	// A dry run or JSON output already prints the full plan, so it is not
+	// announced twice.
+	app := New(&bytes.Buffer{}, &bytes.Buffer{})
+	if app.announcer(args) == nil {
+		t.Fatal("a real run must announce its plan before mutating")
+	}
+	dry, err := parseArguments([]string{"install", "--dry-run"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.announcer(dry) != nil {
+		t.Fatal("a dry run must not announce twice")
+	}
+}
+
+func TestGuidancePrintsCanonicalTextAndIndexStatus(t *testing.T) {
+	root := indexedRepository(t)
+	stdout, _, code := output(t, "guidance", "--repo", root)
+	if code != 0 {
+		t.Fatalf("guidance exited with %d", code)
+	}
+	for _, fragment := range []string{"get_blast_radius", "find_reusable_code", "Index status: ready"} {
+		if !strings.Contains(stdout, fragment) {
+			t.Fatalf("guidance does not mention %q:\n%s", fragment, stdout)
+		}
+	}
+}
+
+func TestGuidanceReportsMissingIndex(t *testing.T) {
+	stdout, _, code := output(t, "guidance", "--repo", t.TempDir())
+	if code != 0 {
+		t.Fatalf("guidance exited with %d", code)
+	}
+	if !strings.Contains(stdout, "Index status: none") {
+		t.Fatalf("guidance did not report a missing index:\n%s", stdout)
+	}
+}
+
+func TestGuidanceHooksAlwaysSucceed(t *testing.T) {
+	// Advisory hooks must fail open: even an unindexed or unknown path, and an
+	// unknown phase, exit 0 with usable context.
+	for _, phase := range []string{"pre-search", "pre-edit", "unknown-phase"} {
+		stdout, _, code := output(t, "guidance", "--hook", phase, "--repo", filepath.Join(t.TempDir(), "missing"))
+		if code != 0 {
+			t.Fatalf("hook %q exited with %d", phase, code)
+		}
+		if !strings.Contains(stdout, "Grafo advisory") {
+			t.Fatalf("hook %q printed no advisory context: %s", phase, stdout)
+		}
+	}
+}
+
+func TestHelpDocumentsGuidanceInstallation(t *testing.T) {
+	stdout, _, code := output(t, "help")
+	if code != 0 {
+		t.Fatalf("help exited with %d", code)
+	}
+	for _, fragment := range []string{"grafo guidance", "--mcp-only", "--refresh", "--hooks"} {
+		if !strings.Contains(stdout, fragment) {
+			t.Fatalf("help does not document %q:\n%s", fragment, stdout)
+		}
+	}
+}

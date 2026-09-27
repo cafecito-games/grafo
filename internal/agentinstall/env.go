@@ -21,8 +21,11 @@ type Reader interface {
 	Output(ctx context.Context, name string, arguments ...string) ([]byte, error)
 	// ReadFile reads a configuration file.
 	ReadFile(name string) ([]byte, error)
-	// Stat reports whether a path exists.
+	// Stat reports whether a path exists, following symlinks.
 	Stat(name string) (fs.FileInfo, error)
+	// Lstat reports on a path without following symlinks, so the installer can
+	// refuse to write through one.
+	Lstat(name string) (fs.FileInfo, error)
 	// GOOS reports the target operating system ("linux", "darwin", "windows").
 	GOOS() string
 	// HomeDir reports the current user's home directory.
@@ -43,6 +46,8 @@ type Writer interface {
 	// WriteFileAtomic replaces path's contents by writing a temporary file in
 	// the same directory and renaming it over path.
 	WriteFileAtomic(path string, data []byte, perm fs.FileMode) error
+	// Remove deletes one file or empty directory Grafo owns.
+	Remove(path string) error
 }
 
 // Environment bundles every outside-world operation the installer needs.
@@ -84,6 +89,10 @@ func NewOSEnvironment() OSEnvironment { return OSEnvironment{} }
 func (OSEnvironment) ReadFile(name string) ([]byte, error) { return os.ReadFile(name) }
 
 func (OSEnvironment) Stat(name string) (fs.FileInfo, error) { return os.Stat(name) }
+
+func (OSEnvironment) Lstat(name string) (fs.FileInfo, error) { return os.Lstat(name) }
+
+func (OSEnvironment) Remove(path string) error { return os.Remove(path) }
 
 func (OSEnvironment) GOOS() string { return runtime.GOOS }
 

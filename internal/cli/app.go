@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cafecito-games/grafo/internal/agentguide"
 	"github.com/cafecito-games/grafo/internal/agentinstall"
 	"github.com/cafecito-games/grafo/internal/embedding/ollama"
 	"github.com/cafecito-games/grafo/internal/federation"
@@ -55,6 +56,8 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		runErr = a.install(ctx, parsed)
 	case "uninstall":
 		runErr = a.uninstall(ctx, parsed)
+	case "guidance":
+		runErr = a.guidance(ctx, parsed)
 	case "index":
 		runErr = a.index(ctx, parsed)
 	case "watch":
@@ -107,7 +110,33 @@ func installTargets(args parsedArguments) agentinstall.Options {
 	if args.flags["all"] {
 		targets = nil
 	}
-	return agentinstall.Options{Targets: targets, All: args.flags["all"], DryRun: args.flags["dry-run"]}
+	return agentinstall.Options{
+		Targets: targets,
+		All:     args.flags["all"],
+		DryRun:  args.flags["dry-run"],
+		MCPOnly: args.flags["mcp-only"],
+		Hooks:   args.flags["hooks"],
+		Refresh: args.flags["refresh"],
+	}
+}
+
+// announcer reports every planned target and action before anything is mutated.
+// Dry runs and JSON output already print the full plan, so they pass nil.
+func (a *App) announcer(args parsedArguments) func([]agentinstall.Action) {
+	if args.flags["dry-run"] || args.flags["json"] {
+		return nil
+	}
+	return func(planned []agentinstall.Action) {
+		if len(planned) == 0 {
+			return
+		}
+		fmt.Fprintln(a.stdout, "planned changes:")
+		for _, action := range planned {
+			action.DryRun = true
+			a.printAgentAction(action, "  ")
+		}
+		fmt.Fprintln(a.stdout, "applying:")
+	}
 }
 
 func (a *App) install(ctx context.Context, args parsedArguments) error {
@@ -138,7 +167,9 @@ func (a *App) install(ctx context.Context, args parsedArguments) error {
 	if strings.Contains(executable, string(os.PathSeparator)+"go-build") {
 		return fmt.Errorf("cannot install from a temporary 'go run' binary; install grafo with 'go install github.com/cafecito-games/grafo/cmd/grafo@latest' first")
 	}
-	actions, installErr := agentinstall.Install(ctx, environment, executable, installTargets(args))
+	options := installTargets(args)
+	options.Announce = a.announcer(args)
+	actions, installErr := agentinstall.Install(ctx, environment, executable, options)
 	if err := a.printAgentActions(actions, args.flags["json"]); err != nil {
 		return err
 	}
@@ -152,7 +183,9 @@ func (a *App) install(ctx context.Context, args parsedArguments) error {
 }
 
 func (a *App) uninstall(ctx context.Context, args parsedArguments) error {
-	actions, uninstallErr := agentinstall.Uninstall(ctx, agentinstall.NewOSEnvironment(), installTargets(args))
+	options := installTargets(args)
+	options.Announce = a.announcer(args)
+	actions, uninstallErr := agentinstall.Uninstall(ctx, agentinstall.NewOSEnvironment(), options)
 	if err := a.printAgentActions(actions, args.flags["json"]); err != nil {
 		return err
 	}
@@ -163,33 +196,88 @@ func (a *App) printAgentActions(actions []agentinstall.Action, asJSON bool) erro
 	if asJSON {
 		return writeJSON(a.stdout, actions)
 	}
-	// Dry-run rows describe a plan, so the change reads as an infinitive.
-	planned := map[string]string{
-		"installed": "install", "updated": "update", "removed": "remove",
-		"unchanged": "leave unchanged", "skipped": "skip",
-	}
 	for _, action := range actions {
-		change := action.Change
-		if action.DryRun {
-			verb, known := planned[change]
-			if !known {
-				verb = change
-			}
-			change = "would " + verb
-		}
-		fmt.Fprintf(a.stdout, "%s %s", change, action.Client.Display)
-		if action.Scope != "" {
-			fmt.Fprintf(a.stdout, " (%s scope)", action.Scope)
-		}
-		if action.Target != "" {
-			fmt.Fprintf(a.stdout, " · %s", action.Target)
-		}
-		if action.Detail != "" {
-			fmt.Fprintf(a.stdout, " · %s", action.Detail)
-		}
-		fmt.Fprintln(a.stdout)
+		a.printAgentAction(action, "")
 	}
 	return nil
+}
+
+// plannedVerbs render a dry-run or announced row as an intention.
+var plannedVerbs = map[string]string{
+	"installed": "install", "updated": "update", "removed": "remove",
+	"unchanged": "leave unchanged", "skipped": "skip",
+}
+
+func (a *App) printAgentAction(action agentinstall.Action, indent string) {
+	change := action.Change
+	if action.DryRun {
+		verb, known := plannedVerbs[change]
+		if !known {
+			verb = change
+		}
+		change = "would " + verb
+	}
+	fmt.Fprintf(a.stdout, "%s%s %s", indent, change, action.Client.Display)
+	if action.Kind != "" {
+		fmt.Fprintf(a.stdout, " %s", action.Kind)
+	}
+	if action.Scope != "" {
+		fmt.Fprintf(a.stdout, " (%s scope)", action.Scope)
+	}
+	if action.Target != "" {
+		fmt.Fprintf(a.stdout, " · %s", action.Target)
+	}
+	if action.Detail != "" {
+		fmt.Fprintf(a.stdout, " · %s", action.Detail)
+	}
+	fmt.Fprintln(a.stdout)
+}
+
+// guidance prints Grafo's canonical agent guidance, or one advisory hook hint.
+//
+// Hook mode is advisory only: it never fails and never returns a nonzero exit
+// status, so a client hook cannot block a tool call when Grafo is unavailable or
+// the repository has no index.
+func (a *App) guidance(ctx context.Context, args parsedArguments) error {
+	root := repoPath(args)
+	if phase := strings.TrimSpace(args.values["hook"]); phase != "" {
+		fmt.Fprintln(a.stdout, advisoryHint(phase, a.indexSummary(ctx, root)))
+		return nil
+	}
+	fmt.Fprint(a.stdout, agentguide.Text())
+	fmt.Fprintf(a.stdout, "\n%s\n", a.indexSummary(ctx, root))
+	return nil
+}
+
+// advisoryHint renders the short context a pre-search or pre-edit hook injects.
+func advisoryHint(phase, index string) string {
+	switch phase {
+	case "pre-search":
+		return "Grafo advisory (pre-search): " + index +
+			" For symbol, call, endpoint, event, data, or impact questions, resolve the symbol with" +
+			" Grafo's graph tools before searching text."
+	case "pre-edit":
+		return "Grafo advisory (pre-edit): " + index +
+			" Run get_blast_radius (grafo impact <symbol>) before a behaviour-changing edit, and" +
+			" find_reusable_code before adding new code."
+	default:
+		return "Grafo advisory: " + index
+	}
+}
+
+// indexSummary reports whether the current repository and branch have an index,
+// so guidance never recommends the graph for an unindexed branch.
+func (a *App) indexSummary(ctx context.Context, root string) string {
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		return "Index status: unknown (" + err.Error() + "); use native tools."
+	}
+	if _, statErr := os.Stat(project.IndexPath); statErr != nil {
+		return fmt.Sprintf("Index status: none for %s on branch %s; use native tools, or run 'grafo index %s' first.",
+			project.Name, project.Branch, root)
+	}
+	return fmt.Sprintf("Index status: ready for %s on branch %s; prefer Grafo's graph tools.",
+		project.Name, project.Branch)
 }
 
 func (a *App) index(ctx context.Context, args parsedArguments) error {
@@ -956,7 +1044,7 @@ type parsedArguments struct {
 
 var booleanOptions = map[string]bool{
 	"json": true, "force": true, "help": true, "source": true, "regex": true, "case-sensitive": true,
-	"list": true, "all": true, "dry-run": true,
+	"list": true, "all": true, "dry-run": true, "mcp-only": true, "hooks": true, "refresh": true,
 }
 var valueOptions = map[string]bool{
 	"repo": true, "repos": true, "depth": true, "direction": true, "relation": true,
@@ -965,7 +1053,7 @@ var valueOptions = map[string]bool{
 	"upstream-depth": true, "downstream-depth": true, "upstream-limit": true,
 	"downstream-limit": true, "source-limit": true, "path-prefix": true, "language": true,
 	"repo-name": true, "max-matches": true, "max-matches-per-file": true,
-	"max-matches-per-pattern": true, "client": true,
+	"max-matches-per-pattern": true, "client": true, "hook": true,
 }
 
 func parseArguments(arguments []string) (parsedArguments, error) {
@@ -1074,7 +1162,9 @@ const helpText = `Grafo builds a deterministic semantic graph of a repository.
 
 Usage:
   grafo install [client...] [--client a,b] [--all] [--list] [--dry-run] [--json]
+                 [--mcp-only] [--hooks] [--refresh]
   grafo uninstall [client...] [--client a,b] [--all] [--dry-run] [--json]
+  grafo guidance [--repo path] [--hook pre-search|pre-edit]
   grafo index [path] [--force] [--json]
   grafo watch [path] [--interval 1s]
   grafo status [path] [--repos pathA,pathB] [--json]
@@ -1102,8 +1192,17 @@ accept --repo or a comma-separated --repos list. Active branch indexes are
 refreshed incrementally before queries and never substituted across branches.
 
 'grafo install --list' only detects clients and never writes; '--dry-run'
-reports every file and command a real run would touch. 'grafo uninstall'
-removes only Grafo's own MCP registration.
+reports every file and command a real run would touch. 'grafo install' also installs
+Grafo's agent guidance as an isolated skill file or a delimited managed block and
+reports every target before mutating anything; '--mcp-only' registers the server
+alone, '--refresh' updates only artifacts that already exist, and '--hooks' opts
+in to advisory pre-search and pre-edit hooks for clients that document a safe
+hook API. 'grafo uninstall' removes only Grafo's own registration, skill, managed
+block, and hooks, and leaves anything whose ownership it cannot prove.
+
+'grafo guidance' prints that canonical guidance plus the index status of the
+current repository and branch; '--hook' prints one advisory hint and always exits
+successfully, so a client hook can never block a tool call.
 
 'grafo impact' reports both directions: what depends on the symbol and what it
 depends on, plus impacted files, cross-repository hops, and config, data, and

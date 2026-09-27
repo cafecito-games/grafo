@@ -55,6 +55,14 @@ type plan struct {
 	write    *fileWrite
 	commands [][]string
 	retry    *cliRetry
+	// removes are files this plan deletes; removeDirs are directories Grafo
+	// created that are deleted only when they end up empty.
+	removes    []string
+	removeDirs []string
+	// digest labels the content this plan writes, for the installed-artifact
+	// receipt. dropReceipt forgets the receipt instead.
+	digest      string
+	dropReceipt bool
 }
 
 // adapter owns one client's identity, detection, and command or file surface.
@@ -67,7 +75,23 @@ type adapter interface {
 
 // apply commits a plan through the mutating half of the environment.
 func (p plan) apply(ctx context.Context, env Environment, display, executable string) error {
+	for _, path := range p.removes {
+		if err := env.Remove(path); err != nil {
+			return fmt.Errorf("remove %s artifact %s: %w", display, path, err)
+		}
+	}
+	// Directories Grafo created are removed only when empty, which os.Remove
+	// enforces for us, so a directory the user also uses survives.
+	for _, path := range p.removeDirs {
+		if path != "" {
+			_ = env.Remove(path)
+		}
+	}
 	if p.write != nil {
+		// Final guard: never replace a symlink with a regular file.
+		if info, err := env.Lstat(p.write.path); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to replace %s configuration %s: the path is a symlink", display, p.write.path)
+		}
 		directory := parentPath(env.GOOS(), p.write.path)
 		if directory != "" {
 			if err := env.MkdirAll(directory, 0o755); err != nil {
@@ -374,13 +398,18 @@ func verifyGrafoOwnership(display, path string, raw json.RawMessage) error {
 }
 
 func ownedByGrafo(command string, arguments []string) bool {
+	if !grafoBinary(command) {
+		return false
+	}
+	return len(arguments) > 0 && arguments[0] == "mcp"
+}
+
+// grafoBinary reports whether a command path names the Grafo executable.
+func grafoBinary(command string) bool {
 	base := command
 	if index := strings.LastIndexAny(base, `/\`); index >= 0 {
 		base = base[index+1:]
 	}
 	base = strings.ToLower(strings.TrimSuffix(base, ".exe"))
-	if base != serverName {
-		return false
-	}
-	return len(arguments) > 0 && arguments[0] == "mcp"
+	return base == serverName
 }

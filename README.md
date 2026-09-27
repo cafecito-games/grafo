@@ -41,13 +41,50 @@ configured by editing their documented user-level config file.
 grafo install --list          # detect only; never writes
 grafo install --all --dry-run # report every file and command a real run touches
 grafo install claude codex    # or: grafo install --client cursor,vscode
-grafo uninstall --all         # remove only Grafo's own registration
+grafo install --mcp-only      # register the server without installing guidance
+grafo install --refresh       # update only artifacts that already exist
+grafo install --hooks         # also install advisory, fail-open hooks
+grafo uninstall --all         # remove only Grafo-owned artifacts
 ```
 
 Config files are parsed structurally, written atomically, and unrelated servers
 and settings are preserved. `--list` and `--dry-run` cannot write. Naming a
 client that is not installed is an error; automatic and `--all` mode skip
 missing clients and say so. All of these accept `--json`.
+
+### Installed agent guidance
+
+Registration alone does not teach an agent when to use the graph, so `grafo
+install` also installs one canonical, embedded guidance playbook: prefer graph
+structure over content search for symbol, call, endpoint, event, data, and impact
+questions; check `get_index_status` before trusting the graph; search for reusable
+code before adding code; run bidirectional `get_blast_radius` before a
+behaviour-changing edit; and fall back to native tools deliberately when the
+content is not code or the branch has no index.
+
+Guidance is installed only through documented, user-scoped surfaces: an isolated
+Grafo-owned skill file for Claude Code, and one delimited managed block
+(`<!-- BEGIN grafo-guidance -->` … `<!-- END grafo-guidance -->`) for Codex,
+Gemini CLI, OpenCode, and Windsurf. Everything outside the markers is preserved
+byte-for-byte, a file with no Grafo ownership marker is never overwritten, and
+duplicated or half-present markers are reported instead of repaired.
+Repository-local instruction files are never edited, no permission is granted,
+and no edit is ever blocked.
+
+`--hooks` opts in to advisory `PreToolUse` hooks in Claude Code's documented
+personal settings. They only inject context: `grafo guidance --hook pre-search`
+and `--hook pre-edit` print one advisory line and always exit 0, so a missing or
+broken Grafo can never block a tool call. `grafo guidance` prints the same
+canonical text plus whether the current repository and branch actually have an
+index.
+
+Every installed artifact is recorded in a receipt under the Grafo configuration
+directory (`$XDG_CONFIG_HOME/grafo/installed-artifacts.json`) with its target,
+digest, guidance version, and ownership marker, so an upgrade replaces exactly
+the previous Grafo-owned content and `grafo uninstall` removes only what it can
+prove Grafo wrote. Anything it cannot prove is left in place and reported with
+the manual step. Re-running install is idempotent, `--dry-run` writes nothing,
+and a real run prints every target and action before mutating anything.
 
 The generated MCP configuration uses the absolute path of the installed Grafo
 binary, so agents do not depend on their launch environment's `PATH`. Re-run
