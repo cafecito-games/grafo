@@ -492,6 +492,38 @@ resolves are always `unknown`, because nothing in the index bounds where they
 are published or consumed. Federation applies the same contract: a producer in
 one repository and a consumer in another clear the orphan.
 
+## Repository components
+
+A monorepo can declare explicit component ownership in its repository-root
+`grafo.yaml`:
+
+```yaml
+components:
+  - name: client
+    roots: [client, web/ui]
+  - name: server
+    roots:
+      - apps/server
+```
+
+Component names are case-sensitive, unique, and use letters, digits, `.`, `_`,
+or `-`. Roots are normalized repository-relative paths with `/` separators;
+they cannot contain globs, escape through `..`, duplicate one another, or
+overlap another root. `.` assigns every eligible indexed file to one component.
+
+Indexing stores a component node, a repository `contains` component edge, and a
+component `contains` file edge for every proven match. Root matching respects
+path segments, so `client` owns `client/main.gd` but not
+`client-old/main.gd`. Ignored, unsupported, symlinked, and oversized files are
+never assigned. Files that match no component remain repository-scoped, and a
+component with no eligible files remains in the graph with a warning.
+
+The declarations are the configuration authority; persisted component-to-file
+edges are the authority for queries. Grafo rejects malformed, duplicate,
+overlapping, or ambiguous component configuration before changing the durable
+index. Component edits rebuild only workspace ownership evidence, so unchanged
+language source files are not reparsed.
+
 ## Endpoint and service topology
 
 Endpoint queries turn HTTP and event wiring into task-shaped results while

@@ -14,11 +14,12 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	"github.com/cafecito-games/grafo/internal/projectconfig"
 )
 
 const workspaceOwner = "__workspace__"
 const workspaceSemanticKeysMeta = "parser_workspace_semantic_keys"
-const SemanticIndexVersion = "20"
+const SemanticIndexVersion = "21"
 
 type Options struct {
 	Force       bool
@@ -93,6 +94,18 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		report.Phases.TotalNS = time.Since(started).Nanoseconds()
 		report.ElapsedMS = time.Since(started).Milliseconds()
 	}()
+	configuration, err := projectconfig.Load(project.Root)
+	if err != nil {
+		return report, fmt.Errorf("load project configuration: %w", err)
+	}
+	discoveryStarted := time.Now()
+	discovered, err := discoverFiles(ctx, project, s.parsers)
+	report.Phases.DiscoveryNS += time.Since(discoveryStarted).Nanoseconds()
+	if err != nil {
+		return report, fmt.Errorf("discover source files: %w", err)
+	}
+	paths := discovered.paths
+	report.Skipped = append(report.Skipped, discovered.skipped...)
 	indexedVersion, err := s.repository.Meta(ctx, "semantic_index_version")
 	if err != nil {
 		return report, fmt.Errorf("load semantic index version: %w", err)
@@ -114,33 +127,12 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	if previousDirtyRaw != "" {
 		previousDirtyValid = json.Unmarshal([]byte(previousDirtyRaw), &previousDirty) == nil
 	}
-	workspace := graph.ParseResult{Nodes: []graph.Node{{
-		ID: project.ID, Kind: graph.KindRepository, Name: project.Name,
-		QualifiedName: project.Name, OwnerFile: workspaceOwner,
-		Properties: map[string]string{"root": project.Root, "branch": project.Branch},
-	}}}
 	persistenceStarted := time.Now()
-	if err := s.repository.ReplaceOwner(ctx, workspaceOwner, workspace); err != nil {
-		return report, fmt.Errorf("store workspace: %w", err)
-	}
-	if options.Boundary != nil {
-		if err := options.Boundary(Boundary{Kind: BoundaryWorkspacePersisted, Completed: 1}); err != nil {
-			return report, fmt.Errorf("workspace persistence boundary: %w", err)
-		}
-	}
 	known, err := s.repository.Files(ctx)
 	report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
 	if err != nil {
 		return report, fmt.Errorf("load indexed files: %w", err)
 	}
-	discoveryStarted := time.Now()
-	discovered, err := discoverFiles(ctx, project, s.parsers)
-	report.Phases.DiscoveryNS += time.Since(discoveryStarted).Nanoseconds()
-	if err != nil {
-		return report, fmt.Errorf("discover source files: %w", err)
-	}
-	paths := discovered.paths
-	report.Skipped = append(report.Skipped, discovered.skipped...)
 	workspaceSemanticKeys, err := s.parsers.WorkspaceSemanticKeys(ctx, parserapi.Input{
 		Root: project.Root, Repository: project.Name, RepoID: project.ID, GoModule: project.GoModule,
 	})
@@ -277,6 +269,23 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 			}
 		}
 	}
+	membershipPaths := make([]string, 0, len(current))
+	for path := range current {
+		membershipPaths = append(membershipPaths, path)
+	}
+	sort.Strings(membershipPaths)
+	workspace, workspaceDiagnostics := componentWorkspace(project, configuration.Components, membershipPaths)
+	report.Diagnostics = append(report.Diagnostics, workspaceDiagnostics...)
+	persistenceStarted = time.Now()
+	if err := s.repository.ReplaceOwner(ctx, workspaceOwner, workspace); err != nil {
+		return report, fmt.Errorf("store workspace: %w", err)
+	}
+	if options.Boundary != nil {
+		if err := options.Boundary(Boundary{Kind: BoundaryWorkspacePersisted, Completed: 1}); err != nil {
+			return report, fmt.Errorf("workspace persistence boundary: %w", err)
+		}
+	}
+	report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
 	for path := range known {
 		if !current[path] {
 			report.Removed = append(report.Removed, path)

@@ -3,8 +3,6 @@ package sql
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -109,8 +107,7 @@ func (*Router) SemanticKey(_ context.Context, input parserapi.Input) (string, er
 	if err != nil {
 		return "", err
 	}
-	digest := sha256.Sum256(config.raw)
-	return "sql-router-v1:" + hex.EncodeToString(digest[:]), nil
+	return config.semanticKey, nil
 }
 
 func (r *Router) selectDialect(ctx context.Context, input parserapi.Input, config configuration) (Dialect, error) {

@@ -98,6 +98,7 @@ func TestIsDeclarationMemberClassifiesTheWholeVocabulary(t *testing.T) {
 
 		// Containers and declarations, all referenced by their own name.
 		graph.KindRepository: false,
+		graph.KindComponent:  false,
 		graph.KindFile:       false,
 		graph.KindPackage:    false,
 		graph.KindModule:     false,
