@@ -6,7 +6,7 @@
 [node name="Main" type="Node"]
 script = ExtResource("1_player")
 
-[node name="Button" type="Button" parent="."]
+[node name="Button" type="Button" parent="." groups=["enemies", "undeclared_group"]]
 
 [node name="Enemy" parent="." instance=ExtResource("2_enemy")]
 

@@ -1039,3 +1039,153 @@ func TestServiceReparsesScriptsWhenAutoloadEnablementChangesUnderGit(t *testing.
 		}
 	}
 }
+
+// TestServiceReconcilesGodotInteractionsAfterProjectEdits is the integrity test
+// for the interaction vocabulary: adding and then removing a [global_group]
+// declaration must move the scene's and the script's membership edges between the
+// declared group and an unresolved boundary node, and each incremental state must
+// equal what a clean rebuild of the same tree produces.
+func TestServiceReconcilesGodotInteractionsAfterProjectEdits(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	write(t, mkdirFor(t, root, "project.godot"),
+		"config_version=5\n\n[input]\njump={\"deadzone\": 0.5, \"events\": []}\n")
+	write(t, mkdirFor(t, root, "scenes/arena.tscn"),
+		"[gd_scene format=3]\n\n[node name=\"Arena\" type=\"Node2D\" groups=[\"enemies\"]]\n")
+	write(t, mkdirFor(t, root, "scripts/spawner.gd"),
+		"extends Node\n\nfunc poll() -> void:\n"+
+			"\tif Input.is_action_pressed(\"jump\"):\n\t\tget_tree().call_group(\"enemies\", \"die\")\n")
+
+	service, repository, project := openGodotIndex(t, ctx, root)
+	defer repository.Close()
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	// Before the project declares the group, every membership and dispatch points
+	// at an unresolved boundary node: the wiring is visible and unproven.
+	assertGodotInteraction(t, ctx, repository, "scenes/arena", "godot:node_group:project.godot:enemies", true)
+	assertGodotInteraction(t, ctx, repository, "scripts/spawner.poll", "godot:node_group:project.godot:enemies", true)
+	assertGodotInteraction(t, ctx, repository, "scripts/spawner.poll", "godot:input_action:project.godot:jump", false)
+	assertCleanRebuildMatches(t, ctx, root, repository)
+
+	write(t, filepath.Join(root, "project.godot"),
+		"config_version=5\n\n[input]\njump={\"deadzone\": 0.5, \"events\": []}\n\n[global_group]\nenemies=\"Hostile\"\n")
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	// The scene was not reparsed, yet its membership now resolves to the
+	// declaration: by-name reconciliation is what keeps the two in step.
+	assertGodotInteraction(t, ctx, repository, "scenes/arena", "godot:node_group:project.godot:enemies", false)
+	assertGodotInteraction(t, ctx, repository, "scripts/spawner.poll", "godot:node_group:project.godot:enemies", false)
+	assertCleanRebuildMatches(t, ctx, root, repository)
+
+	write(t, filepath.Join(root, "project.godot"), "config_version=5\n")
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	// Removing both declarations must leave no stale edge to a deleted node and
+	// no stale action either.
+	assertGodotInteraction(t, ctx, repository, "scenes/arena", "godot:node_group:project.godot:enemies", true)
+	assertGodotInteraction(t, ctx, repository, "scripts/spawner.poll", "godot:input_action:project.godot:jump", true)
+	assertCleanRebuildMatches(t, ctx, root, repository)
+}
+
+func openGodotIndex(t *testing.T, ctx context.Context, root string) (*indexer.Service, *sqlite.Repository, indexer.Project) {
+	t.Helper()
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return indexer.NewService(repository, parserapi.NewRegistry(gdscriptparser.New(), godotparser.New())),
+		repository, project
+}
+
+// assertGodotInteraction checks that one interaction reaches the named far side
+// and that its resolution state is what the evidence licenses.
+func assertGodotInteraction(t *testing.T, ctx context.Context, repository graph.Repository, selector, qualified string, external bool) {
+	t.Helper()
+	report, err := query.NewService(repository).GodotInteractions(ctx, selector,
+		query.GodotInteractionsOptions{})
+	if err != nil {
+		t.Fatalf("interactions for %s: %v", selector, err)
+	}
+	for _, interaction := range report.Outbound {
+		if interaction.Node.QualifiedName != qualified {
+			continue
+		}
+		if interaction.Node.External != external {
+			t.Fatalf("%s -> %s external = %v, want %v", selector, qualified,
+				interaction.Node.External, external)
+		}
+		return
+	}
+	t.Fatalf("%s has no interaction with %s; got %#v", selector, qualified, report.Outbound)
+}
+
+// assertCleanRebuildMatches indexes the same tree into a fresh index and compares
+// the edge and node census, which is the property an incremental index has to
+// preserve for the interaction vocabulary to be trustworthy.
+func assertCleanRebuildMatches(t *testing.T, ctx context.Context, root string, incremental graph.Repository) {
+	t.Helper()
+	clean := t.TempDir()
+	if err := copyTree(t, root, clean); err != nil {
+		t.Fatal(err)
+	}
+	service, repository, project := openGodotIndex(t, ctx, clean)
+	defer repository.Close()
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	want, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := incremental.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(want.ByKind, got.ByKind) || !reflect.DeepEqual(want.ByEdge, got.ByEdge) {
+		t.Fatalf("incremental index differs from a clean rebuild:\nkinds %v vs %v\nedges %v vs %v",
+			got.ByKind, want.ByKind, got.ByEdge, want.ByEdge)
+	}
+	if want.External != got.External {
+		t.Fatalf("external node count = %d, clean rebuild = %d", got.External, want.External)
+	}
+}
+
+func copyTree(t *testing.T, from, to string) error {
+	t.Helper()
+	return filepath.WalkDir(from, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(from, path)
+		if err != nil {
+			return err
+		}
+		if relative == "." {
+			return nil
+		}
+		// The index lives inside the tree; copying it would make the rebuild
+		// incremental instead of clean.
+		if strings.HasPrefix(relative, ".grafo") {
+			return filepath.SkipDir
+		}
+		target := filepath.Join(to, relative)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(target, content, 0o644)
+	})
+}

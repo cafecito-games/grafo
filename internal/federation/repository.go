@@ -531,6 +531,10 @@ func candidateAllowed(relation graph.EdgeKind, kind graph.NodeKind) bool {
 		return kind == graph.KindModule || kind == graph.KindClass
 	case graph.EdgeAutoloads:
 		return kind == graph.KindModule || kind == graph.KindClass || kind == graph.KindGodotScene
+	case graph.EdgeUsesInputAction:
+		return kind == graph.KindGodotInputAction
+	case graph.EdgeInGroup, graph.EdgeUsesGroup:
+		return kind == graph.KindGodotNodeGroup
 	default:
 		return true
 	}

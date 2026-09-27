@@ -747,3 +747,122 @@ func TestParserNamesTheUnreadableFileThatBlockedAUIDProof(t *testing.T) {
 		}
 	}
 }
+
+// TestParserDeclaresInputActionsAndGlobalGroups covers the two project.godot
+// sections this change promotes into first-class Godot vocabulary, including the
+// declarations that must resolve nothing: the generic configuration key stays
+// exactly where it was, and the action or group node is layered on top of it.
+func TestParserDeclaresInputActionsAndGlobalGroups(t *testing.T) {
+	result := parse(t, "project.godot", `config_version=5
+
+[input]
+
+jump={
+"deadzone": 0.25,
+"events": [Object(InputEventKey,"keycode":32)]
+}
+attack={"deadzone": 0.5, "events": []}
+attack={"deadzone": 0.9, "events": []}
+broken=5
+
+[global_group]
+
+enemies="Hostile actors"
+props=7
+`)
+	action := assertNode(t, result.Nodes, graph.KindGodotInputAction, "godot:input_action:project.godot:jump")
+	if action.Name != "jump" || action.Properties["form"] != "input_action" ||
+		action.Properties["deadzone"] != "0.25" || action.Properties["events"] != "1" ||
+		action.Properties["config_key"] != "input/jump" {
+		t.Fatalf("unexpected input action node: %#v", action)
+	}
+	group := assertNode(t, result.Nodes, graph.KindGodotNodeGroup, "godot:node_group:project.godot:enemies")
+	if group.Name != "enemies" || group.Properties["form"] != "node_group" ||
+		group.Properties["global"] != "true" || group.Properties["description"] != "Hostile actors" ||
+		group.Properties["config_key"] != "global_group/enemies" {
+		t.Fatalf("unexpected node group node: %#v", group)
+	}
+	// The generic configuration key is still defined, and the declaration hangs
+	// off it, so config catalogs keep working without a name-prefix heuristic.
+	key := assertNode(t, result.Nodes, graph.KindConfigKey, "config:project.godot:input/jump")
+	assertFactFromTo(t, result.Facts, graph.EdgeDefines, key.ID, action.ID)
+	groupKey := assertNode(t, result.Nodes, graph.KindConfigKey, "config:project.godot:global_group/enemies")
+	assertFactFromTo(t, result.Facts, graph.EdgeDefines, groupKey.ID, group.ID)
+
+	for _, unwanted := range []struct {
+		kind      graph.NodeKind
+		qualified string
+	}{
+		{kind: graph.KindGodotInputAction, qualified: "godot:input_action:project.godot:attack"},
+		{kind: graph.KindGodotInputAction, qualified: "godot:input_action:project.godot:broken"},
+		{kind: graph.KindGodotNodeGroup, qualified: "godot:node_group:project.godot:props"},
+	} {
+		for _, node := range result.Nodes {
+			if node.Kind == unwanted.kind && node.QualifiedName == unwanted.qualified {
+				t.Fatalf("%s %q must not be declared from ambiguous or malformed configuration",
+					unwanted.kind, unwanted.qualified)
+			}
+		}
+	}
+	for _, want := range []string{
+		`input action "attack" is declared more than once`,
+		`input action "broken" is not an action dictionary`,
+		`node group "props" has no description string`,
+	} {
+		found := false
+		for _, diagnostic := range result.Diagnostics {
+			if strings.Contains(diagnostic.Message, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("missing diagnostic %q; got %#v", want, result.Diagnostics)
+		}
+	}
+}
+
+// TestParserRecordsSceneNodeGroupMembership covers declarative group membership:
+// every group a scene node declares becomes one project-scoped membership edge
+// carrying the node path that proves it, and an item that is not a group name is
+// diagnosed instead of guessed.
+func TestParserRecordsSceneNodeGroupMembership(t *testing.T) {
+	root := t.TempDir()
+	writeProjectFile(t, root, "client/project.godot", "config_version=5\n")
+	result := parseIn(t, root, "client/scenes/arena.tscn", `[gd_scene format=3]
+
+[node name="Arena" type="Node2D" groups=["arenas"]]
+
+[node name="Enemy" type="Node2D" parent="." groups=["enemies", "damageable"]]
+
+[node name="Broken" type="Node2D" parent="." groups=[7]]
+`)
+	arena := assertNode(t, result.Nodes, graph.KindGodotSceneNode, "client/scenes/arena:Arena")
+	enemy := assertNode(t, result.Nodes, graph.KindGodotSceneNode, "client/scenes/arena:Arena/Enemy")
+	assertFact(t, result.Facts, graph.EdgeInGroup, arena.ID,
+		"godot:node_group:client/project.godot:arenas")
+	for _, group := range []string{"enemies", "damageable"} {
+		assertFact(t, result.Facts, graph.EdgeInGroup, enemy.ID,
+			"godot:node_group:client/project.godot:"+group)
+	}
+	for _, fact := range result.Facts {
+		if fact.Kind != graph.EdgeInGroup {
+			continue
+		}
+		if fact.TargetKind != graph.KindGodotNodeGroup {
+			t.Fatalf("membership fact must target a node group: %#v", fact)
+		}
+		if fact.Properties["form"] != "declared" || fact.Properties["node_path"] == "" ||
+			fact.Properties["group"] == "" {
+			t.Fatalf("membership fact is missing its evidence: %#v", fact)
+		}
+	}
+	found := false
+	for _, diagnostic := range result.Diagnostics {
+		if strings.Contains(diagnostic.Message, `scene node "Arena/Broken" declares a group that is not a name`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("a non-name group item must be diagnosed; got %#v", result.Diagnostics)
+	}
+}
