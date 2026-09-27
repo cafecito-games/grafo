@@ -58,6 +58,8 @@ plugins:
 	assertProjection(t, result, graph.KindType, "AcmeV1EnvelopeState.State", "acme.v1.State")
 	assertProjection(t, result, graph.KindField, "example.com/generated/acme/v1.State_STATE_READY", "acme.v1.State.STATE_READY")
 	assertProjection(t, result, graph.KindField, "AcmeV1EnvelopeState.State.STATE_READY", "acme.v1.State.STATE_READY")
+	assertProjection(t, result, graph.KindField, "example.com/generated/acme/v1.Lower_a_b", "acme.v1.Lower.a_b")
+	assertProjection(t, result, graph.KindField, "example.com/generated/acme/v1.Lower_aB", "acme.v1.Lower.aB")
 
 	registry, err := loader.Load(context.Background(), parserapi.Input{Root: root, Repository: "fixture", RepoID: "repo:fixture"})
 	if err != nil {
@@ -186,6 +188,7 @@ message Envelope {
 }
 message Child {}
 enum State { STATE_UNSPECIFIED = 0; STATE_READY = 1; }
+enum Lower { a_b = 0; aB = 1; }
 `)
 	return root
 }

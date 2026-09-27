@@ -598,7 +598,7 @@ func goProjection(input parserapi.Input, d declaration, pkg, generator, version,
 	}
 	field := goCamel(d.name)
 	if d.form == "enum_value" {
-		return []Projection{projection(input, graph.KindField, pkg+"."+owner+"_"+goCamel(d.name), d.id, d.canonical, graph.KindField, "go", generator, version, configPath, map[string]string{"projection": "enum_value"})}
+		return []Projection{projection(input, graph.KindField, pkg+"."+owner+"_"+d.name, d.id, d.canonical, graph.KindField, "go", generator, version, configPath, map[string]string{"projection": "enum_value"})}
 	}
 	base := pkg + "." + owner
 	result := []Projection{
