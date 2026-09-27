@@ -277,6 +277,11 @@ func planGuidance(reader Reader, options Options, install bool, identity Client,
 			failures = append(failures, planErr)
 			continue
 		}
+		// Guidance targets are root-bounded, so every mutation re-checks
+		// containment immediately before it runs.
+		if intended.write != nil || len(intended.removes) > 0 || len(intended.removeDirs) > 0 {
+			intended.guardRoot = true
+		}
 		steps = append(steps, newStep(identity, artifact.kind(), target, intended, options, artifact))
 	}
 	return steps, failures

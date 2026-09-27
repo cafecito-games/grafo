@@ -853,3 +853,191 @@ func TestHooksInstallQuotedExecutablePath(t *testing.T) {
 		t.Fatalf("replay with a quoted path = %#v", got)
 	}
 }
+
+// A hook receipt authorizes mutations only at the exact settings file it
+// records. A stale receipt from an old configuration location must never let
+// install or uninstall touch an identical user-authored entry somewhere else.
+func TestHookReceiptDoesNotAuthorizeADifferentSettingsFile(t *testing.T) {
+	staleTarget := linuxHome + "/.config/claude/settings.json"
+	staleCommands := []string{
+		"/old/grafo guidance --hook pre-search",
+		"/old/grafo guidance --hook pre-edit",
+	}
+	// The user hand-wrote an entry that happens to match the stale recording.
+	userAuthored := `{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/old/grafo guidance --hook pre-search"
+          }
+        ]
+      }
+    ]
+  }
+}
+`
+	seed := func(t *testing.T) *fakeEnvironment {
+		t.Helper()
+		environment := guidanceEnvironment()
+		environment.files[claudeSettings] = userAuthored
+		ledger, err := json.Marshal(receiptFile{Format: receiptFormat, Receipts: []Receipt{{
+			Client: "claude", Kind: KindHooks, Target: staleTarget,
+			Commands: staleCommands, Grafo: "0.0.1", Updated: "2020-01-01T00:00:00Z",
+		}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		environment.files[receiptLedger] = string(ledger)
+		return environment
+	}
+
+	t.Run("uninstall", func(t *testing.T) {
+		environment := seed(t)
+		actions, err := Uninstall(context.Background(), environment, Options{Targets: []string{"claude"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		hooks := findAction(t, actions, "claude", KindHooks)
+		if hooks.Change != changeSkipped || !strings.Contains(hooks.Detail, "cannot prove") {
+			t.Fatalf("hooks action = %#v", hooks)
+		}
+		if environment.files[claudeSettings] != userAuthored {
+			t.Fatalf("a user-authored hook was removed: %s", environment.files[claudeSettings])
+		}
+	})
+
+	t.Run("install", func(t *testing.T) {
+		environment := seed(t)
+		actions, err := Install(context.Background(), environment, grafoPath,
+			Options{Targets: []string{"claude"}, Hooks: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := findAction(t, actions, "claude", KindHooks); got.Change != changeInstalled {
+			t.Fatalf("hooks action = %#v", got)
+		}
+		entries := hookEntries(t, environment.files[claudeSettings])
+		if len(entries) != 1+len(hookPhases) {
+			t.Fatalf("PreToolUse entries = %#v", entries)
+		}
+		if entries[0].Hooks[0].Command != staleCommands[0] {
+			t.Fatalf("a user-authored hook was replaced: %#v", entries[0])
+		}
+	})
+}
+
+// Containment is re-validated immediately before the write, so swapping a
+// parent for a symlink after planning cannot redirect it.
+func TestApplyRevalidatesTargetBeforeWriting(t *testing.T) {
+	environment := guidanceEnvironment()
+	options := Options{Targets: []string{"codex"}}
+	options.Announce = func([]Action) {
+		// Planning has finished; redirect the parent directory.
+		environment.symlinks[linuxHome+"/.codex"] = "/srv/repo/instructions"
+		environment.dirs["/srv/repo/instructions"] = true
+	}
+
+	_, err := Install(context.Background(), environment, grafoPath, options)
+	if err == nil || !strings.Contains(err.Error(), "outside the user configuration roots") {
+		t.Fatalf("error = %v", err)
+	}
+	for _, write := range environment.writes {
+		if strings.Contains(write.path, "AGENTS.md") {
+			t.Fatalf("wrote after the target was redirected: %v", write)
+		}
+	}
+}
+
+func TestApplyRevalidatesTargetBeforeDeleting(t *testing.T) {
+	environment := guidanceEnvironment()
+	if _, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"claude"}}); err != nil {
+		t.Fatal(err)
+	}
+	options := Options{Targets: []string{"claude"}}
+	options.Announce = func([]Action) {
+		environment.symlinks[linuxHome+"/.claude"] = "/srv/repo"
+		environment.dirs["/srv/repo"] = true
+	}
+
+	_, err := Uninstall(context.Background(), environment, options)
+	if err == nil || !strings.Contains(err.Error(), "outside the user configuration roots") {
+		t.Fatalf("error = %v", err)
+	}
+	if len(environment.removes) != 0 {
+		t.Fatalf("deleted after the target was redirected: %v", environment.removes)
+	}
+}
+
+func TestResolvePathHandlesWindowsRoots(t *testing.T) {
+	environment := newFakeEnvironment("windows", `C:\Users\u`)
+	environment.symlinks[`\\fileserver\profiles\u\.codex`] = `\\fileserver\other\codex`
+	environment.symlinks[`C:\Users\u\.codex`] = `C:\Users\u\dotfiles\codex`
+	cases := []struct{ path, want string }{
+		// A UNC path keeps both leading separators instead of collapsing into a
+		// current-drive-rooted path, so its ancestors are inspected at all.
+		{`\\fileserver\profiles\u\.codex\AGENTS.md`, `\\fileserver\other\codex\AGENTS.md`},
+		{`\\fileserver\share\file.md`, `\\fileserver\share\file.md`},
+		{`C:\Users\u\.codex\AGENTS.md`, `C:\Users\u\dotfiles\codex\AGENTS.md`},
+		{`C:\Users\u\.claude\settings.json`, `C:\Users\u\.claude\settings.json`},
+	}
+	for _, test := range cases {
+		got, err := resolvePath(environment, test.path)
+		if err != nil {
+			t.Errorf("resolvePath(%q): %v", test.path, err)
+			continue
+		}
+		if got != test.want {
+			t.Errorf("resolvePath(%q) = %q, want %q", test.path, got, test.want)
+		}
+	}
+}
+
+// A symlinked ancestor of a UNC configuration root must be detected, not missed
+// because the path was silently rewritten to the current drive.
+func TestUNCConfigRootDetectsSymlinkedAncestor(t *testing.T) {
+	environment := newFakeEnvironment("windows", `\\fileserver\profiles\u`)
+	environment.symlinks[`\\fileserver\profiles\u\.codex`] = `\\fileserver\public\shared`
+	environment.dirs[`\\fileserver\public\shared`] = true
+
+	err := checkUserConfigRoot(environment, `\\fileserver\profiles\u\.codex\AGENTS.md`)
+	if err == nil || !strings.Contains(err.Error(), "outside the user configuration roots") {
+		t.Fatalf("error = %v", err)
+	}
+	if err = checkUserConfigRoot(environment, `\\fileserver\profiles\u\.claude\skills\grafo\SKILL.md`); err != nil {
+		t.Fatalf("a UNC path inside the user root was refused: %v", err)
+	}
+}
+
+// cmd.exe expands %NAME% even inside double quotes, so such a path cannot be
+// quoted safely. Grafo refuses the hook explicitly instead of writing a command
+// that would run the wrong binary.
+func TestHooksRefuseUnquotableWindowsPath(t *testing.T) {
+	environment := newFakeEnvironment("windows", `C:\Users\u`)
+	environment.dirs[`C:\Users\u`] = true
+	environment.lookups["claude"] = `C:\bin\claude.exe`
+	environment.outputs[`C:\bin\claude.exe mcp list`] = ""
+
+	actions, err := Install(context.Background(), environment, `C:\Users\%USERNAME%\grafo.exe`,
+		Options{Targets: []string{"claude"}, Hooks: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hooks := findAction(t, actions, "claude", KindHooks)
+	if hooks.Change != changeSkipped {
+		t.Fatalf("hooks action = %#v", hooks)
+	}
+	if !strings.Contains(hooks.Detail, "%") || !strings.Contains(hooks.Detail, "cmd.exe") {
+		t.Errorf("diagnostic does not explain the refusal: %q", hooks.Detail)
+	}
+	if _, exists := environment.files[`C:\Users\u\.claude\settings.json`]; exists {
+		t.Fatal("an unquotable hook command was written")
+	}
+	// The safe artifacts are still installed.
+	if got := findAction(t, actions, "claude", KindSkill); got.Change != changeInstalled {
+		t.Fatalf("skill action = %#v", got)
+	}
+}

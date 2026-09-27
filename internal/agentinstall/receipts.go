@@ -113,9 +113,12 @@ func (o ownership) provesPath(path string) bool {
 	return o.found && o.receipt.Target == path
 }
 
-// commands returns the exact command lines a receipt records.
-func (o ownership) commands() []string {
-	if !o.found {
+// commandsFor returns the exact command lines a receipt records, but only when
+// the receipt was written for this very target. A receipt from an old
+// configuration location must never authorize a mutation in a different settings
+// file: the identical entry there may be the user's own.
+func (o ownership) commandsFor(path string) []string {
+	if !o.provesPath(path) {
 		return nil
 	}
 	return o.receipt.Commands

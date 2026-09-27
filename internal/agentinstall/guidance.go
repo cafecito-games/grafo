@@ -216,6 +216,12 @@ func resolvePath(reader Reader, path string) (string, error) {
 func splitPathPrefix(goos, path string) (string, string) {
 	separator := pathSeparator(goos)
 	if goos == "windows" {
+		// A UNC path (\\server\share\...) must keep both leading separators, or it
+		// collapses into a current-drive-rooted path and its real ancestors are
+		// never inspected.
+		if len(path) >= 2 && (path[0] == '\\' || path[0] == '/') && (path[1] == '\\' || path[1] == '/') {
+			return separator + separator, strings.TrimLeft(path[2:], "/\\")
+		}
 		if len(path) >= 2 && path[1] == ':' {
 			return path[:2] + separator, strings.TrimLeft(path[2:], "/\\")
 		}
@@ -512,6 +518,11 @@ func (h claudeHooks) planInstall(reader Reader, display, path, executable string
 	if err != nil {
 		return plan{}, err
 	}
+	// An executable path that cannot be quoted safely is reported and skipped
+	// rather than written as a command that would run something else.
+	if unsupported := hookExecutableSupported(reader.GOOS(), executable); unsupported != nil {
+		return plan{change: changeSkipped, detail: unsupported.Error()}, nil
+	}
 	commands := hookCommands(reader.GOOS(), executable)
 	desired := make([]json.RawMessage, 0, len(hookPhases))
 	for index, phase := range hookPhases {
@@ -527,7 +538,7 @@ func (h claudeHooks) planInstall(reader Reader, display, path, executable string
 	// Grafo may replace only entries it can prove are its own: the exact command
 	// it is about to install, or the exact command a receipt says it installed
 	// before (which is how a moved binary is refreshed instead of duplicated).
-	kept, owned := partitionHookEntries(entries, ownedHookPairs(commands, own.commands()))
+	kept, owned := partitionHookEntries(entries, ownedHookPairs(commands, own.commandsFor(path)))
 	if len(owned) == len(desired) && sameRawMessages(owned, desired) {
 		return plan{change: changeUnchanged, detail: "advisory hooks are current"}, nil
 	}
@@ -562,7 +573,7 @@ func (h claudeHooks) planUninstall(reader Reader, display, path string, own owne
 	}
 	// Without receipt evidence there is no proof which entries are Grafo's, so
 	// nothing is touched.
-	recorded := own.commands()
+	recorded := own.commandsFor(path)
 	if len(recorded) == 0 {
 		if !hasHookLookalike(entries) {
 			return plan{change: changeUnchanged, detail: "advisory hooks are not installed"}, nil
@@ -586,6 +597,19 @@ func (h claudeHooks) planUninstall(reader Reader, display, path string, own owne
 		return plan{}, err
 	}
 	return plan{change: changeRemoved, write: write, dropReceipt: true}, nil
+}
+
+// hookExecutableSupported reports whether a hook command line can be written
+// safely for the target platform. cmd.exe expands %NAME% even inside double
+// quotes and offers no escape for it, so such a path is refused instead of
+// guessed at.
+func hookExecutableSupported(goos, executable string) error {
+	if goos == "windows" && strings.Contains(executable, "%") {
+		return fmt.Errorf("skipping advisory hooks: cmd.exe expands %%NAME%% even inside double quotes, "+
+			"so the grafo path %q cannot be quoted safely; install grafo at a path without %% to enable hooks",
+			executable)
+	}
+	return nil
 }
 
 // hookCommands renders the command line of every phase, in hookPhases order.
