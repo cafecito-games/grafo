@@ -25,6 +25,7 @@ type Service struct {
 	source     func(context.Context, string, graph.NodeKind, int, int) (sourcecontext.Excerpt, error)
 	search     *search.Service
 	catalog    *query.Catalog
+	topology   *query.Topology
 	refreshMu  sync.Mutex
 }
 
@@ -36,6 +37,7 @@ func NewFederated(repository graph.ReadRepository, projects []indexer.Project) *
 	service := &Service{repository: repository, query: query.NewService(repository), projects: projects}
 	if catalogRepository, ok := repository.(graph.CatalogRepository); ok {
 		service.catalog = query.NewCatalog(catalogRepository)
+		service.topology = query.NewTopology(catalogRepository)
 	}
 	return service
 }
@@ -101,6 +103,10 @@ func (s *Service) Server(version string) *mcp.Server {
 		mcp.AddTool(server, &mcp.Tool{Name: "list_config_keys", Title: "List configuration keys", Description: "Catalog configuration keys with their definitions, readers, and unresolved references. Stored values are never returned.", Annotations: annotations}, s.listConfigKeys)
 		mcp.AddTool(server, &mcp.Tool{Name: "list_events", Title: "List events", Description: "Catalog events with their declarations, producers, consumers, and handlers.", Annotations: annotations}, s.listEvents)
 		mcp.AddTool(server, &mcp.Tool{Name: "find_orphaned_events", Title: "Find orphaned events", Description: "Report events published without a consumer, consumed without a producer, or declared with neither. An unresolved possible counterpart makes the status unknown rather than orphaned.", Annotations: annotations}, s.findOrphanedEvents)
+		mcp.AddTool(server, &mcp.Tool{Name: "list_endpoints", Title: "List endpoints", Description: "Catalog exact HTTP endpoint declarations with source locations, exposer evidence, and resolved, ambiguous, missing, or unresolved handlers.", Annotations: annotations}, s.listEndpoints)
+		mcp.AddTool(server, &mcp.Tool{Name: "list_outbound_requests", Title: "List outbound requests", Description: "List outbound HTTP facts and resolve each to one exact endpoint when available. Duplicate method-and-route declarations remain ambiguous and unknown targets remain external.", Annotations: annotations}, s.listOutboundRequests)
+		mcp.AddTool(server, &mcp.Tool{Name: "find_handler", Title: "Find handler", Description: "Find HTTP and event handlers only from handled_by graph evidence, preserving ambiguous, missing, and unresolved targets.", Annotations: annotations}, s.findHandler)
+		mcp.AddTool(server, &mcp.Tool{Name: "get_service_topology", Title: "Get service topology", Description: "Return repository-backed service nodes and evidence-backed synchronous HTTP and asynchronous event links. Every link retains its endpoint or event node IDs and underlying edge IDs.", Annotations: annotations}, s.getServiceTopology)
 	}
 	mcp.AddTool(server, &mcp.Tool{Name: "get_index_status", Title: "Get index status", Description: "Return the active repository, branch, indexed commit, and graph counts.", Annotations: annotations}, s.getIndexStatus)
 	if s.reusable != nil {
@@ -599,6 +605,76 @@ func (s *Service) findOrphanedEvents(ctx context.Context, _ *mcp.CallToolRequest
 		return nil, query.OrphanedEventList{}, err
 	}
 	result, err := s.catalog.OrphanedEvents(ctx, input.options())
+	return nil, result, err
+}
+
+type EndpointInput struct {
+	Repository string `json:"repository,omitempty" jsonschema:"restrict results to one indexed repository service by stable name"`
+	Method     string `json:"method,omitempty" jsonschema:"exact HTTP method such as GET or POST"`
+	Route      string `json:"route,omitempty" jsonschema:"literal route fragment"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"maximum entries or links; defaults to 100 and may not exceed 1000"`
+}
+
+func (i EndpointInput) options() query.TopologyOptions {
+	return query.TopologyOptions{Repository: i.Repository, Method: i.Method, Route: i.Route, Limit: i.Limit}
+}
+
+type HandlerInput struct {
+	Repository string `json:"repository,omitempty" jsonschema:"restrict results to one indexed repository service by stable name"`
+	Method     string `json:"method,omitempty" jsonschema:"exact HTTP method such as GET or POST"`
+	Route      string `json:"route,omitempty" jsonschema:"literal route fragment"`
+	Event      string `json:"event,omitempty" jsonschema:"literal event name fragment; cannot be combined with method or route"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"maximum handler matches; defaults to 100 and may not exceed 1000"`
+}
+
+func (i HandlerInput) options() query.TopologyOptions {
+	return query.TopologyOptions{Repository: i.Repository, Method: i.Method, Route: i.Route,
+		Event: i.Event, Limit: i.Limit}
+}
+
+type ServiceTopologyInput struct {
+	Repository string `json:"repository,omitempty" jsonschema:"restrict results to one indexed repository service by stable name"`
+	Method     string `json:"method,omitempty" jsonschema:"exact HTTP method such as GET or POST"`
+	Route      string `json:"route,omitempty" jsonschema:"literal route fragment"`
+	Event      string `json:"event,omitempty" jsonschema:"literal event name fragment; cannot be combined with method or route"`
+	Direction  string `json:"direction,omitempty" jsonschema:"incoming, outgoing, or both when filtering one service"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"maximum service links; defaults to 100 and may not exceed 1000"`
+}
+
+func (i ServiceTopologyInput) options() query.TopologyOptions {
+	return query.TopologyOptions{Repository: i.Repository, Method: i.Method, Route: i.Route,
+		Event: i.Event, Direction: query.Direction(i.Direction), Limit: i.Limit}
+}
+
+func (s *Service) listEndpoints(ctx context.Context, _ *mcp.CallToolRequest, input EndpointInput) (*mcp.CallToolResult, query.EndpointList, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.EndpointList{}, err
+	}
+	result, err := s.topology.Endpoints(ctx, input.options())
+	return nil, result, err
+}
+
+func (s *Service) listOutboundRequests(ctx context.Context, _ *mcp.CallToolRequest, input EndpointInput) (*mcp.CallToolResult, query.OutboundRequestList, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.OutboundRequestList{}, err
+	}
+	result, err := s.topology.OutboundRequests(ctx, input.options())
+	return nil, result, err
+}
+
+func (s *Service) findHandler(ctx context.Context, _ *mcp.CallToolRequest, input HandlerInput) (*mcp.CallToolResult, query.HandlerList, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.HandlerList{}, err
+	}
+	result, err := s.topology.Handlers(ctx, input.options())
+	return nil, result, err
+}
+
+func (s *Service) getServiceTopology(ctx context.Context, _ *mcp.CallToolRequest, input ServiceTopologyInput) (*mcp.CallToolResult, query.ServiceTopology, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.ServiceTopology{}, err
+	}
+	result, err := s.topology.ServiceTopology(ctx, input.options())
 	return nil, result, err
 }
 
