@@ -97,6 +97,42 @@ the command after moving the binary. Each repository still needs an initial
 `grafo index .`; subsequent MCP queries refresh its active branch index
 incrementally.
 
+### Background indexing and diagnostics
+
+`grafo watch` keeps one repository current while a terminal stays open. For
+several repositories at once, register them and install a local background
+service instead:
+
+```sh
+grafo service add .              # register this repository root
+grafo service list               # show the user-level registry of watched roots
+grafo service install            # macOS launchd agent or Linux user systemd unit
+grafo service status             # platform state plus per-root last pass
+grafo service logs --lines 50    # bounded, rotating, source-free log
+grafo service uninstall          # remove only the definition Grafo owns
+grafo service run --once         # one reconciliation pass in the foreground
+```
+
+The service is entirely local. Exactly one supervisor runs at a time, every
+indexing run holds its branch index's lock so a foreground `grafo index` can
+never race it, and a killed supervisor leaves committed indexes intact: the next
+pass reconciles from them. Branch switches and worktrees stay isolated, a
+temporarily unavailable root is paused rather than pruned, and one failing root
+never stops the others.
+
+```sh
+grafo doctor                     # read-only report; nothing is mutated
+grafo doctor --json
+grafo doctor --repair            # only the four documented repairs
+```
+
+`grafo doctor` reports the binary, the registry, every root's branch and index,
+the service definition, the supervisor, and the agent registrations. `--repair`
+unregisters a definitively missing, unshared root, refreshes Grafo-owned agent
+artifacts, recreates a service definition Grafo installed, and restarts a stale
+service. It never deletes repository indexes, never guesses where a moved
+repository went, and never rewrites content Grafo cannot prove it wrote.
+
 Every query supports `--json` for agent-friendly output. Run `grafo help` for
 the complete command surface.
 

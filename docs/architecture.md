@@ -175,6 +175,56 @@ a receipt under the Grafo configuration directory recording target, digest,
 guidance version, and marker, so uninstall and upgrade prove ownership from
 receipts plus exact markers instead of substring matching.
 
+## Background service and diagnostics
+
+`internal/service` orchestrates indexing across repositories; it never implements
+a second indexer. Three authorities are consumed rather than duplicated: a
+user-level registry (`$XDG_CONFIG_HOME/grafo/watched-roots.json`, written
+atomically at mode 0600 under an exclusive lock) owns which roots are watched,
+`indexer.DiscoverProject` owns branch and index identity, and
+`internal/indexer` owns indexing semantics. A malformed or unreadable registry
+blocks every mutation and reports how to recover.
+
+The concurrency model has three layers. Exactly one supervisor process per user
+is admitted by an exclusive kernel-backed lock on `service.lock` in the state
+directory. Inside it, at most one goroutine works on a root at a time and at most
+`--concurrency` roots index at once. Every indexing run - background or
+foreground `grafo index`/`grafo watch` - holds the per-index lock beside the
+branch database, so the two can never write one index concurrently. A killed
+supervisor therefore needs no cleanup: the kernel drops its locks, SQLite rolls
+back the uncommitted transaction, and the next pass rediscovers and reconciles
+from the committed index, which makes restarts idempotent.
+
+Change hints are debounced and advisory; periodic reconciliation runs regardless,
+so a lossy or missing platform watcher only affects latency. A watcher overflow
+hint schedules one bounded full reconciliation of that root. A root that is
+temporarily unreadable is paused for the pass with its registration and indexes
+preserved; a definitively deleted root is reported and never pruned implicitly. If
+branch identity cannot be proven, the root is not indexed at all, so one branch is
+never written into another branch's database. One failing root never stops
+another: failures are recorded per root and exposed in the status file. The
+bounded, rotating log records paths, counts, timings, and errors, with every field
+collapsed to a single line; there is no API that accepts file content, so source
+text cannot reach it.
+
+Platform adapters own the generated launchd plist and systemd user unit, each
+carrying an exact version marker and pointing at the absolute installed binary
+and a stable `--state-dir`. Installation is idempotent; a definition that differs
+from the generated content is replaced only when a receipt in the shared
+`agentinstall` ledger proves Grafo wrote the bytes on disk, and is otherwise
+reported as a conflict. Ownership and path containment reuse
+`agentinstall`'s receipt ledger and user-configuration-root check rather than
+adding a second mechanism.
+
+`grafo doctor` reads the binary, registry, per-root branch and index state, the
+platform service, the supervisor status file, and the agent registrations from the
+same client registry the installer uses; without `--repair` it mutates nothing.
+`--repair` performs only four enumerated repairs: unregister a definitively
+missing root that overlaps no other registration, refresh Grafo-owned agent
+artifacts that a receipt proves Grafo installed, recreate a service definition
+Grafo installed, and restart a stale service. Everything else is reported with an
+actionable manual step.
+
 ## Catalogs and orphan detection
 
 `internal/graph` owns the resource kind and relationship vocabulary; a single

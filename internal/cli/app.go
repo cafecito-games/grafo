@@ -22,12 +22,17 @@ import (
 	"github.com/cafecito-games/grafo/internal/query"
 	"github.com/cafecito-games/grafo/internal/search"
 	"github.com/cafecito-games/grafo/internal/semantic"
+	"github.com/cafecito-games/grafo/internal/service"
 	sourcecontext "github.com/cafecito-games/grafo/internal/source"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 	"github.com/cafecito-games/grafo/internal/version"
 )
 
 const Version = version.Value
+
+// foregroundIndexLockWait bounds how long a foreground index waits for a
+// background service pass on the same branch index to finish.
+const foregroundIndexLockWait = 2 * time.Minute
 
 type App struct {
 	stdout io.Writer
@@ -62,6 +67,10 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		runErr = a.index(ctx, parsed)
 	case "watch":
 		runErr = a.watch(ctx, parsed)
+	case "service":
+		runErr = a.service(ctx, parsed)
+	case "doctor":
+		runErr = a.doctor(ctx, parsed)
 	case "status", "counts":
 		runErr = a.status(ctx, parsed)
 	case "mcp":
@@ -303,6 +312,13 @@ func (a *App) index(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
+	// The same lock the background supervisor takes, so a foreground index and a
+	// service pass can never write one branch index concurrently.
+	unlock, err := service.IndexLock(project.IndexPath, foregroundIndexLockWait)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unlock() }()
 	repository, err := sqlite.Open(ctx, project.IndexPath)
 	if err != nil {
 		return err
@@ -338,6 +354,11 @@ func (a *App) watch(ctx context.Context, args parsedArguments) error {
 		if err != nil {
 			return err
 		}
+		unlock, err := service.IndexLock(project.IndexPath, foregroundIndexLockWait)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = unlock() }()
 		repository, err := sqlite.Open(ctx, project.IndexPath)
 		if err != nil {
 			return err
@@ -1307,6 +1328,7 @@ type parsedArguments struct {
 var booleanOptions = map[string]bool{
 	"json": true, "force": true, "help": true, "source": true, "regex": true, "case-sensitive": true,
 	"list": true, "all": true, "dry-run": true, "mcp-only": true, "hooks": true, "refresh": true,
+	"repair": true, "once": true, "paused": true,
 }
 var valueOptions = map[string]bool{
 	"repo": true, "repos": true, "depth": true, "direction": true, "relation": true,
@@ -1316,7 +1338,7 @@ var valueOptions = map[string]bool{
 	"downstream-limit": true, "source-limit": true, "path-prefix": true, "language": true,
 	"repo-name": true, "max-matches": true, "max-matches-per-file": true,
 	"max-matches-per-pattern": true, "client": true, "hook": true,
-	"kind": true, "name": true,
+	"kind": true, "name": true, "state-dir": true, "lines": true, "concurrency": true,
 }
 
 func parseArguments(arguments []string) (parsedArguments, error) {
@@ -1437,6 +1459,15 @@ Usage:
   grafo guidance [--repo path] [--hook pre-search|pre-edit]
   grafo index [path] [--force] [--json]
   grafo watch [path] [--interval 1s]
+  grafo service add [path] [--interval 10s] [--paused] [--json]
+  grafo service remove [path]
+  grafo service list [--json]
+  grafo service install [--dry-run] [--json]
+  grafo service status [--json]
+  grafo service logs [--lines 50] [--json]
+  grafo service uninstall [--dry-run] [--json]
+  grafo service run [--once] [--state-dir dir] [--concurrency n] [--json]
+  grafo doctor [--repair] [--json]
   grafo status [path] [--repos pathA,pathB] [--json]
   grafo mcp [--repo path | --repos pathA,pathB] [--model embeddinggemma]
   grafo embed [path] [--model embeddinggemma] [--ollama-url http://localhost:11434] [--force]
@@ -1477,6 +1508,20 @@ alone, '--refresh' updates only artifacts that already exist, and '--hooks' opts
 in to advisory pre-search and pre-edit hooks for clients that document a safe
 hook API. 'grafo uninstall' removes only Grafo's own registration, skill, managed
 block, and hooks, and leaves anything whose ownership it cannot prove.
+
+'grafo service' keeps every registered repository root indexed without a
+foreground terminal: 'add'/'remove'/'list' own the user-level registry of watched
+roots, and 'install'/'uninstall' generate and remove a macOS launchd agent or a
+Linux user systemd unit that runs 'grafo service run'. Exactly one supervisor
+runs at a time, every indexing run holds the branch index's lock, and a killed
+supervisor leaves committed indexes intact. A definition Grafo cannot prove it
+wrote is reported, never replaced. 'grafo watch' remains available everywhere.
+
+'grafo doctor' reports the binary, the registry, every root's branch and index,
+the service, the supervisor, and the agent registrations, and mutates nothing.
+'--repair' performs only four documented repairs: unregister a definitively
+missing, unshared root; refresh Grafo-owned agent registrations and guidance;
+recreate a service definition Grafo installed; and restart a stale service.
 
 'grafo guidance' prints that canonical guidance plus the index status of the
 current repository and branch; '--hook' prints one advisory hint and always exits
