@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -110,6 +111,68 @@ func TestServiceIndexesOnlyChangedFiles(t *testing.T) {
 	}
 	if len(third.Updated) != 1 || len(third.Removed) != 1 || third.Removed[0] != "web.ts" {
 		t.Fatalf("unexpected incremental update: %#v", third)
+	}
+}
+
+func TestServiceReindexesGoDependentsWhenTypeEvidenceChanges(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	runGit(t, root, "init", "-b", "main")
+	if err := os.MkdirAll(filepath.Join(root, "contract"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "worker"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26\n")
+	write(t, filepath.Join(root, "contract", "runner.go"), "package contract\ntype Runner interface { Run() }\n")
+	write(t, filepath.Join(root, "worker", "worker.go"), "package worker\ntype Worker struct{}\nfunc (Worker) Run() {}\n")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	goParser := golangparser.New()
+	service := indexer.NewService(repository, parserapi.NewRegistry(goParser))
+	if report, err := service.Run(ctx, project, indexer.Options{}); err != nil || len(report.Updated) != 2 {
+		t.Fatalf("initial index: report=%#v err=%v", report, err)
+	}
+	if metrics := goParser.SemanticLoadMetrics(); metrics.Loads != 1 || metrics.PeakConcurrent != 1 {
+		t.Fatalf("semantic package loading was not bounded and shared: %#v", metrics)
+	}
+
+	write(t, filepath.Join(root, "contract", "runner.go"), "package contract\ntype Runner interface { Run(); Stop() }\n")
+	reindexed, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reindexed.Updated) != 2 {
+		t.Fatalf("expected changed package and semantic dependents to reindex, got %#v", reindexed)
+	}
+	if reindexed.Counts.ByEdge[string(graph.EdgeImplements)] != 0 {
+		t.Fatalf("stale implements edge survived interface edit: %#v", reindexed.Counts.ByEdge)
+	}
+	if metrics := goParser.SemanticLoadMetrics(); metrics.Loads != 2 {
+		t.Fatalf("semantic cache did not invalidate after interface edit: %#v", metrics)
+	}
+	changedGOOS := "linux"
+	if runtime.GOOS == changedGOOS {
+		changedGOOS = "darwin"
+	}
+	t.Setenv("GOOS", changedGOOS)
+	contextChanged, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(contextChanged.Updated) != 2 {
+		t.Fatalf("build-context change did not invalidate Go semantic evidence: %#v", contextChanged)
 	}
 }
 

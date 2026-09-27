@@ -148,6 +148,7 @@ func runWorkspace(ctx context.Context, caseDir string, manifest Manifest) (Snaps
 	projects := make([]indexer.Project, 0, len(manifest.Repositories))
 	roots := make([]string, 0, len(manifest.Repositories))
 	origins := map[string]map[string]bool{}
+	var diagnostics []DiagnosticRef
 	for _, spec := range manifest.Repositories {
 		source := filepath.Join(caseDir, filepath.FromSlash(spec.Path))
 		destination := filepath.Join(workspace, spec.ID)
@@ -163,24 +164,51 @@ func runWorkspace(ctx context.Context, caseDir string, manifest Manifest) (Snaps
 		}
 		projects = append(projects, project)
 		roots = append(roots, destination)
-		if err := indexOnce(ctx, project, false); err != nil {
+		report, err := indexOnce(ctx, project, false)
+		if err != nil {
 			return Snapshot{}, Snapshot{}, fmt.Errorf("initial index %s: %w", spec.ID, err)
+		}
+		for _, diagnostic := range report.Diagnostics {
+			diagnostics = append(diagnostics, DiagnosticRef{Repo: spec.ID, Path: diagnostic.Path,
+				Line: diagnostic.Line, Level: diagnostic.Level, MessageContains: diagnostic.Message})
 		}
 		if err := collectOrigins(ctx, project, spec.ID, origins); err != nil {
 			return Snapshot{}, Snapshot{}, err
 		}
+	}
+	sort.Slice(diagnostics, func(i, j int) bool {
+		left, right := diagnostics[i], diagnostics[j]
+		return left.Repo+"\x00"+left.Path+fmt.Sprintf("\x00%09d", left.Line)+"\x00"+left.Level+"\x00"+left.MessageContains <
+			right.Repo+"\x00"+right.Path+fmt.Sprintf("\x00%09d", right.Line)+"\x00"+right.Level+"\x00"+right.MessageContains
+	})
+	if err := compareDiagnostics(manifest.Expect.Diagnostics, diagnostics); err != nil {
+		return Snapshot{}, Snapshot{}, err
 	}
 	first, err := evaluateWorkspace(ctx, projects, roots, origins, manifest.Expect)
 	if err != nil {
 		return Snapshot{}, Snapshot{}, err
 	}
 	for index, project := range projects {
-		if err := indexOnce(ctx, project, true); err != nil {
+		if _, err := indexOnce(ctx, project, true); err != nil {
 			return Snapshot{}, Snapshot{}, fmt.Errorf("incremental index %s: %w", manifest.Repositories[index].ID, err)
 		}
 	}
 	incremental, err := evaluateWorkspace(ctx, projects, roots, origins, manifest.Expect)
 	return first, incremental, err
+}
+
+func compareDiagnostics(expected, actual []DiagnosticRef) error {
+	if len(expected) != len(actual) {
+		return fmt.Errorf("diagnostics count differs: expected %d, actual %d: %+v", len(expected), len(actual), actual)
+	}
+	for index := range expected {
+		want, got := expected[index], actual[index]
+		if want.Repo != got.Repo || want.Path != got.Path || want.Line != got.Line || want.Level != got.Level ||
+			!strings.Contains(got.MessageContains, want.MessageContains) {
+			return fmt.Errorf("diagnostics differ at index %d:\nwant: %+v\n got: %+v", index, want, got)
+		}
+	}
+	return nil
 }
 
 func initializeFixtureGit(ctx context.Context, root, caseID, repositoryID string) error {
@@ -197,26 +225,23 @@ func initializeFixtureGit(ctx context.Context, root, caseID, repositoryID string
 	return nil
 }
 
-func indexOnce(ctx context.Context, project indexer.Project, requireUnchanged bool) error {
+func indexOnce(ctx context.Context, project indexer.Project, requireUnchanged bool) (indexer.Report, error) {
 	repository, err := sqlite.Open(ctx, project.IndexPath)
 	if err != nil {
-		return err
+		return indexer.Report{}, err
 	}
 	report, runErr := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{})
 	closeErr := repository.Close()
 	if runErr != nil {
-		return runErr
+		return report, runErr
 	}
 	if closeErr != nil {
-		return closeErr
-	}
-	if len(report.Diagnostics) != 0 {
-		return fmt.Errorf("unexpected parser diagnostics: %+v", report.Diagnostics)
+		return report, closeErr
 	}
 	if requireUnchanged && (len(report.Updated) != 0 || len(report.Removed) != 0 || report.Unchanged != report.Counts.Files) {
-		return fmt.Errorf("unchanged refresh mutated index: updated=%v removed=%v unchanged=%d files=%d", report.Updated, report.Removed, report.Unchanged, report.Counts.Files)
+		return report, fmt.Errorf("unchanged refresh mutated index: updated=%v removed=%v unchanged=%d files=%d", report.Updated, report.Removed, report.Unchanged, report.Counts.Files)
 	}
-	return nil
+	return report, nil
 }
 
 func collectOrigins(ctx context.Context, project indexer.Project, repoID string, origins map[string]map[string]bool) error {

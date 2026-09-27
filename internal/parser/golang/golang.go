@@ -16,17 +16,91 @@ import (
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 )
 
-type Parser struct{}
+type Parser struct {
+	semantic SemanticLoader
+}
 
-func New() *Parser { return &Parser{} }
+func New() *Parser { return &Parser{semantic: NewPackageLoader()} }
+
+func NewWithSemanticLoader(loader SemanticLoader) *Parser { return &Parser{semantic: loader} }
+
+func (p *Parser) SemanticLoadMetrics() SemanticLoadMetrics {
+	if provider, ok := p.semantic.(interface{ Metrics() SemanticLoadMetrics }); ok {
+		return provider.Metrics()
+	}
+	return SemanticLoadMetrics{}
+}
 
 func (*Parser) Language() string { return "go" }
 func (*Parser) Supports(path string) bool {
 	return strings.EqualFold(filepath.Ext(path), ".go")
 }
 
-func (*Parser) Parse(_ context.Context, input parserapi.Input) (graph.ParseResult, error) {
+func (*Parser) SemanticKey(_ context.Context, input parserapi.Input) (string, error) {
+	if input.Root == "" {
+		return buildContextString(), nil
+	}
+	key, _, err := semanticWorkspaceKey(input.Root)
+	return key, err
+}
+
+func (p *Parser) WorkspaceSemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
+	return p.SemanticKey(ctx, input)
+}
+
+func (*Parser) SemanticDependencies() []string { return semanticDependencies() }
+
+func (*Parser) SemanticAffectedPaths(allPaths, changedPaths []string) []string {
+	changed := false
+	for _, path := range changedPaths {
+		if isGoSemanticInput(path) {
+			changed = true
+			break
+		}
+	}
+	if !changed {
+		return nil
+	}
+	result := make([]string, 0, len(allPaths))
+	for _, path := range allPaths {
+		if strings.EqualFold(filepath.Ext(path), ".go") {
+			result = append(result, path)
+		}
+	}
+	return result
+}
+
+func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseResult, error) {
 	b := parserapi.NewBuilder(input, "go")
+	semantic := SemanticView{}
+	if p.semantic != nil {
+		loaded, loadErr := p.semantic.Load(ctx, input)
+		if loadErr != nil {
+			b.Diagnostic(0, "warning", "Go semantic loading failed; using syntax evidence: "+loadErr.Error())
+		} else {
+			semantic = loaded
+			if semantic.BuildContext != "" {
+				properties := map[string]string{
+					"go_build_context":   semantic.BuildContext,
+					"go_semantic_loader": "go/packages",
+				}
+				if input.GoModule != "" {
+					properties["go_module"] = input.GoModule
+				}
+				if input.Root != "" {
+					if workspace := discoverGoWorkspace(input.Root); workspace != "" {
+						properties["go_workspace"] = workspace
+					}
+				}
+				b.Result.Nodes[0].Properties = properties
+			}
+			b.Result.Diagnostics = append(b.Result.Diagnostics, semantic.Diagnostics...)
+			if semantic.Available && !semantic.Included {
+				b.Result.Nodes[0].Properties["go_build_excluded"] = "true"
+				return b.Finish(), nil
+			}
+		}
+	}
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, input.Path, input.Content, parser.ParseComments|parser.SkipObjectResolution)
 	if file == nil {
@@ -36,6 +110,9 @@ func (*Parser) Parse(_ context.Context, input parserapi.Input) (graph.ParseResul
 		b.Diagnostic(0, "warning", err.Error())
 	}
 	packageName := packageQualified(input, file.Name.Name)
+	if semantic.PackagePath != "" {
+		packageName = semantic.PackagePath
+	}
 	imports := map[string]string{}
 	for _, spec := range file.Imports {
 		importPath, unquoteErr := strconv.Unquote(spec.Path.Value)
@@ -54,12 +131,12 @@ func (*Parser) Parse(_ context.Context, input parserapi.Input) (graph.ParseResul
 	for _, decl := range file.Decls {
 		switch node := decl.(type) {
 		case *goast.FuncDecl:
-			parseFunction(b, fset, input, packageName, imports, node)
+			parseFunction(b, fset, input, packageName, imports, semantic, node)
 		case *goast.GenDecl:
 			if node.Tok == token.TYPE {
 				for _, spec := range node.Specs {
 					if ts, ok := spec.(*goast.TypeSpec); ok {
-						parseType(b, fset, input, packageName, ts)
+						parseType(b, fset, input, packageName, semantic, ts)
 					}
 				}
 			}
@@ -82,7 +159,7 @@ func packageQualified(input parserapi.Input, packageName string) string {
 	return dir
 }
 
-func parseFunction(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input, pkg string, imports map[string]string, decl *goast.FuncDecl) {
+func parseFunction(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input, pkg string, imports map[string]string, semantic SemanticView, decl *goast.FuncDecl) {
 	kind := graph.KindFunction
 	qualified := pkg + "." + decl.Name.Name
 	owner := ""
@@ -114,10 +191,10 @@ func parseFunction(b *parserapi.Builder, fset *token.FileSet, input parserapi.In
 			if !ok {
 				return true
 			}
-			parseCall(b, fset, input, pkg, imports, functionID, receiverVariable, receiverQualified, flow, call)
+			parseCall(b, fset, input, pkg, imports, semantic, functionID, receiverVariable, receiverQualified, flow, call)
 			return true
 		})
-		emitDataFlow(b, fset, input, pkg, imports, functionID, receiverVariable, receiverQualified, flow, decl.Body)
+		emitDataFlow(b, fset, input, pkg, imports, semantic, functionID, receiverVariable, receiverQualified, flow, decl.Body)
 	}
 }
 
@@ -198,7 +275,7 @@ func collectFunctionBindings(b *parserapi.Builder, fset *token.FileSet, input pa
 	return bindings
 }
 
-func emitDataFlow(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input, pkg string, imports map[string]string, functionID, receiverVariable, receiverQualified string, bindings functionBindings, body *goast.BlockStmt) {
+func emitDataFlow(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input, pkg string, imports map[string]string, semantic SemanticView, functionID, receiverVariable, receiverQualified string, bindings functionBindings, body *goast.BlockStmt) {
 	goast.Inspect(body, func(n goast.Node) bool {
 		switch value := n.(type) {
 		case *goast.AssignStmt:
@@ -225,7 +302,10 @@ func emitDataFlow(b *parserapi.Builder, fset *token.FileSet, input parserapi.Inp
 				}
 			}
 		case *goast.CallExpr:
-			callee := resolvedGoCallee(value, fset, pkg, imports, receiverVariable, receiverQualified, bindings.types)
+			callee, _, ignore := resolvedGoCallee(value, fset, pkg, imports, semantic, receiverVariable, receiverQualified, bindings.types)
+			if ignore {
+				return true
+			}
 			loc := location(input.Path, fset, value.Pos(), value.End())
 			for position, argument := range value.Args {
 				for _, sourceID := range referencedVariables(argument, bindings.symbols) {
@@ -255,7 +335,7 @@ func referencedVariables(expr goast.Expr, symbols map[string]string) []string {
 	return result
 }
 
-func parseType(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input, pkg string, spec *goast.TypeSpec) {
+func parseType(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input, pkg string, semantic SemanticView, spec *goast.TypeSpec) {
 	kind := graph.KindType
 	if _, ok := spec.Type.(*goast.InterfaceType); ok {
 		kind = graph.KindInterface
@@ -264,6 +344,12 @@ func parseType(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input,
 	loc := location(input.Path, fset, spec.Pos(), spec.End())
 	typeID := b.Declare(b.FileID(), graph.Node{Kind: kind, Name: spec.Name.Name,
 		QualifiedName: qualified, Location: loc, Properties: map[string]string{"underlying": render(fset, spec.Type)}})
+	for _, implementation := range semantic.Implementations {
+		if implementation.Concrete == qualified {
+			b.AddFact(typeID, graph.EdgeImplements, "", implementation.Interface, graph.KindInterface, loc,
+				map[string]string{"resolution": "go/types"})
+		}
+	}
 	switch value := spec.Type.(type) {
 	case *goast.StructType:
 		parseFields(b, fset, input, qualified, typeID, value.Fields, false)
@@ -300,8 +386,11 @@ func parseFields(b *parserapi.Builder, fset *token.FileSet, input parserapi.Inpu
 	}
 }
 
-func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input, pkg string, imports map[string]string, fromID, receiverVariable, receiverQualified string, bindings functionBindings, call *goast.CallExpr) {
-	callee := resolvedGoCallee(call, fset, pkg, imports, receiverVariable, receiverQualified, bindings.types)
+func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input, pkg string, imports map[string]string, semantic SemanticView, fromID, receiverVariable, receiverQualified string, bindings functionBindings, call *goast.CallExpr) {
+	callee, proven, ignore := resolvedGoCallee(call, fset, pkg, imports, semantic, receiverVariable, receiverQualified, bindings.types)
+	if ignore {
+		return
+	}
 	loc := location(input.Path, fset, call.Pos(), call.End())
 	if callee == "os.Getenv" || callee == "os.LookupEnv" {
 		if key, ok := stringArgument(call.Args, 0); ok {
@@ -346,10 +435,33 @@ func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input,
 			return
 		}
 	}
-	b.AddFact(fromID, graph.EdgeCalls, "", callee, "", loc, nil)
+	properties := map[string]string(nil)
+	if proven {
+		properties = map[string]string{"resolution": "go/types"}
+	}
+	b.AddFact(fromID, graph.EdgeCalls, "", callee, "", loc, properties)
 }
 
-func resolvedGoCallee(call *goast.CallExpr, fset *token.FileSet, pkg string, imports map[string]string, receiverVariable, receiverQualified string, types map[string]string) string {
+func resolvedGoCallee(call *goast.CallExpr, fset *token.FileSet, pkg string, imports map[string]string, semantic SemanticView, receiverVariable, receiverQualified string, types map[string]string) (string, bool, bool) {
+	if semantic.Available {
+		offset := fset.Position(call.Lparen).Offset
+		if evidence, exists := semantic.Calls[offset]; exists {
+			if evidence.Ignore {
+				return "", false, true
+			}
+			if evidence.Target != "" {
+				return evidence.Target, true, false
+			}
+		}
+		// Once a package was type checked, absence of object identity is
+		// meaningful. Keep an explicit syntactic target instead of applying
+		// receiver-name or constructor-name guesses.
+		callee := render(fset, call.Fun)
+		if ident, ok := call.Fun.(*goast.Ident); ok && !strings.Contains(ident.Name, ".") {
+			callee = pkg + "." + ident.Name
+		}
+		return callee, false, false
+	}
 	callee := render(fset, call.Fun)
 	if selector, ok := call.Fun.(*goast.SelectorExpr); ok {
 		if ident, ok := selector.X.(*goast.Ident); ok {
@@ -379,7 +491,7 @@ func resolvedGoCallee(call *goast.CallExpr, fset *token.FileSet, pkg string, imp
 	if ident, ok := call.Fun.(*goast.Ident); ok && !strings.Contains(ident.Name, ".") {
 		callee = pkg + "." + ident.Name
 	}
-	return callee
+	return callee, false, false
 }
 
 func inferGoExprType(expr goast.Expr, fset *token.FileSet, pkg string, imports, types map[string]string) string {

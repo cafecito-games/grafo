@@ -135,9 +135,13 @@ are marked `federated` and retain their original evidence.
 - Deterministic symbol lookup, neighborhood traversal, shortest paths, callers,
   callees, blast-radius traversal, multi-repository federation, and MCP access.
 
-Grafo currently performs syntactic and name-based linking. It does not yet do
-type-checker-grade dispatch or full SSA data flow. Structural retrieval remains
-graph-based; vector similarity is confined to optional candidate discovery.
+Grafo combines syntactic extraction with Go toolchain type evidence for exact
+Go function and method dispatch, promotions, generic instantiations, and
+repository-local interface method sets. Other languages remain syntactic and
+name-based, and Grafo does not perform whole-program pointer analysis or full
+SSA data flow.
+Structural retrieval remains graph-based; vector similarity is confined to
+optional candidate discovery.
 
 ## Documentation graph
 

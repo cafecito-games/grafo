@@ -359,6 +359,15 @@
         }
       }
     ],
+    "diagnostics": [
+      {
+        "repo": "server",
+        "path": "server.go",
+        "line": 6,
+        "level": "warning",
+        "message_contains": "router"
+      }
+    ],
     "queries": [
       {
         "id": "client-to-server-handler",

@@ -33,8 +33,9 @@ storage can evolve independently.
    A semantic-index version forces a one-time rebuild when parser behavior or
    graph meaning changes, so an upgraded binary never serves an old schema as
    if it were current.
-3. A parser emits declaration nodes and unresolved relationship facts. It never
-   talks to the database.
+3. A parser emits declaration nodes and relationship facts without talking to
+   the database. Most adapters use syntax evidence; the Go adapter augments it
+   with compact `go/packages`/`go/types` object evidence when available.
 4. The repository transactionally replaces the changed file's nodes and facts.
 5. Reconciliation deterministically resolves only dirty facts against
    declarations and materializes adjacency-indexed edges. When evidence is
@@ -44,7 +45,10 @@ storage can evolve independently.
    IDs, ordering, and breadth-first tie-breaking are stable.
 
 Dirty-target tracking limits edge reconciliation to facts affected by changed
-declarations or owners. Unchanged files do not re-enter a parser.
+declarations or owners. Unchanged files normally do not re-enter a parser. A Go
+source, module, workspace, vendoring, or build-context change invalidates Go
+semantic views so dependent method sets and call targets converge with a clean
+rebuild.
 
 Affected facts are first materialized in a durable SQLite queue, then resolved
 in bounded transactions. Each committed batch checkpoints the WAL, and the
@@ -69,6 +73,16 @@ once before leaving that set. Parser-level semantic dependencies propagate
 configuration changes (for example `grafo.yaml`) to otherwise unchanged source
 files. Any Git detection failure safely falls back to hashing every supported
 file; non-Git directories always use that fallback.
+
+The Go semantic loader runs with module downloads and toolchain switching
+disabled. One bounded workspace load converts `types.Info` calls, selections,
+instances, and method sets into per-file evidence, then releases the toolchain
+syntax/type graphs. Its cache key includes source and module/workspace digests
+plus GOOS, GOARCH, CGO, tags/flags, workspace selection, and toolchain version.
+Type errors remain diagnostics while proven facts augment AST output; excluded
+build-tag files record the active context without emitting declarations.
+`implements` comparisons are bounded to interfaces declared in loaded workspace
+packages; dependency and standard-library interfaces remain external facts.
 
 ## Federation
 
@@ -123,8 +137,9 @@ Grafo does not require sqlc.
   while the router records the selected dialect in node metadata.
 - Add storage by implementing the small `IndexRepository`, `QueryRepository`,
   and `StatusRepository` ports.
-- Add new relationships as facts first; keep name/type resolution in the
-  reconciliation stage so parsers remain syntactic.
+- Add new relationships as facts first; keep graph-candidate reconciliation in
+  the repository. A parser may provide an exact qualified target when its
+  language's authoritative semantic model proves object identity.
 - Dependency manifests emit shared module nodes and `depends_on` facts, keeping
   ecosystem-specific versions and scopes in edge properties. Federation
   resolves exact module declarations without copying manifest contents.
