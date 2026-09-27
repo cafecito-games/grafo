@@ -87,6 +87,42 @@ func TestRunRejectsDefaultTemporaryOutputInsideSource(t *testing.T) {
 	}
 }
 
+func TestRestoreTrackedFilePreservesExecutableMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tool.py")
+	if err := restoreTrackedFile(path, []byte("print('ok')\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o755 {
+		t.Fatalf("restored mode = %04o, want 0755", got)
+	}
+}
+
+func TestRunRestoresExecutableMutationTarget(t *testing.T) {
+	repository := fixtureRepository(t)
+	target := filepath.Join(repository, "main.go")
+	if err := os.Chmod(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runTestGit(t, repository, "add", "--chmod=+x", "main.go")
+	runTestGit(t, repository, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "make target executable")
+	before := sourceState(t, repository)
+
+	report, err := Run(context.Background(), Options{Repository: repository, Output: filepath.Join(t.TempDir(), "benchmark")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != StatusPassed {
+		t.Fatalf("benchmark status = %q, want passed: %s", report.Status, report.Error)
+	}
+	if after := sourceState(t, repository); !reflect.DeepEqual(before, after) {
+		t.Fatalf("source checkout changed: before=%q after=%q", before, after)
+	}
+}
+
 func TestLoadBaselineRejectsIncompatibleVersions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "baseline.json")
 	if err := os.WriteFile(path, []byte(`{"schema_version":999,"semantic_index_version":"old","graph_schema_version":1}`), 0o644); err != nil {

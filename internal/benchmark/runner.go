@@ -221,7 +221,12 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 		return report, fmt.Errorf("corpus has no tracked inputs supported by the production parser registry")
 	}
 	target := chooseMutationTarget(supportedPaths)
-	original, err := os.ReadFile(filepath.Join(isolation, filepath.FromSlash(target)))
+	targetPath := filepath.Join(isolation, filepath.FromSlash(target))
+	targetInfo, err := os.Stat(targetPath)
+	if err != nil {
+		return report, fmt.Errorf("inspect scenario target %s: %w", target, err)
+	}
+	original, err := os.ReadFile(targetPath)
 	if err != nil {
 		return report, fmt.Errorf("read scenario target %s: %w", target, err)
 	}
@@ -284,13 +289,13 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 		return report, err
 	}
 
-	if err := os.WriteFile(filepath.Join(isolation, filepath.FromSlash(target)), append(append([]byte{}, original...), '\n'), 0o644); err != nil {
+	if err := os.WriteFile(targetPath, append(append([]byte{}, original...), '\n'), 0o644); err != nil {
 		return report, err
 	}
 	if err := runMutationPair(ctx, &report, "edit", "edit_unchanged", isolation, report.Artifacts.ResumeDatabase, target, 1, 0, cold.Index.Counts, false); err != nil {
 		return report, err
 	}
-	if err := os.Remove(filepath.Join(isolation, filepath.FromSlash(target))); err != nil {
+	if err := os.Remove(targetPath); err != nil {
 		return report, err
 	}
 	deleted, err := executeScenario(ctx, "delete", isolation, report.Artifacts.ResumeDatabase, nil)
@@ -301,17 +306,20 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	if err != nil {
 		return report, err
 	}
-	if err := os.WriteFile(filepath.Join(isolation, filepath.FromSlash(target)), original, 0o644); err != nil {
+	if err := restoreTrackedFile(targetPath, original, targetInfo.Mode()); err != nil {
 		return report, err
 	}
 	if err := runMutationPair(ctx, &report, "restore", "restore_unchanged", isolation, report.Artifacts.ResumeDatabase, target, 1, 0, cold.Index.Counts, true); err != nil {
 		return report, err
 	}
+	if err := runGit(ctx, isolation, "diff", "--quiet", "--", target); err != nil {
+		return report, fmt.Errorf("restored target differs from the selected commit: %w", err)
+	}
 
 	if err := runGit(ctx, isolation, "switch", "-c", "grafo-benchmark-branch"); err != nil {
 		return report, err
 	}
-	if err := os.WriteFile(filepath.Join(isolation, filepath.FromSlash(target)), append(append([]byte{}, original...), '\n'), 0o644); err != nil {
+	if err := os.WriteFile(targetPath, append(append([]byte{}, original...), '\n'), 0o644); err != nil {
 		return report, err
 	}
 	if err := runGit(ctx, isolation, "add", "--", target); err != nil {
@@ -426,6 +434,16 @@ func summarizeIndex(report indexer.Report) IndexReport {
 		Unchanged: report.Unchanged, Removed: len(report.Removed), RemovedPaths: report.Removed,
 		Skipped: len(report.Skipped), SkippedPaths: report.Skipped, Counts: report.Counts,
 		Phases: report.Phases, ReconciliationBatches: report.ReconciliationBatches}
+}
+
+func restoreTrackedFile(path string, content []byte, mode os.FileMode) error {
+	if err := os.WriteFile(path, content, mode.Perm()); err != nil {
+		return fmt.Errorf("restore tracked file: %w", err)
+	}
+	if err := os.Chmod(path, mode.Perm()); err != nil {
+		return fmt.Errorf("restore tracked file mode: %w", err)
+	}
+	return nil
 }
 
 func runMutationPair(ctx context.Context, report *Report, changedName, stableName, root, database, target string, updated, removed int, expectedCounts graph.Counts, zeroReadStable bool) error {

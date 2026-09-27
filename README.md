@@ -263,10 +263,13 @@ GRAFO_BENCH_REPO=~/CafecitoGames/uzir task bench:corpus
 Set `GRAFO_BENCH_OUTPUT=/path/outside/the/corpus` to retain artifacts at a
 specific location. Otherwise the command creates and prints a temporary output
 directory. `GRAFO_BENCH_BASELINE` accepts a prior report and rejects incompatible
-report, graph-schema, or semantic-index versions. Optional absolute resource
-gates use `GRAFO_BENCH_MAX_WAL_BYTES` and `GRAFO_BENCH_MAX_RSS_BYTES`; timing
-measurements remain reported baselines rather than committed machine-sensitive
-budgets.
+report, graph-schema, or semantic-index versions; it records provenance but does
+not impose an automatic timing comparison. Optional absolute resource gates use
+`GRAFO_BENCH_MAX_WAL_BYTES` and `GRAFO_BENCH_MAX_RSS_BYTES`. Peak WAL is the
+largest value observed at 100 ms intervals and durable indexer boundaries. Peak
+RSS is the absolute process RSS observed during each scenario, including heap
+retained from earlier scenarios. Timing measurements remain reported baselines
+rather than committed machine-sensitive budgets.
 
 The harness validates the input before creating an index, checks out only the
 tracked files from the selected commit in an isolated clone, and stores every
