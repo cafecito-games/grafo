@@ -736,10 +736,9 @@ func (e *extractor) addSignalOperation(node *gdast.CallExpression, member *gdast
 		name = e.resolveExpression(member.Object, current)
 	}
 	// The handler is recorded on the routing fact itself as well as on the
-	// signal declaration. Most connects name a signal another file declares, so
-	// the parser cannot reach that declaration to hang a handled_by edge on it;
-	// the property keeps the route's destination visible in exactly those cases
-	// without anyone guessing which declaration the name belongs to.
+	// handled_by fact. Most connects name a signal another file declares, so the
+	// parser preserves the source name and lets storage decide whether exactly
+	// one declaration proves the relation.
 	extra := map[string]string{}
 	subscriber := fromID
 	if operation.form == "connect" && handler >= 0 {
@@ -749,11 +748,10 @@ func (e *extractor) addSignalOperation(node *gdast.CallExpression, member *gdast
 			// statement that wired it, and the handler is a node this parser
 			// owns. Sourcing the route there is what lets the graph traverse a
 			// resolved signal back to its declared handler even when the signal
-			// is declared in another file - the case a handled_by edge cannot
-			// cover, because that edge's source would have to be the foreign
-			// declaration and facts resolve only their target by name. The
-			// wiring statement is kept as the site, and the fact's own location
-			// still points at the connect call.
+			// is declared in another file. The named-source handled_by edge now
+			// expresses that direction directly too; this subscribes edge remains
+			// useful for handler-first traversal. The wiring statement is kept as
+			// the site, and the fact's own location still points at the connect call.
 			if id := e.handlerNode(method); id != "" {
 				subscriber = id
 				if current.container != "" {
@@ -817,20 +815,24 @@ func (e *extractor) handlerMethod(arguments []gdast.Expression, index int, curre
 // addSignalHandler names the method a literal connect routes a signal to. Only a
 // bare identifier that resolves to a method this script declares is accepted: a
 // Callable bound to another object, a lambda, or a computed name proves nothing
-// about which method the engine will run, so nothing is recorded. An unresolved
-// signal records no handler either, because there is no declaration to hang the
-// route on and inventing one would attach the handler to a name rather than to a
-// signal.
+// about which method the engine will run, so nothing is recorded. A foreign
+// signal keeps its canonical name so storage can resolve the source without the
+// parser inventing an ID or choosing among ambiguous declarations.
 func (e *extractor) addSignalHandler(ref signalRef, arguments []gdast.Expression, index int, current scope, loc graph.Location) {
-	if ref.id == "" {
+	if ref.qualified == "" {
 		return
 	}
 	method := e.handlerMethod(arguments, index, current)
 	if method == "" {
 		return
 	}
-	e.b.AddFact(ref.id, graph.EdgeHandledBy, "", method, graph.KindMethod, loc,
-		map[string]string{"form": "connect", "signal": ref.qualified, "receiver": current.receiver})
+	properties := map[string]string{"form": "connect", "signal": ref.qualified, "receiver": current.receiver}
+	if ref.id != "" {
+		e.b.AddFact(ref.id, graph.EdgeHandledBy, "", method, graph.KindMethod, loc, properties)
+		return
+	}
+	e.b.AddNamedSourceFact(ref.qualified, graph.KindEvent, graph.EdgeHandledBy,
+		"", method, graph.KindMethod, loc, properties)
 }
 
 // addSignalFact records one signal fact and reports the declaration it resolved
@@ -853,7 +855,7 @@ func (e *extractor) addSignalFact(fromID string, kind graph.EdgeKind, form, name
 	if !ok {
 		properties["signal"] = name
 		e.b.AddFact(fromID, kind, "", name, graph.KindEvent, loc, properties)
-		return signalRef{}, true
+		return signalRef{qualified: name}, true
 	}
 	properties["signal"] = ref.qualified
 	e.b.AddFact(fromID, kind, ref.id, "", graph.KindEvent, loc, properties)

@@ -64,18 +64,25 @@ schema rebuild also skips files already converted to that version. Indexes on
 `edges.fact_id` and dirty lookup keys keep replacement work proportional to the
 affected graph.
 
-Symbolic resolution creates a declaration edge only when exactly one candidate
-matches the parser's target and edge-kind constraints. Ambiguous names remain
-explicit external nodes until a parser can supply a qualified target; Grafo
-does not turn uncertainty into speculative fan-out.
+Facts identify each source either by an exact `from_id` or by a symbolic
+`source` plus an optional `source_kind`; conflicting or missing source locators
+are rejected before an owner is replaced. Both endpoints are resolved before an
+edge is written. An absent exact source becomes an explicit external node rather
+than a dangling edge, and symbolic resolution creates a declaration edge only
+when exactly one candidate matches. Target resolution additionally applies the
+edge-kind compatibility rules; kindless source resolution requires uniqueness
+across every node kind. Ambiguous names remain explicit external nodes rather
+than becoming speculative fan-out.
 
 Node-name substring search uses shadow values written with Go's Unicode-aware
 lowercase rule. Both the stored `name` and `qualified_name` values and every
 search fragment pass through that same rule, so catalog filters and symbol
 search agree for ASCII and non-ASCII names without locale-sensitive or
 accent-insensitive collation. Migration 00005 preserves the old ASCII behavior
-for existing rows; semantic-index version 18 then requires a one-time reindex
-to populate Unicode-correct shadow values for every node.
+for existing rows; semantic-index version 18 required a one-time reindex to
+populate Unicode-correct shadow values for every node. Migration 00006 adds
+named fact sources without changing legacy exact-source rows, and semantic-index
+version 19 reparses producers so they can emit the expanded contract.
 
 For Git worktrees, the indexer narrows content hashing to files changed since
 the indexed commit, current untracked files, and paths that were dirty during

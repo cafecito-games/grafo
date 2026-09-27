@@ -181,6 +181,9 @@ func (r *Repository) Files(ctx context.Context) (map[string]graph.FileRecord, er
 }
 
 func (r *Repository) ReplaceFile(ctx context.Context, file graph.FileRecord, parsed graph.ParseResult) error {
+	if err := validateParseResult(parsed); err != nil {
+		return err
+	}
 	return r.inTransaction(ctx, func(q *sqlcgen.Queries, writer *batchWriter) error {
 		if err := markOwnerDirty(ctx, q, file.Path); err != nil {
 			return err
@@ -203,6 +206,9 @@ func (r *Repository) ReplaceFile(ctx context.Context, file graph.FileRecord, par
 }
 
 func (r *Repository) ReplaceOwner(ctx context.Context, owner string, parsed graph.ParseResult) error {
+	if err := validateParseResult(parsed); err != nil {
+		return err
+	}
 	return r.inTransaction(ctx, func(q *sqlcgen.Queries, writer *batchWriter) error {
 		if err := markOwnerDirty(ctx, q, owner); err != nil {
 			return err
@@ -218,6 +224,15 @@ func (r *Repository) ReplaceOwner(ctx context.Context, owner string, parsed grap
 		}
 		return insertParseResult(ctx, q, writer, parsed)
 	})
+}
+
+func validateParseResult(parsed graph.ParseResult) error {
+	for index, fact := range parsed.Facts {
+		if err := fact.ValidateSourceLocator(); err != nil {
+			return fmt.Errorf("validate fact %d: %w", index, err)
+		}
+	}
+	return nil
 }
 
 func (r *Repository) RemoveFiles(ctx context.Context, paths []string) error {
@@ -353,16 +368,22 @@ func (r *Repository) reconcileBatch(ctx context.Context, resolved *resolutionCac
 		for _, row := range facts {
 			processed++
 			fact := factFromDirtyRow(row)
+			sources, err := resolveSources(ctx, q, writer, fact, row.SourceExists != 0, resolved)
+			if err != nil {
+				return err
+			}
 			targets, err := resolveTargets(ctx, q, writer, fact, row.TargetExists != 0, resolved)
 			if err != nil {
 				return err
 			}
-			for _, target := range targets {
-				edge := graph.Edge{ID: graph.EdgeID(fact.ID, target), FactID: fact.ID,
-					FromID: fact.FromID, ToID: target, Kind: fact.Kind, Location: fact.Location,
-					Properties: fact.Properties}
-				if err := writer.addEdge(ctx, edgeParams(edge)); err != nil {
-					return err
+			for _, source := range sources {
+				for _, target := range targets {
+					edge := graph.Edge{ID: graph.EdgeID(fact.ID, target), FactID: fact.ID,
+						FromID: source, ToID: target, Kind: fact.Kind, Location: fact.Location,
+						Properties: fact.Properties}
+					if err := writer.addEdge(ctx, edgeParams(edge)); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -428,7 +449,15 @@ func subtractBatchStats(after, before graph.WriteBatchStats) graph.WriteBatchSta
 	}
 }
 
+type endpointDirection uint8
+
+const (
+	targetEndpoint endpointDirection = iota
+	sourceEndpoint
+)
+
 type resolutionKey struct {
+	direction  endpointDirection
 	target     string
 	targetKind graph.NodeKind
 	edgeKind   graph.EdgeKind
@@ -480,26 +509,38 @@ type resolutionCandidate struct {
 	qualifiedName string
 }
 
+func resolveSources(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter, fact graph.Fact, sourceExists bool, cache *resolutionCache) ([]string, error) {
+	return resolveEndpoint(ctx, q, writer, fact, sourceEndpoint, sourceExists, cache)
+}
+
 func resolveTargets(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter, fact graph.Fact, targetExists bool, cache *resolutionCache) ([]string, error) {
-	if fact.TargetID != "" {
-		if targetExists {
-			return []string{fact.TargetID}, nil
+	return resolveEndpoint(ctx, q, writer, fact, targetEndpoint, targetExists, cache)
+}
+
+func resolveEndpoint(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter, fact graph.Fact, direction endpointDirection, exactExists bool, cache *resolutionCache) ([]string, error) {
+	exactID, name, kind := fact.TargetID, fact.Target, fact.TargetKind
+	if direction == sourceEndpoint {
+		exactID, name, kind = fact.FromID, fact.Source, fact.SourceKind
+	}
+	if exactID != "" {
+		if exactExists {
+			return []string{exactID}, nil
 		}
-		external := externalNode(fact)
+		external := externalNode(exactID, "")
 		if err := writer.addNode(ctx, nodeParams(external, 1)); err != nil {
 			return nil, err
 		}
 		return []string{external.ID}, nil
 	}
-	key := resolutionKey{target: fact.Target, targetKind: fact.TargetKind, edgeKind: fact.Kind}
+	key := resolutionKey{direction: direction, target: name, targetKind: kind, edgeKind: fact.Kind}
 	if targets, ok := cache.get(key); ok {
 		return targets, nil
 	}
 	var targets []string
 	var rows []resolutionCandidate
-	if fact.Target != "" {
-		if fact.TargetKind == "" {
-			found, err := q.FindNodesExact(ctx, fact.Target)
+	if name != "" {
+		if kind == "" {
+			found, err := q.FindNodesExact(ctx, name)
 			if err != nil {
 				return nil, err
 			}
@@ -509,7 +550,7 @@ func resolveTargets(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter
 			}
 		} else {
 			found, err := q.FindNodesExactKind(ctx, sqlcgen.FindNodesExactKindParams{
-				Target: fact.Target, Kind: string(fact.TargetKind)})
+				Target: name, Kind: string(kind)})
 			if err != nil {
 				return nil, err
 			}
@@ -518,7 +559,7 @@ func resolveTargets(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter
 				rows = append(rows, resolutionCandidate{id: row.ID, kind: graph.NodeKind(row.Kind), qualifiedName: row.QualifiedName})
 			}
 		}
-		rows = filterCandidates(fact, rows)
+		rows = filterCandidates(fact, direction, rows)
 		sort.Slice(rows, func(i, j int) bool {
 			if rows[i].qualifiedName == rows[j].qualifiedName {
 				return rows[i].id < rows[j].id
@@ -526,14 +567,14 @@ func resolveTargets(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter
 			return rows[i].qualifiedName < rows[j].qualifiedName
 		})
 		// A name shared by multiple declarations is not enough evidence to
-		// invent a fan-out edge. Preserve one explicit unresolved target and
+		// invent a fan-out edge. Preserve one explicit unresolved endpoint and
 		// let a parser provide a qualified name when it can prove the binding.
 		if len(rows) == 1 {
 			targets = []string{rows[0].id}
 		}
 	}
 	if len(targets) == 0 {
-		external := externalNode(fact)
+		external := externalNode(name, kind)
 		if err := writer.addNode(ctx, nodeParams(external, 1)); err != nil {
 			return nil, err
 		}
@@ -543,8 +584,12 @@ func resolveTargets(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter
 	return targets, nil
 }
 
-func filterCandidates(fact graph.Fact, rows []resolutionCandidate) []resolutionCandidate {
-	if fact.TargetKind != "" {
+func filterCandidates(fact graph.Fact, direction endpointDirection, rows []resolutionCandidate) []resolutionCandidate {
+	kind := fact.TargetKind
+	if direction == sourceEndpoint {
+		kind = fact.SourceKind
+	}
+	if kind != "" || direction == sourceEndpoint {
 		return rows
 	}
 	result := rows[:0]
@@ -556,14 +601,9 @@ func filterCandidates(fact graph.Fact, rows []resolutionCandidate) []resolutionC
 	return result
 }
 
-func externalNode(fact graph.Fact) graph.Node {
-	kind := fact.TargetKind
+func externalNode(qualified string, kind graph.NodeKind) graph.Node {
 	if kind == "" {
 		kind = graph.KindExternal
-	}
-	qualified := fact.Target
-	if qualified == "" {
-		qualified = fact.TargetID
 	}
 	return graph.Node{ID: graph.NodeID(kind, "external:"+qualified), Kind: kind,
 		Name: graph.SimpleName(qualified), QualifiedName: qualified, OwnerFile: "__external__",
@@ -895,7 +935,8 @@ func foldName(name string) string {
 }
 
 func factParams(f graph.Fact) sqlcgen.UpsertFactParams {
-	return sqlcgen.UpsertFactParams{ID: f.ID, FromID: f.FromID, Kind: string(f.Kind), TargetID: f.TargetID,
+	return sqlcgen.UpsertFactParams{ID: f.ID, FromID: f.FromID, Source: f.Source,
+		SourceKind: string(f.SourceKind), Kind: string(f.Kind), TargetID: f.TargetID,
 		Target: f.Target, TargetKind: string(f.TargetKind), Path: f.Location.Path, Line: int64(f.Location.Line),
 		ColumnNo: int64(f.Location.Column), EndLine: int64(f.Location.EndLine),
 		Properties: graph.MarshalProperties(f.Properties), OwnerFile: f.OwnerFile}
@@ -915,7 +956,8 @@ func nodeFromRow(n sqlcgen.Node) graph.Node {
 }
 
 func factFromDirtyRow(f sqlcgen.ListDirtyFactBatchRow) graph.Fact {
-	return graph.Fact{ID: f.ID, FromID: f.FromID, Kind: graph.EdgeKind(f.Kind), TargetID: f.TargetID,
+	return graph.Fact{ID: f.ID, FromID: f.FromID, Source: f.Source, SourceKind: graph.NodeKind(f.SourceKind),
+		Kind: graph.EdgeKind(f.Kind), TargetID: f.TargetID,
 		Target: f.Target, TargetKind: graph.NodeKind(f.TargetKind),
 		Location:   graph.Location{Path: f.Path, Line: int(f.Line), Column: int(f.ColumnNo), EndLine: int(f.EndLine)},
 		Properties: graph.UnmarshalProperties(f.Properties), OwnerFile: f.OwnerFile}

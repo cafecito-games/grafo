@@ -64,13 +64,15 @@ var (
 	}
 	factBatchSpec = batchSpec{
 		name:    "facts",
-		columns: 12,
+		columns: 14,
 		prefix: `INSERT INTO facts(
-    id, from_id, kind, target_id, target, target_kind, path, line, column_no,
-    end_line, properties, owner_file
+    id, from_id, source, source_kind, kind, target_id, target, target_kind,
+    path, line, column_no, end_line, properties, owner_file
 ) VALUES `,
 		suffix: ` ON CONFLICT(id) DO UPDATE SET
     from_id = excluded.from_id,
+    source = excluded.source,
+    source_kind = excluded.source_kind,
     kind = excluded.kind,
     target_id = excluded.target_id,
     target = excluded.target,
@@ -154,8 +156,9 @@ func (w *batchWriter) addNode(ctx context.Context, row sqlcgen.UpsertNodeParams)
 }
 
 func (w *batchWriter) addFact(ctx context.Context, row sqlcgen.UpsertFactParams) error {
-	return w.add(ctx, &w.facts, []any{row.ID, row.FromID, row.Kind, row.TargetID, row.Target,
-		row.TargetKind, row.Path, row.Line, row.ColumnNo, row.EndLine, row.Properties, row.OwnerFile})
+	return w.add(ctx, &w.facts, []any{row.ID, row.FromID, row.Source, row.SourceKind, row.Kind,
+		row.TargetID, row.Target, row.TargetKind, row.Path, row.Line, row.ColumnNo, row.EndLine,
+		row.Properties, row.OwnerFile})
 }
 
 func (w *batchWriter) addDirtyNode(ctx context.Context, id string) error {

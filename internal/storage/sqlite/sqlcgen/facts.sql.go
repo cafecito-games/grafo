@@ -30,9 +30,14 @@ func (q *Queries) DeleteFactsByOwner(ctx context.Context, ownerFile string) erro
 }
 
 const listDirtyFactBatch = `-- name: ListDirtyFactBatch :many
-SELECT facts.id, facts.from_id, facts.kind, facts.target_id, facts.target, facts.target_kind, facts.path, facts.line, facts.column_no, facts.end_line, facts.properties, facts.owner_file, CASE WHEN facts.target_id = '' OR target_node.id IS NOT NULL THEN 1 ELSE 0 END AS target_exists
+SELECT facts.id, facts.from_id, facts.source, facts.source_kind, facts.kind,
+       facts.target_id, facts.target, facts.target_kind, facts.path, facts.line,
+       facts.column_no, facts.end_line, facts.properties, facts.owner_file,
+       CASE WHEN facts.from_id = '' OR source_node.id IS NOT NULL THEN 1 ELSE 0 END AS source_exists,
+       CASE WHEN facts.target_id = '' OR target_node.id IS NOT NULL THEN 1 ELSE 0 END AS target_exists
 FROM dirty_facts INDEXED BY dirty_facts_order
 CROSS JOIN facts
+LEFT JOIN nodes AS source_node ON source_node.id = facts.from_id AND source_node.external = 0
 LEFT JOIN nodes AS target_node ON target_node.id = facts.target_id
 WHERE facts.id = dirty_facts.fact_id
 ORDER BY dirty_facts.owner_file, dirty_facts.fact_id
@@ -42,6 +47,8 @@ LIMIT ?
 type ListDirtyFactBatchRow struct {
 	ID           string `json:"id"`
 	FromID       string `json:"from_id"`
+	Source       string `json:"source"`
+	SourceKind   string `json:"source_kind"`
 	Kind         string `json:"kind"`
 	TargetID     string `json:"target_id"`
 	Target       string `json:"target"`
@@ -52,6 +59,7 @@ type ListDirtyFactBatchRow struct {
 	EndLine      int64  `json:"end_line"`
 	Properties   string `json:"properties"`
 	OwnerFile    string `json:"owner_file"`
+	SourceExists int64  `json:"source_exists"`
 	TargetExists int64  `json:"target_exists"`
 }
 
@@ -67,6 +75,8 @@ func (q *Queries) ListDirtyFactBatch(ctx context.Context, limit int64) ([]ListDi
 		if err := rows.Scan(
 			&i.ID,
 			&i.FromID,
+			&i.Source,
+			&i.SourceKind,
 			&i.Kind,
 			&i.TargetID,
 			&i.Target,
@@ -77,6 +87,7 @@ func (q *Queries) ListDirtyFactBatch(ctx context.Context, limit int64) ([]ListDi
 			&i.EndLine,
 			&i.Properties,
 			&i.OwnerFile,
+			&i.SourceExists,
 			&i.TargetExists,
 		); err != nil {
 			return nil, err
@@ -94,11 +105,13 @@ func (q *Queries) ListDirtyFactBatch(ctx context.Context, limit int64) ([]ListDi
 
 const upsertFact = `-- name: UpsertFact :exec
 INSERT INTO facts(
-    id, from_id, kind, target_id, target, target_kind, path, line, column_no,
-    end_line, properties, owner_file
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    id, from_id, source, source_kind, kind, target_id, target, target_kind,
+    path, line, column_no, end_line, properties, owner_file
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     from_id = excluded.from_id,
+    source = excluded.source,
+    source_kind = excluded.source_kind,
     kind = excluded.kind,
     target_id = excluded.target_id,
     target = excluded.target,
@@ -114,6 +127,8 @@ ON CONFLICT(id) DO UPDATE SET
 type UpsertFactParams struct {
 	ID         string `json:"id"`
 	FromID     string `json:"from_id"`
+	Source     string `json:"source"`
+	SourceKind string `json:"source_kind"`
 	Kind       string `json:"kind"`
 	TargetID   string `json:"target_id"`
 	Target     string `json:"target"`
@@ -130,6 +145,8 @@ func (q *Queries) UpsertFact(ctx context.Context, arg UpsertFactParams) error {
 	_, err := q.exec(ctx, q.upsertFactStmt, upsertFact,
 		arg.ID,
 		arg.FromID,
+		arg.Source,
+		arg.SourceKind,
 		arg.Kind,
 		arg.TargetID,
 		arg.Target,
