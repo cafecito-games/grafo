@@ -186,7 +186,7 @@ are marked `federated` and retain their original evidence.
   `.cfg`, `.gdextension`, `.import`, and `.remap`) and `.uid` sidecars; and
   shader/include modules, uniforms, structs, functions, parameters, locals,
   calls, global references, and `#include` relationships.
-- `.env`, YAML, JSON, and Java `.properties` keys and value references.
+- `.env`, YAML, JSON, TOML, and Java `.properties` keys and value references.
 - Markdown documents (`.md` and `.markdown`) as structural graphs: headings are
   bounded `document_section` nodes, relative links connect sections to files or
   other document sections, and explicit code keywords connect prose to symbols.

@@ -36,6 +36,7 @@ func TestRegistryRoutesEverySupportedFixtureFormat(t *testing.T) {
 		"config.yml":                 "config",
 		"settings.properties":        "config",
 		"config.json":                "config",
+		"config.toml":                "config",
 		"README.md":                  "markdown",
 		"docs/architecture.markdown": "markdown",
 	}

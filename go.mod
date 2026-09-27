@@ -3,6 +3,7 @@ module github.com/cafecito-games/grafo
 go 1.26.0
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/cafecito-games/gdparser v0.0.0-20260926231848-07997740011c
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/pganalyze/pg_query_go/v6 v6.2.2

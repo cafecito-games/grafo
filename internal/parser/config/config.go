@@ -5,12 +5,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 )
@@ -23,7 +25,7 @@ func (*Parser) Language() string { return "config" }
 func (*Parser) Supports(path string) bool {
 	base := strings.ToLower(filepath.Base(path))
 	ext := strings.ToLower(filepath.Ext(path))
-	return base == ".env" || strings.HasPrefix(base, ".env.") || ext == ".yaml" || ext == ".yml" || ext == ".properties" || ext == ".json"
+	return base == ".env" || strings.HasPrefix(base, ".env.") || ext == ".yaml" || ext == ".yml" || ext == ".properties" || ext == ".json" || ext == ".toml"
 }
 
 type entry struct {
@@ -49,9 +51,16 @@ func (*Parser) Parse(_ context.Context, input parserapi.Input) (graph.ParseResul
 		entries = parseYAML(input.Content)
 	case ext == ".json":
 		entries, err = parseJSON(input.Content)
+	case ext == ".toml":
+		entries, err = parseTOML(input.Content)
 	}
 	if err != nil {
-		b.Diagnostic(0, "warning", err.Error())
+		line := 0
+		var parseErr toml.ParseError
+		if errors.As(err, &parseErr) {
+			line = parseErr.Position.Line
+		}
+		b.Diagnostic(line, "warning", err.Error())
 	}
 	for _, item := range entries {
 		loc := graph.Location{Path: input.Path, Line: item.line, Column: 1, EndLine: item.line}
@@ -178,5 +187,50 @@ func parseJSON(content []byte) ([]entry, error) {
 		}
 	}
 	walk("", value)
+	return result, nil
+}
+
+func parseTOML(content []byte) ([]entry, error) {
+	var value map[string]any
+	if _, err := toml.NewDecoder(bytes.NewReader(content)).Decode(&value); err != nil {
+		return nil, fmt.Errorf("parse TOML: %w", err)
+	}
+
+	values := map[string][]string{}
+	var walk func(string, any)
+	walk = func(prefix string, value any) {
+		switch current := value.(type) {
+		case map[string]any:
+			keys := make([]string, 0, len(current))
+			for key := range current {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				name := key
+				if prefix != "" {
+					name = prefix + "." + key
+				}
+				walk(name, current[key])
+			}
+		case []map[string]any:
+			for _, item := range current {
+				walk(prefix, item)
+			}
+		default:
+			values[prefix] = append(values[prefix], fmt.Sprint(current))
+		}
+	}
+	walk("", value)
+
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]entry, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, entry{key, strings.Join(values[key], "\n"), 1})
+	}
 	return result, nil
 }
