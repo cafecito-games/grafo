@@ -61,6 +61,7 @@ type OutboundRequest struct {
 	Source      Resource       `json:"source"`
 	Method      string         `json:"method"`
 	Route       string         `json:"route"`
+	Scheme      string         `json:"scheme,omitempty"`
 	Authority   string         `json:"authority,omitempty"`
 	Status      BoundaryStatus `json:"status"`
 	Target      Endpoint       `json:"target"`
@@ -138,6 +139,8 @@ type ServiceLink struct {
 	Status        BoundaryStatus  `json:"status"`
 	Method        string          `json:"method,omitempty"`
 	Route         string          `json:"route,omitempty"`
+	Scheme        string          `json:"scheme,omitempty"`
+	Authority     string          `json:"authority,omitempty"`
 	Event         string          `json:"event,omitempty"`
 	EndpointIDs   []string        `json:"endpoint_ids,omitempty"`
 	EventIDs      []string        `json:"event_ids,omitempty"`
@@ -673,7 +676,10 @@ func (t *Topology) collectOutboundRequests(ctx context.Context, options Topology
 			continue
 		}
 		request := OutboundRequest{Source: newResource(sourceScoped), Method: method, Route: route,
-			Authority: routeModel.Authority, Candidates: []Endpoint{}}
+			Scheme: routeModel.Scheme, Authority: routeModel.Authority, Candidates: []Endpoint{}}
+		if scheme := strings.TrimSpace(base.Properties["http_scheme"]); scheme != "" {
+			request.Scheme = strings.ToLower(scheme)
+		}
 		if authority := strings.TrimSpace(base.Properties["http_authority"]); authority != "" {
 			request.Authority = authority
 		}
@@ -1068,7 +1074,11 @@ func (t *Topology) ServiceTopology(ctx context.Context, options TopologyOptions)
 			from := repositoryService(request.Source.Repository)
 			boundaryName := request.Method + " " + request.Route
 			if request.Authority != "" {
-				boundaryName = request.Method + " //" + request.Authority + request.Route
+				prefix := "//"
+				if request.Scheme != "" {
+					prefix = request.Scheme + "://"
+				}
+				boundaryName = request.Method + " " + prefix + request.Authority + request.Route
 			}
 			var to ServiceNode
 			var endpointIDs []string
@@ -1091,7 +1101,8 @@ func (t *Topology) ServiceTopology(ctx context.Context, options TopologyOptions)
 				targetNodes = []Resource{request.Target.Resource}
 			}
 			link := ServiceLink{FromServiceID: from.ID, ToServiceID: to.ID, Kind: LinkHTTP,
-				Name: request.Method + " " + request.Route, Method: request.Method, Route: request.Route,
+				Name: boundaryName, Method: request.Method, Route: request.Route,
+				Scheme: request.Scheme, Authority: request.Authority,
 				Status: request.Status, EndpointIDs: endpointIDs,
 				SourceNodes: []Resource{request.Source}, TargetNodes: targetNodes,
 				Evidence: []LinkEvidence{request.Evidence}}

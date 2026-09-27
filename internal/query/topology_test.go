@@ -175,9 +175,9 @@ func TestOutboundRequestsRankCanonicalRouteCompatibility(t *testing.T) {
 	}
 
 	tests := []struct {
-		source, route, destination, authority string
-		status                                query.BoundaryStatus
-		candidates                            int
+		source, route, destination, scheme, authority string
+		status                                        query.BoundaryStatus
+		candidates                                    int
 	}{
 		{source: "Exact", route: "/users/42", destination: "literal", status: query.BoundaryResolved},
 		{source: "Template", route: "/people/42", destination: "parameter", status: query.BoundaryResolved},
@@ -187,14 +187,15 @@ func TestOutboundRequestsRankCanonicalRouteCompatibility(t *testing.T) {
 		{source: "RegexMismatch", route: "/codes/nope", status: query.BoundaryUnresolved},
 		{source: "UnknownRegex", route: "/codes/{_}", status: query.BoundaryUnresolved},
 		{source: "MethodMismatch", route: "/people/42", status: query.BoundaryUnresolved},
-		{source: "ExternalAuthority", route: "/users/42", authority: "external.test", status: query.BoundaryUnresolved},
-		{source: "LegacyAuthority", route: "/users/42", authority: "legacy.test", status: query.BoundaryUnresolved},
+		{source: "ExternalAuthority", route: "/users/42", scheme: "https", authority: "external.test", status: query.BoundaryUnresolved},
+		{source: "HTTPAuthority", route: "/users/42", scheme: "http", authority: "external.test", status: query.BoundaryUnresolved},
+		{source: "LegacyAuthority", route: "/users/42", scheme: "https", authority: "legacy.test", status: query.BoundaryUnresolved},
 		{source: "Invalid", route: "/users/%zz", status: query.BoundaryUnresolved},
 	}
 	for _, test := range tests {
 		t.Run(test.source, func(t *testing.T) {
 			request := bySource[test.source]
-			if request.Status != test.status || request.Route != test.route || request.Authority != test.authority || len(request.Candidates) != test.candidates {
+			if request.Status != test.status || request.Route != test.route || request.Scheme != test.scheme || request.Authority != test.authority || len(request.Candidates) != test.candidates {
 				t.Fatalf("request = %#v", request)
 			}
 			if test.destination != "" && request.Destination.Name != test.destination {
@@ -214,11 +215,11 @@ func TestOutboundRequestsRankCanonicalRouteCompatibility(t *testing.T) {
 	}
 	externalIDs := map[string]bool{}
 	for _, link := range topology.Links {
-		if link.Name == "GET /users/42" && (link.ToServiceID != "service:server") {
+		if link.Route == "/users/42" && link.ToServiceID != "service:server" {
 			externalIDs[link.ToServiceID] = true
 		}
 	}
-	if len(externalIDs) != 2 {
+	if len(externalIDs) != 3 {
 		t.Fatalf("distinct authorities shared an external service: %#v", topology)
 	}
 }
@@ -255,8 +256,8 @@ func newHTTPCompatibilityFixture() *catalogRepository {
 	addEndpoint("n:team-b", "team b", "GET", "/teams/{teamID}")
 
 	requests := []struct {
-		name, method, raw, canonical, authority string
-		legacy                                  bool
+		name, method, raw, canonical, scheme, authority string
+		legacy                                          bool
 	}{
 		{name: "Exact", method: "GET", raw: "/users/42/?expand=true#details", canonical: "/users/42"},
 		{name: "Template", method: "GET", raw: "/people/42", canonical: "/people/42"},
@@ -266,7 +267,8 @@ func newHTTPCompatibilityFixture() *catalogRepository {
 		{name: "RegexMismatch", method: "GET", raw: "/codes/nope", canonical: "/codes/nope"},
 		{name: "UnknownRegex", method: "GET", raw: "/codes/{value}", canonical: "/codes/{_}"},
 		{name: "MethodMismatch", method: "POST", raw: "/people/42", canonical: "/people/42"},
-		{name: "ExternalAuthority", method: "GET", raw: "https://external.test/users/42", canonical: "/users/42", authority: "external.test"},
+		{name: "ExternalAuthority", method: "GET", raw: "https://external.test/users/42", canonical: "/users/42", scheme: "https", authority: "external.test"},
+		{name: "HTTPAuthority", method: "GET", raw: "http://external.test/users/42", canonical: "/users/42", scheme: "http", authority: "external.test"},
 		{name: "LegacyAuthority", method: "GET", raw: "https://legacy.test/users/42?view=full#details", canonical: "/users/42", legacy: true},
 		{name: "Invalid", method: "GET", raw: "/users/%zz", canonical: "/users/%zz"},
 	}
@@ -284,6 +286,7 @@ func newHTTPCompatibilityFixture() *catalogRepository {
 		}
 		if request.authority != "" {
 			properties["http_authority"] = request.authority
+			properties["http_scheme"] = request.scheme
 		}
 		if request.name == "Invalid" {
 			properties["http_invalid"] = "true"

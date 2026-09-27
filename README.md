@@ -522,7 +522,8 @@ distinct. Resolution ranks exact literals ahead of compatible single-segment
 templates, then compatible catchalls. Several declarations at the best rank
 remain ambiguous and create no confirmed service link. Unknown values do not
 prove regex matches, and absolute URLs with an authority stay external rather
-than resolving from their path alone. Handler results use only `handled_by`
+than resolving from their path alone. Their scheme and authority remain part of
+the external service identity. Handler results use only `handled_by`
 evidence and likewise distinguish resolved, unresolved, ambiguous, and missing
 handlers.
 

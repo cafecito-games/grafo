@@ -462,7 +462,8 @@ parameter names are interchangeable, while regex constraints and catchalls are
 preserved. Candidate resolution ranks exact literals, compatible templates,
 then catchalls, and equal best candidates remain an ambiguous boundary with no
 confirmed service link. An authority on an absolute request URL prevents a
-path-only local match. Asynchronous links pair publisher and subscriber
+path-only local match, while scheme plus authority distinguish its external
+service identity. Asynchronous links pair publisher and subscriber
 evidence for the same event without persisting a derived relationship.
 Federation retains its edge marker, and cross-repository evidence also marks
 template-compatible HTTP links as federated.
