@@ -1,0 +1,1103 @@
+{
+  "schema_version": 1,
+  "case_id": "protobuf-bindings",
+  "repositories": [
+    {
+      "id": "bindings",
+      "path": "repos/bindings"
+    }
+  ],
+  "expect": {
+    "nodes": [
+      {
+        "repo": "bindings",
+        "kind": "class",
+        "qualified_name": "AcmeV1EnvelopeEnvelope"
+      },
+      {
+        "repo": "bindings",
+        "kind": "class",
+        "qualified_name": "AcmeV1EnvelopeState"
+      },
+      {
+        "repo": "bindings",
+        "kind": "class",
+        "qualified_name": "Client"
+      },
+      {
+        "repo": "bindings",
+        "kind": "class",
+        "qualified_name": "Node",
+        "external": true
+      },
+      {
+        "repo": "bindings",
+        "kind": "config_key",
+        "qualified_name": "config:buf.yaml:modules"
+      },
+      {
+        "repo": "bindings",
+        "kind": "config_key",
+        "qualified_name": "config:buf.yaml:version"
+      },
+      {
+        "repo": "bindings",
+        "kind": "config_key",
+        "qualified_name": "config:project.godot:application/config/name"
+      },
+      {
+        "repo": "bindings",
+        "kind": "config_key",
+        "qualified_name": "config:project.godot:config_version"
+      },
+      {
+        "repo": "bindings",
+        "kind": "field",
+        "qualified_name": "AcmeV1EnvelopeState.State.STATE_READY"
+      },
+      {
+        "repo": "bindings",
+        "kind": "field",
+        "qualified_name": "AcmeV1EnvelopeState.State.STATE_UNSPECIFIED"
+      },
+      {
+        "repo": "bindings",
+        "kind": "field",
+        "qualified_name": "acme.v1.Envelope.text"
+      },
+      {
+        "repo": "bindings",
+        "kind": "field",
+        "qualified_name": "acme.v1.State.STATE_READY"
+      },
+      {
+        "repo": "bindings",
+        "kind": "field",
+        "qualified_name": "acme.v1.State.STATE_UNSPECIFIED"
+      },
+      {
+        "repo": "bindings",
+        "kind": "field",
+        "qualified_name": "example.com/bindings/gen/acme/v1.Envelope.Text"
+      },
+      {
+        "repo": "bindings",
+        "kind": "field",
+        "qualified_name": "example.com/bindings/gen/acme/v1.State_STATE_READY"
+      },
+      {
+        "repo": "bindings",
+        "kind": "field",
+        "qualified_name": "example.com/bindings/gen/acme/v1.State_STATE_UNSPECIFIED"
+      },
+      {
+        "repo": "bindings",
+        "kind": "file",
+        "qualified_name": "buf.gen.yaml"
+      },
+      {
+        "repo": "bindings",
+        "kind": "file",
+        "qualified_name": "buf.yaml"
+      },
+      {
+        "repo": "bindings",
+        "kind": "file",
+        "qualified_name": "client.gd"
+      },
+      {
+        "repo": "bindings",
+        "kind": "file",
+        "qualified_name": "gen/acme/v1/envelope.pb.go"
+      },
+      {
+        "repo": "bindings",
+        "kind": "file",
+        "qualified_name": "gen/acme/v1/use.go"
+      },
+      {
+        "repo": "bindings",
+        "kind": "file",
+        "qualified_name": "go.mod"
+      },
+      {
+        "repo": "bindings",
+        "kind": "file",
+        "qualified_name": "project.godot"
+      },
+      {
+        "repo": "bindings",
+        "kind": "file",
+        "qualified_name": "proto/acme/v1/envelope.proto"
+      },
+      {
+        "repo": "bindings",
+        "kind": "function",
+        "qualified_name": "example.com/bindings/gen/acme/v1.ReadText"
+      },
+      {
+        "repo": "bindings",
+        "kind": "method",
+        "qualified_name": "AcmeV1EnvelopeEnvelope.get_text"
+      },
+      {
+        "repo": "bindings",
+        "kind": "method",
+        "qualified_name": "AcmeV1EnvelopeEnvelope.has_text"
+      },
+      {
+        "repo": "bindings",
+        "kind": "method",
+        "qualified_name": "AcmeV1EnvelopeEnvelope.new"
+      },
+      {
+        "repo": "bindings",
+        "kind": "method",
+        "qualified_name": "AcmeV1EnvelopeEnvelope.set_text"
+      },
+      {
+        "repo": "bindings",
+        "kind": "method",
+        "qualified_name": "Client.make_envelope"
+      },
+      {
+        "repo": "bindings",
+        "kind": "method",
+        "qualified_name": "example.com/bindings/gen/acme/v1.Envelope.GetText"
+      },
+      {
+        "repo": "bindings",
+        "kind": "module",
+        "qualified_name": "client"
+      },
+      {
+        "repo": "bindings",
+        "kind": "module",
+        "qualified_name": "example.com/bindings"
+      },
+      {
+        "repo": "bindings",
+        "kind": "module",
+        "qualified_name": "project"
+      },
+      {
+        "repo": "bindings",
+        "kind": "parameter",
+        "qualified_name": "example.com/bindings/gen/acme/v1.ReadText.value"
+      },
+      {
+        "repo": "bindings",
+        "kind": "repository",
+        "qualified_name": "bindings"
+      },
+      {
+        "repo": "bindings",
+        "kind": "type",
+        "qualified_name": "AcmeV1EnvelopeState.State"
+      },
+      {
+        "repo": "bindings",
+        "kind": "type",
+        "qualified_name": "acme.v1.Envelope"
+      },
+      {
+        "repo": "bindings",
+        "kind": "type",
+        "qualified_name": "acme.v1.State"
+      },
+      {
+        "repo": "bindings",
+        "kind": "type",
+        "qualified_name": "example.com/bindings/gen/acme/v1.Envelope"
+      },
+      {
+        "repo": "bindings",
+        "kind": "type",
+        "qualified_name": "example.com/bindings/gen/acme/v1.Envelope_Text"
+      },
+      {
+        "repo": "bindings",
+        "kind": "type",
+        "qualified_name": "example.com/bindings/gen/acme/v1.State"
+      }
+    ],
+    "edges": [
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "class",
+          "qualified_name": "AcmeV1EnvelopeEnvelope"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "bindings",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "1",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "class",
+          "qualified_name": "AcmeV1EnvelopeState"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "bindings",
+          "kind": "type",
+          "qualified_name": "acme.v1.State"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "1",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "class",
+          "qualified_name": "Client"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 4,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "class",
+          "qualified_name": "Client"
+        },
+        "relation": "extends",
+        "to": {
+          "repo": "bindings",
+          "kind": "class",
+          "qualified_name": "Node",
+          "external": true
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 2,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "AcmeV1EnvelopeState.State.STATE_READY"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "acme.v1.State.STATE_READY"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "1",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "AcmeV1EnvelopeState.State.STATE_UNSPECIFIED"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "acme.v1.State.STATE_UNSPECIFIED"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "1",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "example.com/bindings/gen/acme/v1.Envelope.Text"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "1",
+          "generator": "protoc-gen-go",
+          "generator_version": "v1.36.11"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "example.com/bindings/gen/acme/v1.State_STATE_READY"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "acme.v1.State.STATE_READY"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "1",
+          "generator": "protoc-gen-go",
+          "generator_version": "v1.36.11"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "example.com/bindings/gen/acme/v1.State_STATE_UNSPECIFIED"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "acme.v1.State.STATE_UNSPECIFIED"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "1",
+          "generator": "protoc-gen-go",
+          "generator_version": "v1.36.11"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "file",
+          "qualified_name": "buf.yaml"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "bindings",
+          "kind": "config_key",
+          "qualified_name": "config:buf.yaml:modules"
+        },
+        "source": {
+          "path": "buf.yaml",
+          "line": 2,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "file",
+          "qualified_name": "buf.yaml"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "bindings",
+          "kind": "config_key",
+          "qualified_name": "config:buf.yaml:version"
+        },
+        "source": {
+          "path": "buf.yaml",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "file",
+          "qualified_name": "client.gd"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "module",
+          "qualified_name": "client"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "file",
+          "qualified_name": "gen/acme/v1/use.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "function",
+          "qualified_name": "example.com/bindings/gen/acme/v1.ReadText"
+        },
+        "source": {
+          "path": "gen/acme/v1/use.go",
+          "line": 3,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "file",
+          "qualified_name": "go.mod"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "module",
+          "qualified_name": "example.com/bindings"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "file",
+          "qualified_name": "project.godot"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "module",
+          "qualified_name": "project"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "file",
+          "qualified_name": "proto/acme/v1/envelope.proto"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "proto/acme/v1/envelope.proto",
+          "line": 4,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "file",
+          "qualified_name": "proto/acme/v1/envelope.proto"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "type",
+          "qualified_name": "acme.v1.State"
+        },
+        "source": {
+          "path": "proto/acme/v1/envelope.proto",
+          "line": 10,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "function",
+          "qualified_name": "example.com/bindings/gen/acme/v1.ReadText"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "example.com/bindings/gen/acme/v1.Envelope.GetText"
+        },
+        "source": {
+          "path": "gen/acme/v1/use.go",
+          "line": 4,
+          "column": 9
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "function",
+          "qualified_name": "example.com/bindings/gen/acme/v1.ReadText"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "parameter",
+          "qualified_name": "example.com/bindings/gen/acme/v1.ReadText.value"
+        },
+        "source": {
+          "path": "gen/acme/v1/use.go",
+          "line": 3,
+          "column": 15
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.get_text"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "1",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.has_text"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "1",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.new"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "bindings",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "1",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.set_text"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "1",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.new"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 5,
+          "column": 9
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "example.com/bindings/gen/acme/v1.Envelope.GetText"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "1",
+          "generator": "protoc-gen-go",
+          "generator_version": "v1.36.11"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "module",
+          "qualified_name": "client"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "class",
+          "qualified_name": "Client"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "module",
+          "qualified_name": "project"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "bindings",
+          "kind": "config_key",
+          "qualified_name": "config:project.godot:application/config/name"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 4,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "module",
+          "qualified_name": "project"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "bindings",
+          "kind": "config_key",
+          "qualified_name": "config:project.godot:config_version"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "parameter",
+          "qualified_name": "example.com/bindings/gen/acme/v1.ReadText.value"
+        },
+        "relation": "returns",
+        "to": {
+          "repo": "bindings",
+          "kind": "function",
+          "qualified_name": "example.com/bindings/gen/acme/v1.ReadText"
+        },
+        "source": {
+          "path": "gen/acme/v1/use.go",
+          "line": 4,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "repository",
+          "qualified_name": "bindings"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "bindings",
+          "kind": "file",
+          "qualified_name": "buf.gen.yaml"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "repository",
+          "qualified_name": "bindings"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "bindings",
+          "kind": "file",
+          "qualified_name": "buf.yaml"
+        },
+        "source": {
+          "path": "buf.yaml",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "repository",
+          "qualified_name": "bindings"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "bindings",
+          "kind": "file",
+          "qualified_name": "client.gd"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "repository",
+          "qualified_name": "bindings"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "bindings",
+          "kind": "file",
+          "qualified_name": "gen/acme/v1/envelope.pb.go"
+        },
+        "source": {
+          "path": "gen/acme/v1/envelope.pb.go",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "repository",
+          "qualified_name": "bindings"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "bindings",
+          "kind": "file",
+          "qualified_name": "gen/acme/v1/use.go"
+        },
+        "source": {
+          "path": "gen/acme/v1/use.go",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "repository",
+          "qualified_name": "bindings"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "bindings",
+          "kind": "file",
+          "qualified_name": "go.mod"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "repository",
+          "qualified_name": "bindings"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "bindings",
+          "kind": "file",
+          "qualified_name": "project.godot"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "repository",
+          "qualified_name": "bindings"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "bindings",
+          "kind": "file",
+          "qualified_name": "proto/acme/v1/envelope.proto"
+        },
+        "source": {
+          "path": "proto/acme/v1/envelope.proto",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "type",
+          "qualified_name": "AcmeV1EnvelopeState.State"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "bindings",
+          "kind": "type",
+          "qualified_name": "acme.v1.State"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "1",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "proto/acme/v1/envelope.proto",
+          "line": 6,
+          "column": 5
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "type",
+          "qualified_name": "acme.v1.State"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "acme.v1.State.STATE_READY"
+        },
+        "source": {
+          "path": "proto/acme/v1/envelope.proto",
+          "line": 12,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "type",
+          "qualified_name": "acme.v1.State"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "acme.v1.State.STATE_UNSPECIFIED"
+        },
+        "source": {
+          "path": "proto/acme/v1/envelope.proto",
+          "line": 11,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "type",
+          "qualified_name": "example.com/bindings/gen/acme/v1.Envelope"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "bindings",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "1",
+          "generator": "protoc-gen-go",
+          "generator_version": "v1.36.11"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "type",
+          "qualified_name": "example.com/bindings/gen/acme/v1.Envelope_Text"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "1",
+          "generator": "protoc-gen-go",
+          "generator_version": "v1.36.11"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "type",
+          "qualified_name": "example.com/bindings/gen/acme/v1.State"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "bindings",
+          "kind": "type",
+          "qualified_name": "acme.v1.State"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "1",
+          "generator": "protoc-gen-go",
+          "generator_version": "v1.36.11"
+        }
+      }
+    ]
+  }
+}

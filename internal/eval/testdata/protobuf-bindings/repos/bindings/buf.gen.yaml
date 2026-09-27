@@ -1,0 +1,12 @@
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: example.com/bindings/gen
+plugins:
+  - remote: buf.build/protocolbuffers/go:v1.36.11
+    out: gen
+    opt: paths=source_relative
+  - local: protoc-gen-gdscript
+    out: generated/gd

@@ -380,7 +380,10 @@ are marked `federated` and retain their original evidence.
   HTTP requests, and common publish/subscribe calls.
 - Protobuf packages, imports, messages, nested messages, enums and values,
   fields, maps, oneofs, extensions, services, RPC methods, streaming direction,
-  and message/enum type references in `.proto` files.
+  and message/enum type references in `.proto` files. Buf v2 generation
+  configuration can project supported `protoc-gen-go` v1 and gdproto v0.6
+  names back onto those canonical declarations, including bindings whose
+  generated GDScript files are ignored.
 - Swift imports, functions, classes, actors, structs, enums, protocols,
   extensions, methods, properties, parameters, local variables, basic
   assignment/argument/return flow, inheritance and protocol conformance,

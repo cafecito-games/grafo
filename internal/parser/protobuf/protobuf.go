@@ -112,6 +112,9 @@ func (e *extractor) extract() {
 	if e.pkg != "" {
 		properties["package"] = e.pkg
 	}
+	if goPackage := e.fileOption("go_package"); goPackage != "" {
+		properties["go_package"] = goPackage
+	}
 	if e.file.Edition != nil {
 		properties["edition"] = e.file.Edition.Edition.AsString()
 	} else if e.file.Syntax != nil {
@@ -134,6 +137,23 @@ func (e *extractor) extract() {
 	for _, extension := range descriptor.GetExtension() {
 		e.extractExtension(extension, e.b.FileID(), e.pkg)
 	}
+}
+
+func (e *extractor) fileOption(name string) string {
+	value := ""
+	e.file.RangeOptions(func(option *ast.OptionNode) bool {
+		if option == nil || option.Name == nil || len(option.Name.Parts) != 1 || option.Name.Parts[0].Name == nil {
+			return true
+		}
+		if string(option.Name.Parts[0].Name.AsIdentifier()) != name {
+			return true
+		}
+		if text, ok := option.Val.(ast.StringValueNode); ok {
+			value = text.AsString()
+		}
+		return false
+	})
+	return value
 }
 
 func (e *extractor) extractImports() {

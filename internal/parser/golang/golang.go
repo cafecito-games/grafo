@@ -16,15 +16,28 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/httpmodel"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	"github.com/cafecito-games/grafo/internal/parser/protobufbinding"
 )
 
 type Parser struct {
 	semantic SemanticLoader
+	bindings *protobufbinding.Loader
 }
 
-func New() *Parser { return &Parser{semantic: NewPackageLoader()} }
+func New() *Parser {
+	return &Parser{semantic: NewPackageLoader(), bindings: protobufbinding.NewLoader()}
+}
 
-func NewWithSemanticLoader(loader SemanticLoader) *Parser { return &Parser{semantic: loader} }
+func NewWithSemanticLoader(loader SemanticLoader) *Parser {
+	return &Parser{semantic: loader, bindings: protobufbinding.NewLoader()}
+}
+
+func NewWithBindingLoader(loader *protobufbinding.Loader) *Parser {
+	if loader == nil {
+		loader = protobufbinding.NewLoader()
+	}
+	return &Parser{semantic: NewPackageLoader(), bindings: loader}
+}
 
 func (p *Parser) SemanticLoadMetrics() SemanticLoadMetrics {
 	if provider, ok := p.semantic.(interface{ Metrics() SemanticLoadMetrics }); ok {
@@ -38,12 +51,20 @@ func (*Parser) Supports(path string) bool {
 	return strings.EqualFold(filepath.Ext(path), ".go")
 }
 
-func (*Parser) SemanticKey(_ context.Context, input parserapi.Input) (string, error) {
+func (p *Parser) SemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
+	bindingKey := ""
+	if p.bindings != nil {
+		key, err := p.bindings.SemanticKey(ctx, input)
+		if err != nil {
+			return "", err
+		}
+		bindingKey = ":" + key
+	}
 	if input.Root == "" {
-		return buildContextString(), nil
+		return buildContextString() + bindingKey, nil
 	}
 	key, _, err := semanticWorkspaceKey(input.Root)
-	return key, err
+	return key + bindingKey, err
 }
 
 func (p *Parser) WorkspaceSemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
@@ -55,7 +76,7 @@ func (*Parser) SemanticDependencies() []string { return semanticDependencies() }
 func (*Parser) SemanticAffectedPaths(allPaths, changedPaths []string) []string {
 	changed := false
 	for _, path := range changedPaths {
-		if isGoSemanticInput(path) {
+		if isGoSemanticInput(path) || protobufbinding.IsSemanticInput(path) {
 			changed = true
 			break
 		}
@@ -101,6 +122,23 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 				b.Result.Nodes[0].Properties["go_build_excluded"] = "true"
 				return b.Finish(), nil
 			}
+		}
+	}
+	if p.bindings != nil && input.Root != "" {
+		registry, bindingErr := p.bindings.Load(ctx, input)
+		if bindingErr != nil {
+			b.Diagnostic(0, "warning", "load Protobuf binding registry: "+bindingErr.Error())
+		} else if generated, ok, reason := registry.GeneratedFile(input.Path, "go", input.Content); ok {
+			if b.Result.Nodes[0].Properties == nil {
+				b.Result.Nodes[0].Properties = map[string]string{}
+			}
+			b.Result.Nodes[0].Properties["generated"] = "true"
+			b.Result.Nodes[0].Properties["generator"] = generated.Generator
+			b.Result.Nodes[0].Properties["generator_version"] = generated.Version
+			b.Result.Nodes[0].Properties["source_proto"] = generated.Source
+			return b.Finish(), nil
+		} else if reason != "" {
+			b.Diagnostic(1, "warning", "Protobuf generated-file provenance rejected: "+reason)
 		}
 	}
 	fset := token.NewFileSet()

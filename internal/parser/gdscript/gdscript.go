@@ -13,13 +13,20 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	"github.com/cafecito-games/grafo/internal/parser/godot/godotid"
+	"github.com/cafecito-games/grafo/internal/parser/protobufbinding"
 )
 
 // Parser extracts semantic graph nodes and relationships from Godot 4
 // GDScript source files.
-type Parser struct{}
+type Parser struct{ bindings *protobufbinding.Loader }
 
-func New() *Parser               { return &Parser{} }
+func New() *Parser { return &Parser{bindings: protobufbinding.NewLoader()} }
+func NewWithBindingLoader(loader *protobufbinding.Loader) *Parser {
+	if loader == nil {
+		loader = protobufbinding.NewLoader()
+	}
+	return &Parser{bindings: loader}
+}
 func (*Parser) Language() string { return "gdscript" }
 
 func (*Parser) Supports(path string) bool {
@@ -29,12 +36,20 @@ func (*Parser) Supports(path string) bool {
 // SemanticKey makes the owning Godot project's autoload vocabulary part of the
 // incremental cache key, so editing project.godot reparses scripts whose
 // autoload uses can now resolve differently.
-func (*Parser) SemanticKey(_ context.Context, input parserapi.Input) (string, error) {
+func (p *Parser) SemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
 	project, err := godotid.LoadProject(input.Root, input.Path)
 	if err != nil {
 		return "", err
 	}
-	return "gdscript-godot-project-v1:" + project.SemanticKey(), nil
+	key := "gdscript-godot-project-v1:" + project.SemanticKey()
+	if p.bindings != nil {
+		bindingKey, bindingErr := p.bindings.SemanticKey(ctx, input)
+		if bindingErr != nil {
+			return "", bindingErr
+		}
+		key += ":" + bindingKey
+	}
+	return key, nil
 }
 
 // SemanticAffectedPaths reparses every script under a Godot project whose
@@ -42,7 +57,11 @@ func (*Parser) SemanticKey(_ context.Context, input parserapi.Input) (string, er
 // paths, and a Godot project can sit in any subdirectory of a monorepo.
 func (*Parser) SemanticAffectedPaths(allPaths, changedPaths []string) []string {
 	var roots []string
+	bindingChanged := false
 	for _, path := range changedPaths {
+		if protobufbinding.IsSemanticInput(path) {
+			bindingChanged = true
+		}
 		if filepath.Base(path) != godotid.ProjectFileName {
 			continue
 		}
@@ -54,12 +73,16 @@ func (*Parser) SemanticAffectedPaths(allPaths, changedPaths []string) []string {
 		}
 		roots = append(roots, directory)
 	}
-	if len(roots) == 0 {
+	if len(roots) == 0 && !bindingChanged {
 		return nil
 	}
 	var affected []string
 	for _, path := range allPaths {
 		if !strings.EqualFold(filepath.Ext(path), ".gd") {
+			continue
+		}
+		if bindingChanged {
+			affected = append(affected, path)
 			continue
 		}
 		for _, root := range roots {
@@ -111,8 +134,22 @@ type extractor struct {
 	bases map[string]string
 }
 
-func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseResult, error) {
+func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseResult, error) {
 	b := parserapi.NewBuilder(input, "gdscript")
+	if p.bindings != nil && input.Root != "" {
+		registry, bindingErr := p.bindings.Load(ctx, input)
+		if bindingErr != nil {
+			b.Diagnostic(0, "warning", "load Protobuf binding registry: "+bindingErr.Error())
+		} else if generated, ok, reason := registry.GeneratedFile(input.Path, "gdscript", input.Content); ok {
+			b.Result.Nodes[0].Properties = map[string]string{
+				"generated": "true", "generator": generated.Generator,
+				"generator_version": generated.Version, "source_proto": generated.Source,
+			}
+			return b.Finish(), nil
+		} else if reason != "" {
+			b.Diagnostic(1, "warning", "Protobuf generated-file provenance rejected: "+reason)
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return b.Finish(), err
 	}

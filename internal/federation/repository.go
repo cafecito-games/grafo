@@ -426,7 +426,7 @@ func (r *Repository) EdgesTo(ctx context.Context, id string) ([]graph.Edge, erro
 				return nil, err
 			}
 			for _, edge := range edges {
-				if candidateAllowed(edge.Kind, target.Kind) {
+				if candidateAllowed(edge.Kind, target) {
 					result = append(result, federatedEdge(edge, target.ID))
 				}
 			}
@@ -484,7 +484,7 @@ func (r *Repository) exactCandidates(ctx context.Context, target graph.Node, rel
 				return nil, err
 			}
 			for _, node := range nodes {
-				if node.External || !candidateAllowed(relation, node.Kind) {
+				if node.External || !candidateAllowed(relation, node) {
 					continue
 				}
 				if node.QualifiedName == target.QualifiedName || node.Name == target.QualifiedName || node.QualifiedName == target.Name || node.Name == target.Name {
@@ -506,7 +506,8 @@ func (r *Repository) exactCandidates(ctx context.Context, target graph.Node, rel
 	return result, nil
 }
 
-func candidateAllowed(relation graph.EdgeKind, kind graph.NodeKind) bool {
+func candidateAllowed(relation graph.EdgeKind, node graph.Node) bool {
+	kind := node.Kind
 	switch relation {
 	case graph.EdgeCalls, graph.EdgePasses, graph.EdgeHandledBy:
 		return kind == graph.KindFunction || kind == graph.KindMethod
@@ -535,6 +536,8 @@ func candidateAllowed(relation graph.EdgeKind, kind graph.NodeKind) bool {
 		return kind == graph.KindGodotInputAction
 	case graph.EdgeInGroup, graph.EdgeUsesGroup:
 		return kind == graph.KindGodotNodeGroup
+	case graph.EdgeGeneratedFrom:
+		return node.Language == "protobuf" && (kind == graph.KindType || kind == graph.KindField)
 	default:
 		return true
 	}

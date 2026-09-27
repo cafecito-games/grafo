@@ -1,0 +1,13 @@
+syntax = "proto3";
+package acme.v1;
+
+message Envelope {
+  oneof payload {
+    string text = 1;
+  }
+}
+
+enum State {
+  STATE_UNSPECIFIED = 0;
+  STATE_READY = 1;
+}

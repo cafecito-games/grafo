@@ -24,6 +24,7 @@ storage can evolve independently.
        │   └─ godotid/*    Godot resource identity, project scope, and UID aliases
        ├─ java/*           Tree-sitter Java AST adapter
        ├─ protobuf/*       protocompile Protobuf AST adapter
+       ├─ protobufbinding/* deterministic Buf-generated API projections
        ├─ swift/*          Tree-sitter Swift AST adapter
        └─ sql/*            dialect adapters such as PostgreSQL
   internal/projectconfig   shared grafo.yaml loader and owned-section validation
@@ -117,6 +118,31 @@ Type errors remain diagnostics while proven facts augment AST output; excluded
 build-tag files record the active context without emitting declarations.
 `implements` comparisons are bounded to interfaces declared in loaded workspace
 packages; dependency and standard-library interfaces remain external facts.
+
+## Protobuf binding projections
+
+Canonical `.proto` declarations own schema identity. The shared
+`protobufbinding` registry reads those declarations plus repository-owned Buf
+v2 module and generation configuration, then applies versioned naming adapters
+for `protoc-gen-go` v1 and gdproto v0.6. It emits language-facing message,
+enum, field, accessor, and oneof-wrapper nodes with a `generated_from` edge to
+the exact canonical node ID. Go and GDScript parsers consume that one registry;
+they do not carry their own generator naming rules.
+
+The registry never runs a generator, downloads a plugin, or reads ignored
+output as an authority. This allows configured GDScript bindings to exist in
+the graph even when their output directory is ignored. A tracked generated file
+is reduced to file/provenance evidence only when its standard header, source
+annotation, configured output path, and supported generator all agree; the
+schema/config projections retain useful API names while runtime helpers and
+descriptor initialization stay out of normal catalogs. Other generated Go code
+keeps the ordinary Go indexing path.
+
+Schema, Buf configuration, adapter version, and corroborating generated-file
+content participate in incremental hashes. Missing or malformed configuration,
+unsupported plugins or versions, ambiguous schema names, and ambiguous header
+source basenames fail closed with diagnostics or unresolved evidence instead of
+inventing a projection.
 
 ## Failure flow
 
