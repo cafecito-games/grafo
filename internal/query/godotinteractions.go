@@ -229,7 +229,7 @@ func (s *Service) godotInteraction(ctx context.Context, edge graph.Edge, near gr
 	if err != nil {
 		return GodotInteraction{}, false, err
 	}
-	category, ok := godotInteractionCategory(edge.Kind, near, node.Kind)
+	category, ok := godotInteractionCategory(edge, near, node.Kind)
 	if !ok || !options.wants(category) {
 		return GodotInteraction{}, false, nil
 	}
@@ -250,21 +250,44 @@ func godotInteractionEdge(kind graph.EdgeKind) bool {
 	}
 }
 
-// godotInteractionCategory classifies one edge. The interaction relations name
-// their category outright; references and defines are generic relations shared
-// with every other producer, so they qualify only when one of their two endpoints
-// is an interaction kind. Both endpoints are considered because either can be the
-// interaction: a script references a signal, while a configuration key defines
-// the action it declares. That is explicit kind compatibility rather than a
-// name-prefix heuristic, which is what keeps a configuration key named
-// "input/jump" out of the action section while the action itself stays in.
-func godotInteractionCategory(edge graph.EdgeKind, near, far graph.NodeKind) (GodotInteractionCategory, bool) {
-	switch edge {
+// godotSignalForms are the connection forms only the Godot producers write, and
+// they are what proves a signal interaction is a Godot one.
+//
+// Provenance has to be proved rather than assumed, because events and the
+// publishes, subscribes, and handled_by relations are shared vocabulary: the Go,
+// Python, TypeScript, Java, and Swift extractors all emit them. Classifying them
+// as Godot gameplay wiring on kind alone would answer a question about a Go
+// message bus with fabricated Godot interactions, which is worse than an empty
+// report. None of those producers sets any property on such a fact, so the form
+// this change introduced is unambiguous evidence that a Godot producer wrote it.
+var godotSignalForms = map[string]bool{
+	"emit":                   true,
+	"connect":                true,
+	"signal_disconnect":      true,
+	"signal_connection_test": true,
+}
+
+// godotInteractionCategory classifies one edge. The action and group relations
+// are Godot-only edge kinds and name their category outright. The signal
+// relations are shared with every other event producer, so they qualify only
+// with Godot provenance. References and defines are generic relations shared with
+// every producer, so they qualify only when one of their two endpoints is a
+// Godot-only interaction kind - or, for an event, when the same provenance holds.
+// Both endpoints are considered because either can be the interaction: a script
+// references a signal, while a configuration key defines the action it declares.
+// That is explicit kind and provenance compatibility rather than a name-prefix
+// heuristic, which is what keeps a configuration key named "input/jump" out of
+// the action section while the action itself stays in.
+func godotInteractionCategory(edge graph.Edge, near, far graph.NodeKind) (GodotInteractionCategory, bool) {
+	switch edge.Kind {
 	case graph.EdgeUsesInputAction:
 		return GodotActionInteraction, true
 	case graph.EdgeInGroup, graph.EdgeUsesGroup:
 		return GodotGroupInteraction, true
 	case graph.EdgePublishes, graph.EdgeSubscribes, graph.EdgeHandledBy:
+		if !godotSignalForms[edge.Properties["form"]] {
+			return "", false
+		}
 		return GodotSignalInteraction, true
 	case graph.EdgeReferences, graph.EdgeDefines:
 		for _, kind := range []graph.NodeKind{far, near} {
@@ -274,6 +297,9 @@ func godotInteractionCategory(edge graph.EdgeKind, near, far graph.NodeKind) (Go
 			case graph.KindGodotNodeGroup:
 				return GodotGroupInteraction, true
 			case graph.KindEvent:
+				if !godotSignalForms[edge.Properties["form"]] {
+					return "", false
+				}
 				return GodotSignalInteraction, true
 			}
 		}

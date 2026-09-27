@@ -164,3 +164,61 @@ func TestGodotInteractionsFiltersByCategoryAndDirection(t *testing.T) {
 		}
 	}
 }
+
+// TestGodotInteractionsRefusesNonGodotEventWiring pins the provenance rule.
+// Events and the publishes, subscribes, and handled_by relations are shared with
+// the Go, Python, TypeScript, Java, and Swift extractors, so a Godot report on a
+// symbol from one of those languages must be empty rather than presenting its
+// message bus as Godot gameplay wiring.
+func TestGodotInteractionsRefusesNonGodotEventWiring(t *testing.T) {
+	goMethod := godotNode(graph.KindMethod, "billing.Service.Charge", nil)
+	goMethod.Language = "go"
+	pythonFunction := godotNode(graph.KindFunction, "tasks.handle_charge", nil)
+	pythonFunction.Language = "python"
+	event := godotNode(graph.KindEvent, "charge.settled", nil)
+	event.Language = "go"
+	nodes := map[string]graph.Node{goMethod.ID: goMethod, pythonFunction.ID: pythonFunction,
+		event.ID: event}
+	repository := &fakeRepository{nodes: nodes, edges: []graph.Edge{
+		// Exactly what the Go, Python, and TypeScript extractors emit: no
+		// properties at all.
+		{ID: "e-publish", FromID: goMethod.ID, ToID: event.ID, Kind: graph.EdgePublishes},
+		{ID: "e-subscribe", FromID: pythonFunction.ID, ToID: event.ID, Kind: graph.EdgeSubscribes},
+		{ID: "e-handled", FromID: event.ID, ToID: pythonFunction.ID, Kind: graph.EdgeHandledBy},
+		{ID: "e-reference", FromID: goMethod.ID, ToID: event.ID, Kind: graph.EdgeReferences},
+	}}
+	service := query.NewService(repository)
+	ctx := context.Background()
+
+	for _, selector := range []string{"billing.Service.Charge", "tasks.handle_charge", "charge.settled"} {
+		report, err := service.GodotInteractions(ctx, selector, query.GodotInteractionsOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(report.Outbound) != 0 || len(report.Inbound) != 0 {
+			t.Fatalf("%s produced fabricated Godot interactions: outbound %#v inbound %#v",
+				selector, report.Outbound, report.Inbound)
+		}
+		if report.Unresolved != 0 {
+			t.Fatalf("%s reported unresolved interactions it does not have", selector)
+		}
+	}
+
+	// The same shape with a Godot producer's form does qualify, so the gate is
+	// provenance and not a blanket refusal of every event relation.
+	godotEvent := godotNode(graph.KindEvent, "Hud.ready_changed", nil)
+	method := godotNode(graph.KindMethod, "Hud.on_ready", nil)
+	withForm := &fakeRepository{
+		nodes: map[string]graph.Node{godotEvent.ID: godotEvent, method.ID: method},
+		edges: []graph.Edge{{ID: "e-connect", FromID: method.ID, ToID: godotEvent.ID,
+			Kind: graph.EdgeSubscribes, Properties: map[string]string{"form": "connect"}}},
+	}
+	report, err := query.NewService(withForm).GodotInteractions(ctx, "Hud.on_ready",
+		query.GodotInteractionsOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Outbound) != 1 || report.Outbound[0].Category != query.GodotSignalInteraction {
+		t.Fatalf("a Godot-produced route must still be reported: %#v", report.Outbound)
+	}
+}

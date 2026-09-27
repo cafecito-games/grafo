@@ -530,8 +530,8 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 			return
 		}
 	}
-	// A bare call that resolved to a method this script declares is that method,
-	// never an engine API that happens to share its name.
+	// A call that resolved to a method this script declares is that method, never
+	// an engine API that happens to share its name - in either spelling.
 	if !e.localCall(node.Callee, current) {
 		// A bare call is a call on this object; a member call records the
 		// receiver expression as evidence, and an expression that names nothing
@@ -712,12 +712,28 @@ func (e *extractor) addSignalOperation(node *gdast.CallExpression, member *gdast
 	// the property keeps the route's destination visible in exactly those cases
 	// without anyone guessing which declaration the name belongs to.
 	extra := map[string]string{}
+	subscriber := fromID
 	if operation.form == "connect" && handler >= 0 {
 		if method := e.handlerMethod(node.Arguments, handler, current); method != "" {
 			extra["handler"] = method
+			// The thing that receives the signal is the handler, not the
+			// statement that wired it, and the handler is a node this parser
+			// owns. Sourcing the route there is what lets the graph traverse a
+			// resolved signal back to its declared handler even when the signal
+			// is declared in another file - the case a handled_by edge cannot
+			// cover, because that edge's source would have to be the foreign
+			// declaration and facts resolve only their target by name. The
+			// wiring statement is kept as the site, and the fact's own location
+			// still points at the connect call.
+			if id := e.handlerNode(method); id != "" {
+				subscriber = id
+				if current.container != "" {
+					extra["site"] = current.container
+				}
+			}
 		}
 	}
-	ref, emitted := e.addSignalFact(fromID, operation.kind, operation.form, name, current, loc, extra)
+	ref, emitted := e.addSignalFact(subscriber, operation.kind, operation.form, name, current, loc, extra)
 	if !emitted {
 		return false
 	}
@@ -742,6 +758,16 @@ func isIdentifier(value string) bool {
 		}
 	}
 	return true
+}
+
+// handlerNode returns the graph id of a method this script declares. The node is
+// owned by this file, so its id is derivable here exactly as the declaration
+// site derives it.
+func (e *extractor) handlerNode(qualified string) string {
+	if qualified == "" {
+		return ""
+	}
+	return graph.NodeID(graph.KindMethod, qualified, e.input.RepoID, e.input.Path)
 }
 
 // handlerMethod returns the qualified name of the method a connect routes to,
@@ -1073,12 +1099,16 @@ var inputActionAPIs = map[string]inputActionAPI{
 	"event_is_action":          {form: "query", arguments: []int{1}},
 	"event_is_action_pressed":  {form: "query", arguments: []int{1}},
 	"event_is_action_released": {form: "query", arguments: []int{1}},
-	"is_action":                {form: "query", arguments: []int{0}, requireInputReceiver: true},
-	"has_action":               {form: "query", arguments: []int{0}, requireInputReceiver: true},
-	"add_action":               {form: "declare", arguments: []int{0}, requireInputReceiver: true},
-	"erase_action":             {form: "remove", arguments: []int{0}, requireInputReceiver: true},
-	"get_axis":                 {form: "query", arguments: []int{0, 1}, requireInputReceiver: true},
-	"get_vector":               {form: "query", arguments: []int{0, 1, 2, 3}, requireInputReceiver: true},
+	// is_action, is_action_pressed, is_action_released, and get_action_strength
+	// are InputEvent methods as well as (for the latter three) Input methods, so
+	// none of them may require an Input or InputMap receiver: a call on a typed
+	// InputEvent is correct code and has to resolve.
+	"is_action":    {form: "query", arguments: []int{0}},
+	"has_action":   {form: "query", arguments: []int{0}, requireInputReceiver: true},
+	"add_action":   {form: "declare", arguments: []int{0}, requireInputReceiver: true},
+	"erase_action": {form: "remove", arguments: []int{0}, requireInputReceiver: true},
+	"get_axis":     {form: "query", arguments: []int{0, 1}, requireInputReceiver: true},
+	"get_vector":   {form: "query", arguments: []int{0, 1, 2, 3}, requireInputReceiver: true},
 }
 
 // groupAPI is one Node or SceneTree entry point that names a node group.
@@ -1195,16 +1225,46 @@ func (e *extractor) addGroupOperations(node *gdast.CallExpression, fromID, metho
 	e.b.AddFact(fromID, api.kind, "", target, graph.KindGodotNodeGroup, e.location(argument), properties)
 }
 
-// localCall reports whether a bare call resolved to a method this script
-// declares. Such a call is that method and never an engine entry point that
-// happens to share its name, which is what keeps a project's own
-// add_to_group() or is_action_pressed() out of the Godot interaction vocabulary.
+// localCall reports whether a call resolved to a method this script declares.
+// Such a call is that method and never an engine entry point that happens to
+// share its name, which is what keeps a project's own add_to_group() or
+// is_action_pressed() out of the Godot interaction vocabulary.
+//
+// Both spellings of a call on this object count. A bare name is one
+// (is_action_pressed(...)); a member call whose receiver is this object is the
+// other (self.is_action_pressed(...), or the script's own class name). Checking
+// only the bare form would let the qualified spelling of the very same local
+// method produce a resolved input-action or group edge for a Godot API the
+// script never called, which is a guessed edge.
 func (e *extractor) localCall(callee gdast.Expression, current scope) bool {
-	identifier, ok := callee.(*gdast.Identifier)
+	switch node := callee.(type) {
+	case *gdast.Identifier:
+		return e.methods[qualify(current.receiver, node.Name)] != ""
+	case *gdast.MemberExpression:
+		if !e.namesThisObject(node.Object, current) {
+			return false
+		}
+		return e.methods[qualify(current.receiver, node.Property)] != ""
+	default:
+		return false
+	}
+}
+
+// namesThisObject reports whether an expression names the object whose script
+// this is: "self", or the script's own class. Any other receiver is a different
+// object whose type this parser cannot resolve, so a method call on it is not
+// evidence of a local method.
+func (e *extractor) namesThisObject(expression gdast.Expression, current scope) bool {
+	identifier, ok := expression.(*gdast.Identifier)
 	if !ok {
 		return false
 	}
-	return e.methods[qualify(current.receiver, identifier.Name)] != ""
+	if identifier.Name == "self" {
+		return true
+	}
+	// A bare class name resolves through the type table to this script's own
+	// qualified name only when it is this script's class.
+	return current.types[identifier.Name] == current.receiver && current.receiver != ""
 }
 
 // inputAction returns the identity an action name has inside the Godot project

@@ -646,3 +646,124 @@ func _on_inherited() -> void:
 	assertHasFactWithProperty(t, result.Facts, graph.EdgeSubscribes, "inherited_signal", "handler",
 		"Socket._on_inherited")
 }
+
+// TestParserKeepsLocallyDeclaredActionMethodsOutOfTheVocabulary covers both
+// spellings of a call on this object. A script is free to declare its own
+// is_action_pressed, and neither the bare nor the self-qualified call to it
+// involves a Godot input API, so neither may produce a typed action edge.
+func TestParserKeepsLocallyDeclaredActionMethodsOutOfTheVocabulary(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "client/project.godot", "config_version=5\n\n[input]\njump={\"deadzone\": 0.5, \"events\": []}\n")
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "client/scripts/pane.gd", Repository: "sample", RepoID: "repo:sample",
+		Content: []byte(`class_name Pane extends Control
+
+func poll() -> void:
+	if is_action_pressed("jump"):
+		pass
+	if self.is_action_pressed("jump"):
+		pass
+	if Pane.is_action_pressed("jump"):
+		pass
+	if add_to_group("enemies"):
+		pass
+	if self.add_to_group("enemies"):
+		pass
+
+func is_action_pressed(_name: String) -> bool:
+	return false
+
+func add_to_group(_name: String) -> bool:
+	return false
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fact := range result.Facts {
+		switch fact.Kind {
+		case graph.EdgeUsesInputAction, graph.EdgeInGroup, graph.EdgeUsesGroup:
+			t.Fatalf("a locally declared method must not produce a Godot interaction: %#v", fact)
+		case graph.EdgeReadsConfig:
+			if strings.HasPrefix(fact.Target, "input/") {
+				t.Fatalf("a locally declared method must not read an input action: %#v", fact)
+			}
+		}
+	}
+}
+
+// TestParserResolvesActionQueriesOnInputEventReceivers covers the InputEvent
+// action-query methods. is_action is an InputEvent method rather than an Input or
+// InputMap one, so requiring an Input receiver discarded correct code.
+func TestParserResolvesActionQueriesOnInputEventReceivers(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "client/project.godot", "config_version=5\n")
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "client/scripts/input.gd", Repository: "sample", RepoID: "repo:sample",
+		Content: []byte(`extends Node
+
+func _input(event: InputEvent) -> void:
+	if event.is_action("ui_accept"):
+		pass
+	if event.is_action_pressed("ui_cancel"):
+		pass
+	if event.is_action_released("ui_left"):
+		pass
+	var strength = event.get_action_strength("ui_right")
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"ui_accept", "ui_cancel", "ui_left", "ui_right"} {
+		fact := findFactWithTarget(t, result.Facts, graph.EdgeUsesInputAction,
+			"godot:input_action:client/project.godot:"+action)
+		if fact.Properties["form"] != "query" || fact.Properties["receiver"] != "InputEvent" {
+			t.Fatalf("InputEvent action query fact = %#v", fact)
+		}
+		assertHasFact(t, result.Facts, graph.EdgeReadsConfig, "input/"+action)
+	}
+}
+
+// TestParserSourcesCrossFileConnectionsAtTheirHandler is the traversal that was
+// missing: a connect to a signal another file declares can still be walked from
+// the resolved signal back to the method that handles it, because the route is
+// sourced at the handler this script declares rather than at the statement that
+// wired it. A handled_by edge cannot express this - its source would have to be
+// the foreign declaration, and a fact resolves only its target by name.
+func TestParserSourcesCrossFileConnectionsAtTheirHandler(t *testing.T) {
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "scripts/kit.gd", Repository: "sample", RepoID: "repo:sample",
+		Content: []byte(`class_name Kit extends Node
+
+var _backend: Backend
+
+func wire() -> void:
+	_backend.sign_in_success.connect(_on_sign_in)
+	_backend.sign_in_failed.connect(func(): pass)
+
+func _on_sign_in() -> void:
+	pass
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Kit._on_sign_in")
+	routed := findFactWithTarget(t, result.Facts, graph.EdgeSubscribes, "Backend.sign_in_success")
+	if routed.FromID != handler.ID {
+		t.Fatalf("a resolved handler must source the route: %#v", routed)
+	}
+	if routed.Properties["handler"] != "Kit._on_sign_in" || routed.Properties["site"] != "Kit.wire" {
+		t.Fatalf("the route lost its handler or its call site: %#v", routed)
+	}
+	// A lambda proves no method, so the route stays at the wiring statement.
+	wire := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Kit.wire")
+	lambda := findFactWithTarget(t, result.Facts, graph.EdgeSubscribes, "Backend.sign_in_failed")
+	if lambda.FromID != wire.ID {
+		t.Fatalf("an unprovable handler must leave the route at its call site: %#v", lambda)
+	}
+	if _, ok := lambda.Properties["handler"]; ok {
+		t.Fatalf("a lambda proves no method; got %#v", lambda)
+	}
+}

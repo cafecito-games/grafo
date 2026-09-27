@@ -3257,29 +3257,6 @@
           "kind": "method",
           "qualified_name": "Player.load_scene"
         },
-        "relation": "subscribes",
-        "to": {
-          "repo": "matrix",
-          "kind": "event",
-          "qualified_name": "Player.finished"
-        },
-        "source": {
-          "path": "scripts/player.gd",
-          "line": 7,
-          "column": 2
-        },
-        "properties": {
-          "form": "connect",
-          "handler": "Player.on_finished",
-          "signal": "Player.finished"
-        }
-      },
-      {
-        "from": {
-          "repo": "matrix",
-          "kind": "method",
-          "qualified_name": "Player.load_scene"
-        },
         "relation": "uses_group",
         "to": {
           "repo": "matrix",
@@ -3362,6 +3339,30 @@
           "path": "scripts/player.gd",
           "line": 22,
           "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.on_finished"
+        },
+        "relation": "subscribes",
+        "to": {
+          "repo": "matrix",
+          "kind": "event",
+          "qualified_name": "Player.finished"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 7,
+          "column": 2
+        },
+        "properties": {
+          "form": "connect",
+          "handler": "Player.on_finished",
+          "signal": "Player.finished",
+          "site": "Player.load_scene"
         }
       },
       {
