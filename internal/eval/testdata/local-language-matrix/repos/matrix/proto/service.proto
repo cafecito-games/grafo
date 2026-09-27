@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package matrix.api;
+
+import "proto/common.proto";
+
+message Request {
+  matrix.common.Payload payload = 1;
+}
+
+service MatrixService {
+  rpc Get(Request) returns (matrix.common.Payload);
+}

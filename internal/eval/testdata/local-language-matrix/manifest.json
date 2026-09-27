@@ -241,6 +241,16 @@
       {
         "repo": "matrix",
         "kind": "field",
+        "qualified_name": "matrix.api.Request.payload"
+      },
+      {
+        "repo": "matrix",
+        "kind": "field",
+        "qualified_name": "matrix.common.Payload.value"
+      },
+      {
+        "repo": "matrix",
+        "kind": "field",
         "qualified_name": "resources/sample.display_name"
       },
       {
@@ -302,6 +312,16 @@
         "repo": "matrix",
         "kind": "file",
         "qualified_name": "project.godot"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "proto/common.proto"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "proto/service.proto"
       },
       {
         "repo": "matrix",
@@ -542,6 +562,11 @@
       {
         "repo": "matrix",
         "kind": "interface",
+        "qualified_name": "matrix.api.MatrixService"
+      },
+      {
+        "repo": "matrix",
+        "kind": "interface",
         "qualified_name": "swift_worker.SwiftRunnable"
       },
       {
@@ -578,6 +603,11 @@
         "repo": "matrix",
         "kind": "method",
         "qualified_name": "example.worker.Job.run"
+      },
+      {
+        "repo": "matrix",
+        "kind": "method",
+        "qualified_name": "matrix.api.MatrixService.Get"
       },
       {
         "repo": "matrix",
@@ -720,6 +750,16 @@
         "repo": "matrix",
         "kind": "table",
         "qualified_name": "public.psql_events"
+      },
+      {
+        "repo": "matrix",
+        "kind": "type",
+        "qualified_name": "matrix.api.Request"
+      },
+      {
+        "repo": "matrix",
+        "kind": "type",
+        "qualified_name": "matrix.common.Payload"
       },
       {
         "repo": "matrix",
@@ -1163,6 +1203,27 @@
       {
         "from": {
           "repo": "matrix",
+          "kind": "field",
+          "qualified_name": "matrix.api.Request.payload"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "matrix",
+          "kind": "type",
+          "qualified_name": "matrix.common.Payload"
+        },
+        "source": {
+          "path": "proto/service.proto",
+          "line": 8,
+          "column": 3
+        },
+        "properties": {
+          "role": "field_type"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
           "kind": "file",
           "qualified_name": ".env.local"
         },
@@ -1489,6 +1550,78 @@
         "source": {
           "path": "project.godot",
           "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "proto/common.proto"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "type",
+          "qualified_name": "matrix.common.Payload"
+        },
+        "source": {
+          "path": "proto/common.proto",
+          "line": 5,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "proto/service.proto"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "interface",
+          "qualified_name": "matrix.api.MatrixService"
+        },
+        "source": {
+          "path": "proto/service.proto",
+          "line": 11,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "proto/service.proto"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "type",
+          "qualified_name": "matrix.api.Request"
+        },
+        "source": {
+          "path": "proto/service.proto",
+          "line": 7,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "proto/service.proto"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "proto/common.proto"
+        },
+        "source": {
+          "path": "proto/service.proto",
+          "line": 5,
           "column": 1
         }
       },
@@ -2911,6 +3044,24 @@
         "from": {
           "repo": "matrix",
           "kind": "interface",
+          "qualified_name": "matrix.api.MatrixService"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "matrix.api.MatrixService.Get"
+        },
+        "source": {
+          "path": "proto/service.proto",
+          "line": 12,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "interface",
           "qualified_name": "swift_worker.SwiftRunnable"
         },
         "relation": "declares",
@@ -3455,6 +3606,48 @@
           "path": "JavaWorker.java",
           "line": 4,
           "column": 16
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "matrix.api.MatrixService.Get"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "matrix",
+          "kind": "type",
+          "qualified_name": "matrix.api.Request"
+        },
+        "source": {
+          "path": "proto/service.proto",
+          "line": 12,
+          "column": 11
+        },
+        "properties": {
+          "role": "input"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "matrix.api.MatrixService.Get"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "matrix",
+          "kind": "type",
+          "qualified_name": "matrix.common.Payload"
+        },
+        "source": {
+          "path": "proto/service.proto",
+          "line": 12,
+          "column": 29
+        },
+        "properties": {
+          "role": "output"
         }
       },
       {
@@ -4082,6 +4275,42 @@
         "to": {
           "repo": "matrix",
           "kind": "file",
+          "qualified_name": "proto/common.proto"
+        },
+        "source": {
+          "path": "proto/common.proto",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "proto/service.proto"
+        },
+        "source": {
+          "path": "proto/service.proto",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
           "qualified_name": "requirements-dev.txt"
         },
         "source": {
@@ -4532,6 +4761,42 @@
           "path": "schema.psql",
           "line": 1,
           "column": 34
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "type",
+          "qualified_name": "matrix.api.Request"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "matrix",
+          "kind": "field",
+          "qualified_name": "matrix.api.Request.payload"
+        },
+        "source": {
+          "path": "proto/service.proto",
+          "line": 8,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "type",
+          "qualified_name": "matrix.common.Payload"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "matrix",
+          "kind": "field",
+          "qualified_name": "matrix.common.Payload.value"
+        },
+        "source": {
+          "path": "proto/common.proto",
+          "line": 6,
+          "column": 3
         }
       },
       {

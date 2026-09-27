@@ -5,10 +5,10 @@ can query from the command line. Source symbols, calls, imports, configuration,
 HTTP routes, and event-like publish/subscribe operations become nodes and edges.
 
 This repository is at the foundation stage. Go is parsed with the Go compiler
-AST, Godot source formats use `gdparser`, Java, Python, Swift, and TypeScript/TSX
-use Tree-sitter, PostgreSQL SQL uses PostgreSQL's own parser, and SQLite SQL uses
-Meyer's SQLite grammar. The index is local, incremental, branch-aware, and
-stored in SQLite.
+AST, Godot source formats use `gdparser`, Protobuf uses Buf's `protocompile`,
+Java, Python, Swift, and TypeScript/TSX use Tree-sitter, PostgreSQL SQL uses
+PostgreSQL's own parser, and SQLite SQL uses Meyer's SQLite grammar. The index
+is local, incremental, branch-aware, and stored in SQLite.
 
 [Architecture and extension points](docs/architecture.md)
 
@@ -378,6 +378,9 @@ are marked `federated` and retain their original evidence.
   variables, type annotations, basic assignment/argument/return flow, imports,
   calls, inheritance, environment reads, framework route decorators, outbound
   HTTP requests, and common publish/subscribe calls.
+- Protobuf packages, imports, messages, nested messages, enums and values,
+  fields, maps, oneofs, extensions, services, RPC methods, streaming direction,
+  and message/enum type references in `.proto` files.
 - Swift imports, functions, classes, actors, structs, enums, protocols,
   extensions, methods, properties, parameters, local variables, basic
   assignment/argument/return flow, inheritance and protocol conformance,

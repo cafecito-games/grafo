@@ -23,6 +23,7 @@ storage can evolve independently.
        ├─ godot/*          gdparser scene, resource, config, UID, and shader adapters
        │   └─ godotid/*    Godot resource identity, project scope, and UID aliases
        ├─ java/*           Tree-sitter Java AST adapter
+       ├─ protobuf/*       protocompile Protobuf AST adapter
        ├─ swift/*          Tree-sitter Swift AST adapter
        └─ sql/*            dialect adapters such as PostgreSQL
   internal/storage/sqlite  Goose + sqlc adapter
