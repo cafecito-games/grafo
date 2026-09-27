@@ -567,8 +567,9 @@ func on_ready_changed(_value: bool) -> void:
 
 // TestParserRecordsHandlerWhenSignalOwnerIsAnotherFile is the case the smoke run
 // exposed: nearly every real connect names a signal another file declares, so no
-// handled_by edge can be hung on a declaration this parser cannot see. The route
-// must still record where it goes, and it must not invent an owner for the signal.
+// handled_by edge is emitted with a named source when this parser cannot see the
+// declaration. Storage, rather than the parser, decides whether that source is
+// uniquely declared.
 func TestParserRecordsHandlerWhenSignalOwnerIsAnotherFile(t *testing.T) {
 	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
 		Path: "scripts/kit.gd", Repository: "sample", RepoID: "repo:sample",
@@ -595,9 +596,14 @@ func _on_sign_in() -> void:
 	if _, ok := lambda.Properties["handler"]; ok {
 		t.Fatalf("a lambda proves no method; got %#v", lambda)
 	}
+	handled := findFactWithTarget(t, result.Facts, graph.EdgeHandledBy, "Kit._on_sign_in")
+	if handled.FromID != "" || handled.Source != "Backend.sign_in_success" ||
+		handled.SourceKind != graph.KindEvent || handled.Properties["form"] != "connect" {
+		t.Fatalf("cross-file handled_by fact = %#v", handled)
+	}
 	for _, fact := range result.Facts {
-		if fact.Kind == graph.EdgeHandledBy {
-			t.Fatalf("a signal this script does not declare must not gain a handler edge: %#v", fact)
+		if fact.Kind == graph.EdgeHandledBy && fact.Source == "Backend.sign_in_failed" {
+			t.Fatalf("a lambda proves no handler: %#v", fact)
 		}
 	}
 }
@@ -645,6 +651,82 @@ func _on_inherited() -> void:
 	assertHasFactWithProperty(t, result.Facts, graph.EdgePublishes, "inherited_signal", "form", "emit")
 	assertHasFactWithProperty(t, result.Facts, graph.EdgeSubscribes, "inherited_signal", "handler",
 		"Socket._on_inherited")
+}
+
+func TestParserQualifiesLegacyObjectSignalHandlersWithoutGuessing(t *testing.T) {
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "scripts/kit.gd", Repository: "sample", RepoID: "repo:sample",
+		Content: []byte(`class_name Kit extends Node
+
+var _backend: Backend
+var _unknown
+
+func wire() -> void:
+	_backend.connect("ready", _on_ready)
+	_unknown.connect("ready", _on_ready)
+
+func _on_ready() -> void:
+	pass
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := 0
+	for _, fact := range result.Facts {
+		if fact.Kind != graph.EdgeHandledBy {
+			continue
+		}
+		want++
+		if fact.Source != "Backend.ready" || fact.SourceKind != graph.KindEvent ||
+			fact.Target != "Kit._on_ready" {
+			t.Fatalf("legacy Object.connect handled_by fact = %#v", fact)
+		}
+	}
+	if want != 1 {
+		t.Fatalf("legacy Object.connect handled_by facts = %d, want 1; got %#v", want, result.Facts)
+	}
+}
+
+func TestParserRequiresStructuralOwnerForMemberSignalHandlers(t *testing.T) {
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "scripts/kit.gd", Repository: "sample", RepoID: "repo:sample",
+		Content: []byte(`class_name Kit extends Node
+
+var _backend: Backend
+var _unknown
+
+func wire() -> void:
+	_backend.ready.connect(_on_typed)
+	_unknown.ready.connect(_on_unknown)
+
+func _on_typed() -> void:
+	pass
+
+func _on_unknown() -> void:
+	pass
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	typed := false
+	for _, fact := range result.Facts {
+		if fact.Kind != graph.EdgeHandledBy {
+			continue
+		}
+		if fact.Target == "Kit._on_unknown" {
+			t.Fatalf("untyped member receiver produced handled_by fact %#v", fact)
+		}
+		if fact.Target != "Kit._on_typed" || fact.Source != "Backend.ready" ||
+			fact.SourceKind != graph.KindEvent {
+			t.Fatalf("member signal handled_by fact = %#v", fact)
+		}
+		typed = true
+	}
+	if !typed {
+		t.Fatalf("typed member signal produced no handled_by fact: %#v", result.Facts)
+	}
 }
 
 // TestParserKeepsLocallyDeclaredActionMethodsOutOfTheVocabulary covers both
@@ -725,12 +807,10 @@ func _input(event: InputEvent) -> void:
 	}
 }
 
-// TestParserSourcesCrossFileConnectionsAtTheirHandler is the traversal that was
-// missing: a connect to a signal another file declares can still be walked from
-// the resolved signal back to the method that handles it, because the route is
-// sourced at the handler this script declares rather than at the statement that
-// wired it. A handled_by edge cannot express this - its source would have to be
-// the foreign declaration, and a fact resolves only its target by name.
+// TestParserSourcesCrossFileConnectionsAtTheirHandler preserves the traversal
+// added before named fact sources existed: the subscribes route remains sourced
+// at the handler this script declares rather than at the statement that wired
+// it, even though handled_by can now express the signal-to-handler direction.
 func TestParserSourcesCrossFileConnectionsAtTheirHandler(t *testing.T) {
 	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
 		Path: "scripts/kit.gd", Repository: "sample", RepoID: "repo:sample",

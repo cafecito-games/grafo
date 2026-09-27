@@ -186,6 +186,8 @@ type Node struct {
 type Fact struct {
 	ID         string            `json:"id"`
 	FromID     string            `json:"from_id"`
+	Source     string            `json:"source,omitempty"`
+	SourceKind NodeKind          `json:"source_kind,omitempty"`
 	Kind       EdgeKind          `json:"kind"`
 	TargetID   string            `json:"target_id,omitempty"`
 	Target     string            `json:"target,omitempty"`
@@ -193,6 +195,22 @@ type Fact struct {
 	Location   Location          `json:"location,omitempty"`
 	Properties map[string]string `json:"properties,omitempty"`
 	OwnerFile  string            `json:"-"`
+}
+
+// ValidateSourceLocator requires a fact to identify its source either by an
+// exact node ID or by a symbolic name with an optional kind. Keeping this
+// invariant on Fact makes every producer and persistence adapter share one
+// contract instead of choosing precedence between conflicting evidence.
+func (f Fact) ValidateSourceLocator() error {
+	hasID := f.FromID != ""
+	hasName := f.Source != ""
+	if hasID == hasName {
+		return fmt.Errorf("fact %q must provide exactly one source locator", f.ID)
+	}
+	if !hasName && f.SourceKind != "" {
+		return fmt.Errorf("fact %q provides source kind without a named source", f.ID)
+	}
+	return nil
 }
 
 type Edge struct {

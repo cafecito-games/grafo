@@ -80,8 +80,29 @@ WHERE facts.owner_file = dirty_owners.owner_file
 UNION ALL
 SELECT facts.id, facts.owner_file
 FROM dirty_nodes
+CROSS JOIN facts INDEXED BY facts_from_id
+WHERE facts.from_id = dirty_nodes.node_id
+  AND (
+    NOT EXISTS (
+      SELECT 1 FROM nodes
+      WHERE nodes.id = facts.from_id AND nodes.external = 0
+    )
+    OR NOT EXISTS (
+      SELECT 1 FROM edges
+      WHERE edges.fact_id = facts.id AND edges.from_id = facts.from_id
+    )
+  )
+UNION ALL
+SELECT facts.id, facts.owner_file
+FROM dirty_nodes
 CROSS JOIN facts INDEXED BY facts_target_id
 WHERE facts.target_id = dirty_nodes.node_id
+UNION ALL
+SELECT facts.id, facts.owner_file
+FROM dirty_targets
+CROSS JOIN facts INDEXED BY facts_source
+WHERE facts.source = dirty_targets.target
+  AND (facts.source_kind = '' OR facts.source_kind = dirty_targets.target_kind)
 UNION ALL
 SELECT facts.id, facts.owner_file
 FROM dirty_targets

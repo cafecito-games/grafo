@@ -158,18 +158,31 @@ func (b *Builder) AddNode(node graph.Node) string {
 }
 
 func (b *Builder) AddFact(from string, kind graph.EdgeKind, targetID, target string, targetKind graph.NodeKind, loc graph.Location, properties map[string]string) {
+	b.addFact("id:"+from, graph.Fact{FromID: from}, kind, targetID, target, targetKind, loc, properties)
+}
+
+// AddNamedSourceFact records an edge whose source declaration is owned by
+// another parse result. Storage resolves the exact source name and optional
+// kind; the parser supplies evidence but never invents the foreign node ID.
+func (b *Builder) AddNamedSourceFact(source string, sourceKind graph.NodeKind, kind graph.EdgeKind, targetID, target string, targetKind graph.NodeKind, loc graph.Location, properties map[string]string) {
+	b.addFact("name:"+source, graph.Fact{Source: source, SourceKind: sourceKind}, kind,
+		targetID, target, targetKind, loc, properties)
+}
+
+func (b *Builder) addFact(sourceIdentity string, source graph.Fact, kind graph.EdgeKind, targetID, target string, targetKind graph.NodeKind, loc graph.Location, properties map[string]string) {
 	b.ordinal++
 	keyTarget := target
 	if targetID != "" {
 		keyTarget = targetID
 	}
-	id := graph.FactID(b.Input.Path, from, kind, keyTarget, loc.Line, b.ordinal)
+	id := graph.FactID(b.Input.Path, sourceIdentity, kind, keyTarget, loc.Line, b.ordinal)
 	if b.seenFact[id] {
 		return
 	}
 	b.seenFact[id] = true
 	b.Result.Facts = append(b.Result.Facts, graph.Fact{
-		ID: id, FromID: from, Kind: kind, TargetID: targetID, Target: target,
+		ID: id, FromID: source.FromID, Source: source.Source, SourceKind: source.SourceKind,
+		Kind: kind, TargetID: targetID, Target: target,
 		TargetKind: targetKind, Location: loc, Properties: properties, OwnerFile: b.Input.Path,
 	})
 }

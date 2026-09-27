@@ -24,7 +24,7 @@ func TestBulkWritesAreExactlyEquivalentToSingleRowQueries(t *testing.T) {
 	}
 	facts := []sqlcgen.UpsertFactParams{
 		{ID: "fact", FromID: "caller", Kind: "calls", TargetID: "target", Path: "a.go", Line: 5, Properties: `{"proof":"direct"}`, OwnerFile: "a.go"},
-		{ID: "fact", FromID: "caller", Kind: "references", Target: "pkg.Target", TargetKind: "function", Path: "updated.go", Line: 11, ColumnNo: 2, EndLine: 12, Properties: `{"proof":"name"}`, OwnerFile: "updated.go"},
+		{ID: "fact", Source: "pkg.Caller", SourceKind: "method", Kind: "references", Target: "pkg.Target", TargetKind: "function", Path: "updated.go", Line: 11, ColumnNo: 2, EndLine: 12, Properties: `{"proof":"name"}`, OwnerFile: "updated.go"},
 	}
 	edges := []sqlcgen.InsertEdgeParams{
 		{ID: "edge-1", FactID: "fact", FromID: "caller", ToID: "target", Kind: "references", Path: "updated.go", Line: 11, ColumnNo: 2, EndLine: 12, Properties: `{"proof":"name"}`},
@@ -202,6 +202,68 @@ func TestCanceledEdgeBatchRollsBackAndRestartResumesQueue(t *testing.T) {
 	}
 }
 
+func TestCanceledNamedSourceBatchRollsBackAndRestartResumesQueue(t *testing.T) {
+	database := filepath.Join(t.TempDir(), "named-source.sqlite")
+	ctx := context.Background()
+	repository, err := Open(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := graph.Node{ID: "signal", Kind: graph.KindEvent, Name: "ready",
+		QualifiedName: "Backend.ready", OwnerFile: "backend.gd"}
+	target := graph.Node{ID: "handler", Kind: graph.KindMethod, Name: "on_ready",
+		QualifiedName: "Kit.on_ready", OwnerFile: "kit.gd"}
+	fact := graph.Fact{ID: "handled", Source: source.QualifiedName, SourceKind: graph.KindEvent,
+		Kind: graph.EdgeHandledBy, TargetID: target.ID, OwnerFile: "kit.gd"}
+	if err := repository.ReplaceOwner(ctx, "kit.gd", graph.ParseResult{Nodes: []graph.Node{target}, Facts: []graph.Fact{fact}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.ReplaceOwner(ctx, "backend.gd", graph.ParseResult{Nodes: []graph.Node{source}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.ReplaceOwner(ctx, "backend.gd", graph.ParseResult{}); err != nil {
+		t.Fatal(err)
+	}
+
+	canceled, cancel := context.WithCancel(ctx)
+	repository.afterBatch = func(kind string, _ graph.WriteBatchStats) {
+		if kind == edgeBatchSpec.name {
+			cancel()
+		}
+	}
+	if err := repository.Reconcile(canceled); err == nil {
+		t.Fatal("canceled named-source reconciliation unexpectedly committed")
+	}
+	repository.afterBatch = nil
+	edges, err := repository.EdgesTo(ctx, target.ID)
+	if err != nil || len(edges) != 1 || edges[0].FromID != source.ID {
+		t.Fatalf("named-source replacement did not roll back: edges=%#v err=%v", edges, err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	repository, err = Open(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	edges, err = repository.EdgesTo(ctx, target.ID)
+	if err != nil || len(edges) != 1 || edges[0].FromID == source.ID {
+		t.Fatalf("restart did not resume named-source replacement: edges=%#v err=%v", edges, err)
+	}
+	unresolved, err := repository.Node(ctx, edges[0].FromID)
+	if err != nil || !unresolved.External || unresolved.QualifiedName != source.QualifiedName {
+		t.Fatalf("resumed source = %#v, err=%v", unresolved, err)
+	}
+}
+
 func TestBulkExternalDeduplicationAndInternalConvergence(t *testing.T) {
 	ctx := context.Background()
 	repository := openTestRepository(t)
@@ -262,7 +324,7 @@ func tableRows(t *testing.T, repository *Repository, table string) []string {
 	t.Helper()
 	columns := map[string]string{
 		"nodes": "id,kind,name,qualified_name,language,path,line,column_no,end_line,properties,owner_file,external,name_folded,qualified_name_folded",
-		"facts": "id,from_id,kind,target_id,target,target_kind,path,line,column_no,end_line,properties,owner_file",
+		"facts": "id,from_id,source,source_kind,kind,target_id,target,target_kind,path,line,column_no,end_line,properties,owner_file",
 		"edges": "id,fact_id,from_id,to_id,kind,path,line,column_no,end_line,properties",
 	}[table]
 	if columns == "" {

@@ -1155,6 +1155,120 @@ func TestServiceReconcilesGodotInteractionsAfterProjectEdits(t *testing.T) {
 	assertCleanRebuildMatches(t, ctx, root, repository)
 }
 
+func TestServiceReconcilesCrossFileSignalHandlers(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	write(t, mkdirFor(t, root, "backend.gd"), "class_name Backend extends Node\nsignal sign_in_success\n")
+	write(t, mkdirFor(t, root, "other.gd"), "class_name Other extends Node\nsignal ready\n")
+	write(t, mkdirFor(t, root, "kit.gd"), `class_name Kit extends Node
+
+var _backend: Backend
+var _unknown
+
+func wire() -> void:
+	_backend.sign_in_success.connect(_on_sign_in)
+	_backend.connect("sign_in_success", _on_legacy)
+	_unknown.connect("ready", _on_unknown)
+	_unknown.ready.connect(_on_unknown_member)
+
+func _on_sign_in() -> void:
+	pass
+
+func _on_legacy() -> void:
+	pass
+
+func _on_unknown() -> void:
+	pass
+
+func _on_unknown_member() -> void:
+	pass
+`)
+	service, repository, project := openGodotIndex(t, ctx, root)
+	defer func() { _ = repository.Close() }()
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	assertCrossFileHandler(t, ctx, repository, "Kit._on_sign_in", "Backend.sign_in_success", false)
+	assertCrossFileHandler(t, ctx, repository, "Kit._on_legacy", "Backend.sign_in_success", false)
+	assertNoHandledBy(t, ctx, repository, "Kit._on_unknown")
+	assertNoHandledBy(t, ctx, repository, "Kit._on_unknown_member")
+	assertCleanRebuildMatches(t, ctx, root, repository)
+
+	write(t, filepath.Join(root, "duplicate.gd"), "class_name Backend extends Node\nsignal sign_in_success\n")
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	assertCrossFileHandler(t, ctx, repository, "Kit._on_sign_in", "Backend.sign_in_success", true)
+	assertCrossFileHandler(t, ctx, repository, "Kit._on_legacy", "Backend.sign_in_success", true)
+	assertNoHandledBy(t, ctx, repository, "Kit._on_unknown")
+	assertNoHandledBy(t, ctx, repository, "Kit._on_unknown_member")
+	assertCleanRebuildMatches(t, ctx, root, repository)
+
+	if err := os.Remove(filepath.Join(root, "duplicate.gd")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	assertCrossFileHandler(t, ctx, repository, "Kit._on_sign_in", "Backend.sign_in_success", false)
+	assertCrossFileHandler(t, ctx, repository, "Kit._on_legacy", "Backend.sign_in_success", false)
+	assertNoHandledBy(t, ctx, repository, "Kit._on_unknown")
+	assertNoHandledBy(t, ctx, repository, "Kit._on_unknown_member")
+
+	write(t, filepath.Join(root, "backend.gd"), "class_name Backend extends Node\nsignal signed_in\n")
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	assertCrossFileHandler(t, ctx, repository, "Kit._on_sign_in", "Backend.sign_in_success", true)
+	assertCrossFileHandler(t, ctx, repository, "Kit._on_legacy", "Backend.sign_in_success", true)
+	assertNoHandledBy(t, ctx, repository, "Kit._on_unknown")
+	assertNoHandledBy(t, ctx, repository, "Kit._on_unknown_member")
+	assertCleanRebuildMatches(t, ctx, root, repository)
+}
+
+func assertCrossFileHandler(t *testing.T, ctx context.Context, repository graph.Repository, handlerName, signalName string, external bool) {
+	t.Helper()
+	handler, err := query.NewService(repository).Resolve(ctx, handlerName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edges, err := repository.EdgesTo(ctx, handler.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, edge := range edges {
+		if edge.Kind != graph.EdgeHandledBy {
+			continue
+		}
+		source, err := repository.Node(ctx, edge.FromID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if source.QualifiedName != signalName || source.Kind != graph.KindEvent || source.External != external {
+			t.Fatalf("handled_by source = %#v, want event external=%v", source, external)
+		}
+		return
+	}
+	t.Fatalf("missing handled_by edge to %#v; inbound=%#v", handler, edges)
+}
+
+func assertNoHandledBy(t *testing.T, ctx context.Context, repository graph.Repository, handlerName string) {
+	t.Helper()
+	handler, err := query.NewService(repository).Resolve(ctx, handlerName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edges, err := repository.EdgesTo(ctx, handler.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, edge := range edges {
+		if edge.Kind == graph.EdgeHandledBy {
+			t.Fatalf("unproven legacy receiver produced handled_by edge %#v", edge)
+		}
+	}
+}
+
 func openGodotIndex(t *testing.T, ctx context.Context, root string) (*indexer.Service, *sqlite.Repository, indexer.Project) {
 	t.Helper()
 	project, err := indexer.DiscoverProject(ctx, root)

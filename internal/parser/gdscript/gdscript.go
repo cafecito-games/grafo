@@ -583,7 +583,8 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 	}
 	if method == "emit_signal" && len(node.Arguments) > 0 {
 		if name, ok := literalString(node.Arguments[0]); ok {
-			e.addSignalFact(fromID, graph.EdgePublishes, "emit", name, current, loc, nil)
+			e.addSignalFact(fromID, graph.EdgePublishes, "emit", name,
+				qualify(current.receiver, name), current, loc, nil)
 			return
 		}
 	}
@@ -714,7 +715,7 @@ var signalOperations = map[string]signalOperation{
 // guess, so the call falls through to the ordinary call edge.
 func (e *extractor) addSignalOperation(node *gdast.CallExpression, member *gdast.MemberExpression, fromID, method string, current scope, loc graph.Location) bool {
 	operation := signalOperations[method]
-	name, handler := "", operation.handler
+	name, handler, handlerSource := "", operation.handler, ""
 	if operation.callable && len(node.Arguments) > 0 {
 		// Godot 4 passes a Callable here and the older Object form passes the
 		// signal's name, so a literal argument decides between the Object form
@@ -727,6 +728,10 @@ func (e *extractor) addSignalOperation(node *gdast.CallExpression, member *gdast
 				return false
 			}
 			name, handler = text, operation.handler+1
+			if owner := e.signalOwner(member.Object, current); owner != "" {
+				name = qualify(owner, text)
+				handlerSource = name
+			}
 		}
 	}
 	if name == "" {
@@ -734,12 +739,12 @@ func (e *extractor) addSignalOperation(node *gdast.CallExpression, member *gdast
 		// be one the script's base class declares, which is resolved by name
 		// against the whole graph rather than guessed here.
 		name = e.resolveExpression(member.Object, current)
+		handlerSource = e.signalSource(member.Object, current)
 	}
 	// The handler is recorded on the routing fact itself as well as on the
-	// signal declaration. Most connects name a signal another file declares, so
-	// the parser cannot reach that declaration to hang a handled_by edge on it;
-	// the property keeps the route's destination visible in exactly those cases
-	// without anyone guessing which declaration the name belongs to.
+	// handled_by fact. Most connects name a signal another file declares, so the
+	// parser preserves the source name and lets storage decide whether exactly
+	// one declaration proves the relation.
 	extra := map[string]string{}
 	subscriber := fromID
 	if operation.form == "connect" && handler >= 0 {
@@ -749,11 +754,10 @@ func (e *extractor) addSignalOperation(node *gdast.CallExpression, member *gdast
 			// statement that wired it, and the handler is a node this parser
 			// owns. Sourcing the route there is what lets the graph traverse a
 			// resolved signal back to its declared handler even when the signal
-			// is declared in another file - the case a handled_by edge cannot
-			// cover, because that edge's source would have to be the foreign
-			// declaration and facts resolve only their target by name. The
-			// wiring statement is kept as the site, and the fact's own location
-			// still points at the connect call.
+			// is declared in another file. The named-source handled_by edge now
+			// expresses that direction directly too; this subscribes edge remains
+			// useful for handler-first traversal. The wiring statement is kept as
+			// the site, and the fact's own location still points at the connect call.
 			if id := e.handlerNode(method); id != "" {
 				subscriber = id
 				if current.container != "" {
@@ -762,7 +766,7 @@ func (e *extractor) addSignalOperation(node *gdast.CallExpression, member *gdast
 			}
 		}
 	}
-	ref, emitted := e.addSignalFact(subscriber, operation.kind, operation.form, name, current, loc, extra)
+	ref, emitted := e.addSignalFact(subscriber, operation.kind, operation.form, name, handlerSource, current, loc, extra)
 	if !emitted {
 		return false
 	}
@@ -770,6 +774,46 @@ func (e *extractor) addSignalOperation(node *gdast.CallExpression, member *gdast
 		e.addSignalHandler(ref, node.Arguments, handler, current, loc)
 	}
 	return true
+}
+
+// signalOwner returns only receiver identity supported by structural type
+// evidence. A bare unknown variable name is not an owner: qualifying a literal
+// signal with it would create a name no declaration owns, while resolving the
+// bare signal could attach a handler to an unrelated uniquely named event.
+func (e *extractor) signalOwner(expression gdast.Expression, current scope) string {
+	switch node := expression.(type) {
+	case *gdast.Identifier:
+		if node.Name == "self" {
+			return current.receiver
+		}
+		return current.types[node.Name]
+	case *gdast.TypeExpression:
+		return e.resolveType(node.Name, current)
+	case *gdast.CallExpression:
+		return e.inferExpressionType(node, current)
+	default:
+		return ""
+	}
+}
+
+// signalSource keeps the bare form for a signal identifier on this object, but
+// accepts a member receiver only when its owner has structural type evidence.
+// The routing fact may still preserve an unknown expression as unresolved
+// evidence; handled_by is stricter because resolving its source would assert
+// which declaration invokes the handler.
+func (e *extractor) signalSource(expression gdast.Expression, current scope) string {
+	switch node := expression.(type) {
+	case *gdast.Identifier:
+		return node.Name
+	case *gdast.MemberExpression:
+		owner := e.signalOwner(node.Object, current)
+		if owner == "" {
+			return ""
+		}
+		return qualify(owner, node.Property)
+	default:
+		return ""
+	}
 }
 
 // isIdentifier reports whether a literal could be a GDScript signal name.
@@ -817,34 +861,41 @@ func (e *extractor) handlerMethod(arguments []gdast.Expression, index int, curre
 // addSignalHandler names the method a literal connect routes a signal to. Only a
 // bare identifier that resolves to a method this script declares is accepted: a
 // Callable bound to another object, a lambda, or a computed name proves nothing
-// about which method the engine will run, so nothing is recorded. An unresolved
-// signal records no handler either, because there is no declaration to hang the
-// route on and inventing one would attach the handler to a name rather than to a
-// signal.
+// about which method the engine will run, so nothing is recorded. A foreign
+// signal keeps its canonical name so storage can resolve the source without the
+// parser inventing an ID or choosing among ambiguous declarations.
 func (e *extractor) addSignalHandler(ref signalRef, arguments []gdast.Expression, index int, current scope, loc graph.Location) {
-	if ref.id == "" {
+	if ref.qualified == "" {
 		return
 	}
 	method := e.handlerMethod(arguments, index, current)
 	if method == "" {
 		return
 	}
-	e.b.AddFact(ref.id, graph.EdgeHandledBy, "", method, graph.KindMethod, loc,
-		map[string]string{"form": "connect", "signal": ref.qualified, "receiver": current.receiver})
+	properties := map[string]string{"form": "connect", "signal": ref.qualified, "receiver": current.receiver}
+	if ref.id != "" {
+		e.b.AddFact(ref.id, graph.EdgeHandledBy, "", method, graph.KindMethod, loc, properties)
+		return
+	}
+	e.b.AddNamedSourceFact(ref.qualified, graph.KindEvent, graph.EdgeHandledBy,
+		"", method, graph.KindMethod, loc, properties)
 }
 
 // addSignalFact records one signal fact and reports the declaration it resolved
 // to. A returned ref with an empty id means the name matched no declaration in
 // this script and the fact names it as an unresolved event, which is what keeps a
 // signal whose owner is unknown visible without guessing an owner.
-func (e *extractor) addSignalFact(fromID string, kind graph.EdgeKind, form, name string, current scope, loc graph.Location, extra map[string]string) (signalRef, bool) {
+func (e *extractor) addSignalFact(fromID string, kind graph.EdgeKind, form, name, handlerSource string, current scope, loc graph.Location, extra map[string]string) (signalRef, bool) {
 	if name == "" {
 		return signalRef{}, false
 	}
 	name = strings.TrimPrefix(name, current.receiver+".")
-	ref, ok := current.signals[name]
-	if !ok {
-		ref, ok = current.signals[qualify(current.receiver, name)]
+	ref, ok := signalRef{}, false
+	if handlerSource != "" {
+		ref, ok = current.signals[name]
+		if !ok {
+			ref, ok = current.signals[qualify(current.receiver, name)]
+		}
 	}
 	properties := map[string]string{"form": form}
 	for key, value := range extra {
@@ -853,7 +904,7 @@ func (e *extractor) addSignalFact(fromID string, kind graph.EdgeKind, form, name
 	if !ok {
 		properties["signal"] = name
 		e.b.AddFact(fromID, kind, "", name, graph.KindEvent, loc, properties)
-		return signalRef{}, true
+		return signalRef{qualified: handlerSource}, true
 	}
 	properties["signal"] = ref.qualified
 	e.b.AddFact(fromID, kind, ref.id, "", graph.KindEvent, loc, properties)

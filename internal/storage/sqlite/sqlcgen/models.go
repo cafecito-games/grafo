@@ -57,6 +57,8 @@ type Fact struct {
 	EndLine    int64  `json:"end_line"`
 	Properties string `json:"properties"`
 	OwnerFile  string `json:"owner_file"`
+	Source     string `json:"source"`
+	SourceKind string `json:"source_kind"`
 }
 
 type File struct {
