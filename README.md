@@ -5,7 +5,7 @@ can query from the command line. Source symbols, calls, imports, configuration,
 HTTP routes, and event-like publish/subscribe operations become nodes and edges.
 
 This repository is at the foundation stage. Go is parsed with the Go compiler
-AST, Godot source formats use `gdparser`, Python and TypeScript/TSX use
+AST, Godot source formats use `gdparser`, Python, Swift, and TypeScript/TSX use
 Tree-sitter, PostgreSQL SQL uses PostgreSQL's own parser, and SQLite SQL uses
 Meyer's SQLite grammar. The index is local, incremental, branch-aware, and
 stored in SQLite.
@@ -110,6 +110,11 @@ are marked `federated` and retain their original evidence.
   variables, type annotations, basic assignment/argument/return flow, imports,
   calls, inheritance, environment reads, framework route decorators, outbound
   HTTP requests, and common publish/subscribe calls.
+- Swift imports, functions, classes, actors, structs, enums, protocols,
+  extensions, methods, properties, parameters, local variables, basic
+  assignment/argument/return flow, inheritance and protocol conformance,
+  `ProcessInfo` environment reads, common server routes, outbound HTTP
+  requests, and publish/subscribe calls.
 - Go modules, npm packages, and Python requirements from `go.mod`,
   `package.json`, and `requirements*.txt`, including version, scope, indirect,
   optional, and replacement metadata. Dependency edges resolve across repos.

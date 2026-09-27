@@ -123,6 +123,18 @@
       },
       {
         "repo": "matrix",
+        "kind": "event",
+        "qualified_name": "swift.ready",
+        "external": true
+      },
+      {
+        "repo": "matrix",
+        "kind": "external",
+        "qualified_name": "SwiftWorker",
+        "external": true
+      },
+      {
+        "repo": "matrix",
         "kind": "external",
         "qualified_name": "reflect.Value.Call",
         "external": true
@@ -246,6 +258,11 @@
       {
         "repo": "matrix",
         "kind": "file",
+        "qualified_name": "swift_worker.swift"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
         "qualified_name": "types.pyi"
       },
       {
@@ -306,12 +323,22 @@
       {
         "repo": "matrix",
         "kind": "function",
+        "qualified_name": "swift_worker.invokeSwift"
+      },
+      {
+        "repo": "matrix",
+        "kind": "function",
         "qualified_name": "types.typed_value"
       },
       {
         "repo": "matrix",
         "kind": "function",
         "qualified_name": "web/view.View"
+      },
+      {
+        "repo": "matrix",
+        "kind": "interface",
+        "qualified_name": "swift_worker.SwiftRunnable"
       },
       {
         "repo": "matrix",
@@ -338,6 +365,16 @@
         "kind": "method",
         "qualified_name": "on_pressed",
         "external": true
+      },
+      {
+        "repo": "matrix",
+        "kind": "method",
+        "qualified_name": "swift_worker.SwiftRunnable.run"
+      },
+      {
+        "repo": "matrix",
+        "kind": "method",
+        "qualified_name": "swift_worker.SwiftWorker.run"
       },
       {
         "repo": "matrix",
@@ -424,6 +461,16 @@
       {
         "repo": "matrix",
         "kind": "parameter",
+        "qualified_name": "swift_worker.SwiftRunnable.run.value"
+      },
+      {
+        "repo": "matrix",
+        "kind": "parameter",
+        "qualified_name": "swift_worker.SwiftWorker.run.value"
+      },
+      {
+        "repo": "matrix",
+        "kind": "parameter",
         "qualified_name": "types.typed_value.value"
       },
       {
@@ -448,6 +495,11 @@
       },
       {
         "repo": "matrix",
+        "kind": "type",
+        "qualified_name": "swift_worker.SwiftWorker"
+      },
+      {
+        "repo": "matrix",
         "kind": "variable",
         "qualified_name": "scenes/exported:Exported"
       },
@@ -460,6 +512,21 @@
         "repo": "matrix",
         "kind": "variable",
         "qualified_name": "scenes/main:Main/Button"
+      },
+      {
+        "repo": "matrix",
+        "kind": "variable",
+        "qualified_name": "swift_worker.SwiftWorker.run.result@7"
+      },
+      {
+        "repo": "matrix",
+        "kind": "variable",
+        "qualified_name": "swift_worker.invokeSwift.input@15"
+      },
+      {
+        "repo": "matrix",
+        "kind": "variable",
+        "qualified_name": "swift_worker.invokeSwift.worker@14"
       },
       {
         "repo": "matrix",
@@ -1176,6 +1243,60 @@
         "from": {
           "repo": "matrix",
           "kind": "file",
+          "qualified_name": "swift_worker.swift"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "swift_worker.invokeSwift"
+        },
+        "source": {
+          "path": "swift_worker.swift",
+          "line": 13,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "swift_worker.swift"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "interface",
+          "qualified_name": "swift_worker.SwiftRunnable"
+        },
+        "source": {
+          "path": "swift_worker.swift",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "swift_worker.swift"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "type",
+          "qualified_name": "swift_worker.SwiftWorker"
+        },
+        "source": {
+          "path": "swift_worker.swift",
+          "line": 5,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
           "qualified_name": "types.pyi"
         },
         "relation": "declares",
@@ -1422,6 +1543,79 @@
         "from": {
           "repo": "matrix",
           "kind": "function",
+          "qualified_name": "swift_worker.invokeSwift"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "matrix",
+          "kind": "external",
+          "qualified_name": "SwiftWorker",
+          "external": true
+        },
+        "source": {
+          "path": "swift_worker.swift",
+          "line": 14,
+          "column": 31
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "swift_worker.invokeSwift"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "swift_worker.SwiftWorker.run"
+        },
+        "source": {
+          "path": "swift_worker.swift",
+          "line": 16,
+          "column": 5
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "swift_worker.invokeSwift"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "variable",
+          "qualified_name": "swift_worker.invokeSwift.input@15"
+        },
+        "source": {
+          "path": "swift_worker.swift",
+          "line": 15,
+          "column": 9
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "swift_worker.invokeSwift"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "variable",
+          "qualified_name": "swift_worker.invokeSwift.worker@14"
+        },
+        "source": {
+          "path": "swift_worker.swift",
+          "line": 14,
+          "column": 9
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "function",
           "qualified_name": "types.typed_value"
         },
         "relation": "declares",
@@ -1434,6 +1628,24 @@
           "path": "types.pyi",
           "line": 1,
           "column": 17
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "interface",
+          "qualified_name": "swift_worker.SwiftRunnable"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "swift_worker.SwiftRunnable.run"
+        },
+        "source": {
+          "path": "swift_worker.swift",
+          "line": 2,
+          "column": 5
         }
       },
       {
@@ -1533,6 +1745,79 @@
           "path": "scripts/player.gd",
           "line": 14,
           "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "swift_worker.SwiftRunnable.run"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "parameter",
+          "qualified_name": "swift_worker.SwiftRunnable.run.value"
+        },
+        "source": {
+          "path": "swift_worker.swift",
+          "line": 2,
+          "column": 14
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "swift_worker.SwiftWorker.run"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "parameter",
+          "qualified_name": "swift_worker.SwiftWorker.run.value"
+        },
+        "source": {
+          "path": "swift_worker.swift",
+          "line": 6,
+          "column": 14
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "swift_worker.SwiftWorker.run"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "variable",
+          "qualified_name": "swift_worker.SwiftWorker.run.result@7"
+        },
+        "source": {
+          "path": "swift_worker.swift",
+          "line": 7,
+          "column": 13
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "swift_worker.SwiftWorker.run"
+        },
+        "relation": "publishes",
+        "to": {
+          "repo": "matrix",
+          "kind": "event",
+          "qualified_name": "swift.ready",
+          "external": true
+        },
+        "source": {
+          "path": "swift_worker.swift",
+          "line": 8,
+          "column": 9
         }
       },
       {
@@ -1753,6 +2038,24 @@
         },
         "properties": {
           "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "parameter",
+          "qualified_name": "swift_worker.SwiftWorker.run.value"
+        },
+        "relation": "assigns",
+        "to": {
+          "repo": "matrix",
+          "kind": "variable",
+          "qualified_name": "swift_worker.SwiftWorker.run.result@7"
+        },
+        "source": {
+          "path": "swift_worker.swift",
+          "line": 7,
+          "column": 13
         }
       },
       {
@@ -2125,6 +2428,24 @@
         "to": {
           "repo": "matrix",
           "kind": "file",
+          "qualified_name": "swift_worker.swift"
+        },
+        "source": {
+          "path": "swift_worker.swift",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
           "qualified_name": "types.pyi"
         },
         "source": {
@@ -2310,6 +2631,42 @@
       {
         "from": {
           "repo": "matrix",
+          "kind": "type",
+          "qualified_name": "swift_worker.SwiftWorker"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "swift_worker.SwiftWorker.run"
+        },
+        "source": {
+          "path": "swift_worker.swift",
+          "line": 6,
+          "column": 5
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "type",
+          "qualified_name": "swift_worker.SwiftWorker"
+        },
+        "relation": "implements",
+        "to": {
+          "repo": "matrix",
+          "kind": "interface",
+          "qualified_name": "swift_worker.SwiftRunnable"
+        },
+        "source": {
+          "path": "swift_worker.swift",
+          "line": 5,
+          "column": 21
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
           "kind": "variable",
           "qualified_name": "scenes/main:Main/Button"
         },
@@ -2381,6 +2738,45 @@
         "properties": {
           "method": "on_pressed",
           "signal": "pressed"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "variable",
+          "qualified_name": "swift_worker.SwiftWorker.run.result@7"
+        },
+        "relation": "returns",
+        "to": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "swift_worker.SwiftWorker.run"
+        },
+        "source": {
+          "path": "swift_worker.swift",
+          "line": 9,
+          "column": 9
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "variable",
+          "qualified_name": "swift_worker.invokeSwift.input@15"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "swift_worker.SwiftWorker.run"
+        },
+        "source": {
+          "path": "swift_worker.swift",
+          "line": 16,
+          "column": 5
+        },
+        "properties": {
+          "argument": "0"
         }
       },
       {
