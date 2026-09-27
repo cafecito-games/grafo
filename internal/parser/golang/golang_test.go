@@ -105,8 +105,11 @@ func invoke(value Runner) { value.Run() }
 func TestSyntaxFailureFallbackRequiresUnshadowedBuiltins(t *testing.T) {
 	safe := []byte(`package sample
 func cleanup() {}
+func callbackCleanup() {}
+func Register(func()) {}
 func Guard(value any) {
 	if value != nil { defer cleanup(); panic(value) }
+	Register(func() { defer callbackCleanup(); panic(value) })
 	_ = recover()
 }
 `)
@@ -124,6 +127,17 @@ func Guard(value any) {
 		"example.com/sample.Guard", "example.com/sample.cleanup", "defer")
 	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeRecovers,
 		"example.com/sample.Guard", "builtin.recover", "recover")
+	assertNoFailureTarget(t, result.Facts, graph.EdgeDefers, "example.com/sample.callbackCleanup")
+	panicCount := 0
+	guardID := graph.NodeID(graph.KindFunction, "example.com/sample.Guard", "repo", "safe.go")
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgePanics && fact.FromID == guardID {
+			panicCount++
+		}
+	}
+	if panicCount != 1 {
+		t.Fatalf("syntax fallback panics = %d, want only the directly executed panic", panicCount)
+	}
 
 	shadowed := []byte(`package sample
 var panic = func(any) {}
@@ -367,11 +381,14 @@ type Cleaner struct{}
 func (Cleaner) Close() {}
 
 type Provider interface { Read() (string, error) }
+type BigProvider interface { Provider }
 
 func Produce() (int, error) { return 0, ErrSentinel }
 func Multi() (error, error) { return ErrSentinel, &Problem{} }
 func cleanup() {}
+func callbackCleanup() {}
 func worker() {}
+func Register(func()) {}
 
 func Wrap() error {
 	_, err := Produce()
@@ -418,6 +435,7 @@ func Guard(value any, cleaner Cleaner) {
 	defer cleanup()
 	defer cleaner.Close()
 	defer func() { _ = recover() }()
+	Register(func() { defer callbackCleanup(); panic(ErrSentinel) })
 	go worker()
 	panic(value)
 }
@@ -435,9 +453,11 @@ func Guard(value any, cleaner Cleaner) {
 	assertNodeProperty(t, result.Nodes, graph.KindType, "example.com/failures.Problem", "error_type", "true")
 	assertNodeProperty(t, result.Nodes, graph.KindFunction, "example.com/failures.Multi", "error_result_positions", "0,1")
 	assertNodeProperty(t, result.Nodes, graph.KindMethod, "example.com/failures.Provider.Read", "error_result_positions", "1")
+	assertNodeProperty(t, result.Nodes, graph.KindMethod, "example.com/failures.BigProvider.Read", "error_result_positions", "1")
 
 	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeKind("returns_error"), "example.com/failures.Multi", "builtin.error", "signature")
 	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeReturnsError, "example.com/failures.Provider.Read", "builtin.error", "signature")
+	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeReturnsError, "example.com/failures.BigProvider.Read", "builtin.error", "signature")
 	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeKind("propagates_error"), "example.com/failures.Produce", "example.com/failures.ErrSentinel", "return")
 	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeKind("wraps_error"), "example.com/failures.Wrap", "example.com/failures.Produce", "wrap")
 	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeKind("propagates_error"), "example.com/failures.Join", "builtin.error", "join")
@@ -453,6 +473,8 @@ func Guard(value any, cleaner Cleaner) {
 	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeKind("defers"), "example.com/failures.Guard", "example.com/failures.cleanup", "defer")
 	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeDefers, "example.com/failures.Guard", "example.com/failures.Cleaner.Close", "defer")
 	assertNoFailureTarget(t, result.Facts, graph.EdgeKind("defers"), "example.com/failures.worker")
+	assertNoFailureTarget(t, result.Facts, graph.EdgeDefers, "example.com/failures.callbackCleanup")
+	assertNoFailureTarget(t, result.Facts, graph.EdgePanics, "example.com/failures.ErrSentinel")
 	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeKind("recovers"), "example.com/failures.Guard", "builtin.recover", "recover")
 	panicFact := assertFailureFactFrom(t, result.Nodes, result.Facts, graph.EdgeKind("panics"), "example.com/failures.Guard")
 	if panicFact.TargetKind != graph.KindExternal || panicFact.Properties["unresolved"] != "true" {
@@ -467,6 +489,21 @@ func Guard(value any, cleaner Cleaner) {
 			}
 		}
 	}
+}
+
+func TestSyntaxFailureFallbackSeesPackageShadowingAcrossFiles(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "shadow.go"), "package sample\nvar panic = func(any) {}\n")
+	content := []byte("package sample\nfunc Guard(value any) { panic(value) }\n")
+	writeFile(t, filepath.Join(root, "guard.go"), string(content))
+
+	result, err := golangparser.NewWithSemanticLoader(nil).Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "guard.go", Content: content, Repository: "sample", RepoID: "repo", GoModule: "example.com/sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoFailureFactFrom(t, result.Nodes, result.Facts, graph.EdgePanics, "example.com/sample.Guard")
 }
 
 func TestFailureIdentityUsesPackageObjectsNotAliasesOrSimpleNames(t *testing.T) {

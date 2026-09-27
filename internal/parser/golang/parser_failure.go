@@ -2,7 +2,10 @@ package golang
 
 import (
 	goast "go/ast"
+	"go/parser"
 	"go/token"
+	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -18,8 +21,16 @@ func emitSyntaxFailureFlow(b *parserapi.Builder, fset *token.FileSet, input pars
 	packageShadowed map[string]bool) {
 	shadowed := syntaxShadowedBuiltins(declaration, packageShadowed)
 	body := declaration.Body
+	executableClosures := map[*goast.FuncLit]bool{}
+	asyncClosures := map[*goast.FuncLit]bool{}
 	goast.Inspect(body, func(node goast.Node) bool {
 		switch value := node.(type) {
+		case *goast.GoStmt:
+			if closure := calledFunctionLiteral(value.Call); closure != nil {
+				asyncClosures[closure] = true
+			}
+		case *goast.FuncLit:
+			return executableClosures[value] && !asyncClosures[value]
 		case *goast.DeferStmt:
 			conditional := strconv.FormatBool(nodeWithinConditional(body, value.Pos()))
 			target := ""
@@ -37,6 +48,9 @@ func emitSyntaxFailureFlow(b *parserapi.Builder, fset *token.FileSet, input pars
 					map[string]string{"form": "defer", "evidence": "go/ast", "resolution": "syntax", "conditional": conditional})
 			}
 		case *goast.CallExpr:
+			if closure := calledFunctionLiteral(value); closure != nil && !asyncClosures[closure] {
+				executableClosures[closure] = true
+			}
 			identifier, ok := value.Fun.(*goast.Ident)
 			if !ok || shadowed[identifier.Name] {
 				return true
@@ -100,7 +114,33 @@ func syntaxShadowedBuiltins(declaration *goast.FuncDecl, packageShadowed map[str
 	return shadowed
 }
 
-func syntaxPackageShadowedBuiltins(file *goast.File) map[string]bool {
+func syntaxPackageShadowedBuiltins(input parserapi.Input, file *goast.File) map[string]bool {
+	shadowed := syntaxFileShadowedBuiltins(file)
+	if input.Root == "" || input.Path == "" {
+		return shadowed
+	}
+	directory := filepath.Join(input.Root, filepath.Dir(filepath.FromSlash(input.Path)))
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return shadowed
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".go" || entry.Name() == filepath.Base(input.Path) {
+			continue
+		}
+		path := filepath.Join(directory, entry.Name())
+		sibling, parseErr := parser.ParseFile(token.NewFileSet(), path, nil, parser.SkipObjectResolution)
+		if parseErr != nil || sibling == nil || sibling.Name.Name != file.Name.Name {
+			continue
+		}
+		for name := range syntaxFileShadowedBuiltins(sibling) {
+			shadowed[name] = true
+		}
+	}
+	return shadowed
+}
+
+func syntaxFileShadowedBuiltins(file *goast.File) map[string]bool {
 	shadowed := map[string]bool{}
 	for _, declaration := range file.Decls {
 		switch value := declaration.(type) {

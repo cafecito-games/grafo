@@ -117,8 +117,11 @@ func (s *Service) addFailureFlowFact(ctx context.Context, report *FailureFlow, e
 	fact := FailureFlowFact{
 		Direction: direction, Form: edge.Properties["form"],
 		Conditional: edge.Properties["conditional"] == "true",
-		Unresolved:  node.External || edge.Properties["unresolved"] == "true",
-		Federated:   isFederated(edge), Edge: edge, Node: node,
+		// External is a storage boundary, not a confidence judgment. Standard
+		// library and builtin identities are external to the indexed repository
+		// but can still be proven exactly by a semantic extractor.
+		Unresolved: edge.Properties["unresolved"] == "true",
+		Federated:  isFederated(edge), Edge: edge, Node: node,
 	}
 	*section = append(*section, fact)
 	return nil

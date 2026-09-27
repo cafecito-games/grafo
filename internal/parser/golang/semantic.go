@@ -48,6 +48,7 @@ type SemanticErrorResult struct {
 
 type SemanticFunction struct {
 	ErrorResults []SemanticErrorResult
+	Promoted     bool
 }
 
 type SemanticErrorDeclaration struct {

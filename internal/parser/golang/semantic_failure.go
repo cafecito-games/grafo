@@ -70,14 +70,41 @@ func (e failureExtractor) collectDeclarations(file *goast.File) {
 			switch spec := raw.(type) {
 			case *goast.TypeSpec:
 				if interfaceType, ok := spec.Type.(*goast.InterfaceType); ok {
+					explicit := map[string]bool{}
 					for _, field := range interfaceType.Methods.List {
 						for _, name := range field.Names {
+							explicit[name.Name] = true
 							method, _ := e.pkg.TypesInfo.Defs[name].(*types.Func)
 							if method == nil {
 								continue
 							}
 							signature, _ := method.Type().(*types.Signature)
 							e.collectSignature(objectTarget(method), signature, name.Pos())
+						}
+					}
+					object, _ := e.pkg.TypesInfo.Defs[spec.Name].(*types.TypeName)
+					if object != nil {
+						iface, _ := types.Unalias(object.Type()).Underlying().(*types.Interface)
+						if iface == nil {
+							continue
+						}
+						iface.Complete()
+						for index := 0; index < iface.NumMethods(); index++ {
+							method := iface.Method(index)
+							if explicit[method.Name()] {
+								continue
+							}
+							signature, _ := method.Type().(*types.Signature)
+							name := qualifiedObject(object) + "." + method.Name()
+							start := len(e.view.Failures)
+							e.collectSignature(name, signature, spec.Name.Pos())
+							function := e.view.Functions[name]
+							function.Promoted = true
+							e.view.Functions[name] = function
+							for failureIndex := start; failureIndex < len(e.view.Failures); failureIndex++ {
+								e.view.Failures[failureIndex].Location = e.location(spec.Name.Pos(), spec.Name.End())
+								e.view.Failures[failureIndex].Properties["promoted"] = "true"
+							}
 						}
 					}
 				}
@@ -376,8 +403,16 @@ func (e failureExtractor) handlersFromCondition(functionName string, condition g
 }
 
 func (e failureExtractor) collectAbruptAndDeferred(body *goast.BlockStmt, functionName string, origins map[types.Object][]failureTarget) {
+	executableClosures := map[*goast.FuncLit]bool{}
+	asyncClosures := map[*goast.FuncLit]bool{}
 	goast.Inspect(body, func(node goast.Node) bool {
 		switch value := node.(type) {
+		case *goast.GoStmt:
+			if closure := calledFunctionLiteral(value.Call); closure != nil {
+				asyncClosures[closure] = true
+			}
+		case *goast.FuncLit:
+			return executableClosures[value] && !asyncClosures[value]
 		case *goast.DeferStmt:
 			target := e.callTarget(value.Call)
 			if target.name == "" {
@@ -387,6 +422,9 @@ func (e failureExtractor) collectAbruptAndDeferred(body *goast.BlockStmt, functi
 				"form": "defer", "conditional": strconv.FormatBool(nodeWithinConditional(body, value.Pos())),
 			})
 		case *goast.CallExpr:
+			if closure := calledFunctionLiteral(value); closure != nil && !asyncClosures[closure] {
+				executableClosures[closure] = true
+			}
 			callee := callableTarget(value.Fun, e.pkg.TypesInfo, nil)
 			switch callee {
 			case "builtin.panic":
@@ -408,6 +446,22 @@ func (e failureExtractor) collectAbruptAndDeferred(body *goast.BlockStmt, functi
 		}
 		return true
 	})
+}
+
+func calledFunctionLiteral(call *goast.CallExpr) *goast.FuncLit {
+	if call == nil {
+		return nil
+	}
+	expression := call.Fun
+	for {
+		parenthesized, ok := expression.(*goast.ParenExpr)
+		if !ok {
+			break
+		}
+		expression = parenthesized.X
+	}
+	closure, _ := expression.(*goast.FuncLit)
+	return closure
 }
 
 func (e failureExtractor) expressionTargets(expression goast.Expr, origins map[types.Object][]failureTarget, functionName string) []failureTarget {

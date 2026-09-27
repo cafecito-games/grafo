@@ -50,6 +50,12 @@ func TestFailureFlowSeparatesDeclarationsEscapesHandlersAndCleanup(t *testing.T)
 	if len(report.Recoveries) != 1 || len(report.DeferredCleanup) != 1 {
 		t.Fatalf("recovery/cleanup = %#v / %#v", report.Recoveries, report.DeferredCleanup)
 	}
+	if report.Recoveries[0].Unresolved {
+		t.Fatalf("proven builtin recovery reported as unresolved: %#v", report.Recoveries[0])
+	}
+	if report.Unresolved != 1 {
+		t.Fatalf("unresolved = %d, want only the dynamic panic payload", report.Unresolved)
+	}
 
 	incoming, err := query.NewService(repository).FailureFlow(context.Background(), "sample.Load", query.FailureFlowOptions{})
 	if err != nil {

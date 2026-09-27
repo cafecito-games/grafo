@@ -9,6 +9,7 @@ import (
 	"go/printer"
 	"go/token"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -114,7 +115,7 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 		packageName = semantic.PackagePath
 	}
 	imports := map[string]string{}
-	packageShadowedBuiltins := syntaxPackageShadowedBuiltins(file)
+	packageShadowedBuiltins := syntaxPackageShadowedBuiltins(input, file)
 	for _, spec := range file.Imports {
 		importPath, unquoteErr := strconv.Unquote(spec.Path.Value)
 		if unquoteErr != nil {
@@ -445,6 +446,42 @@ func parseFields(b *parserapi.Builder, fset *token.FileSet, input parserapi.Inpu
 					b.AddFact(nodeID, failure.Kind, "", failure.Target, failure.TargetKind,
 						failure.Location, cloneStringMap(failure.Properties))
 				}
+			}
+		}
+	}
+	if methods {
+		addPromotedInterfaceMethods(b, parentName, parentID,
+			location(input.Path, fset, fields.Pos(), fields.End()), semantic)
+	}
+}
+
+func addPromotedInterfaceMethods(b *parserapi.Builder, parentName, parentID string, loc graph.Location, semantic SemanticView) {
+	prefix := parentName + "."
+	var names []string
+	for name, function := range semantic.Functions {
+		if function.Promoted && strings.HasPrefix(name, prefix) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	for _, qualified := range names {
+		function := semantic.Functions[qualified]
+		positions := make([]string, 0, len(function.ErrorResults))
+		for _, result := range function.ErrorResults {
+			positions = append(positions, strconv.Itoa(result.Position))
+		}
+		properties := map[string]string{"promoted": "true", "error_evidence": "go/types"}
+		if len(positions) > 0 {
+			properties["returns_error"] = "true"
+			properties["error_result_positions"] = strings.Join(positions, ",")
+		}
+		nodeID := b.AddNode(graph.Node{Kind: graph.KindMethod, Name: graph.SimpleName(qualified),
+			QualifiedName: qualified, Location: loc, Properties: properties})
+		b.AddFact(parentID, graph.EdgeHasField, nodeID, "", "", loc, map[string]string{"promoted": "true"})
+		for _, failure := range semantic.Failures {
+			if failure.Function == qualified {
+				b.AddFact(nodeID, failure.Kind, "", failure.Target, failure.TargetKind,
+					failure.Location, cloneStringMap(failure.Properties))
 			}
 		}
 	}
