@@ -82,7 +82,15 @@ func TestHandlerResolutionReportsAmbiguousAndUnresolvedTargets(t *testing.T) {
 }
 
 func TestEndpointRepositoryFilterKeepsReferencedUnresolvedTargets(t *testing.T) {
-	service := query.NewTopology(newTopologyFixture())
+	repository := newTopologyFixture()
+	repository.add("orders", graph.Node{ID: "n:orders-delete-other", Kind: graph.KindFunction,
+		Name: "DeleteOther", QualifiedName: "orders.DeleteOther"})
+	repository.add("orders", graph.Node{ID: "n:external-other", Kind: graph.KindEndpoint,
+		Name: "DELETE /other", QualifiedName: "DELETE /other", External: true,
+		Properties: map[string]string{"unresolved": "true"}})
+	repository.edges = append(repository.edges, graph.Edge{ID: "e:request-other", FactID: "f:request-other",
+		FromID: "n:orders-delete-other", ToID: "n:external-other", Kind: graph.EdgeRequests})
+	service := query.NewTopology(repository)
 	result, err := service.Endpoints(context.Background(), query.TopologyOptions{
 		Repository: "client", Method: "DELETE", Limit: 20,
 	})
