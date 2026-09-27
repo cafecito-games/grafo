@@ -70,6 +70,6 @@ SELECT * FROM nodes
 WHERE kind = @kind
   AND external >= @min_external
   AND external <= @max_external
-  AND (lower(name) LIKE @name_pattern OR lower(qualified_name) LIKE @name_pattern)
+  AND (instr(lower(name), @name_fragment) > 0 OR instr(lower(qualified_name), @name_fragment) > 0)
 ORDER BY qualified_name, id
 LIMIT @max_results;

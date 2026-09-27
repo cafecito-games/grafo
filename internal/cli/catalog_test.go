@@ -149,6 +149,30 @@ func TestCatalogCommandsRejectUnsupportedFilters(t *testing.T) {
 	if code, _, stderr := execute(t, "data-usage", "missing_table", "--repo", root); code == 0 {
 		t.Fatalf("an unknown resource must fail: %s", stderr)
 	}
+	if code, _, stderr := execute(t, "data-resources", "--repo", root, "--kind", ","); code == 0 {
+		t.Fatalf("a kind list naming no kind must fail: %s", stderr)
+	}
+	if code, stdout, _ := execute(t, "data-resources", "--repo", root, "--name", "%", "--json"); code != 0 {
+		t.Fatalf("a literal name fragment must be accepted")
+	} else if !strings.Contains(stdout, `"resources": []`) {
+		t.Fatalf("a name fragment acted as a wildcard: %s", stdout)
+	}
+}
+
+func TestCatalogRefusesAMixedFreshnessFederation(t *testing.T) {
+	indexed := catalogFixture(t)
+	run(t, "index", indexed)
+	unindexed := catalogFixture(t)
+	code, stdout, stderr := execute(t, "data-resources", "--repos", indexed+","+unindexed, "--json")
+	if code == 0 {
+		t.Fatalf("a federation that cannot be refreshed must not answer: %s", stdout)
+	}
+	if stdout != "" {
+		t.Fatalf("a partial catalog was written before the failure: %s", stdout)
+	}
+	if !strings.Contains(stderr, "has no index") {
+		t.Fatalf("unexpected federation failure: %s", stderr)
+	}
 }
 
 func catalogFixture(t *testing.T) string {

@@ -632,12 +632,14 @@ func (r *Repository) ListNodesByKind(ctx context.Context, request graph.NodeList
 	if request.Limit > 0 {
 		limit = int64(request.Limit)
 	}
-	pattern := "%" + strings.ToLower(request.Name) + "%"
+	// The fragment is matched literally, so a name containing % or _ narrows
+	// the catalog instead of silently widening it.
+	fragment := strings.ToLower(request.Name)
 	result := []graph.ScopedNode{}
 	for _, kind := range request.Kinds {
 		rows, err := r.queries.ListNodesByKind(ctx, sqlcgen.ListNodesByKindParams{
 			Kind: string(kind), MinExternal: minExternal, MaxExternal: maxExternal,
-			NamePattern: pattern, MaxResults: limit,
+			NameFragment: fragment, MaxResults: limit,
 		})
 		if err != nil {
 			return nil, err

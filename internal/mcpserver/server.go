@@ -145,7 +145,7 @@ func (s *Service) getNode(ctx context.Context, _ *mcp.CallToolRequest, input Sel
 		return nil, NodeOutput{}, err
 	}
 	node, err := s.query.Resolve(ctx, input.Selector)
-	return nil, NodeOutput{Node: node}, err
+	return nil, NodeOutput{Node: node}, withCandidates(err)
 }
 
 type TraversalInput struct {
@@ -161,7 +161,7 @@ func (s *Service) getNeighbors(ctx context.Context, _ *mcp.CallToolRequest, inpu
 		return nil, query.Traversal{}, err
 	}
 	result, err := s.query.Neighborhood(ctx, input.Selector, input.Depth, query.Direction(input.Direction), edgeKinds(input.Relations), input.Limit)
-	return nil, result, err
+	return nil, result, withCandidates(err)
 }
 
 type PathInput struct {
@@ -177,7 +177,7 @@ func (s *Service) findPath(ctx context.Context, _ *mcp.CallToolRequest, input Pa
 		return nil, query.Path{}, err
 	}
 	result, err := s.query.ShortestPath(ctx, input.From, input.To, query.Direction(input.Direction), edgeKinds(input.Relations), input.Limit)
-	return nil, result, err
+	return nil, result, withCandidates(err)
 }
 
 func (s *Service) getCallers(ctx context.Context, _ *mcp.CallToolRequest, input TraversalInput) (*mcp.CallToolResult, query.Traversal, error) {
@@ -190,7 +190,7 @@ func (s *Service) getCallers(ctx context.Context, _ *mcp.CallToolRequest, input 
 	}
 	result, err := s.query.Neighborhood(ctx, input.Selector, depth, query.Incoming,
 		[]graph.EdgeKind{graph.EdgeCalls, graph.EdgeHandledBy}, input.Limit)
-	return nil, result, err
+	return nil, result, withCandidates(err)
 }
 
 func (s *Service) getCallees(ctx context.Context, _ *mcp.CallToolRequest, input TraversalInput) (*mcp.CallToolResult, query.Traversal, error) {
@@ -203,7 +203,7 @@ func (s *Service) getCallees(ctx context.Context, _ *mcp.CallToolRequest, input 
 	}
 	result, err := s.query.Neighborhood(ctx, input.Selector, depth, query.Outgoing,
 		[]graph.EdgeKind{graph.EdgeCalls, graph.EdgeHandledBy}, input.Limit)
-	return nil, result, err
+	return nil, result, withCandidates(err)
 }
 
 func (s *Service) getBlastRadius(ctx context.Context, _ *mcp.CallToolRequest, input TraversalInput) (*mcp.CallToolResult, query.Traversal, error) {
@@ -219,13 +219,13 @@ func (s *Service) getBlastRadius(ctx context.Context, _ *mcp.CallToolRequest, in
 			graph.EdgeImplements, graph.EdgeEmbeds, graph.EdgeReferences, graph.EdgeReads,
 			graph.EdgeWrites, graph.EdgeAssigns, graph.EdgeReturns, graph.EdgePasses,
 			graph.EdgeRequests, graph.EdgeDependsOn}, input.Limit)
-	return nil, result, err
+	return nil, result, withCandidates(err)
 }
 
 type CatalogInput struct {
 	Repository string `json:"repository,omitempty" jsonschema:"restrict results to one indexed repository by name"`
 	Name       string `json:"name,omitempty" jsonschema:"optional name or qualified-name fragment"`
-	Limit      int    `json:"limit,omitempty" jsonschema:"maximum entries; defaults to 100 and may not exceed 1000"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"maximum catalog entries, and separately the maximum evidence sites per relation; defaults to 100 and may not exceed 1000"`
 }
 
 func (i CatalogInput) options() query.CatalogOptions {
@@ -241,7 +241,11 @@ func (s *Service) listDataResources(ctx context.Context, _ *mcp.CallToolRequest,
 	if err := s.ready(ctx); err != nil {
 		return nil, query.DataResourceList{}, err
 	}
-	result, err := s.catalog.DataResources(ctx, nodeKinds(input.Kinds), input.options())
+	kinds, err := nodeKinds(input.Kinds)
+	if err != nil {
+		return nil, query.DataResourceList{}, err
+	}
+	result, err := s.catalog.DataResources(ctx, kinds, input.options())
 	return nil, result, err
 }
 
@@ -259,7 +263,9 @@ func (s *Service) getDataResourceUsage(ctx context.Context, _ *mcp.CallToolReque
 }
 
 // withCandidates names the ambiguous candidates in the error, because a tool
-// error carries no structured payload for a client to read them from.
+// error carries no structured payload for a client to read them from. Every
+// tool that resolves a selector uses it, so one ambiguous name behaves the same
+// way across the whole surface.
 func withCandidates(err error) error {
 	var ambiguous *query.AmbiguousError
 	if !errors.As(err, &ambiguous) {
@@ -340,14 +346,19 @@ func (s *Service) getIndexStatus(ctx context.Context, _ *mcp.CallToolRequest, _ 
 	return nil, StatusOutput{Projects: s.projects, IndexedAt: indexedAt, IndexedCommit: commit, Counts: counts}, nil
 }
 
-func nodeKinds(values []string) []graph.NodeKind {
+// nodeKinds rejects a list that names no usable kind. Degrading it to the
+// default would answer a malformed request with a full catalog.
+func nodeKinds(values []string) ([]graph.NodeKind, error) {
 	result := make([]graph.NodeKind, 0, len(values))
 	for _, value := range values {
 		if value = strings.TrimSpace(value); value != "" {
 			result = append(result, graph.NodeKind(value))
 		}
 	}
-	return result
+	if len(values) > 0 && len(result) == 0 {
+		return nil, fmt.Errorf("kinds contains no node kind")
+	}
+	return result, nil
 }
 
 func edgeKinds(values []string) []graph.EdgeKind {

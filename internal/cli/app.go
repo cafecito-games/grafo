@@ -576,7 +576,11 @@ func (a *App) dataResources(ctx context.Context, args parsedArguments) error {
 		return err
 	}
 	defer closeRepository()
-	result, err := catalog.DataResources(ctx, parseNodeKinds(args.values["kind"]), options)
+	kinds, err := parseNodeKinds(args.values["kind"])
+	if err != nil {
+		return err
+	}
+	result, err := catalog.DataResources(ctx, kinds, options)
 	if err != nil {
 		return err
 	}
@@ -746,9 +750,11 @@ func (a *App) printCatalogSummary(declared, unresolved int, noun string, truncat
 	fmt.Fprintln(a.stdout)
 }
 
-func parseNodeKinds(raw string) []graph.NodeKind {
+// parseNodeKinds rejects a --kind value that names no kind. Degrading it to the
+// default would answer a malformed request with a full catalog.
+func parseNodeKinds(raw string) ([]graph.NodeKind, error) {
 	if raw == "" {
-		return nil
+		return nil, nil
 	}
 	var result []graph.NodeKind
 	for _, value := range strings.Split(raw, ",") {
@@ -756,7 +762,10 @@ func parseNodeKinds(raw string) []graph.NodeKind {
 			result = append(result, graph.NodeKind(value))
 		}
 	}
-	return result
+	if len(result) == 0 {
+		return nil, fmt.Errorf("--kind must name at least one node kind")
+	}
+	return result, nil
 }
 
 func openExisting(ctx context.Context, root string) (indexer.Project, graph.Repository, error) {

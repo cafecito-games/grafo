@@ -85,6 +85,16 @@ func TestListNodesByKindEnumeratesExactKinds(t *testing.T) {
 		t.Fatalf("name filter is not case-insensitive: %#v", filtered)
 	}
 
+	literal, err := repository.ListNodesByKind(ctx, graph.NodeListQuery{
+		Kinds: graph.DataResourceKinds(), Name: "%", Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(literal) != 0 {
+		t.Fatalf("a name fragment acted as a wildcard: %#v", literal)
+	}
+
 	bounded, err := repository.ListNodesByKind(ctx, graph.NodeListQuery{
 		Kinds: []graph.NodeKind{graph.KindTable}, Visibility: graph.AllNodes, Limit: 1,
 	})

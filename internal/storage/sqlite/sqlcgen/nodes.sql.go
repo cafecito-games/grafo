@@ -204,17 +204,17 @@ SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line
 WHERE kind = ?1
   AND external >= ?2
   AND external <= ?3
-  AND (lower(name) LIKE ?4 OR lower(qualified_name) LIKE ?4)
+  AND (instr(lower(name), ?4) > 0 OR instr(lower(qualified_name), ?4) > 0)
 ORDER BY qualified_name, id
 LIMIT ?5
 `
 
 type ListNodesByKindParams struct {
-	Kind        string `json:"kind"`
-	MinExternal int64  `json:"min_external"`
-	MaxExternal int64  `json:"max_external"`
-	NamePattern string `json:"name_pattern"`
-	MaxResults  int64  `json:"max_results"`
+	Kind         string `json:"kind"`
+	MinExternal  int64  `json:"min_external"`
+	MaxExternal  int64  `json:"max_external"`
+	NameFragment string `json:"name_fragment"`
+	MaxResults   int64  `json:"max_results"`
 }
 
 func (q *Queries) ListNodesByKind(ctx context.Context, arg ListNodesByKindParams) ([]Node, error) {
@@ -222,7 +222,7 @@ func (q *Queries) ListNodesByKind(ctx context.Context, arg ListNodesByKindParams
 		arg.Kind,
 		arg.MinExternal,
 		arg.MaxExternal,
-		arg.NamePattern,
+		arg.NameFragment,
 		arg.MaxResults,
 	)
 	if err != nil {
