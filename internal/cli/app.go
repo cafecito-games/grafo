@@ -1423,11 +1423,12 @@ Usage:
                             [--max-matches 500] [--max-matches-per-file 50]
                             [--max-matches-per-pattern 200] [--max-file-size 1048576]
   grafo path <from> <to> [--direction outgoing] [--relation calls,...]
-  grafo data-resources [--kind table,view] [--name text] [--limit 100] [--json]
-  grafo data-usage <table-view-or-id> [--limit 100] [--json]
-  grafo config-keys [--name text] [--limit 100] [--json]
-  grafo events [--name text] [--limit 100] [--json]
-  grafo orphaned-events [--name text] [--limit 100] [--json]
+  grafo data-resources [--kind table,view] [--name text] [--repo-name name]
+                       [--limit 100] [--json]
+  grafo data-usage <table-view-or-id> [--repo-name name] [--limit 100] [--json]
+  grafo config-keys [--name text] [--repo-name name] [--limit 100] [--json]
+  grafo events [--name text] [--repo-name name] [--limit 100] [--json]
+  grafo orphaned-events [--name text] [--repo-name name] [--limit 100] [--json]
   grafo version
 
 Options may appear before or after positional arguments. All query commands
