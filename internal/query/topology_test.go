@@ -81,6 +81,22 @@ func TestHandlerResolutionReportsAmbiguousAndUnresolvedTargets(t *testing.T) {
 	}
 }
 
+func TestEndpointRepositoryFilterKeepsReferencedUnresolvedTargets(t *testing.T) {
+	service := query.NewTopology(newTopologyFixture())
+	result, err := service.Endpoints(context.Background(), query.TopologyOptions{
+		Repository: "client", Method: "DELETE", Limit: 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Endpoints) != 0 || len(result.Unresolved) != 1 {
+		t.Fatalf("repository filter hid its unresolved endpoint reference: %#v", result)
+	}
+	if result.Unresolved[0].Route != "/missing" || result.Unresolved[0].Repository != "" {
+		t.Fatalf("unresolved endpoint gained a false home or wrong route: %#v", result.Unresolved[0])
+	}
+}
+
 func TestOutboundRequestsResolveExactEndpointsAndFailClosedOnAmbiguity(t *testing.T) {
 	service := query.NewTopology(newTopologyFixture())
 	result, err := service.OutboundRequests(context.Background(), query.TopologyOptions{Limit: 20})
@@ -202,6 +218,9 @@ func TestTopologyBoundsAndMermaidAreStableAndEscaped(t *testing.T) {
 	}
 	if _, err := service.ServiceTopology(context.Background(), query.TopologyOptions{Direction: "sideways"}); err == nil {
 		t.Fatal("an unsupported direction must be rejected")
+	}
+	if _, err := service.ServiceTopology(context.Background(), query.TopologyOptions{Direction: query.Outgoing}); err == nil {
+		t.Fatal("a directional topology without a repository must be rejected")
 	}
 	if _, err := service.Endpoints(context.Background(), query.TopologyOptions{Direction: query.Incoming}); err == nil {
 		t.Fatal("an inapplicable direction must not be accepted and ignored")

@@ -476,7 +476,7 @@ keeping the graph evidence authoritative:
 grafo endpoints --method GET --route /orders --json
 grafo outbound-requests --repo-name checkout --json
 grafo find-handler --event order.placed --json
-grafo service-topology --direction outgoing --json
+grafo service-topology --repo-name checkout --direction outgoing --json
 grafo service-topology --mermaid
 ```
 

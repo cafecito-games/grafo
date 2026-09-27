@@ -170,6 +170,7 @@ func (t *Topology) normalize(ctx context.Context, options TopologyOptions) (Topo
 	options.Method = strings.ToUpper(strings.TrimSpace(options.Method))
 	options.Route = strings.TrimSpace(options.Route)
 	options.Event = strings.TrimSpace(options.Event)
+	options.Direction = Direction(strings.ToLower(strings.TrimSpace(string(options.Direction))))
 	if options.Direction == "" {
 		options.Direction = Both
 	}
@@ -241,6 +242,21 @@ func endpointMatches(node graph.Node, options TopologyOptions) bool {
 		return false
 	}
 	return options.Route == "" || strings.Contains(strings.ToLower(route), strings.ToLower(options.Route))
+}
+
+func (t *Topology) endpointReferencedByRepository(ctx context.Context, endpointID, repository string,
+	owners map[string]string,
+) (bool, error) {
+	edges, err := t.repository.EdgesTo(ctx, endpointID)
+	if err != nil {
+		return false, err
+	}
+	for _, edge := range edges {
+		if edge.Kind == graph.EdgeRequests && owners[edge.FromID] == repository {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func eventMatches(node graph.Node, event string) bool {
@@ -325,6 +341,13 @@ func (t *Topology) Endpoints(ctx context.Context, options TopologyOptions) (Endp
 	if options.Event != "" {
 		return EndpointList{}, fmt.Errorf("an event filter does not apply to endpoint listings")
 	}
+	var owners map[string]string
+	if options.Repository != "" {
+		owners, err = t.ownership(ctx)
+		if err != nil {
+			return EndpointList{}, err
+		}
+	}
 	result := EndpointList{Endpoints: []Endpoint{}, Unresolved: []Endpoint{}}
 	for _, visibility := range []graph.NodeVisibility{graph.LocalNodes, graph.ExternalNodes} {
 		nodes, err := t.scoped(ctx, []graph.NodeKind{graph.KindEndpoint}, visibility)
@@ -332,8 +355,18 @@ func (t *Topology) Endpoints(ctx context.Context, options TopologyOptions) (Endp
 			return EndpointList{}, err
 		}
 		for _, scoped := range nodes {
-			if options.Repository != "" && scoped.Repository != options.Repository {
-				continue
+			if options.Repository != "" {
+				if scoped.Node.External {
+					referenced, err := t.endpointReferencedByRepository(ctx, scoped.Node.ID, options.Repository, owners)
+					if err != nil {
+						return EndpointList{}, err
+					}
+					if !referenced {
+						continue
+					}
+				} else if scoped.Repository != options.Repository {
+					continue
+				}
 			}
 			if !endpointMatches(scoped.Node, options) {
 				continue
@@ -887,6 +920,9 @@ func (t *Topology) ServiceTopology(ctx context.Context, options TopologyOptions)
 	options, limit, err := t.normalize(ctx, options)
 	if err != nil {
 		return ServiceTopology{}, err
+	}
+	if options.Repository == "" && options.Direction != Both {
+		return ServiceTopology{}, fmt.Errorf("a %s direction filter requires a repository", options.Direction)
 	}
 	options.Limit = limit
 	requestOptions := options

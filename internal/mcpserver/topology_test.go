@@ -72,5 +72,6 @@ func TestServerExposesEndpointAndServiceTopologyTools(t *testing.T) {
 	}
 
 	callExpectingError(t, session, "get_service_topology", map[string]any{"direction": "sideways"})
+	callExpectingError(t, session, "get_service_topology", map[string]any{"direction": "outgoing"})
 	callExpectingError(t, session, "find_handler", map[string]any{"route": "/orders", "event": "order.placed"})
 }

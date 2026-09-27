@@ -52,6 +52,9 @@ func TestTopologyCommandsValidateFiltersAndBounds(t *testing.T) {
 	if code, _, stderr := execute(t, "service-topology", "--repo", root, "--direction", "sideways"); code == 0 {
 		t.Fatalf("invalid direction was accepted: %s", stderr)
 	}
+	if code, _, stderr := execute(t, "service-topology", "--repo", root, "--direction", "outgoing"); code == 0 {
+		t.Fatalf("direction without --repo-name was accepted: %s", stderr)
+	}
 	if code, _, stderr := execute(t, "endpoints", "--repo", root, "--event", "order.placed"); code == 0 {
 		t.Fatalf("an inert endpoint event filter was accepted: %s", stderr)
 	}
