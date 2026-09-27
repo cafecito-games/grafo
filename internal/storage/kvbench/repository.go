@@ -16,6 +16,7 @@ import (
 )
 
 const defaultReconciliationBatchSize = 10_000
+const defaultNodeMatchLimit = 25
 
 type Options struct {
 	ReconciliationBatchSize int
@@ -536,6 +537,64 @@ func (r *Repository) SearchNodes(ctx context.Context, term string, limit int) ([
 		nodes = nodes[:limit]
 	}
 	return nodes, err
+}
+
+func (r *Repository) MatchNodes(ctx context.Context, request graph.NodeMatchQuery) (graph.NodeMatchGroup, error) {
+	selector := strings.TrimSpace(request.Selector)
+	if selector == "" {
+		return graph.NodeMatchGroup{}, nil
+	}
+	limit := request.Limit
+	if limit <= 0 {
+		limit = defaultNodeMatchLimit
+	}
+	scopes := []struct {
+		level    graph.NodeMatchLevel
+		external bool
+	}{
+		{graph.MatchQualifiedName, false},
+		{graph.MatchQualifiedName, true},
+		{graph.MatchName, false},
+		{graph.MatchName, true},
+		{graph.MatchSubstring, false},
+		{graph.MatchSubstring, true},
+	}
+	var fallback graph.NodeMatchGroup
+	for _, scope := range scopes {
+		group := graph.NodeMatchGroup{Level: scope.level, External: scope.external}
+		err := r.store.view(ctx, func(tx transaction) error {
+			return tx.scan(prefix("node"), func(_ []byte, value []byte) error {
+				node, err := decodeNode(value)
+				if err != nil {
+					return err
+				}
+				if node.External != scope.external || request.Kind != "" && node.Kind != request.Kind ||
+					!graph.LooseMatch(scope.level, selector, node) {
+					return nil
+				}
+				group.Total++
+				if graph.StrictMatch(scope.level, selector, node) {
+					group.Strict++
+				}
+				group.Nodes = append(group.Nodes, node)
+				return nil
+			})
+		})
+		if err != nil {
+			return graph.NodeMatchGroup{}, err
+		}
+		graph.SortNodeMatches(scope.level, selector, group.Nodes)
+		if len(group.Nodes) > limit {
+			group.Nodes = group.Nodes[:limit]
+		}
+		if group.Strict > 0 {
+			return group, nil
+		}
+		if group.StrongerThan(fallback) {
+			fallback = group
+		}
+	}
+	return fallback, nil
 }
 
 func (r *Repository) Node(ctx context.Context, id string) (graph.Node, error) {

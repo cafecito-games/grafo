@@ -208,6 +208,23 @@ func assertEquivalent(t *testing.T, control, candidate graph.Repository) {
 			t.Fatalf("search %q differs:\ncontrol=%#v\ncandidate=%#v", term, controlNodes, candidateNodes)
 		}
 	}
+	for _, request := range []graph.NodeMatchQuery{
+		{Selector: "pkg.A"},
+		{Selector: "Duplicate", Kind: graph.KindFunction},
+		{Selector: "missing", Limit: 1},
+	} {
+		controlMatch, err := control.MatchNodes(ctx, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		candidateMatch, err := candidate.MatchNodes(ctx, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(controlMatch, candidateMatch) {
+			t.Fatalf("match %#v differs:\ncontrol=%#v\ncandidate=%#v", request, controlMatch, candidateMatch)
+		}
+	}
 	a := testNode("a", graph.KindFunction, "pkg.A", "one.go")
 	controlEdges, err := control.EdgesFrom(ctx, a.ID)
 	if err != nil {

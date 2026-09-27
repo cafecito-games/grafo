@@ -310,6 +310,18 @@ func semanticProbe(ctx context.Context, repository graph.Repository) (string, er
 	if err != nil {
 		return "", err
 	}
+	matches := make([]graph.NodeMatchGroup, 0, 3)
+	for _, request := range []graph.NodeMatchQuery{
+		{Selector: "probe.Source"},
+		{Selector: "Duplicate", Kind: graph.KindFunction},
+		{Selector: "missing", Limit: 1},
+	} {
+		match, err := repository.MatchNodes(ctx, request)
+		if err != nil {
+			return "", err
+		}
+		matches = append(matches, match)
+	}
 	counts, err := repository.Counts(ctx)
 	if err != nil {
 		return "", err
@@ -317,8 +329,9 @@ func semanticProbe(ctx context.Context, repository graph.Repository) (string, er
 	payload, err := json.Marshal(struct {
 		Before, After []graph.Edge
 		Search        []graph.Node
+		Matches       []graph.NodeMatchGroup
 		Counts        graph.Counts
-	}{before, after, search, counts})
+	}{before, after, search, matches, counts})
 	if err != nil {
 		return "", err
 	}
