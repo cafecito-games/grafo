@@ -202,26 +202,25 @@ func strictMatches(group graph.NodeMatchGroup, selector string) []graph.Node {
 	return result
 }
 
-// preferDeclarations drops candidates that are sub-parts of another candidate:
-// a parameter, local variable, or field whose qualified name extends that of a
-// symbol also in the set. Those nodes carry their declaring symbol's qualified
-// name as a prefix, so matching would otherwise make every local a rival
-// candidate for the selector that names its parent, and the caller named the
-// parent rather than the child.
+// preferDeclarations drops candidates that are provably sub-parts of another
+// candidate, so a selector naming a declaration is not made ambiguous by that
+// declaration's own parameters, local variables, fields, or columns. The caller
+// named the parent rather than the child.
 //
-// A nested qualified name alone is never enough: only graph.IsDeclarationMember
-// kinds may be suppressed. Go allows "type Charge struct{}" beside
-// "func (Charge) Charge()", whose qualified names are pkg.Charge and
-// pkg.Charge.Charge; both are declarations, so that selector must stay ambiguous
-// instead of resolving to the outer one. The input is returned unchanged when the
-// rule would leave nothing.
+// Suppression is structural, and deliberately so: a member kind is only a hint,
+// because a parser may use one for something that is a declaration in its own
+// right - Godot models scene nodes as hierarchical graph.KindVariable nodes. The
+// three conditions in isSubPartOfCandidate enforce the suppression invariant
+// documented above graph.memberKinds, whose point is that no qualified-name
+// convention, present or future, can cause a real declaration to be suppressed.
+// The input is returned unchanged when the rule would leave nothing.
 func preferDeclarations(nodes []graph.Node) []graph.Node {
 	if len(nodes) < 2 {
 		return nodes
 	}
 	result := make([]graph.Node, 0, len(nodes))
-	for _, node := range nodes {
-		if !isMemberOfAny(node, nodes) {
+	for index, node := range nodes {
+		if !isSubPartOfCandidate(index, nodes) {
 			result = append(result, node)
 		}
 	}
@@ -231,21 +230,47 @@ func preferDeclarations(nodes []graph.Node) []graph.Node {
 	return result
 }
 
-// isMemberOfAny reports whether node is a declaration member nested inside
-// another candidate's qualified name.
-func isMemberOfAny(node graph.Node, nodes []graph.Node) bool {
+// isSubPartOfCandidate reports whether nodes[index] is a sub-part of another
+// candidate rather than a declaration of its own. All three conditions of the
+// suppression invariant must hold: the candidate's kind is one parsers use for a
+// sub-part, nothing else in the set is nested inside it, and the nearest candidate
+// containing it is a real declaration rather than another member.
+//
+// The last two conditions are what keep the rule honest for hierarchical member
+// kinds. A Godot scene node "scenes/main:Player" containing
+// "scenes/main:Player/Player" is a container, not a sub-part, so it survives by
+// the second condition; the child survives by the third, because its container is
+// itself a KindVariable and therefore not evidence of a declaration. The selector
+// stays ambiguous, which is the whole point.
+func isSubPartOfCandidate(index int, nodes []graph.Node) bool {
+	node := nodes[index]
 	if !graph.IsDeclarationMember(node.Kind) {
 		return false
 	}
-	for _, other := range nodes {
-		if other.ID == node.ID {
+	container := -1
+	for other := range nodes {
+		if other == index {
 			continue
 		}
-		if extendsQualifiedName(node.QualifiedName, other.QualifiedName) {
-			return true
+		if extendsQualifiedName(nodes[other].QualifiedName, node.QualifiedName) {
+			// Something in the match set is nested inside this candidate, so it is
+			// a container and suppressing it would hide that nested declaration's
+			// parent from the ambiguity report.
+			return false
+		}
+		if !extendsQualifiedName(node.QualifiedName, nodes[other].QualifiedName) {
+			continue
+		}
+		// Keep the nearest container, which is the longest qualified name this
+		// candidate extends.
+		if container < 0 || len(nodes[other].QualifiedName) > len(nodes[container].QualifiedName) {
+			container = other
 		}
 	}
-	return false
+	if container < 0 {
+		return false
+	}
+	return !graph.IsDeclarationMember(nodes[container].Kind)
 }
 
 // extendsQualifiedName reports whether child continues parent past a separator.

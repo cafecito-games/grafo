@@ -50,20 +50,47 @@ type NodeMatchQuery struct {
 	Limit    int      `json:"limit,omitempty"`
 }
 
-// memberKinds are the node kinds that exist only as part of a declaration: a
-// function's parameters and local variables, a type's fields, and a table's
-// columns. Every parser builds their qualified name by extending the declaring
+// memberKinds are the node kinds a parser uses for a sub-part of a declaration:
+// a function's parameters and local variables, a type's fields, and a table's
+// columns. Parsers build their qualified name by extending the declaring
 // symbol's, so a selector naming the parent also matches them, and selector
 // resolution may drop them in favour of that parent.
 //
-// The rule for classifying a kind, for whoever extends the vocabulary: a kind
-// belongs here only if both of these hold.
+// Membership is necessary but never sufficient. A kind is only a hint about the
+// usual role of a node, and at least one parser overloads a member kind for
+// something that is a declaration in its own right:
+// internal/parser/godot/textresource.go declares scene nodes and sub-resources as
+// KindVariable with hierarchical qualified names ("scenes/main:Player",
+// "scenes/main:Player/Button", "scenes/main#Style_button"), and GDScript
+// references those by name; it also declares properties as KindField nested under
+// those scene nodes. So the decision to suppress a candidate is structural, not
+// kind-based alone - see the invariant below and preferDeclarations in
+// internal/query.
+//
+// THE SUPPRESSION INVARIANT, which no qualified-name convention may break: a
+// candidate is dropped only when all three hold.
+//
+//  1. Its kind is in memberKinds.
+//  2. The nearest candidate whose qualified name it extends is NOT itself a
+//     member kind, so that container really is a declaration and the candidate
+//     really is a part of it.
+//  3. No other candidate is nested inside it, so it is a leaf of the match set
+//     rather than a container of one.
+//
+// Conditions 2 and 3 are what make the rule safe: a node that contains another
+// candidate is a container rather than a sub-part, and a node whose container is
+// itself a member belongs to a hierarchy of peers rather than to a declaration.
+// Both stay in the ambiguity set, so no naming convention - present or future -
+// can cause a real declaration to be suppressed.
+//
+// The rule for adding a kind here, for whoever extends the vocabulary: include it
+// only if both of these hold.
 //
 //  1. Every parser that emits it builds its qualified name by extending the
-//     declaring symbol's. Check the emitting parser rather than reasoning from
-//     the name. KindIndex is the counter-example: internal/parser/sql/sqlite and
-//     .../postgres give an index its own top-level qualified name, not
-//     "table.index", so it never nests in the first place.
+//     declaring symbol's. Check the emitting parser rather than reasoning from the
+//     name, and check every parser, not a representative one. KindIndex is the
+//     counter-example: internal/parser/sql/sqlite and .../postgres give an index
+//     its own top-level qualified name, not "table.index", so it never nests.
 //  2. It cannot be referenced on its own bare name, only through its parent.
 //     KindDocSection and KindConfigKey are the counter-examples: markdown links
 //     resolve "path#anchor" as a target and config references resolve a bare key,
@@ -72,9 +99,9 @@ type NodeMatchQuery struct {
 //     connected and emitted by their bare name.
 //
 // When in doubt, leave the kind out. A wrongly excluded kind costs an ambiguity
-// error, which a caller resolves with a qualified name or a kind filter; a
-// wrongly included one silently suppresses a real declaration, which is the
-// defect this resolution path exists to prevent.
+// error, which a caller resolves with a qualified name or a kind filter; a wrongly
+// included one relies entirely on the structural conditions above to stay
+// correct.
 //
 // Every other kind is a declaration in its own right even when its qualified name
 // nests under another candidate's. Go allows "type Charge struct{}" beside
@@ -88,10 +115,10 @@ var memberKinds = map[NodeKind]bool{
 	KindColumn:    true,
 }
 
-// IsDeclarationMember reports whether kind only ever exists as part of a
-// declaration. Only such a node may be treated as a sub-part of the symbol whose
-// qualified name it extends; anything else is a rival declaration. See
-// memberKinds for the rule that decides which bucket a kind belongs in.
+// IsDeclarationMember reports whether kind is one a parser uses for a sub-part of
+// a declaration. It is a necessary condition for suppressing a candidate during
+// resolution, never a sufficient one; see the suppression invariant above
+// memberKinds.
 func IsDeclarationMember(kind NodeKind) bool { return memberKinds[kind] }
 
 // NodeMatchGroup is the complete evidence for a selector at one level.

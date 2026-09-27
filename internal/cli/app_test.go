@@ -386,3 +386,47 @@ func TestShowPrefersTableOverItsOwnColumn(t *testing.T) {
 		t.Fatalf("expected the column, got:\n%s", stdout)
 	}
 }
+
+// TestShowReportsAmbiguousSceneNodeHierarchy is the Godot half of the suppression
+// invariant, end to end through the real .tscn parser. Scene nodes are modelled as
+// hierarchical graph.KindVariable nodes, so a child sharing its parent's name
+// produces two equally strong exact-name matches. Both are declarations GDScript
+// can reference by name, so the selector must be ambiguous rather than silently
+// resolving to the parent.
+func TestShowReportsAmbiguousSceneNodeHierarchy(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "scenes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scene := "[gd_scene format=3]\n\n[node name=\"Root\" type=\"Node2D\"]\n\n" +
+		"[node name=\"Player\" type=\"Node2D\" parent=\".\"]\n\n" +
+		"[node name=\"Player\" type=\"Sprite2D\" parent=\"Player\"]\n"
+	if err := os.WriteFile(filepath.Join(root, "scenes", "main.tscn"), []byte(scene), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := run(t, "index", root); code != 0 {
+		t.Fatalf("index exited with %d", code)
+	}
+
+	stdout, stderr, code := output(t, "show", "Player", "--repo", root)
+	if code == 0 {
+		t.Fatalf("a child scene node sharing its parent's name must not resolve silently:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "matches 2 nodes by name") {
+		t.Fatalf("expected both scene nodes to be reported:\n%s", stderr)
+	}
+	for _, qualified := range []string{"scenes/main:Root/Player", "scenes/main:Root/Player/Player"} {
+		if !strings.Contains(stdout, qualified) {
+			t.Fatalf("candidate %s is missing:\n%s", qualified, stdout)
+		}
+	}
+
+	// Each node stays reachable by its own qualified name.
+	stdout, stderr, code = output(t, "show", "scenes/main:Root/Player/Player", "--repo", root)
+	if code != 0 {
+		t.Fatalf("a scene node's qualified name must resolve, got %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "scenes/main:Root/Player/Player") {
+		t.Fatalf("expected the child scene node:\n%s", stdout)
+	}
+}

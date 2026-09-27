@@ -373,8 +373,9 @@ func exactSearchNodes() []graph.Node {
 // TestResolveSuppressesOnlyDeclarationMembers is the counterpart to
 // TestResolvePrefersDeclarationOverItsOwnMembers: a nested qualified name alone
 // must never suppress a candidate, because distinct declarations can legitimately
-// nest. Kind is the evidence for "sub-part of a declaration", not the string
-// prefix.
+// nest - and neither may a member kind alone, because a parser may use one for a
+// hierarchy of real declarations. The cases below cover all three conditions of
+// the suppression invariant documented above graph.memberKinds.
 func TestResolveSuppressesOnlyDeclarationMembers(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -459,6 +460,74 @@ func TestResolveSuppressesOnlyDeclarationMembers(t *testing.T) {
 			},
 			selector: "charge",
 			total:    2,
+		},
+		{
+			// internal/parser/godot models scene nodes as hierarchical
+			// graph.KindVariable nodes, so a member kind can legitimately contain
+			// another member. A child scene node sharing its parent's name is two
+			// declarations, not a declaration and its sub-part: the container is
+			// not a sub-part of anything, and the child's container is itself a
+			// member, so neither may be suppressed.
+			name: "a child scene node sharing its parent's name stays ambiguous",
+			nodes: []graph.Node{
+				resolutionNode(graph.KindVariable, "Player", "scenes/main:Root/Player"),
+				resolutionNode(graph.KindVariable, "Player", "scenes/main:Root/Player/Player"),
+			},
+			selector: "Player",
+			total:    2,
+		},
+		{
+			// A deeper hierarchy of the same shape: no member in a chain of members
+			// may be suppressed, however the parser spells the nesting.
+			name: "a scene node hierarchy several levels deep stays ambiguous",
+			nodes: []graph.Node{
+				resolutionNode(graph.KindVariable, "Player", "scenes/main:Player"),
+				resolutionNode(graph.KindVariable, "Player", "scenes/main:Player/Player"),
+				resolutionNode(graph.KindVariable, "Player", "scenes/main:Player/Player/Player"),
+			},
+			selector: "Player",
+			total:    3,
+		},
+		{
+			// A Godot property is a KindField nested under a scene node, which is a
+			// KindVariable. The container is a member, so the field is a peer in a
+			// hierarchy rather than a sub-part of a declaration.
+			name: "a scene node property is not suppressed by its scene node",
+			nodes: []graph.Node{
+				resolutionNode(graph.KindVariable, "script", "scenes/main:script"),
+				resolutionNode(graph.KindField, "script", "scenes/main:script.script"),
+			},
+			selector: "script",
+			total:    2,
+		},
+		{
+			// A local shadowing a parameter of the same name: the local's qualified
+			// name extends the parameter's, so neither is a sub-part of a
+			// declaration and both are reported. They really are two symbols, and
+			// erring towards an ambiguity error is the safe direction of the
+			// suppression invariant.
+			name: "a local shadowing a parameter of the same name stays ambiguous",
+			nodes: []graph.Node{
+				resolutionNode(graph.KindParameter, "handle", "pkg.serve.handle"),
+				resolutionNode(graph.KindVariable, "handle", "pkg.serve.handle@12"),
+			},
+			selector: "handle",
+			total:    2,
+		},
+		{
+			// Suppression is not over-broad: a declaration with several members of
+			// distinct names - the shape every language parser actually produces -
+			// still resolves to the declaration.
+			name: "a declaration with several distinct members still resolves",
+			nodes: []graph.Node{
+				resolutionNode(graph.KindMethod, "Impact", "pkg.Service.Impact"),
+				resolutionNode(graph.KindParameter, "ctx", "pkg.Service.Impact.ctx"),
+				resolutionNode(graph.KindParameter, "options", "pkg.Service.Impact.options"),
+				resolutionNode(graph.KindVariable, "err", "pkg.Service.Impact.err@185"),
+				resolutionNode(graph.KindVariable, "report", "pkg.Service.Impact.report@200"),
+			},
+			selector: "Service.Impact",
+			resolves: "pkg.Service.Impact",
 		},
 	}
 

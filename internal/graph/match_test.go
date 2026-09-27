@@ -11,11 +11,17 @@ import (
 // rather than silently changing how selectors resolve. A kind is a declaration
 // member only when every parser builds its qualified name by extending the
 // declaring symbol's AND it cannot be referenced on its own bare name; see the
-// memberKinds comment in match.go for the reasoning behind each ruling.
+// memberKinds comment in match.go for the reasoning behind each ruling, and for why
+// a member ruling alone never decides that a candidate may be suppressed.
 func TestIsDeclarationMemberClassifiesTheWholeVocabulary(t *testing.T) {
 	members := map[graph.NodeKind]bool{
-		// A function's parameters and local variables, a type's fields, and a
-		// table's columns. Each is reachable only through its declaring symbol.
+		// A function's parameters, a type's fields, a table's columns, and local
+		// variables. Membership is necessary but not sufficient for suppression:
+		// internal/parser/godot overloads KindVariable for hierarchical scene nodes
+		// and sub-resources, and KindField for their properties, both of which are
+		// declarations GDScript references by name. The structural conditions in
+		// query.isSubPartOfCandidate are what keep those safe - see the suppression
+		// invariant above memberKinds.
 		graph.KindParameter: true,
 		graph.KindVariable:  true,
 		graph.KindField:     true,
