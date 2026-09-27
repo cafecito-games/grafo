@@ -95,6 +95,31 @@ build-tag files record the active context without emitting declarations.
 `implements` comparisons are bounded to interfaces declared in loaded workspace
 packages; dependency and standard-library interfaces remain external facts.
 
+## Failure flow
+
+`internal/graph` owns the versioned failure vocabulary: `returns_error` for a
+callable's typed result contract, `propagates_error` and `wraps_error` for
+actual exits, `handles_error` for consuming conditional actions, and `panics`,
+`recovers`, and `defers` for abrupt exits and cleanup. Recognition details such
+as return, join, comparison, switch, and recovery are edge properties, so the
+vocabulary remains language-neutral while Go is its first producer.
+
+The Go semantic loader reduces `go/types` objects and result tuples into compact
+per-file failure evidence before releasing the package graph. One extractor owns
+signature result positions, sentinel and named error identity, call origins,
+standard-library wrapping/checking forms, and conservative handler recognition.
+Syntax fallback emits only structural defer statements and unshadowed builtins;
+unknown identities and dynamic panic payloads remain source-scoped external
+boundaries. Every fact keeps location, recognition form, type/object evidence,
+and conditional or unresolved state.
+
+`internal/query.FailureFlow` groups those stored facts without reading source:
+typed error declarations, escaping failures, handlers, panics, recoveries, and
+deferred cleanup remain separate. It reads both edge directions, so selecting a
+callable explains its behavior while selecting an error identity or callee shows
+which functions return, propagate, or handle it. The CLI `failure-flow` command
+and MCP `get_failure_flow` tool are adapters over that same report.
+
 ## Federation
 
 Every declaration ID includes its repository identity. A federation opens the

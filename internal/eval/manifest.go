@@ -374,6 +374,8 @@ var validNodeKinds = makeSet(graph.NodeKinds())
 
 var validEdgeKinds = makeSet([]graph.EdgeKind{
 	graph.EdgeContains, graph.EdgeDeclares, graph.EdgeImports, graph.EdgeExports, graph.EdgeCalls, graph.EdgeEmbeds,
+	graph.EdgeReturnsError, graph.EdgePropagatesError, graph.EdgeHandlesError, graph.EdgeWrapsError,
+	graph.EdgePanics, graph.EdgeRecovers, graph.EdgeDefers,
 	graph.EdgeExtends, graph.EdgeImplements, graph.EdgeReadsConfig, graph.EdgeDefines, graph.EdgeExposes,
 	graph.EdgeHandledBy, graph.EdgePublishes, graph.EdgeSubscribes, graph.EdgeReferences, graph.EdgeReads,
 	graph.EdgeWrites, graph.EdgeHasField, graph.EdgeAssigns, graph.EdgeReturns, graph.EdgePasses,

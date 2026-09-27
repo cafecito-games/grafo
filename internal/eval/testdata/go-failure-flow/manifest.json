@@ -1,0 +1,979 @@
+{
+  "schema_version": 1,
+  "case_id": "go-failure-flow",
+  "repositories": [
+    {
+      "id": "failures",
+      "path": "repos/failures"
+    }
+  ],
+  "expect": {
+    "nodes": [
+      {
+        "repo": "failures",
+        "kind": "external",
+        "qualified_name": "builtin.panic",
+        "external": true
+      },
+      {
+        "repo": "failures",
+        "kind": "external",
+        "qualified_name": "builtin.recover",
+        "external": true
+      },
+      {
+        "repo": "failures",
+        "kind": "external",
+        "qualified_name": "errors.Is",
+        "external": true
+      },
+      {
+        "repo": "failures",
+        "kind": "external",
+        "qualified_name": "fmt.Errorf",
+        "external": true
+      },
+      {
+        "repo": "failures",
+        "kind": "external",
+        "qualified_name": "func() { _ = recover() }",
+        "external": true
+      },
+      {
+        "repo": "failures",
+        "kind": "external",
+        "qualified_name": "log.Print",
+        "external": true
+      },
+      {
+        "repo": "failures",
+        "kind": "external",
+        "qualified_name": "unresolved:defer@failures.go:34:2",
+        "external": true
+      },
+      {
+        "repo": "failures",
+        "kind": "external",
+        "qualified_name": "unresolved:panic@failures.go:35:2",
+        "external": true
+      },
+      {
+        "repo": "failures",
+        "kind": "file",
+        "qualified_name": "failures.go"
+      },
+      {
+        "repo": "failures",
+        "kind": "file",
+        "qualified_name": "go.mod"
+      },
+      {
+        "repo": "failures",
+        "kind": "function",
+        "qualified_name": "example.com/failures.Guard"
+      },
+      {
+        "repo": "failures",
+        "kind": "function",
+        "qualified_name": "example.com/failures.Handle"
+      },
+      {
+        "repo": "failures",
+        "kind": "function",
+        "qualified_name": "example.com/failures.Load"
+      },
+      {
+        "repo": "failures",
+        "kind": "function",
+        "qualified_name": "example.com/failures.Run"
+      },
+      {
+        "repo": "failures",
+        "kind": "interface",
+        "qualified_name": "builtin.error",
+        "external": true
+      },
+      {
+        "repo": "failures",
+        "kind": "method",
+        "qualified_name": "example.com/failures.Problem.Error"
+      },
+      {
+        "repo": "failures",
+        "kind": "module",
+        "qualified_name": "errors",
+        "external": true
+      },
+      {
+        "repo": "failures",
+        "kind": "module",
+        "qualified_name": "example.com/failures"
+      },
+      {
+        "repo": "failures",
+        "kind": "module",
+        "qualified_name": "fmt",
+        "external": true
+      },
+      {
+        "repo": "failures",
+        "kind": "module",
+        "qualified_name": "log",
+        "external": true
+      },
+      {
+        "repo": "failures",
+        "kind": "parameter",
+        "qualified_name": "example.com/failures.Guard.value"
+      },
+      {
+        "repo": "failures",
+        "kind": "repository",
+        "qualified_name": "failures"
+      },
+      {
+        "repo": "failures",
+        "kind": "type",
+        "qualified_name": "example.com/failures.Problem"
+      },
+      {
+        "repo": "failures",
+        "kind": "variable",
+        "qualified_name": "example.com/failures.ErrMissing"
+      },
+      {
+        "repo": "failures",
+        "kind": "variable",
+        "qualified_name": "example.com/failures.Handle.err@26"
+      },
+      {
+        "repo": "failures",
+        "kind": "variable",
+        "qualified_name": "example.com/failures.Run.err@18"
+      }
+    ],
+    "edges": [
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "file",
+          "qualified_name": "failures.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Guard"
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 33,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "file",
+          "qualified_name": "failures.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Handle"
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 25,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "file",
+          "qualified_name": "failures.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Load"
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 15,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "file",
+          "qualified_name": "failures.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Run"
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 17,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "file",
+          "qualified_name": "failures.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "failures",
+          "kind": "method",
+          "qualified_name": "example.com/failures.Problem.Error"
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 13,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "file",
+          "qualified_name": "failures.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "failures",
+          "kind": "type",
+          "qualified_name": "example.com/failures.Problem"
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 11,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "file",
+          "qualified_name": "failures.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "failures",
+          "kind": "variable",
+          "qualified_name": "example.com/failures.ErrMissing"
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 9,
+          "column": 5
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "file",
+          "qualified_name": "failures.go"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "failures",
+          "kind": "module",
+          "qualified_name": "errors",
+          "external": true
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 4,
+          "column": 2
+        },
+        "properties": {
+          "alias": "errors"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "file",
+          "qualified_name": "failures.go"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "failures",
+          "kind": "module",
+          "qualified_name": "fmt",
+          "external": true
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 5,
+          "column": 2
+        },
+        "properties": {
+          "alias": "fmt"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "file",
+          "qualified_name": "failures.go"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "failures",
+          "kind": "module",
+          "qualified_name": "log",
+          "external": true
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 6,
+          "column": 2
+        },
+        "properties": {
+          "alias": "log"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "file",
+          "qualified_name": "go.mod"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "failures",
+          "kind": "module",
+          "qualified_name": "example.com/failures"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Guard"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "failures",
+          "kind": "external",
+          "qualified_name": "builtin.panic",
+          "external": true
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 35,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Guard"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "failures",
+          "kind": "external",
+          "qualified_name": "builtin.recover",
+          "external": true
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 34,
+          "column": 21
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Guard"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "failures",
+          "kind": "external",
+          "qualified_name": "func() { _ = recover() }",
+          "external": true
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 34,
+          "column": 8
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Guard"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "failures",
+          "kind": "parameter",
+          "qualified_name": "example.com/failures.Guard.value"
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 33,
+          "column": 12
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Guard"
+        },
+        "relation": "defers",
+        "to": {
+          "repo": "failures",
+          "kind": "external",
+          "qualified_name": "unresolved:defer@failures.go:34:2",
+          "external": true
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 34,
+          "column": 2
+        },
+        "properties": {
+          "conditional": "false",
+          "evidence": "go/types",
+          "form": "defer",
+          "resolution": "go/types",
+          "unresolved": "true"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Guard"
+        },
+        "relation": "panics",
+        "to": {
+          "repo": "failures",
+          "kind": "external",
+          "qualified_name": "unresolved:panic@failures.go:35:2",
+          "external": true
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 35,
+          "column": 2
+        },
+        "properties": {
+          "conditional": "false",
+          "evidence": "go/types",
+          "form": "panic",
+          "resolution": "go/types",
+          "unresolved": "true"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Guard"
+        },
+        "relation": "recovers",
+        "to": {
+          "repo": "failures",
+          "kind": "external",
+          "qualified_name": "builtin.recover",
+          "external": true
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 34,
+          "column": 21
+        },
+        "properties": {
+          "conditional": "false",
+          "evidence": "go/types",
+          "form": "recover",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Handle"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "failures",
+          "kind": "external",
+          "qualified_name": "errors.Is",
+          "external": true
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 27,
+          "column": 5
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Handle"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "failures",
+          "kind": "external",
+          "qualified_name": "log.Print",
+          "external": true
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 30,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Handle"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Load"
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 26,
+          "column": 9
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Handle"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "failures",
+          "kind": "variable",
+          "qualified_name": "example.com/failures.Handle.err@26"
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 26,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Handle"
+        },
+        "relation": "handles_error",
+        "to": {
+          "repo": "failures",
+          "kind": "variable",
+          "qualified_name": "example.com/failures.ErrMissing"
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 27,
+          "column": 2
+        },
+        "properties": {
+          "conditional": "true",
+          "evidence": "go/types",
+          "form": "is",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Load"
+        },
+        "relation": "propagates_error",
+        "to": {
+          "repo": "failures",
+          "kind": "variable",
+          "qualified_name": "example.com/failures.ErrMissing"
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 15,
+          "column": 21
+        },
+        "properties": {
+          "conditional": "false",
+          "evidence": "go/types",
+          "form": "return",
+          "resolution": "go/types",
+          "result_position": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Load"
+        },
+        "relation": "returns_error",
+        "to": {
+          "repo": "failures",
+          "kind": "interface",
+          "qualified_name": "builtin.error",
+          "external": true
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 15,
+          "column": 13
+        },
+        "properties": {
+          "evidence": "go/types",
+          "form": "signature",
+          "resolution": "go/types",
+          "result_position": "0",
+          "type": "builtin.error"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Run"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "failures",
+          "kind": "external",
+          "qualified_name": "fmt.Errorf",
+          "external": true
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 20,
+          "column": 10
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Run"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Load"
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 18,
+          "column": 9
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Run"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "failures",
+          "kind": "variable",
+          "qualified_name": "example.com/failures.Run.err@18"
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 18,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Run"
+        },
+        "relation": "returns_error",
+        "to": {
+          "repo": "failures",
+          "kind": "interface",
+          "qualified_name": "builtin.error",
+          "external": true
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 17,
+          "column": 12
+        },
+        "properties": {
+          "evidence": "go/types",
+          "form": "signature",
+          "resolution": "go/types",
+          "result_position": "0",
+          "type": "builtin.error"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Run"
+        },
+        "relation": "wraps_error",
+        "to": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Load"
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 20,
+          "column": 3
+        },
+        "properties": {
+          "callee_result_position": "0",
+          "conditional": "true",
+          "evidence": "go/types",
+          "form": "wrap",
+          "resolution": "go/types",
+          "result_position": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "parameter",
+          "qualified_name": "example.com/failures.Guard.value"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "failures",
+          "kind": "external",
+          "qualified_name": "builtin.panic",
+          "external": true
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 35,
+          "column": 2
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "repository",
+          "qualified_name": "failures"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "failures",
+          "kind": "file",
+          "qualified_name": "failures.go"
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "repository",
+          "qualified_name": "failures"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "failures",
+          "kind": "file",
+          "qualified_name": "go.mod"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "type",
+          "qualified_name": "example.com/failures.Problem"
+        },
+        "relation": "implements",
+        "to": {
+          "repo": "failures",
+          "kind": "interface",
+          "qualified_name": "builtin.error",
+          "external": true
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 11,
+          "column": 6
+        },
+        "properties": {
+          "evidence": "go/types",
+          "form": "error_method_set",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "variable",
+          "qualified_name": "example.com/failures.Handle.err@26"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "failures",
+          "kind": "external",
+          "qualified_name": "errors.Is",
+          "external": true
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 27,
+          "column": 5
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "variable",
+          "qualified_name": "example.com/failures.Handle.err@26"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "failures",
+          "kind": "external",
+          "qualified_name": "log.Print",
+          "external": true
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 30,
+          "column": 2
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "variable",
+          "qualified_name": "example.com/failures.Run.err@18"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "failures",
+          "kind": "external",
+          "qualified_name": "fmt.Errorf",
+          "external": true
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 20,
+          "column": 10
+        },
+        "properties": {
+          "argument": "1"
+        }
+      },
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "variable",
+          "qualified_name": "example.com/failures.Run.err@18"
+        },
+        "relation": "returns",
+        "to": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Run"
+        },
+        "source": {
+          "path": "failures.go",
+          "line": 20,
+          "column": 3
+        }
+      }
+    ],
+    "forbidden_edges": [
+      {
+        "from": {
+          "repo": "failures",
+          "kind": "function",
+          "qualified_name": "example.com/failures.Handle"
+        },
+        "relation": "handles_error",
+        "to": {
+          "repo": "failures",
+          "kind": "external",
+          "qualified_name": "log.Print",
+          "external": true
+        }
+      }
+    ]
+  }
+}

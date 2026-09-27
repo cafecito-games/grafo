@@ -41,16 +41,51 @@ type SemanticImplementation struct {
 	Interface string
 }
 
+type SemanticErrorResult struct {
+	Position int
+	Type     string
+}
+
+type SemanticFunction struct {
+	ErrorResults []SemanticErrorResult
+	Promoted     bool
+}
+
+type SemanticErrorDeclaration struct {
+	Name          string
+	QualifiedName string
+	Kind          graph.NodeKind
+	Type          string
+	Location      graph.Location
+	Sentinel      bool
+}
+
+// SemanticFailure is compact, evidence-backed output from the Go failure
+// extractor. Function maps back to the declaration node owned by the syntax
+// parser; Target is a stable go/types identity or an explicit unresolved
+// boundary.
+type SemanticFailure struct {
+	Function   string
+	Kind       graph.EdgeKind
+	Target     string
+	TargetKind graph.NodeKind
+	Location   graph.Location
+	Properties map[string]string
+}
+
 // SemanticView contains only the evidence needed while parsing one file. It
 // deliberately does not retain go/ast or go/types graphs after loading.
 type SemanticView struct {
-	Available       bool
-	Included        bool
-	PackagePath     string
-	BuildContext    string
-	Calls           map[int]SemanticCall
-	Implementations []SemanticImplementation
-	Diagnostics     []graph.Diagnostic
+	Available         bool
+	Included          bool
+	PackagePath       string
+	BuildContext      string
+	Calls             map[int]SemanticCall
+	Implementations   []SemanticImplementation
+	Functions         map[string]SemanticFunction
+	ErrorDeclarations []SemanticErrorDeclaration
+	Failures          []SemanticFailure
+	Diagnostics       []graph.Diagnostic
 }
 
 type SemanticLoadMetrics struct {
@@ -217,8 +252,30 @@ func cloneSemanticView(view SemanticView) SemanticView {
 		copyView.Calls[offset] = call
 	}
 	copyView.Implementations = append([]SemanticImplementation(nil), view.Implementations...)
+	copyView.Functions = make(map[string]SemanticFunction, len(view.Functions))
+	for name, function := range view.Functions {
+		function.ErrorResults = append([]SemanticErrorResult(nil), function.ErrorResults...)
+		copyView.Functions[name] = function
+	}
+	copyView.ErrorDeclarations = append([]SemanticErrorDeclaration(nil), view.ErrorDeclarations...)
+	copyView.Failures = make([]SemanticFailure, len(view.Failures))
+	for index, failure := range view.Failures {
+		copyView.Failures[index] = failure
+		copyView.Failures[index].Properties = cloneStringMap(failure.Properties)
+	}
 	copyView.Diagnostics = append([]graph.Diagnostic(nil), view.Diagnostics...)
 	return copyView
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make(map[string]string, len(values))
+	for key, value := range values {
+		result[key] = value
+	}
+	return result
 }
 
 func safeLoadWorkspace(ctx context.Context, root, buildContext string) (views map[string]SemanticView, err error) {
@@ -302,6 +359,7 @@ func collectPackageViews(root, buildContext string, pkg *packages.Package, views
 			view.Calls = map[int]SemanticCall{}
 		}
 		collectCalls(pkg, file, view.Calls)
+		collectFailureView(root, pkg, file, path, &view)
 		views[path] = view
 	}
 	collectPackageDiagnostics(root, pkg, views, buildContext)

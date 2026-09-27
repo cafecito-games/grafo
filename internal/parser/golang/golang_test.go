@@ -102,6 +102,63 @@ func invoke(value Runner) { value.Run() }
 	}
 }
 
+func TestSyntaxFailureFallbackRequiresUnshadowedBuiltins(t *testing.T) {
+	safe := []byte(`package sample
+func cleanup() {}
+func callbackCleanup() {}
+func Register(func()) {}
+func Guard(value any) {
+	if value != nil { defer cleanup(); panic(value) }
+	Register(func() { defer callbackCleanup(); panic(value) })
+	func() { _ = recover() }()
+	_ = recover()
+}
+`)
+	result, err := golangparser.NewWithSemanticLoader(nil).Parse(context.Background(), parserapi.Input{
+		Path: "safe.go", Content: safe, Repository: "sample", RepoID: "repo", GoModule: "example.com/sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	panicFact := assertFailureFactFrom(t, result.Nodes, result.Facts, graph.EdgePanics, "example.com/sample.Guard")
+	if panicFact.Properties["conditional"] != "true" || panicFact.Properties["evidence"] != "go/ast" {
+		t.Fatalf("syntax panic evidence = %#v", panicFact)
+	}
+	deferFact := assertFailureFactFrom(t, result.Nodes, result.Facts, graph.EdgeDefers, "example.com/sample.Guard")
+	if deferFact.Target != "example.com/sample.cleanup" || deferFact.Properties["unresolved"] != "true" {
+		t.Fatalf("syntax defer must keep its syntactic target and unresolved evidence: %#v", deferFact)
+	}
+	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeRecovers,
+		"example.com/sample.Guard", "builtin.recover", "recover")
+	if count := failureFactCountFrom(t, result.Nodes, result.Facts, graph.EdgeRecovers, "example.com/sample.Guard"); count != 1 {
+		t.Fatalf("syntax recover facts = %d, want only the named function site", count)
+	}
+	assertNoFailureTarget(t, result.Facts, graph.EdgeDefers, "example.com/sample.callbackCleanup")
+	panicCount := 0
+	guardID := graph.NodeID(graph.KindFunction, "example.com/sample.Guard", "repo", "safe.go")
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgePanics && fact.FromID == guardID {
+			panicCount++
+		}
+	}
+	if panicCount != 1 {
+		t.Fatalf("syntax fallback panics = %d, want only the directly executed panic", panicCount)
+	}
+
+	shadowed := []byte(`package sample
+var panic = func(any) {}
+func Guard(value any, recover func() any) { panic(value); _ = recover() }
+`)
+	result, err = golangparser.NewWithSemanticLoader(nil).Parse(context.Background(), parserapi.Input{
+		Path: "shadowed.go", Content: shadowed, Repository: "sample", RepoID: "repo", GoModule: "example.com/sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoFailureFactFrom(t, result.Nodes, result.Facts, graph.EdgePanics, "example.com/sample.Guard")
+	assertNoFailureFactFrom(t, result.Nodes, result.Facts, graph.EdgeRecovers, "example.com/sample.Guard")
+}
+
 func TestPackageSemanticLoaderResolvesTypedCalls(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26\n")
@@ -291,7 +348,7 @@ func TestSemanticKeySkipsSpecialGoEntries(t *testing.T) {
 func TestPackageSemanticLoaderRetainsProvenFactsForBrokenPackage(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/broken\n\ngo 1.26\n")
-	content := []byte("package broken\nfunc helper() {}\nfunc run() { helper(); missing() }\n")
+	content := []byte("package broken\nfunc helper() {}\nfunc run(value any) { defer helper(); panic(value); _ = recover(); missing() }\n")
 	writeFile(t, filepath.Join(root, "broken.go"), string(content))
 	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
 		Root: root, Path: "broken.go", Content: content, Repository: "broken", RepoID: "repo", GoModule: "example.com/broken",
@@ -300,9 +357,190 @@ func TestPackageSemanticLoaderRetainsProvenFactsForBrokenPackage(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertHasFact(t, result.Facts, graph.EdgeCalls, "example.com/broken.helper")
+	assertHasFactKind(t, result.Facts, graph.EdgePanics)
+	assertHasFact(t, result.Facts, graph.EdgeRecovers, "builtin.recover")
+	assertHasFact(t, result.Facts, graph.EdgeDefers, "example.com/broken.helper")
 	if len(result.Diagnostics) == 0 {
 		t.Fatal("expected type-checking diagnostic")
 	}
+}
+
+func TestPackageSemanticLoaderExtractsFailureAndCleanupFlow(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/failures\n\ngo 1.26\n")
+	content := []byte(`package failures
+import (
+	"errors"
+	"fmt"
+	"log"
+)
+
+var ErrSentinel = errors.New("sentinel")
+
+type Problem struct{}
+func (*Problem) Error() string { return "problem" }
+
+type Source struct{}
+func (Source) Load() error { return ErrSentinel }
+
+type Cleaner struct{}
+func (Cleaner) Close() {}
+
+type Provider interface { Read() (string, error) }
+type BigProvider interface { Provider }
+
+func Produce() (int, error) { return 0, ErrSentinel }
+func Multi() (error, error) { return ErrSentinel, &Problem{} }
+func cleanup() {}
+func callbackCleanup() {}
+func worker() {}
+func Register(func()) {}
+
+func Wrap() error {
+	_, err := Produce()
+	if err != nil {
+		return fmt.Errorf("produce: %w", err)
+	}
+	return nil
+}
+
+func Join(left, right error) error { return errors.Join(left, right) }
+func Mixed() error { return fmt.Errorf("seen %v, wrap %w", ErrSentinel, &Problem{}) }
+func Method(source Source) error { return source.Load() }
+
+func Handle() {
+	_, err := Produce()
+	if errors.Is(err, ErrSentinel) { return }
+	var problem *Problem
+	if errors.As(err, &problem) { return }
+	if err == ErrSentinel { return }
+}
+
+func Switch() {
+	_, err := Produce()
+	switch err {
+	case ErrSentinel:
+		return
+	}
+}
+
+func Retry() {
+	for {
+		_, err := Produce()
+		if err != nil { continue }
+		break
+	}
+}
+
+func LogOnly() {
+	_, err := Produce()
+	if err != nil { log.Print(err) }
+}
+
+func Guard(value any, cleaner Cleaner) {
+	defer cleanup()
+	defer cleaner.Close()
+	defer func() { _ = recover() }()
+	func() { _ = recover() }()
+	Register(func() { defer callbackCleanup(); panic(ErrSentinel) })
+	go worker()
+	panic(value)
+}
+`)
+	writeFile(t, filepath.Join(root, "failures.go"), string(content))
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "failures.go", Content: content, Repository: "failures",
+		RepoID: "repo", GoModule: "example.com/failures",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertNodeProperty(t, result.Nodes, graph.KindVariable, "example.com/failures.ErrSentinel", "error_identity", "sentinel")
+	assertNodeProperty(t, result.Nodes, graph.KindType, "example.com/failures.Problem", "error_type", "true")
+	assertNodeProperty(t, result.Nodes, graph.KindFunction, "example.com/failures.Multi", "error_result_positions", "0,1")
+	assertNodeProperty(t, result.Nodes, graph.KindMethod, "example.com/failures.Provider.Read", "error_result_positions", "1")
+	assertNodeProperty(t, result.Nodes, graph.KindMethod, "example.com/failures.BigProvider.Read", "error_result_positions", "1")
+
+	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeKind("returns_error"), "example.com/failures.Multi", "builtin.error", "signature")
+	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeReturnsError, "example.com/failures.Provider.Read", "builtin.error", "signature")
+	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeReturnsError, "example.com/failures.BigProvider.Read", "builtin.error", "signature")
+	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeKind("propagates_error"), "example.com/failures.Produce", "example.com/failures.ErrSentinel", "return")
+	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeKind("wraps_error"), "example.com/failures.Wrap", "example.com/failures.Produce", "wrap")
+	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeKind("propagates_error"), "example.com/failures.Join", "builtin.error", "join")
+	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeWrapsError, "example.com/failures.Mixed", "example.com/failures.Problem", "wrap")
+	assertNoFailureFact(t, result.Nodes, result.Facts, graph.EdgeWrapsError, "example.com/failures.Mixed", "example.com/failures.ErrSentinel")
+	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgePropagatesError, "example.com/failures.Method", "example.com/failures.Source.Load", "return_call")
+	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeKind("handles_error"), "example.com/failures.Handle", "example.com/failures.ErrSentinel", "is")
+	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeKind("handles_error"), "example.com/failures.Handle", "example.com/failures.Problem", "as")
+	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeKind("handles_error"), "example.com/failures.Handle", "example.com/failures.ErrSentinel", "comparison")
+	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeKind("handles_error"), "example.com/failures.Switch", "example.com/failures.ErrSentinel", "switch")
+	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeKind("handles_error"), "example.com/failures.Retry", "example.com/failures.Produce", "comparison")
+	assertNoFailureFactFrom(t, result.Nodes, result.Facts, graph.EdgeKind("handles_error"), "example.com/failures.LogOnly")
+	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeKind("defers"), "example.com/failures.Guard", "example.com/failures.cleanup", "defer")
+	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeDefers, "example.com/failures.Guard", "example.com/failures.Cleaner.Close", "defer")
+	assertNoFailureTarget(t, result.Facts, graph.EdgeKind("defers"), "example.com/failures.worker")
+	assertNoFailureTarget(t, result.Facts, graph.EdgeDefers, "example.com/failures.callbackCleanup")
+	assertNoFailureTarget(t, result.Facts, graph.EdgePanics, "example.com/failures.ErrSentinel")
+	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgeKind("recovers"), "example.com/failures.Guard", "builtin.recover", "recover")
+	if count := failureFactCountFrom(t, result.Nodes, result.Facts, graph.EdgeRecovers, "example.com/failures.Guard"); count != 1 {
+		t.Fatalf("semantic recover facts = %d, want only the deferred recovery closure", count)
+	}
+	panicFact := assertFailureFactFrom(t, result.Nodes, result.Facts, graph.EdgeKind("panics"), "example.com/failures.Guard")
+	if panicFact.TargetKind != graph.KindExternal || panicFact.Properties["unresolved"] != "true" {
+		t.Fatalf("dynamic panic payload must stay unresolved: %#v", panicFact)
+	}
+	for _, fact := range result.Facts {
+		switch fact.Kind {
+		case graph.EdgeKind("returns_error"), graph.EdgeKind("propagates_error"), graph.EdgeKind("handles_error"),
+			graph.EdgeKind("wraps_error"), graph.EdgeKind("panics"), graph.EdgeKind("recovers"), graph.EdgeKind("defers"):
+			if fact.Location.Path == "" || fact.Location.Line == 0 || fact.Properties["form"] == "" || fact.Properties["evidence"] == "" {
+				t.Fatalf("failure fact lost source or evidence: %#v", fact)
+			}
+		}
+	}
+}
+
+func TestSyntaxFailureFallbackSeesPackageShadowingAcrossFiles(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "shadow.go"), "package sample\nvar panic = func(any) {}\n")
+	content := []byte("package sample\nfunc Guard(value any) { panic(value) }\n")
+	writeFile(t, filepath.Join(root, "guard.go"), string(content))
+
+	result, err := golangparser.NewWithSemanticLoader(nil).Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "guard.go", Content: content, Repository: "sample", RepoID: "repo", GoModule: "example.com/sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoFailureFactFrom(t, result.Nodes, result.Facts, graph.EdgePanics, "example.com/sample.Guard")
+}
+
+func TestFailureIdentityUsesPackageObjectsNotAliasesOrSimpleNames(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/identity\n\ngo 1.26\n")
+	writeFile(t, filepath.Join(root, "left", "left.go"), "package left\ntype Problem struct{}\nfunc (*Problem) Error() string { return \"left\" }\n")
+	writeFile(t, filepath.Join(root, "right", "right.go"), "package right\ntype Problem struct{}\nfunc (*Problem) Error() string { return \"right\" }\n")
+	content := []byte(`package identity
+import (
+	l "example.com/identity/left"
+	r "example.com/identity/right"
+)
+func Left() error { return &l.Problem{} }
+func Right() error { return &r.Problem{} }
+`)
+	writeFile(t, filepath.Join(root, "identity.go"), string(content))
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "identity.go", Content: content, Repository: "identity",
+		RepoID: "repo", GoModule: "example.com/identity",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgePropagatesError,
+		"example.com/identity.Left", "example.com/identity/left.Problem", "return")
+	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgePropagatesError,
+		"example.com/identity.Right", "example.com/identity/right.Problem", "return")
 }
 
 func writeFile(t *testing.T, path, content string) {
@@ -357,4 +595,92 @@ func assertHasFact(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, target
 		}
 	}
 	t.Fatalf("missing %s fact to %q; available targets: %v", kind, target, available)
+}
+
+func assertNodeProperty(t *testing.T, nodes []graph.Node, kind graph.NodeKind, qualified, key, want string) {
+	t.Helper()
+	for _, node := range nodes {
+		if node.Kind == kind && node.QualifiedName == qualified {
+			if got := node.Properties[key]; got != want {
+				t.Fatalf("%s property %s = %q, want %q: %#v", qualified, key, got, want, node)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing %s node %q", kind, qualified)
+}
+
+func assertHasFailureFact(t *testing.T, nodes []graph.Node, facts []graph.Fact, kind graph.EdgeKind, from, target, form string) {
+	t.Helper()
+	fromID := nodeIDByQualified(t, nodes, from)
+	for _, fact := range facts {
+		if fact.Kind == kind && fact.Target == target && fact.FromID == fromID && fact.Properties["form"] == form {
+			return
+		}
+	}
+	t.Fatalf("missing %s fact from %q to %q with form %q", kind, from, target, form)
+}
+
+func assertFailureFactFrom(t *testing.T, nodes []graph.Node, facts []graph.Fact, kind graph.EdgeKind, from string) graph.Fact {
+	t.Helper()
+	fromID := nodeIDByQualified(t, nodes, from)
+	for _, fact := range facts {
+		if fact.Kind == kind && fact.FromID == fromID {
+			return fact
+		}
+	}
+	t.Fatalf("missing %s fact from %q", kind, from)
+	return graph.Fact{}
+}
+
+func assertNoFailureFactFrom(t *testing.T, nodes []graph.Node, facts []graph.Fact, kind graph.EdgeKind, from string) {
+	t.Helper()
+	fromID := nodeIDByQualified(t, nodes, from)
+	for _, fact := range facts {
+		if fact.Kind == kind && fact.FromID == fromID {
+			t.Fatalf("unexpected %s fact from %q: %#v", kind, from, fact)
+		}
+	}
+}
+
+func failureFactCountFrom(t *testing.T, nodes []graph.Node, facts []graph.Fact, kind graph.EdgeKind, from string) int {
+	t.Helper()
+	fromID := nodeIDByQualified(t, nodes, from)
+	count := 0
+	for _, fact := range facts {
+		if fact.Kind == kind && fact.FromID == fromID {
+			count++
+		}
+	}
+	return count
+}
+
+func assertNoFailureFact(t *testing.T, nodes []graph.Node, facts []graph.Fact, kind graph.EdgeKind, from, target string) {
+	t.Helper()
+	fromID := nodeIDByQualified(t, nodes, from)
+	for _, fact := range facts {
+		if fact.Kind == kind && fact.FromID == fromID && fact.Target == target {
+			t.Fatalf("unexpected %s fact from %q to %q: %#v", kind, from, target, fact)
+		}
+	}
+}
+
+func nodeIDByQualified(t *testing.T, nodes []graph.Node, qualified string) string {
+	t.Helper()
+	for _, node := range nodes {
+		if node.QualifiedName == qualified {
+			return node.ID
+		}
+	}
+	t.Fatalf("missing node %q", qualified)
+	return ""
+}
+
+func assertNoFailureTarget(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, target string) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.Kind == kind && fact.Target == target {
+			t.Fatalf("unexpected %s fact to %q: %#v", kind, target, fact)
+		}
+	}
 }

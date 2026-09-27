@@ -251,6 +251,71 @@ func TestServiceReindexesGoDependentsWhenTypeEvidenceChanges(t *testing.T) {
 	}
 }
 
+func TestServiceFailureFlowEditsConvergeWithCleanRebuild(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	write(t, filepath.Join(root, "go.mod"), "module example.com/failureedit\n\ngo 1.26\n")
+	write(t, filepath.Join(root, "producer.go"), `package failureedit
+import "errors"
+var ErrLoad = errors.New("load")
+func Load() error { return ErrLoad }
+`)
+	write(t, filepath.Join(root, "consumer.go"), `package failureedit
+func Run() error { return Load() }
+`)
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(golangparser.New()))
+	if report, err := service.Run(ctx, project, indexer.Options{}); err != nil || len(report.Updated) != 2 {
+		t.Fatalf("initial failure index: report=%#v err=%v", report, err)
+	}
+	assertOutgoingTarget(t, ctx, repository, "example.com/failureedit.Run", graph.EdgePropagatesError, "example.com/failureedit.Load")
+
+	write(t, filepath.Join(root, "producer.go"), `package failureedit
+import "errors"
+var ErrLoad = errors.New("load")
+func Load() (int, error) { return 0, ErrLoad }
+`)
+	write(t, filepath.Join(root, "consumer.go"), `package failureedit
+import "fmt"
+func Run() error {
+	_, err := Load()
+	if err != nil { return fmt.Errorf("run: %w", err) }
+	return nil
+}
+`)
+	updated, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Updated) != 2 {
+		t.Fatalf("signature/body edit did not invalidate both semantic files: %#v", updated)
+	}
+	assertOutgoingTarget(t, ctx, repository, "example.com/failureedit.Run", graph.EdgeWrapsError, "example.com/failureedit.Load")
+	assertNoOutgoingTarget(t, ctx, repository, "example.com/failureedit.Run", graph.EdgePropagatesError, "example.com/failureedit.Load")
+	incremental, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Run(ctx, project, indexer.Options{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	clean, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(incremental.ByKind, clean.ByKind) || !reflect.DeepEqual(incremental.ByEdge, clean.ByEdge) || incremental.External != clean.External {
+		t.Fatalf("incremental failure flow differs from clean rebuild:\n%#v\n%#v", incremental, clean)
+	}
+}
+
 func TestServiceSurfacesTrackedSymlinksWithoutFollowingThem(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

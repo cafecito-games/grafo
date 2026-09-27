@@ -9,6 +9,7 @@ import (
 	"go/printer"
 	"go/token"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -114,6 +115,10 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 		packageName = semantic.PackagePath
 	}
 	imports := map[string]string{}
+	var packageShadowedBuiltins map[string]bool
+	if !semantic.Available {
+		packageShadowedBuiltins = syntaxPackageShadowedBuiltins(input, file)
+	}
 	for _, spec := range file.Imports {
 		importPath, unquoteErr := strconv.Unquote(spec.Path.Value)
 		if unquoteErr != nil {
@@ -128,10 +133,25 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 		b.AddFact(b.FileID(), graph.EdgeImports, "", importPath, graph.KindModule, loc,
 			map[string]string{"alias": alias})
 	}
+	for _, declaration := range semantic.ErrorDeclarations {
+		if declaration.Kind != graph.KindVariable {
+			continue
+		}
+		identity := "named"
+		if declaration.Sentinel {
+			identity = "sentinel"
+		}
+		b.Declare(b.FileID(), graph.Node{
+			Kind: declaration.Kind, Name: declaration.Name, QualifiedName: declaration.QualifiedName,
+			Location: declaration.Location, Properties: map[string]string{
+				"type": declaration.Type, "error_identity": identity, "resolution": "go/types",
+			},
+		})
+	}
 	for _, decl := range file.Decls {
 		switch node := decl.(type) {
 		case *goast.FuncDecl:
-			parseFunction(b, fset, input, packageName, imports, semantic, node)
+			parseFunction(b, fset, input, packageName, imports, semantic, packageShadowedBuiltins, node)
 		case *goast.GenDecl:
 			if node.Tok == token.TYPE {
 				for _, spec := range node.Specs {
@@ -159,7 +179,7 @@ func packageQualified(input parserapi.Input, packageName string) string {
 	return dir
 }
 
-func parseFunction(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input, pkg string, imports map[string]string, semantic SemanticView, decl *goast.FuncDecl) {
+func parseFunction(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input, pkg string, imports map[string]string, semantic SemanticView, packageShadowedBuiltins map[string]bool, decl *goast.FuncDecl) {
 	kind := graph.KindFunction
 	qualified := pkg + "." + decl.Name.Name
 	owner := ""
@@ -177,6 +197,15 @@ func parseFunction(b *parserapi.Builder, fset *token.FileSet, input parserapi.In
 	loc := location(input.Path, fset, decl.Pos(), decl.End())
 	node := graph.Node{Kind: kind, Name: decl.Name.Name, QualifiedName: qualified,
 		Location: loc, Properties: map[string]string{"signature": render(fset, decl.Type)}}
+	if function, ok := semantic.Functions[qualified]; ok && len(function.ErrorResults) > 0 {
+		positions := make([]string, 0, len(function.ErrorResults))
+		for _, result := range function.ErrorResults {
+			positions = append(positions, strconv.Itoa(result.Position))
+		}
+		node.Properties["returns_error"] = "true"
+		node.Properties["error_result_positions"] = strings.Join(positions, ",")
+		node.Properties["error_evidence"] = "go/types"
+	}
 	if owner != "" {
 		node.Properties["receiver"] = owner
 	}
@@ -195,6 +224,15 @@ func parseFunction(b *parserapi.Builder, fset *token.FileSet, input parserapi.In
 			return true
 		})
 		emitDataFlow(b, fset, input, pkg, imports, semantic, functionID, receiverVariable, receiverQualified, flow, decl.Body)
+		if !semantic.Available {
+			emitSyntaxFailureFlow(b, fset, input, pkg, imports, functionID, decl, packageShadowedBuiltins)
+		}
+	}
+	for _, failure := range semantic.Failures {
+		if failure.Function == qualified {
+			b.AddFact(functionID, failure.Kind, "", failure.Target, failure.TargetKind,
+				failure.Location, cloneStringMap(failure.Properties))
+		}
 	}
 }
 
@@ -342,8 +380,22 @@ func parseType(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input,
 	}
 	qualified := pkg + "." + spec.Name.Name
 	loc := location(input.Path, fset, spec.Pos(), spec.End())
+	properties := map[string]string{"underlying": render(fset, spec.Type)}
+	errorType := false
+	for _, declaration := range semantic.ErrorDeclarations {
+		if declaration.Kind == graph.KindType && declaration.QualifiedName == qualified {
+			errorType = true
+			properties["error_type"] = "true"
+			properties["error_evidence"] = "go/types"
+			break
+		}
+	}
 	typeID := b.Declare(b.FileID(), graph.Node{Kind: kind, Name: spec.Name.Name,
-		QualifiedName: qualified, Location: loc, Properties: map[string]string{"underlying": render(fset, spec.Type)}})
+		QualifiedName: qualified, Location: loc, Properties: properties})
+	if errorType {
+		b.AddFact(typeID, graph.EdgeImplements, "", "builtin.error", graph.KindInterface, loc,
+			map[string]string{"resolution": "go/types", "evidence": "go/types", "form": "error_method_set"})
+	}
 	for _, implementation := range semantic.Implementations {
 		if implementation.Concrete == qualified {
 			b.AddFact(typeID, graph.EdgeImplements, "", implementation.Interface, graph.KindInterface, loc,
@@ -352,13 +404,13 @@ func parseType(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input,
 	}
 	switch value := spec.Type.(type) {
 	case *goast.StructType:
-		parseFields(b, fset, input, qualified, typeID, value.Fields, false)
+		parseFields(b, fset, input, qualified, typeID, value.Fields, false, semantic)
 	case *goast.InterfaceType:
-		parseFields(b, fset, input, qualified, typeID, value.Methods, true)
+		parseFields(b, fset, input, qualified, typeID, value.Methods, true, semantic)
 	}
 }
 
-func parseFields(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input, parentName, parentID string, fields *goast.FieldList, methods bool) {
+func parseFields(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input, parentName, parentID string, fields *goast.FieldList, methods bool, semantic SemanticView) {
 	if fields == nil {
 		return
 	}
@@ -378,10 +430,62 @@ func parseFields(b *parserapi.Builder, fset *token.FileSet, input parserapi.Inpu
 			if methods {
 				kind = graph.KindMethod
 			}
+			qualified := parentName + "." + name.Name
+			properties := map[string]string{"type": typeText}
+			if function, ok := semantic.Functions[qualified]; ok && len(function.ErrorResults) > 0 {
+				positions := make([]string, 0, len(function.ErrorResults))
+				for _, result := range function.ErrorResults {
+					positions = append(positions, strconv.Itoa(result.Position))
+				}
+				properties["returns_error"] = "true"
+				properties["error_result_positions"] = strings.Join(positions, ",")
+				properties["error_evidence"] = "go/types"
+			}
 			nodeID := b.AddNode(graph.Node{Kind: kind, Name: name.Name,
-				QualifiedName: parentName + "." + name.Name, Location: loc,
-				Properties: map[string]string{"type": typeText}})
+				QualifiedName: qualified, Location: loc, Properties: properties})
 			b.AddFact(parentID, graph.EdgeHasField, nodeID, "", "", loc, nil)
+			for _, failure := range semantic.Failures {
+				if failure.Function == qualified {
+					b.AddFact(nodeID, failure.Kind, "", failure.Target, failure.TargetKind,
+						failure.Location, cloneStringMap(failure.Properties))
+				}
+			}
+		}
+	}
+	if methods {
+		addPromotedInterfaceMethods(b, parentName, parentID,
+			location(input.Path, fset, fields.Pos(), fields.End()), semantic)
+	}
+}
+
+func addPromotedInterfaceMethods(b *parserapi.Builder, parentName, parentID string, loc graph.Location, semantic SemanticView) {
+	prefix := parentName + "."
+	var names []string
+	for name, function := range semantic.Functions {
+		if function.Promoted && strings.HasPrefix(name, prefix) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	for _, qualified := range names {
+		function := semantic.Functions[qualified]
+		positions := make([]string, 0, len(function.ErrorResults))
+		for _, result := range function.ErrorResults {
+			positions = append(positions, strconv.Itoa(result.Position))
+		}
+		properties := map[string]string{"promoted": "true", "error_evidence": "go/types"}
+		if len(positions) > 0 {
+			properties["returns_error"] = "true"
+			properties["error_result_positions"] = strings.Join(positions, ",")
+		}
+		nodeID := b.AddNode(graph.Node{Kind: graph.KindMethod, Name: graph.SimpleName(qualified),
+			QualifiedName: qualified, Location: loc, Properties: properties})
+		b.AddFact(parentID, graph.EdgeHasField, nodeID, "", "", loc, map[string]string{"promoted": "true"})
+		for _, failure := range semantic.Failures {
+			if failure.Function == qualified {
+				b.AddFact(nodeID, failure.Kind, "", failure.Target, failure.TargetKind,
+					failure.Location, cloneStringMap(failure.Properties))
+			}
 		}
 	}
 }

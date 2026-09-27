@@ -148,8 +148,8 @@ the complete command surface.
 
 `grafo mcp` starts a standards-compatible MCP server over stdio with tools for
 symbol discovery, node lookup, traversal, shortest paths, callers, callees,
-change impact, Godot composition, graph-addressed source retrieval, bounded
-source search, reusable-code discovery, index status, and the data,
+change impact, failure flow, Godot composition, graph-addressed source
+retrieval, bounded source search, reusable-code discovery, index status, and the data,
 configuration, and event catalogs.
 
 Symbol, node, source, caller, callee, path, and impact tools accept a batch of
@@ -198,6 +198,25 @@ grafo impact "Charge" --source --max-lines 40 --json
 Upstream and downstream depth and node limits are bounded independently and
 each section reports its own truncation. Source excerpts are opt-in and read
 through the same bounded reader `grafo source` uses.
+
+### Failure flow
+
+`grafo failure-flow` (MCP `get_failure_flow`) reports a callable's typed error
+result positions separately from failures that actually escape by direct return,
+wrapping, or joining. It also groups consuming handlers, panic and recovery
+sites, and deferred cleanup without claiming branch reachability.
+
+```sh
+grafo failure-flow "example.com/app.Process"
+grafo failure-flow "ErrNotFound" --direction incoming --json
+```
+
+Go object and type identity is authoritative for error-returning calls, sentinel
+variables, named error types, `fmt.Errorf` `%w`, `errors.Join`, `errors.Is`, and
+`errors.As`. Comparisons and common `if err != nil` or switch handlers are
+reported only when their branch consumes control flow; logging by itself is not
+handling. Dynamic panic payloads and facts from incomplete packages remain
+explicit unresolved or conditional evidence.
 
 ### Godot composition
 
@@ -336,7 +355,9 @@ are marked `federated` and retain their original evidence.
 ## What the first slice understands
 
 - Go packages, functions, methods, types, fields, parameters, local variables,
-  imports, calls, basic assignment/argument/return flow, embedding,
+  imports, calls, basic assignment/argument/return flow, typed error returns,
+  propagation, wrapping, joining, handling, panic/recovery, deferred cleanup,
+  embedding,
   `os.Getenv`/`LookupEnv`, `net/http` routes, and common publish/subscribe calls.
 - TypeScript and TSX modules, functions, classes, interfaces, methods,
   parameters, local variables, basic assignment/argument/return flow, imports,
@@ -388,7 +409,8 @@ are marked `federated` and retain their original evidence.
   calls, linked to matching endpoint declarations locally or across repository
   boundaries.
 - Deterministic symbol lookup, neighborhood traversal, shortest paths, callers,
-  callees, blast-radius traversal, multi-repository federation, and MCP access.
+  callees, failure-flow and blast-radius reports, multi-repository federation,
+  and MCP access.
 
 Grafo combines syntactic extraction with Go toolchain type evidence for exact
 Go function and method dispatch, promotions, generic instantiations, and

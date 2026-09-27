@@ -57,8 +57,8 @@ func TestServerListsAndCallsGraphTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Tools) != 21 {
-		t.Fatalf("expected 21 tools, got %d", len(listed.Tools))
+	if len(listed.Tools) != 22 {
+		t.Fatalf("expected 22 tools, got %d", len(listed.Tools))
 	}
 	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name: "find_symbols", Arguments: map[string]any{"query": "Checkout"},
@@ -110,6 +110,26 @@ func TestServerListsAndCallsGraphTools(t *testing.T) {
 		t.Fatalf("unexpected source result: %#v", source.StructuredContent)
 	}
 	if refreshes.Load() != 3 {
+		t.Fatalf("expected refresh before every tool call, got %d", refreshes.Load())
+	}
+	failureFlow, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "get_failure_flow", Arguments: map[string]any{"selector": "sample.Checkout"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failureFlow.IsError {
+		t.Fatalf("failure-flow tool returned an error: %#v", failureFlow.Content)
+	}
+	structured, ok = failureFlow.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("missing structured failure-flow result: %#v", failureFlow.StructuredContent)
+	}
+	root, _ := structured["root"].(map[string]any)
+	if root["qualified_name"] != "sample.Checkout" {
+		t.Fatalf("unexpected failure-flow result: %#v", failureFlow.StructuredContent)
+	}
+	if refreshes.Load() != 4 {
 		t.Fatalf("expected refresh before every tool call, got %d", refreshes.Load())
 	}
 }
