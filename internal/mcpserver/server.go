@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -80,7 +81,7 @@ func (s *Service) Server(version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{Name: "get_blast_radius", Title: "Get blast radius", Description: "Walk incoming dependency edges to identify code structurally affected by a symbol change.", Annotations: annotations}, s.getBlastRadius)
 	if s.catalog != nil {
 		mcp.AddTool(server, &mcp.Tool{Name: "list_data_resources", Title: "List data resources", Description: "Catalog indexed tables and views with normalized dialect and object metadata, plus unresolved external targets kept explicit.", Annotations: annotations}, s.listDataResources)
-		mcp.AddTool(server, &mcp.Tool{Name: "get_data_resource_usage", Title: "Get data resource usage", Description: "Report the readers and writers of one table or view separately, each with its source evidence. An ambiguous name returns candidates instead of a guess.", Annotations: annotations}, s.getDataResourceUsage)
+		mcp.AddTool(server, &mcp.Tool{Name: "get_data_resource_usage", Title: "Get data resource usage", Description: "Report the readers and writers of one table or view separately, each with its source evidence. An ambiguous name fails with its candidates named instead of guessing one.", Annotations: annotations}, s.getDataResourceUsage)
 		mcp.AddTool(server, &mcp.Tool{Name: "list_config_keys", Title: "List configuration keys", Description: "Catalog configuration keys with their definitions, readers, and unresolved references. Stored values are never returned.", Annotations: annotations}, s.listConfigKeys)
 		mcp.AddTool(server, &mcp.Tool{Name: "list_events", Title: "List events", Description: "Catalog events with their declarations, producers, consumers, and handlers.", Annotations: annotations}, s.listEvents)
 		mcp.AddTool(server, &mcp.Tool{Name: "find_orphaned_events", Title: "Find orphaned events", Description: "Report events published without a consumer, consumed without a producer, or declared with neither. An unresolved possible counterpart makes the status unknown rather than orphaned.", Annotations: annotations}, s.findOrphanedEvents)
@@ -254,7 +255,21 @@ func (s *Service) getDataResourceUsage(ctx context.Context, _ *mcp.CallToolReque
 		return nil, query.DataResourceUsage{}, err
 	}
 	result, err := s.catalog.DataResourceUsage(ctx, input.Selector, input.options())
-	return nil, result, err
+	return nil, result, withCandidates(err)
+}
+
+// withCandidates names the ambiguous candidates in the error, because a tool
+// error carries no structured payload for a client to read them from.
+func withCandidates(err error) error {
+	var ambiguous *query.AmbiguousError
+	if !errors.As(err, &ambiguous) {
+		return err
+	}
+	names := make([]string, 0, len(ambiguous.Candidates))
+	for _, candidate := range ambiguous.Candidates {
+		names = append(names, fmt.Sprintf("%s [%s] %s", candidate.QualifiedName, candidate.Kind, candidate.ID))
+	}
+	return fmt.Errorf("%w; candidates: %s", err, strings.Join(names, "; "))
 }
 
 func (s *Service) listConfigKeys(ctx context.Context, _ *mcp.CallToolRequest, input CatalogInput) (*mcp.CallToolResult, query.ConfigKeyList, error) {

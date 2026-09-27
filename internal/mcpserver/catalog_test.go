@@ -3,6 +3,7 @@ package mcpserver_test
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -116,4 +117,42 @@ func TestServerExposesCatalogTools(t *testing.T) {
 	if !rejected.IsError {
 		t.Fatalf("an unsupported kind must be rejected, not answered: %#v", rejected.StructuredContent)
 	}
+
+	ambiguous := graph.Node{ID: graph.NodeID(graph.KindTable, "archive.stock"), Kind: graph.KindTable,
+		Name: "stock", QualifiedName: "archive.stock", OwnerFile: "archive.sql"}
+	other := graph.Node{ID: graph.NodeID(graph.KindTable, "live.stock"), Kind: graph.KindTable,
+		Name: "stock", QualifiedName: "live.stock", OwnerFile: "archive.sql"}
+	if err := repository.ReplaceOwner(ctx, "archive.sql", graph.ParseResult{
+		Nodes: []graph.Node{ambiguous, other},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	conflicted, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "get_data_resource_usage", Arguments: map[string]any{"selector": "stock"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !conflicted.IsError {
+		t.Fatalf("an ambiguous selector must not resolve: %#v", conflicted.StructuredContent)
+	}
+	message := contentText(conflicted)
+	for _, want := range []string{"archive.stock", "live.stock"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("ambiguity error does not name candidate %q: %s", want, message)
+		}
+	}
+}
+
+func contentText(result *mcp.CallToolResult) string {
+	var builder strings.Builder
+	for _, content := range result.Content {
+		if text, ok := content.(*mcp.TextContent); ok {
+			builder.WriteString(text.Text)
+		}
+	}
+	return builder.String()
 }

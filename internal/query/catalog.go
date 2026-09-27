@@ -175,12 +175,20 @@ func (c *Catalog) DataResources(ctx context.Context, kinds []graph.NodeKind, opt
 	if len(kinds) == 0 {
 		kinds = graph.DataResourceKinds()
 	}
+	requested := make([]graph.NodeKind, 0, len(kinds))
+	seenKind := make(map[graph.NodeKind]bool, len(kinds))
 	for _, kind := range kinds {
 		if !graph.IsDataResourceKind(kind) {
 			return DataResourceList{}, fmt.Errorf("%q is not a data resource kind; supported kinds are %s",
 				kind, joinKinds(graph.DataResourceKinds()))
 		}
+		if seenKind[kind] {
+			continue
+		}
+		seenKind[kind] = true
+		requested = append(requested, kind)
 	}
+	kinds = requested
 	limit, err := c.bounds(ctx, options)
 	if err != nil {
 		return DataResourceList{}, err
@@ -329,10 +337,11 @@ func (c *Catalog) OrphanedEvents(ctx context.Context, options CatalogOptions) (O
 		if !ok {
 			continue
 		}
-		sites, err := c.unresolvedCounterparts(ctx, event, counterparts)
+		sites, counterpartsTruncated, err := c.unresolvedCounterparts(ctx, event, counterparts)
 		if err != nil {
 			return OrphanedEventList{}, err
 		}
+		result.Truncated = result.Truncated || counterpartsTruncated
 		orphan.UnresolvedCounterparts = sites
 		for _, site := range sites {
 			if site.Relation == graph.EdgePublishes {
@@ -343,6 +352,11 @@ func (c *Catalog) OrphanedEvents(ctx context.Context, options CatalogOptions) (O
 		}
 		produced, consumed := len(event.Producers) > 0, len(event.Consumers) > 0 || len(event.Handlers) > 0
 		if (!produced && orphan.UnresolvedProducers > 0) || (!consumed && orphan.UnresolvedConsumers > 0) {
+			orphan.Status = OrphanUnknown
+		}
+		// Evidence the bound cut off may hold the missing counterpart, so a
+		// truncated event is uncertain rather than a confirmed orphan.
+		if eventTruncated || counterpartsTruncated {
 			orphan.Status = OrphanUnknown
 		}
 		result.Events = append(result.Events, orphan)
@@ -460,6 +474,7 @@ func (c *Catalog) list(ctx context.Context, kinds []graph.NodeKind, visibility g
 	if err != nil {
 		return nil, false, err
 	}
+	scopedNodes = uniqueScopedNodes(scopedNodes)
 	sortScopedNodes(scopedNodes)
 	if len(scopedNodes) > limit {
 		return scopedNodes[:limit], true, nil
@@ -482,9 +497,12 @@ func (c *Catalog) resolveDataResource(ctx context.Context, selector string, opti
 		}
 		return graph.ScopedNode{Node: node}, nil
 	}
+	// Resolution is deliberately unbounded: a bound applied before exact
+	// matching could hide the one exact match, or hide a second one and report
+	// an ambiguous name as unambiguous.
 	candidates, err := c.repository.ListNodesByKind(ctx, graph.NodeListQuery{
 		Kinds: graph.DataResourceKinds(), Name: selector, Repository: options.Repository,
-		Visibility: graph.AllNodes, Limit: MaxCatalogLimit,
+		Visibility: graph.AllNodes,
 	})
 	if err != nil {
 		return graph.ScopedNode{}, err
@@ -601,7 +619,7 @@ func (c *Catalog) unresolvedEventIndex(ctx context.Context, options CatalogOptio
 	return index, nil
 }
 
-func (c *Catalog) unresolvedCounterparts(ctx context.Context, event Event, index map[string][]graph.Node) ([]UsageSite, error) {
+func (c *Catalog) unresolvedCounterparts(ctx context.Context, event Event, index map[string][]graph.Node) ([]UsageSite, bool, error) {
 	resolved := map[string]bool{}
 	for _, group := range [][]UsageSite{event.Producers, event.Consumers, event.Handlers} {
 		for _, site := range group {
@@ -622,11 +640,13 @@ func (c *Catalog) unresolvedCounterparts(ctx context.Context, event Event, index
 		}
 	}
 	var result []UsageSite
+	truncated := false
 	for _, candidate := range candidates {
-		sites, _, err := c.incoming(ctx, candidate.ID, MaxCatalogLimit, graph.EdgePublishes, graph.EdgeSubscribes)
+		sites, candidateTruncated, err := c.incoming(ctx, candidate.ID, MaxCatalogLimit, graph.EdgePublishes, graph.EdgeSubscribes)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
+		truncated = truncated || candidateTruncated
 		for _, site := range sites {
 			// A federated edge carries the same fact identity as the
 			// unresolved edge it replaced, so counting it again would report
@@ -638,7 +658,7 @@ func (c *Catalog) unresolvedCounterparts(ctx context.Context, event Event, index
 		}
 	}
 	sortUsageSites(result)
-	return result, nil
+	return result, truncated, nil
 }
 
 func (c *Catalog) incoming(ctx context.Context, id string, limit int, relations ...graph.EdgeKind) ([]UsageSite, bool, error) {
@@ -666,6 +686,10 @@ func (c *Catalog) sites(ctx context.Context, edges []graph.Edge, subject string,
 		wanted[relation] = true
 	}
 	seen := map[string]bool{}
+	// Each relation carries its own budget. A shared budget consumed in edge
+	// order lets a busy relation starve another into looking empty, which would
+	// turn a bound into a false claim that no writer or no consumer exists.
+	kept := make(map[graph.EdgeKind]int, len(relations))
 	result := []UsageSite{}
 	truncated := false
 	for _, edge := range edges {
@@ -673,10 +697,11 @@ func (c *Catalog) sites(ctx context.Context, edges []graph.Edge, subject string,
 			continue
 		}
 		seen[edge.ID] = true
-		if len(result) >= limit {
+		if kept[edge.Kind] >= limit {
 			truncated = true
 			continue
 		}
+		kept[edge.Kind]++
 		other := edge.FromID
 		if other == subject {
 			other = edge.ToID
@@ -725,6 +750,19 @@ func classifyConfigProperties(properties map[string]string) (map[string]string, 
 		kept = nil
 	}
 	return kept, withheld
+}
+
+func uniqueScopedNodes(scopedNodes []graph.ScopedNode) []graph.ScopedNode {
+	seen := make(map[string]bool, len(scopedNodes))
+	result := make([]graph.ScopedNode, 0, len(scopedNodes))
+	for _, scoped := range scopedNodes {
+		if seen[scoped.Node.ID] {
+			continue
+		}
+		seen[scoped.Node.ID] = true
+		result = append(result, scoped)
+	}
+	return result
 }
 
 func localOnly(scopedNodes []graph.ScopedNode) []graph.ScopedNode {

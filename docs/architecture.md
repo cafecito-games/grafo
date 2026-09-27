@@ -134,7 +134,10 @@ Orphan status is a query result, never a persisted edge or diagnostic. An event
 with both a producer and a consumer is not reported. A one-sided event is
 classified as published-without-consumer, consumed-without-producer, or
 declared-with-neither, and its status is downgraded from orphaned to unknown
-whenever an unresolved target could be the missing counterpart. Because a
+whenever an unresolved target could be the missing counterpart or a bound cut
+off part of the evidence. Each relation is bounded independently, because a
+budget shared in edge order would let one relation starve another into looking
+empty and turn a bound into a false absence claim. Because a
 federated edge keeps the fact identity of the unresolved edge it replaced,
 resolved cross-repository evidence is never double-counted as uncertainty. An
 event name that no declaration resolves is always unknown: the index does not

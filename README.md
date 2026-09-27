@@ -208,7 +208,10 @@ and the names of anything withheld are listed in `withheld_properties`.
 consumed without a producer, and declared with neither — and separates a
 confirmed orphan from an uncertain one. When an unresolved target could be the
 missing counterpart, the finding's status is `unknown` and the response carries
-the counterpart counts and their evidence. Event names that no declaration
+the counterpart counts and their evidence. Evidence a bound cut off is treated
+the same way, so a truncated event is never a confirmed orphan. Each relation
+carries its own bound, so a busy reader or publisher list can never make another
+relation look empty. Event names that no declaration
 resolves are always `unknown`, because nothing in the index bounds where they
 are published or consumed. Federation applies the same contract: a producer in
 one repository and a consumer in another clear the orphan.

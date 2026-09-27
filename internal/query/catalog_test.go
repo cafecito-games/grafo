@@ -3,6 +3,7 @@ package query_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
@@ -306,6 +307,88 @@ func TestOrphanedEventsIgnoreResolvedFederatedCounterparts(t *testing.T) {
 			t.Fatalf("a federated consumer must clear the orphan: %#v", orphan)
 		}
 	}
+}
+
+func TestBoundedEvidenceNeverStarvesAnotherRelation(t *testing.T) {
+	repository := newCatalogFixture()
+	// Edges arrive in kind order, so a shared budget spent on reads would hide
+	// every writer behind a truncation flag.
+	for index := 0; index < 5; index++ {
+		reader := graph.Node{ID: fmt.Sprintf("n:reader-%d", index), Kind: graph.KindFunction,
+			Name: fmt.Sprintf("Read%d", index), QualifiedName: fmt.Sprintf("shop.Read%d", index)}
+		repository.add("checkout", reader)
+		repository.edges = append(repository.edges, graph.Edge{ID: fmt.Sprintf("e:read-%d", index),
+			FactID: fmt.Sprintf("f:read-%d", index), FromID: reader.ID, ToID: "n:orders", Kind: graph.EdgeReads})
+	}
+	sortEdgesByKind(repository)
+	usage, err := query.NewCatalog(repository).DataResourceUsage(context.Background(), "orders",
+		query.CatalogOptions{Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(usage.Readers) != 2 || !usage.Truncated {
+		t.Fatalf("reader bound was not applied: %#v", usage)
+	}
+	if len(usage.Writers) != 1 {
+		t.Fatalf("readers starved the writer list: %#v", usage)
+	}
+	if len(usage.References) != 1 {
+		t.Fatalf("readers starved the reference list: %#v", usage)
+	}
+}
+
+func TestTruncatedEvidenceNeverConfirmsAnOrphan(t *testing.T) {
+	repository := newCatalogFixture()
+	for index := 0; index < 3; index++ {
+		publisher := graph.Node{ID: fmt.Sprintf("n:publisher-%d", index), Kind: graph.KindFunction,
+			Name: fmt.Sprintf("Emit%d", index), QualifiedName: fmt.Sprintf("shop.Emit%d", index)}
+		repository.add("checkout", publisher)
+		repository.edges = append(repository.edges, graph.Edge{ID: fmt.Sprintf("e:publish-cleared-%d", index),
+			FactID: fmt.Sprintf("f:publish-cleared-%d", index), FromID: publisher.ID,
+			ToID: "n:cart-cleared", Kind: graph.EdgePublishes})
+	}
+	sortEdgesByKind(repository)
+	result, err := query.NewCatalog(repository).OrphanedEvents(context.Background(), query.CatalogOptions{Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, orphan := range result.Events {
+		if orphan.Event.QualifiedName != "shop.CartCleared" {
+			continue
+		}
+		if orphan.Status != query.OrphanUnknown {
+			t.Fatalf("truncated evidence produced a confirmed orphan: %#v", orphan)
+		}
+	}
+	if !result.Truncated {
+		t.Fatalf("truncation was not reported: %#v", result)
+	}
+}
+
+func TestDataResourcesDeduplicateRepeatedKinds(t *testing.T) {
+	result, err := query.NewCatalog(newCatalogFixture()).DataResources(context.Background(),
+		[]graph.NodeKind{graph.KindTable, graph.KindTable}, query.CatalogOptions{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Resources) != 1 || result.Resources[0].QualifiedName != "orders" {
+		t.Fatalf("a repeated kind duplicated the catalog: %#v", result.Resources)
+	}
+}
+
+// sortEdgesByKind mirrors the storage adapter's edge ordering so bound-related
+// behavior is exercised the way the repository returns edges.
+func sortEdgesByKind(repository *catalogRepository) {
+	sort.Slice(repository.edges, func(i, j int) bool {
+		left, right := repository.edges[i], repository.edges[j]
+		if left.Kind != right.Kind {
+			return left.Kind < right.Kind
+		}
+		if left.FromID != right.FromID {
+			return left.FromID < right.FromID
+		}
+		return left.ID < right.ID
+	})
 }
 
 func newCatalogFixture() *catalogRepository {
