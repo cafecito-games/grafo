@@ -26,6 +26,10 @@ type Reader interface {
 	// Lstat reports on a path without following symlinks, so the installer can
 	// refuse to write through one.
 	Lstat(name string) (fs.FileInfo, error)
+	// Readlink reads a symbolic link's target, so the installer can resolve a
+	// path completely before deciding whether it stays inside the user's
+	// configuration tree.
+	Readlink(name string) (string, error)
 	// GOOS reports the target operating system ("linux", "darwin", "windows").
 	GOOS() string
 	// HomeDir reports the current user's home directory.
@@ -91,6 +95,8 @@ func (OSEnvironment) ReadFile(name string) ([]byte, error) { return os.ReadFile(
 func (OSEnvironment) Stat(name string) (fs.FileInfo, error) { return os.Stat(name) }
 
 func (OSEnvironment) Lstat(name string) (fs.FileInfo, error) { return os.Lstat(name) }
+
+func (OSEnvironment) Readlink(name string) (string, error) { return os.Readlink(name) }
 
 func (OSEnvironment) Remove(path string) error { return os.Remove(path) }
 

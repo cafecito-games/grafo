@@ -160,6 +160,13 @@ func (f *fakeEnvironment) Lstat(name string) (fs.FileInfo, error) {
 	return nil, fs.ErrNotExist
 }
 
+func (f *fakeEnvironment) Readlink(name string) (string, error) {
+	if target, ok := f.symlinks[name]; ok {
+		return target, nil
+	}
+	return "", errors.New("not a symlink")
+}
+
 func (f *fakeEnvironment) Remove(path string) error {
 	if f.strict {
 		f.violations = append(f.violations, "Remove "+path)

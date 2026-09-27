@@ -138,7 +138,7 @@ func run(ctx context.Context, env Environment, options Options, install bool, bu
 		return nil, err
 	}
 
-	steps, failures := planSteps(ctx, reader, options, install, build, selected, automatic)
+	steps, failures := planSteps(ctx, reader, options, install, build, selected, automatic, receipts)
 
 	planned := make([]Action, 0, len(steps))
 	for _, entry := range steps {
@@ -155,8 +155,13 @@ func run(ctx context.Context, env Environment, options Options, install bool, bu
 	actions := make([]Action, 0, len(steps))
 	for _, entry := range steps {
 		// Skipped and unchanged artifacts are reported without touching the
-		// filesystem, the client, or the receipt ledger.
+		// filesystem or the client. A stale receipt for an artifact the user
+		// already deleted is still forgotten, so it cannot later be mistaken for
+		// proof of ownership.
 		if entry.action.Change == changeUnchanged || entry.action.Change == changeSkipped {
+			if entry.plan.dropReceipt {
+				receipts.drop(entry.action.Client, entry.action.Kind)
+			}
 			actions = append(actions, entry.action)
 			continue
 		}
@@ -171,7 +176,8 @@ func run(ctx context.Context, env Environment, options Options, install bool, bu
 		case entry.plan.change == changeRemoved:
 			receipts.drop(entry.action.Client, entry.action.Kind)
 		default:
-			receipts.record(entry.action.Client, entry.action.Kind, entry.action.Target, entry.plan.digest)
+			receipts.record(entry.action.Client, entry.action.Kind, entry.action.Target,
+				entry.plan.digest, entry.plan.ownedCommands)
 		}
 		actions = append(actions, entry.action)
 	}
@@ -183,7 +189,7 @@ func run(ctx context.Context, env Environment, options Options, install bool, bu
 
 // planSteps builds every intended action without mutating anything.
 func planSteps(ctx context.Context, reader Reader, options Options, install bool, build planner,
-	selected []adapter, automatic bool) ([]step, []error) {
+	selected []adapter, automatic bool, receipts *receiptStore) ([]step, []error) {
 	var steps []step
 	var failures []error
 	for _, entry := range selected {
@@ -194,14 +200,31 @@ func planSteps(ctx context.Context, reader Reader, options Options, install bool
 			continue
 		}
 		if !place.found {
-			if !automatic {
+			// Installing into a client that is not there is an error only when the
+			// user named it explicitly. Uninstall never fails for a missing client:
+			// its guidance still has to be cleaned up.
+			if !automatic && install {
 				failures = append(failures, fmt.Errorf("%s is not installed", identity.Display))
 				continue
 			}
-			steps = append(steps, step{action: Action{
+			missing := step{action: Action{
 				Client: identity, Kind: KindMCP, Scope: identity.Scope, Target: place.target,
 				Change: changeSkipped, DryRun: options.DryRun, Detail: place.detail,
-			}})
+			}}
+			// A registration receipt for a client that is gone is stale evidence;
+			// uninstall forgets it rather than leaving it to claim ownership later.
+			if !install && receipts.lookup(identity.Name, KindMCP).found {
+				missing.plan.dropReceipt = true
+			}
+			steps = append(steps, missing)
+			// A client the user has since removed must not orphan Grafo's skill,
+			// instructions, hooks, and receipts, so uninstall keeps planning them.
+			if install || options.MCPOnly {
+				continue
+			}
+			guidanceSteps, guidanceFailures := planGuidance(reader, options, install, identity, receipts)
+			steps = append(steps, guidanceSteps...)
+			failures = append(failures, guidanceFailures...)
 			continue
 		}
 
@@ -214,7 +237,7 @@ func planSteps(ctx context.Context, reader Reader, options Options, install bool
 		if options.MCPOnly {
 			continue
 		}
-		guidanceSteps, guidanceFailures := planGuidance(reader, options, install, identity)
+		guidanceSteps, guidanceFailures := planGuidance(reader, options, install, identity, receipts)
 		steps = append(steps, guidanceSteps...)
 		failures = append(failures, guidanceFailures...)
 	}
@@ -222,7 +245,8 @@ func planSteps(ctx context.Context, reader Reader, options Options, install bool
 }
 
 // planGuidance plans the guidance artifacts of one detected client.
-func planGuidance(reader Reader, options Options, install bool, identity Client) ([]step, []error) {
+func planGuidance(reader Reader, options Options, install bool, identity Client,
+	receipts *receiptStore) ([]step, []error) {
 	var steps []step
 	var failures []error
 	for _, artifact := range guidanceFor(identity.Name) {
@@ -241,12 +265,13 @@ func planGuidance(reader Reader, options Options, install bool, identity Client)
 			}})
 			continue
 		}
+		own := receipts.lookup(identity.Name, artifact.kind())
 		var intended plan
 		var planErr error
 		if install {
-			intended, planErr = artifact.planInstall(reader, identity.Display, target, executableOf(options))
+			intended, planErr = artifact.planInstall(reader, identity.Display, target, executableOf(options), own)
 		} else {
-			intended, planErr = artifact.planUninstall(reader, identity.Display, target)
+			intended, planErr = artifact.planUninstall(reader, identity.Display, target, own)
 		}
 		if planErr != nil {
 			failures = append(failures, planErr)
@@ -281,7 +306,11 @@ func noClientError(automatic bool, actions []Action, failures []error) error {
 		return nil
 	}
 	for _, action := range actions {
-		if action.Change != changeSkipped {
+		if action.Kind == KindMCP && action.Change != changeSkipped {
+			return nil
+		}
+		// Guidance that was actually cleaned up proves Grafo had something here.
+		if action.Kind != KindMCP && action.Change != changeSkipped && action.Change != changeUnchanged {
 			return nil
 		}
 	}

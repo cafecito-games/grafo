@@ -60,9 +60,12 @@ type plan struct {
 	removes    []string
 	removeDirs []string
 	// digest labels the content this plan writes, for the installed-artifact
-	// receipt. dropReceipt forgets the receipt instead.
-	digest      string
-	dropReceipt bool
+	// receipt; ownedCommands records the exact command lines the receipt must
+	// remember so a later uninstall can prove ownership. dropReceipt forgets the
+	// receipt instead.
+	digest        string
+	ownedCommands []string
+	dropReceipt   bool
 }
 
 // adapter owns one client's identity, detection, and command or file surface.

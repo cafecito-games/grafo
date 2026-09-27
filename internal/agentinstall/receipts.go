@@ -21,14 +21,18 @@ var now = func() time.Time { return time.Now().UTC() }
 // Receipt records one artifact Grafo installed, so a later uninstall or upgrade
 // can prove ownership instead of guessing from file contents alone.
 type Receipt struct {
-	Client   string `json:"client"`
-	Kind     string `json:"kind"`
-	Target   string `json:"target"`
-	Digest   string `json:"digest,omitempty"`
-	Marker   string `json:"marker,omitempty"`
-	Guidance string `json:"guidance_version,omitempty"`
-	Grafo    string `json:"grafo_version"`
-	Updated  string `json:"updated_at"`
+	Client string `json:"client"`
+	Kind   string `json:"kind"`
+	Target string `json:"target"`
+	Digest string `json:"digest,omitempty"`
+	// Commands are the exact command lines Grafo installed for a hook artifact,
+	// in hookPhases order. Removal matches them exactly, so a user-authored
+	// entry that merely resembles one is never claimed.
+	Commands []string `json:"commands,omitempty"`
+	Marker   string   `json:"marker,omitempty"`
+	Guidance string   `json:"guidance_version,omitempty"`
+	Grafo    string   `json:"grafo_version"`
+	Updated  string   `json:"updated_at"`
 }
 
 // receiptFile is the document stored under the Grafo configuration directory.
@@ -77,26 +81,56 @@ func loadReceipts(reader Reader) (*receiptStore, error) {
 	return store, nil
 }
 
-// lookup returns the receipt for one client artifact.
-func (s *receiptStore) lookup(client, kind string) (Receipt, bool) {
+// lookup returns the receipt evidence for one client artifact.
+func (s *receiptStore) lookup(client, kind string) ownership {
 	index := slices.IndexFunc(s.entries, func(entry Receipt) bool {
 		return entry.Client == client && entry.Kind == kind
 	})
 	if index == -1 {
-		return Receipt{}, false
+		return ownership{}
 	}
-	return s.entries[index], true
+	return ownership{receipt: s.entries[index], found: true}
+}
+
+// ownership is the receipt evidence Grafo has for one installed artifact.
+// Ownership of whole-file and hook artifacts is proven from a receipt, never
+// from a marker substring alone, so uninstall can never delete or rewrite
+// content Grafo cannot prove it wrote.
+type ownership struct {
+	receipt Receipt
+	found   bool
+}
+
+// provesFile reports whether a receipt proves Grafo wrote exactly these bytes at
+// exactly this path.
+func (o ownership) provesFile(path, contents string) bool {
+	return o.found && o.receipt.Target == path && o.receipt.Digest != "" &&
+		o.receipt.Digest == agentguide.Digest(contents)
+}
+
+// provesPath reports whether a receipt claims this exact target at all.
+func (o ownership) provesPath(path string) bool {
+	return o.found && o.receipt.Target == path
+}
+
+// commands returns the exact command lines a receipt records.
+func (o ownership) commands() []string {
+	if !o.found {
+		return nil
+	}
+	return o.receipt.Commands
 }
 
 // record stores a receipt for an artifact whose mutation already succeeded.
-func (s *receiptStore) record(client Client, kind, target, digest string) {
+func (s *receiptStore) record(client Client, kind, target, digest string, commands []string) {
 	entry := Receipt{
-		Client:  client.Name,
-		Kind:    kind,
-		Target:  target,
-		Digest:  digest,
-		Grafo:   version.Value,
-		Updated: now().Format(time.RFC3339),
+		Client:   client.Name,
+		Kind:     kind,
+		Target:   target,
+		Digest:   digest,
+		Commands: commands,
+		Grafo:    version.Value,
+		Updated:  now().Format(time.RFC3339),
 	}
 	if kind != KindMCP {
 		entry.Marker = agentguide.BeginMarker
