@@ -215,7 +215,7 @@ func (s *Service) Search(ctx context.Context, text string, limit int) (SearchRes
 	result := SearchResult{Query: text, Model: s.embedder.Model(), Matches: make([]Match, 0, len(scored))}
 	graphQuery := query.NewService(s.graph)
 	for _, candidate := range scored {
-		contextGraph, err := graphQuery.Neighborhood(ctx, candidate.node.ID, 1, query.Both, nil, 50)
+		contextGraph, err := graphQuery.Neighborhood(ctx, candidate.node.ID, "", 1, query.Both, nil, 50)
 		if err != nil {
 			return SearchResult{}, fmt.Errorf("resolve context for %s: %w", candidate.node.QualifiedName, err)
 		}

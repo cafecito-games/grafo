@@ -40,7 +40,7 @@ func Routes() { router.Get("/charge", Handler) }
 		t.Fatal(err)
 	}
 	defer repository.Close()
-	result, err := query.NewService(repository).Neighborhood(ctx, "example.com/client.Call", 1,
+	result, err := query.NewService(repository).Neighborhood(ctx, "example.com/client.Call", "", 1,
 		query.Outgoing, []graph.EdgeKind{graph.EdgeRequests}, 20)
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +75,7 @@ func Routes() { router.Get("/charge", Handler) }
 	if !foundIncoming {
 		t.Fatalf("incoming federated edge missing: %#v", incoming)
 	}
-	dependency, err := query.NewService(repository).Neighborhood(ctx, "example.com/client", 1,
+	dependency, err := query.NewService(repository).Neighborhood(ctx, "example.com/client", "", 1,
 		query.Outgoing, []graph.EdgeKind{graph.EdgeDependsOn}, 20)
 	if err != nil {
 		t.Fatal(err)

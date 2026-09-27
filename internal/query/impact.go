@@ -115,6 +115,9 @@ func (s *Service) WithSourceReader(reader SourceReader) *Service {
 // depth 4 and limit 1000 per direction, 2 context lines, 200 max source lines,
 // and at most 10 excerpts.
 type ImpactOptions struct {
+	// Kind optionally restricts which node the selector may resolve to, so a
+	// caller can say it means a method rather than one of its parameters.
+	Kind               graph.NodeKind
 	UpstreamDepth      int
 	DownstreamDepth    int
 	UpstreamLimit      int
@@ -182,7 +185,7 @@ type ImpactReport struct {
 // change-impact report. Resolution errors (ErrNotFound, *AmbiguousError)
 // propagate unchanged and never yield a partial report.
 func (s *Service) Impact(ctx context.Context, selector string, options ImpactOptions) (ImpactReport, error) {
-	root, err := s.Resolve(ctx, selector)
+	root, err := s.ResolveKind(ctx, selector, options.Kind)
 	if err != nil {
 		return ImpactReport{}, err
 	}
@@ -250,7 +253,7 @@ func (s *Service) impactSection(ctx context.Context, root graph.Node, direction 
 		traversalDirection = Outgoing
 		relations = DownstreamRelations()
 	}
-	traversal, err := s.Neighborhood(ctx, root.ID, depth, traversalDirection, relations, limit)
+	traversal, err := s.Neighborhood(ctx, root.ID, "", depth, traversalDirection, relations, limit)
 	if err != nil {
 		return ImpactSection{}, err
 	}

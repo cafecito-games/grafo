@@ -22,7 +22,7 @@ type Service struct {
 	projects   []indexer.Project
 	refresh    func(context.Context) error
 	reusable   func(context.Context, string, int) (semantic.SearchResult, error)
-	source     func(context.Context, string, int, int) (sourcecontext.Excerpt, error)
+	source     func(context.Context, string, graph.NodeKind, int, int) (sourcecontext.Excerpt, error)
 	search     *search.Service
 	catalog    *query.Catalog
 	refreshMu  sync.Mutex
@@ -52,7 +52,7 @@ func (s *Service) WithReusable(search func(context.Context, string, int) (semant
 	return s
 }
 
-func (s *Service) WithSource(read func(context.Context, string, int, int) (sourcecontext.Excerpt, error)) *Service {
+func (s *Service) WithSource(read func(context.Context, string, graph.NodeKind, int, int) (sourcecontext.Excerpt, error)) *Service {
 	s.source = read
 	// Impact reports read excerpts through the same bounded reader, so
 	// repository-root confinement and line/byte limits are enforced once.
@@ -141,6 +141,7 @@ func (s *Service) findSymbols(ctx context.Context, _ *mcp.CallToolRequest, input
 type SelectorInput struct {
 	Selector  string   `json:"selector,omitempty" jsonschema:"qualified symbol name or stable node ID"`
 	Selectors []string `json:"selectors,omitempty" jsonschema:"batch of qualified symbol names or stable node IDs resolved in caller order"`
+	Kind      string   `json:"kind,omitempty" jsonschema:"optional node kind the selector must resolve to, such as function, method, type, or field"`
 }
 
 type SourceInput struct {
@@ -148,6 +149,7 @@ type SourceInput struct {
 	Selectors    []string `json:"selectors,omitempty" jsonschema:"batch of symbol names or node IDs read in caller order"`
 	ContextLines int      `json:"context_lines,omitempty" jsonschema:"surrounding lines from 0 to 20"`
 	MaxLines     int      `json:"max_lines,omitempty" jsonschema:"maximum returned lines per excerpt; defaults to 200 and may not exceed 1000"`
+	Kind         string   `json:"kind,omitempty" jsonschema:"optional node kind the selector must resolve to, such as function, method, type, or field"`
 }
 
 // SourceOutput embeds the single excerpt so scalar callers keep reading the
@@ -165,8 +167,9 @@ func (s *Service) getSource(ctx context.Context, _ *mcp.CallToolRequest, input S
 	if err != nil {
 		return nil, SourceOutput{}, err
 	}
+	kind := graph.NodeKind(strings.TrimSpace(input.Kind))
 	results := runBatch(ctx, selectors, namingCandidates(func(readContext context.Context, selector string) (sourcecontext.Excerpt, error) {
-		return s.source(readContext, selector, input.ContextLines, input.MaxLines)
+		return s.source(readContext, selector, kind, input.ContextLines, input.MaxLines)
 	}))
 	excerpt, err := firstValue(results, batched)
 	return nil, SourceOutput{Excerpt: excerpt, Results: results}, err
@@ -185,7 +188,10 @@ func (s *Service) getNode(ctx context.Context, _ *mcp.CallToolRequest, input Sel
 	if err != nil {
 		return nil, NodeOutput{}, err
 	}
-	results := runBatch(ctx, selectors, namingCandidates(s.query.Resolve))
+	kind := graph.NodeKind(strings.TrimSpace(input.Kind))
+	results := runBatch(ctx, selectors, namingCandidates(func(resolveContext context.Context, selector string) (graph.Node, error) {
+		return s.query.ResolveKind(resolveContext, selector, kind)
+	}))
 	node, err := firstValue(results, batched)
 	return nil, NodeOutput{Node: node, Results: results}, err
 }
@@ -197,6 +203,7 @@ type TraversalInput struct {
 	Direction string   `json:"direction,omitempty" jsonschema:"outgoing, incoming, or both"`
 	Relations []string `json:"relations,omitempty" jsonschema:"optional edge kinds to follow"`
 	Limit     int      `json:"limit,omitempty" jsonschema:"maximum visited nodes"`
+	Kind      string   `json:"kind,omitempty" jsonschema:"optional node kind the selector must resolve to, such as function, method, type, or field"`
 }
 
 // TraversalOutput embeds the single traversal so scalar callers keep reading
@@ -221,8 +228,9 @@ func (s *Service) traverse(ctx context.Context, input TraversalInput, depthDefau
 	if depth == 0 {
 		depth = depthDefault
 	}
+	kind := graph.NodeKind(strings.TrimSpace(input.Kind))
 	results := runBatch(ctx, selectors, namingCandidates(func(walkContext context.Context, selector string) (query.Traversal, error) {
-		return s.query.Neighborhood(walkContext, selector, depth, direction, relations, input.Limit)
+		return s.query.Neighborhood(walkContext, selector, kind, depth, direction, relations, input.Limit)
 	}))
 	traversal, err := firstValue(results, batched)
 	return TraversalOutput{Traversal: traversal, Results: results}, err
@@ -250,6 +258,7 @@ type PathInput struct {
 	Direction string     `json:"direction,omitempty" jsonschema:"outgoing, incoming, or both"`
 	Relations []string   `json:"relations,omitempty" jsonschema:"optional edge kinds to follow"`
 	Limit     int        `json:"limit,omitempty" jsonschema:"maximum visited nodes"`
+	Kind      string     `json:"kind,omitempty" jsonschema:"optional node kind both endpoints must resolve to, such as function, method, type, or field"`
 }
 
 // PathOutput embeds the single path so scalar callers keep reading the
@@ -305,7 +314,8 @@ func (s *Service) findPath(ctx context.Context, _ *mcp.CallToolRequest, input Pa
 	results := make([]ResultEnvelope[query.Path], 0, len(pairs))
 	for index, pair := range pairs {
 		envelope := ResultEnvelope[query.Path]{Index: index, Input: pair.From + " -> " + pair.To}
-		value, pathErr := s.query.ShortestPath(ctx, pair.From, pair.To, direction, relations, input.Limit)
+		value, pathErr := s.query.ShortestPath(ctx, pair.From, pair.To,
+			graph.NodeKind(strings.TrimSpace(input.Kind)), direction, relations, input.Limit)
 		if pathErr = withCandidates(pathErr); pathErr != nil {
 			envelope.Error = pathErr.Error()
 		} else {
@@ -344,6 +354,7 @@ type ImpactInput struct {
 	ContextLines    int      `json:"context_lines,omitempty" jsonschema:"excerpt context lines from 0 to 20"`
 	MaxLines        int      `json:"max_lines,omitempty" jsonschema:"maximum lines per excerpt; defaults to 200"`
 	SourceLimit     int      `json:"source_limit,omitempty" jsonschema:"maximum excerpts; defaults to 10"`
+	Kind            string   `json:"kind,omitempty" jsonschema:"optional node kind the selector must resolve to, such as function, method, type, or field"`
 }
 
 // ImpactOutput embeds the single report so scalar callers read it at the top
@@ -359,6 +370,7 @@ func (input ImpactInput) options() query.ImpactOptions {
 		UpstreamLimit: input.UpstreamLimit, DownstreamLimit: input.DownstreamLimit,
 		IncludeSource: input.IncludeSource, SourceContextLines: input.ContextLines,
 		SourceMaxLines: input.MaxLines, SourceLimit: input.SourceLimit,
+		Kind: graph.NodeKind(strings.TrimSpace(input.Kind)),
 	}
 	if options.UpstreamDepth == 0 {
 		options.UpstreamDepth = input.Depth

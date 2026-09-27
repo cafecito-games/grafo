@@ -217,7 +217,7 @@ func TestHelpDocumentsNewCommands(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("help exited with %d", code)
 	}
-	for _, fragment := range []string{"grafo uninstall", "grafo search", "--upstream-depth", "--dry-run", "--list"} {
+	for _, fragment := range []string{"grafo uninstall", "grafo search", "--upstream-depth", "--dry-run", "--list", "--kind"} {
 		if !strings.Contains(stdout, fragment) {
 			t.Fatalf("help does not document %q:\n%s", fragment, stdout)
 		}
@@ -300,5 +300,43 @@ func TestHelpDocumentsGuidanceInstallation(t *testing.T) {
 		if !strings.Contains(stdout, fragment) {
 			t.Fatalf("help does not document %q:\n%s", fragment, stdout)
 		}
+	}
+}
+
+// TestShowReportsAmbiguityAndHonorsKind covers the CLI half of selector
+// resolution: an ambiguous selector must fail with a non-zero status and list the
+// candidates, and --kind must make it resolvable without guessing.
+func TestShowReportsAmbiguityAndHonorsKind(t *testing.T) {
+	root := indexedRepository(t)
+	if err := os.WriteFile(filepath.Join(root, "request.go"),
+		[]byte("package sample\n\ntype Request struct {\n\tCharge int\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := run(t, "index", root); code != 0 {
+		t.Fatalf("index exited with %d", code)
+	}
+
+	stdout, stderr, code := output(t, "show", "Charge", "--repo", root)
+	if code == 0 {
+		t.Fatalf("an ambiguous selector must not resolve silently:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "matches 2 nodes by name") {
+		t.Fatalf("ambiguity must report the total and the reason:\n%s", stderr)
+	}
+	if !strings.Contains(stdout, "sample.Charge") || !strings.Contains(stdout, "sample.Request.Charge") {
+		t.Fatalf("both candidates must be listed:\n%s", stdout)
+	}
+
+	stdout, stderr, code = output(t, "show", "Charge", "--repo", root, "--kind", "function")
+	if code != 0 {
+		t.Fatalf("kind-filtered show exited with %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "sample.Charge") || strings.Contains(stdout, "Request.Charge") {
+		t.Fatalf("--kind should select the function:\n%s", stdout)
+	}
+
+	if _, stderr, code = output(t, "show", "Charge", "--repo", root, "--kind", "nonsense"); code == 0 ||
+		!strings.Contains(stderr, "unknown node kind") {
+		t.Fatalf("an unknown kind must fail loudly, got %d: %s", code, stderr)
 	}
 }

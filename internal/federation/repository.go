@@ -288,6 +288,80 @@ func (r *Repository) ListNodesByKind(ctx context.Context, request graph.NodeList
 	return result, nil
 }
 
+// MatchNodes merges the per-member match evidence for a selector. Only the
+// strongest level any member reported contributes, because a member that holds a
+// stronger match always reports that level itself; totals sum across the
+// contributing members so a federated ambiguity still states the true count.
+func (r *Repository) MatchNodes(ctx context.Context, request graph.NodeMatchQuery) (graph.NodeMatchGroup, error) {
+	selector := strings.TrimSpace(request.Selector)
+	if selector == "" {
+		return graph.NodeMatchGroup{}, nil
+	}
+	limit := request.Limit
+	if limit <= 0 {
+		limit = sqlite.DefaultNodeMatchLimit
+	}
+	request.Selector, request.Limit = selector, limit
+	merged := graph.NodeMatchGroup{Level: graph.MatchNone}
+	byID := map[string]graph.Node{}
+	complete := true
+	for _, item := range r.members {
+		group, err := item.repository.MatchNodes(ctx, request)
+		if err != nil {
+			return graph.NodeMatchGroup{}, err
+		}
+		if group.Total == 0 {
+			continue
+		}
+		if merged.Level != graph.MatchNone && merged.Level.Stronger(group.Level) {
+			continue
+		}
+		if group.Level.Stronger(merged.Level) {
+			merged = graph.NodeMatchGroup{Level: group.Level}
+			byID = map[string]graph.Node{}
+			complete = true
+		}
+		if group.Truncated() {
+			complete = false
+		}
+		merged.Total += group.Total
+		merged.Strict += group.Strict
+		for _, node := range group.Nodes {
+			if existing, ok := byID[node.ID]; !ok || (existing.External && !node.External) {
+				byID[node.ID] = node
+			}
+		}
+	}
+	if merged.Level == graph.MatchNone {
+		return graph.NodeMatchGroup{}, nil
+	}
+	merged.Nodes = make([]graph.Node, 0, len(byID))
+	for _, node := range byID {
+		merged.Nodes = append(merged.Nodes, node)
+	}
+	graph.SortNodeMatches(merged.Level, selector, merged.Nodes)
+	// A node indexed by several members is one candidate, not several. When every
+	// contributing member listed its complete set, the deduplicated list is the
+	// authority for the totals; otherwise summed member totals are the best
+	// available bound and stay an over-count rather than an under-count.
+	if complete {
+		merged.Total = len(merged.Nodes)
+		merged.Strict = 0
+		for _, node := range merged.Nodes {
+			if graph.StrictMatch(merged.Level, selector, node) {
+				merged.Strict++
+			}
+		}
+	}
+	if len(merged.Nodes) > limit {
+		merged.Nodes = merged.Nodes[:limit]
+	}
+	if merged.Total < len(merged.Nodes) {
+		merged.Total = len(merged.Nodes)
+	}
+	return merged, nil
+}
+
 func (r *Repository) Node(ctx context.Context, id string) (graph.Node, error) {
 	var firstErr error
 	for _, item := range r.members {

@@ -73,3 +73,76 @@ WHERE kind = @kind
   AND (instr(lower(name), @name_fragment) > 0 OR instr(lower(qualified_name), @name_fragment) > 0)
 ORDER BY qualified_name, id
 LIMIT @max_results;
+
+-- Selector resolution queries. Each level is narrow and index-backed so
+-- ambiguity is decided from complete counts instead of a truncated substring
+-- window. nodes_qualified and nodes_name are COLLATE NOCASE indexes, so the
+-- case-insensitive equality below stays an index seek; the case-sensitive
+-- ("strict") form is counted separately because it is stronger evidence.
+
+-- name: MatchNodesByQualifiedName :many
+SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line,
+       properties, owner_file, external
+FROM (
+    SELECT nodes.*, CASE WHEN qualified_name = @target THEN 0 ELSE 1 END AS strict_rank
+    FROM nodes
+    WHERE qualified_name = @target COLLATE NOCASE
+      AND external = 0
+      AND (CAST(@kind AS TEXT) = '' OR kind = CAST(@kind AS TEXT))
+)
+ORDER BY strict_rank, length(qualified_name), qualified_name, id
+LIMIT @max_results;
+
+-- name: CountNodeMatchesByQualifiedName :one
+SELECT
+    COUNT(*) AS total,
+    CAST(COALESCE(SUM(CASE WHEN qualified_name = @target THEN 1 ELSE 0 END), 0) AS INTEGER) AS strict_matches
+FROM nodes
+WHERE qualified_name = @target COLLATE NOCASE
+  AND external = 0
+  AND (CAST(@kind AS TEXT) = '' OR kind = CAST(@kind AS TEXT));
+
+-- name: MatchNodesByName :many
+SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line,
+       properties, owner_file, external
+FROM (
+    SELECT nodes.*, CASE WHEN name = @target THEN 0 ELSE 1 END AS strict_rank
+    FROM nodes
+    WHERE name = @target COLLATE NOCASE
+      AND external = 0
+      AND (CAST(@kind AS TEXT) = '' OR kind = CAST(@kind AS TEXT))
+)
+ORDER BY strict_rank, length(qualified_name), qualified_name, id
+LIMIT @max_results;
+
+-- name: CountNodeMatchesByName :one
+SELECT
+    COUNT(*) AS total,
+    CAST(COALESCE(SUM(CASE WHEN name = @target THEN 1 ELSE 0 END), 0) AS INTEGER) AS strict_matches
+FROM nodes
+WHERE name = @target COLLATE NOCASE
+  AND external = 0
+  AND (CAST(@kind AS TEXT) = '' OR kind = CAST(@kind AS TEXT));
+
+-- name: MatchNodesBySubstring :many
+SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line,
+       properties, owner_file, external
+FROM (
+    SELECT nodes.*,
+        CASE WHEN instr(qualified_name, @target) > 0 OR instr(name, @target) > 0 THEN 0 ELSE 1 END AS strict_rank
+    FROM nodes
+    WHERE (lower(name) LIKE '%' || lower(@target) || '%'
+        OR lower(qualified_name) LIKE '%' || lower(@target) || '%')
+      AND (CAST(@kind AS TEXT) = '' OR kind = CAST(@kind AS TEXT))
+)
+ORDER BY strict_rank, external, length(qualified_name), qualified_name, id
+LIMIT @max_results;
+
+-- name: CountNodeMatchesBySubstring :one
+SELECT
+    COUNT(*) AS total,
+    CAST(COALESCE(SUM(CASE WHEN instr(qualified_name, @target) > 0 OR instr(name, @target) > 0 THEN 1 ELSE 0 END), 0) AS INTEGER) AS strict_matches
+FROM nodes
+WHERE (lower(name) LIKE '%' || lower(@target) || '%'
+    OR lower(qualified_name) LIKE '%' || lower(@target) || '%')
+  AND (CAST(@kind AS TEXT) = '' OR kind = CAST(@kind AS TEXT));

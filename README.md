@@ -111,6 +111,26 @@ inputs and return one result or error per input in the caller's order, so one
 bad selector never erases unrelated results. The scalar input fields remain
 supported.
 
+### Selector resolution
+
+Every command and tool that takes a symbol resolves it through one code path, and
+that path either returns a single node on evidence or reports the complete set of
+equally good matches. It never returns one of several matches as though it were
+unique.
+
+Only the strongest kind of evidence a selector produced is considered: an exact
+qualified name, else an exact name, else a substring. Within that evidence, a
+case-sensitive match decides on its own, so `impact` resolves to `App.impact`
+rather than tying with `Service.Impact`; case-insensitive-only matches are still
+listed when the selector is ambiguous, because they are usually what has to be
+told apart. A declaration wins over nodes whose qualified name merely extends it,
+so a method is not made ambiguous by its own parameters and local variables.
+
+An ambiguity error reports the total number of matches in the graph and says when
+the listed candidates are only part of it. Commands and tools that take a selector
+also accept an optional node kind (`--kind` on the CLI, `kind` in MCP input), so a
+caller can say it means the function rather than a parameter of the same name.
+
 ### Change impact
 
 `grafo impact` (also `grafo blast-radius`, and the MCP `get_blast_radius` tool)

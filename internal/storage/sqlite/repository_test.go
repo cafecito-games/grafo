@@ -198,3 +198,80 @@ func TestRepositoryKeepsAmbiguousSymbolicTargetsUnresolved(t *testing.T) {
 		t.Fatalf("ambiguous target was not explicit: %#v", target)
 	}
 }
+
+// TestMatchNodesReportsCompleteTotals pins the adapter contract that selector
+// resolution depends on: the strongest level wins, the totals cover the whole
+// graph even when the listed candidates are truncated, case-sensitive matches are
+// listed first, and the optional kind filter is applied by the query.
+func TestMatchNodesReportsCompleteTotals(t *testing.T) {
+	ctx := context.Background()
+	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+
+	var nodes []graph.Node
+	for index := 0; index < 12; index++ {
+		qualified := fmt.Sprintf("sample.pkg%02d.Service.Search", index)
+		nodes = append(nodes, graph.Node{ID: graph.NodeID(graph.KindMethod, qualified),
+			Kind: graph.KindMethod, Name: "Search", QualifiedName: qualified, OwnerFile: "search.go"})
+	}
+	// Two case-insensitive-only matches and one node that merely contains the term.
+	nodes = append(nodes,
+		graph.Node{ID: graph.NodeID(graph.KindField, "sample.cli.App.search"), Kind: graph.KindField,
+			Name: "search", QualifiedName: "sample.cli.App.search", OwnerFile: "search.go"},
+		graph.Node{ID: graph.NodeID(graph.KindParameter, "sample.cli.App.Run.search"), Kind: graph.KindParameter,
+			Name: "search", QualifiedName: "sample.cli.App.Run.search", OwnerFile: "search.go"},
+		graph.Node{ID: graph.NodeID(graph.KindPackage, "sample.searchengine"), Kind: graph.KindPackage,
+			Name: "searchengine", QualifiedName: "sample.searchengine", OwnerFile: "search.go"})
+	if err := repository.ReplaceOwner(ctx, "search.go", graph.ParseResult{Nodes: nodes}); err != nil {
+		t.Fatal(err)
+	}
+
+	group, err := repository.MatchNodes(ctx, graph.NodeMatchQuery{Selector: "Search", Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if group.Level != graph.MatchName {
+		t.Fatalf("expected the name level to win, got %q", group.Level)
+	}
+	if group.Total != 14 || group.Strict != 12 {
+		t.Fatalf("expected 14 matches with 12 case-sensitive, got %d and %d", group.Total, group.Strict)
+	}
+	if len(group.Nodes) != 5 || !group.Truncated() {
+		t.Fatalf("expected a truncated list of 5, got %d", len(group.Nodes))
+	}
+	for _, node := range group.Nodes {
+		if node.Name != "Search" {
+			t.Fatalf("case-sensitive matches must be listed first, got %q", node.QualifiedName)
+		}
+	}
+
+	// A fully qualified selector reaches the stronger level, kinds filter, and a
+	// substring-only selector falls through to the weakest level.
+	qualified, err := repository.MatchNodes(ctx, graph.NodeMatchQuery{Selector: "sample.pkg00.Service.Search"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if qualified.Level != graph.MatchQualifiedName || qualified.Total != 1 {
+		t.Fatalf("unexpected qualified-name group: %#v", qualified)
+	}
+	filtered, err := repository.MatchNodes(ctx, graph.NodeMatchQuery{Selector: "search", Kind: graph.KindField})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filtered.Total != 1 || len(filtered.Nodes) != 1 || filtered.Nodes[0].Kind != graph.KindField {
+		t.Fatalf("unexpected kind-filtered group: %#v", filtered)
+	}
+	substring, err := repository.MatchNodes(ctx, graph.NodeMatchQuery{Selector: "searcheng"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if substring.Level != graph.MatchSubstring || substring.Total != 1 {
+		t.Fatalf("unexpected substring group: %#v", substring)
+	}
+	if empty, err := repository.MatchNodes(ctx, graph.NodeMatchQuery{Selector: "absent"}); err != nil || empty.Total != 0 {
+		t.Fatalf("expected an empty group, got %#v and %v", empty, err)
+	}
+}

@@ -48,7 +48,7 @@ func TestServiceLinksDocumentationSectionsToCode(t *testing.T) {
 	}
 
 	queries := query.NewService(repository)
-	flow, err := queries.Neighborhood(ctx, "README.md#runtime-flow", 1, query.Outgoing, []graph.EdgeKind{graph.EdgeDocuments}, 20)
+	flow, err := queries.Neighborhood(ctx, "README.md#runtime-flow", "", 1, query.Outgoing, []graph.EdgeKind{graph.EdgeDocuments}, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,23 +309,23 @@ func TestServiceIndexesAndLinksGodotProjectSources(t *testing.T) {
 	}
 
 	queries := query.NewService(repository)
-	setting, err := queries.Neighborhood(ctx, "config:project.godot:application/run/main_scene", 1,
+	setting, err := queries.Neighborhood(ctx, "config:project.godot:application/run/main_scene", "", 1,
 		query.Outgoing, nil, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertReached(t, setting, "scenes/main")
-	reader, err := queries.Neighborhood(ctx, "Settings.main_scene", 1, query.Outgoing, nil, 20)
+	reader, err := queries.Neighborhood(ctx, "Settings.main_scene", "", 1, query.Outgoing, nil, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertReached(t, reader, "config:project.godot:application/run/main_scene")
-	lookup, err := queries.Neighborhood(ctx, "Settings.bind_button", 1, query.Outgoing, nil, 20)
+	lookup, err := queries.Neighborhood(ctx, "Settings.bind_button", "", 1, query.Outgoing, nil, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertReached(t, lookup, "scenes/main:Main/StartButton")
-	lookup, err = queries.Neighborhood(ctx, "Settings.lookup_button", 1, query.Outgoing, nil, 20)
+	lookup, err = queries.Neighborhood(ctx, "Settings.lookup_button", "", 1, query.Outgoing, nil, 20)
 	if err != nil {
 		t.Fatal(err)
 	}

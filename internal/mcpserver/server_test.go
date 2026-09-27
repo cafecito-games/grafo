@@ -38,7 +38,7 @@ func TestServerListsAndCallsGraphTools(t *testing.T) {
 		WithReusable(func(_ context.Context, text string, _ int) (semantic.SearchResult, error) {
 			return semantic.SearchResult{Query: text, Model: "test"}, nil
 		}).
-		WithSource(func(_ context.Context, _ string, _, _ int) (sourcecontext.Excerpt, error) {
+		WithSource(func(_ context.Context, _ string, _ graph.NodeKind, _, _ int) (sourcecontext.Excerpt, error) {
 			return sourcecontext.Excerpt{Path: "checkout.go", StartLine: 1, EndLine: 2, Content: "func Checkout() {}"}, nil
 		}).
 		Server("test").Connect(ctx, serverTransport, nil)

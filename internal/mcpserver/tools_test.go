@@ -175,7 +175,7 @@ func TestBatchedToolsReturnOneEnvelopePerInput(t *testing.T) {
 func TestBlastRadiusReturnsBidirectionalImpact(t *testing.T) {
 	repository, project := batchFixture(t)
 	sourceService := sourcecontext.NewService(repository, sourcecontext.NewSingleProjectLocator(repository, project))
-	session := connect(t, mcpserver.New(repository, project).WithSource(sourceService.Read))
+	session := connect(t, mcpserver.New(repository, project).WithSource(sourceService.ReadKind))
 
 	// Charge is called by Handler, so Charge has upstream impact and none down.
 	structured := call(t, session, "get_blast_radius", map[string]any{

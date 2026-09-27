@@ -59,6 +59,9 @@ type InstrumentedWriteRepository interface {
 // QueryRepository is the read-only port used by graph traversal use cases.
 type QueryRepository interface {
 	SearchNodes(context.Context, string, int) ([]Node, error)
+	// MatchNodes returns the strongest non-empty match evidence for a selector.
+	// Selector resolution depends on its contract; see NodeMatchGroup.
+	MatchNodes(context.Context, NodeMatchQuery) (NodeMatchGroup, error)
 	Node(context.Context, string) (Node, error)
 	EdgesFrom(context.Context, string) ([]Edge, error)
 	EdgesTo(context.Context, string) ([]Edge, error)
