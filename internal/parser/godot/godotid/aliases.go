@@ -1,7 +1,7 @@
 package godotid
 
 import (
-	"bytes"
+	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -15,13 +15,26 @@ import (
 	"sync"
 )
 
-// Alias scanning reads only the header of each candidate file. A UID always
-// appears in the first section of a text resource and in the remap block of an
-// import file, so a bounded read is enough and no whole project is loaded into
-// memory.
+// Alias scanning reads each candidate file only as far as its own UID
+// declaration can appear: the first section of a text resource, the remap block
+// of an import file, the single line of a .uid sidecar. The budget bounds memory
+// without turning a long file into a wrong answer - a file whose verdict is not
+// reached within it is recorded as unknown rather than as undeclared, because
+// undeclared evidence is treated as agreement and unknown evidence must not be.
+const scanBudget = 1 << 20
+
+// scanVerdict is what a scan could establish about one file.
+type scanVerdict int
+
 const (
-	headerReadLimit = 8 << 10
-	uidReadLimit    = 1 << 10
+	// verdictNone means the file conclusively declares no UID.
+	verdictNone scanVerdict = iota
+	// verdictDeclared means a UID was read.
+	verdictDeclared
+	// verdictUnknown means the scan could not determine whether the file
+	// declares a UID: the budget ran out before the verdict, or the file could
+	// not be read.
+	verdictUnknown
 )
 
 // skippedDirectories are never scanned for UID declarations: they hold Godot's
@@ -48,7 +61,25 @@ type Aliases struct {
 	Digest string
 	// Projects lists every repository-relative project.godot found, sorted.
 	Projects []string
-	byUID    map[string][]string
+	// Unknown lists files whose UID declaration could not be determined,
+	// sorted. While it is non-empty the table cannot prove that a UID is
+	// undeclared, so Agrees stops treating absence as agreement.
+	Unknown []string
+	byUID   map[string][]string
+}
+
+// Incomplete reports whether the table can prove that a UID is undeclared. A
+// nil table knows nothing at all, so it is always incomplete.
+func (a *Aliases) Incomplete() bool { return a == nil || len(a.Unknown) > 0 }
+
+// UnknownAliases returns a table that knows nothing about a repository, for the
+// case where scanning it failed. Every UID check against it fails closed.
+func UnknownAliases(root string) *Aliases {
+	label := strings.TrimSpace(root)
+	if label == "" {
+		label = "<repository>"
+	}
+	return &Aliases{byUID: map[string][]string{}, Unknown: []string{label}}
 }
 
 // Declared returns the canonical identities that declare a UID. The second
@@ -66,8 +97,13 @@ func (a *Aliases) Declared(uid string) ([]string, bool) {
 // Agrees reports whether path evidence is consistent with UID evidence: the
 // resource that declares the UID must be the one the path names. Absence is not
 // contradiction, so a UID no resource declares leaves the path standing and an
-// absent target stays an explicit external node. A UID declared by several
-// resources never agrees, because picking one of them would be a guess.
+// absent target stays an explicit external node - but only when the table can
+// prove the absence. If any file's declaration status is unknown, an unfound UID
+// might be declared by it, so unknown evidence fails closed instead of being
+// read as agreement.
+//
+// A UID declared by several resources never agrees, because picking one of them
+// would be a guess.
 //
 // The check runs in this direction only. The reverse question - does the
 // resource the path names declare some other UID? - cannot be answered from
@@ -78,7 +114,7 @@ func (a *Aliases) Declared(uid string) ([]string, bool) {
 func (a *Aliases) Agrees(uid, identity string) bool {
 	declared, ok := a.Declared(uid)
 	if !ok {
-		return true
+		return !a.Incomplete()
 	}
 	return len(declared) == 1 && declared[0] == identity
 }
@@ -87,6 +123,9 @@ func (a *Aliases) Agrees(uid, identity string) bool {
 func (a *Aliases) Describe(uid string) string {
 	declared, _ := a.Declared(uid)
 	if len(declared) == 0 {
+		if a.Incomplete() {
+			return "nothing readable (" + fmt.Sprint(len(a.Unknown)) + " file(s) could not be scanned)"
+		}
 		return "nothing"
 	}
 	return strings.Join(declared, ", ")
@@ -159,8 +198,12 @@ func scanAliases(root string) (*Aliases, error) {
 			aliases.Projects = append(aliases.Projects, relative)
 			return nil
 		}
-		uid, owner := scanDeclaration(path, relative)
-		if uid == "" || owner == "" {
+		uid, owner, verdict := scanDeclaration(path, relative)
+		if verdict == verdictUnknown {
+			aliases.Unknown = append(aliases.Unknown, relative)
+			return nil
+		}
+		if verdict != verdictDeclared || uid == "" || owner == "" {
 			return nil
 		}
 		if declarations[uid] == nil {
@@ -176,55 +219,92 @@ func scanAliases(root string) (*Aliases, error) {
 		aliases.byUID[uid] = sortedSet(declaring)
 	}
 	sort.Strings(aliases.Projects)
+	sort.Strings(aliases.Unknown)
 	aliases.Digest = aliasDigest(aliases)
 	return aliases, nil
 }
 
-// scanDeclaration returns the UID a file declares for itself and the canonical
-// identity that owns it.
-func scanDeclaration(path, relative string) (string, string) {
-	switch strings.ToLower(filepath.Ext(relative)) {
+// scanDeclaration returns the UID a file declares for itself, the canonical
+// identity that owns it, and what the scan could establish. A file type that
+// cannot declare a UID reports verdictNone without being read.
+func scanDeclaration(path, relative string) (string, string, scanVerdict) {
+	extension := strings.ToLower(filepath.Ext(relative))
+	sidecar := Identity(strings.TrimSuffix(relative, filepath.Ext(relative)))
+	switch extension {
 	case ".uid":
-		content, err := readPrefix(path, uidReadLimit)
-		if err != nil {
-			return "", ""
-		}
-		for _, line := range strings.Split(string(content), "\n") {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "uid://") {
-				return line, Identity(strings.TrimSuffix(relative, filepath.Ext(relative)))
+		uid, verdict := scanLines(path, func(line string) (string, bool) {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "uid://") {
+				return trimmed, true
 			}
-		}
-		return "", ""
+			return "", false
+		})
+		return uid, sidecar, verdict
 	case ".import":
-		content, err := readPrefix(path, headerReadLimit)
-		if err != nil {
-			return "", ""
-		}
-		if match := uidPattern.FindSubmatch(content); match != nil {
-			return string(match[1]), Identity(strings.TrimSuffix(relative, filepath.Ext(relative)))
-		}
-		return "", ""
+		uid, verdict := scanLines(path, func(line string) (string, bool) {
+			if match := uidPattern.FindStringSubmatch(line); match != nil {
+				return match[1], true
+			}
+			return "", false
+		})
+		return uid, sidecar, verdict
 	case ".tscn", ".tres", ".escn":
-		content, err := readPrefix(path, headerReadLimit)
-		if err != nil {
-			return "", ""
-		}
 		// Only the document header declares this resource's own UID; an
-		// ext_resource line names some other resource's alias.
-		for _, line := range strings.Split(string(content), "\n") {
+		// ext_resource line names some other resource's alias. The header is
+		// therefore also the point at which the verdict is settled.
+		uid, verdict := scanLines(path, func(line string) (string, bool) {
 			trimmed := strings.TrimSpace(line)
 			if !strings.HasPrefix(trimmed, "[gd_scene") && !strings.HasPrefix(trimmed, "[gd_resource") {
-				continue
+				return "", false
 			}
 			if match := uidPattern.FindStringSubmatch(trimmed); match != nil {
-				return match[1], Identity(relative)
+				return match[1], true
 			}
-			return "", ""
-		}
-		return "", ""
+			return "", true
+		})
+		return uid, Identity(relative), verdict
 	default:
-		return "", ""
+		return "", "", verdictNone
+	}
+}
+
+// scanLines reads a file line by line until decide settles the verdict, the file
+// ends, or the budget is exhausted. The budget bounds the read itself, so a file
+// with one enormous line cannot exhaust memory, and a line that the budget cut
+// short is never handed to decide: a truncated header could match its opening
+// token while hiding the UID that follows, which would settle the verdict the
+// wrong way. Reaching the budget is verdictUnknown - the answer exists somewhere
+// the scan did not reach, and reporting that as "no UID" would let a
+// contradictory reference resolve.
+func scanLines(path string, decide func(line string) (string, bool)) (string, scanVerdict) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", verdictUnknown
+	}
+	defer file.Close()
+	reader := bufio.NewReaderSize(io.LimitReader(file, int64(scanBudget)+1), 64<<10)
+	consumed := 0
+	for {
+		line, readErr := reader.ReadString('\n')
+		consumed += len(line)
+		truncated := consumed > scanBudget
+		settledLine := strings.HasSuffix(line, "\n") || (readErr == io.EOF && line != "" && !truncated)
+		if settledLine {
+			if value, settled := decide(strings.TrimRight(line, "\r\n")); settled {
+				if value == "" {
+					return "", verdictNone
+				}
+				return value, verdictDeclared
+			}
+		}
+		switch {
+		case truncated:
+			return "", verdictUnknown
+		case readErr == io.EOF:
+			return "", verdictNone
+		case readErr != nil:
+			return "", verdictUnknown
+		}
 	}
 }
 
@@ -237,24 +317,16 @@ func sortedSet(values map[string]bool) []string {
 	return result
 }
 
-func readPrefix(path string, limit int64) ([]byte, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	var buffer bytes.Buffer
-	if _, err := io.Copy(&buffer, io.LimitReader(file, limit)); err != nil {
-		return nil, err
-	}
-	return buffer.Bytes(), nil
-}
-
 func aliasDigest(aliases *Aliases) string {
 	digest := sha256.New()
-	_, _ = digest.Write([]byte("godotid-aliases-v1"))
+	_, _ = digest.Write([]byte("godotid-aliases-v2"))
 	for _, project := range aliases.Projects {
 		_, _ = digest.Write([]byte("project\x00" + project + "\x00"))
+	}
+	// An unreadable file changes how every reference resolves, so a file that
+	// becomes readable has to reparse the files it affects.
+	for _, unknown := range aliases.Unknown {
+		_, _ = digest.Write([]byte("unknown\x00" + unknown + "\x00"))
 	}
 	uids := make([]string, 0, len(aliases.byUID))
 	for uid := range aliases.byUID {

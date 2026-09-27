@@ -615,6 +615,31 @@ func TestServiceModelsGodotCompositionAcrossFiles(t *testing.T) {
 		t.Fatalf("counts changed on an unchanged re-index:\n%#v\n%#v", before, after)
 	}
 
+	// Toggling only the singleton marker must reparse dependent scripts: a
+	// disabled autoload is not a global identifier, so the script-side edge has
+	// to disappear even though the script itself did not change.
+	writeGodotProjectWithMarker(t, root, "res://scripts/game.gd", false)
+	disabled, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(disabled.Updated, "scripts/player.gd") {
+		t.Fatalf("disabling an autoload did not reparse its dependent script: %#v", disabled.Updated)
+	}
+	stale, err := queries.Neighborhood(ctx, "scripts/player.ready", "", 1, query.Outgoing, nil, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, reached := range stale.Nodes {
+		if reached.Node.Kind == graph.KindGodotAutoload {
+			t.Fatalf("a disabled autoload kept its script-side edge: %#v", reached.Node)
+		}
+	}
+	writeGodotProject(t, root, "res://scripts/game.gd")
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+
 	writeGodotProject(t, root, "res://scripts/other.gd")
 	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
 		t.Fatal(err)
@@ -658,13 +683,22 @@ func TestServiceModelsGodotCompositionAcrossFiles(t *testing.T) {
 
 func writeGodotProject(t *testing.T, root, autoloadTarget string) {
 	t.Helper()
+	writeGodotProjectWithMarker(t, root, autoloadTarget, true)
+}
+
+func writeGodotProjectWithMarker(t *testing.T, root, autoloadTarget string, enabled bool) {
+	t.Helper()
+	marker := "*"
+	if !enabled {
+		marker = ""
+	}
 	for _, directory := range []string{"scenes", "scripts"} {
 		if err := os.MkdirAll(filepath.Join(root, directory), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	write(t, filepath.Join(root, "project.godot"),
-		"config_version=5\n\n[autoload]\nGame=\"*"+autoloadTarget+"\"\n")
+		"config_version=5\n\n[autoload]\nGame=\""+marker+autoloadTarget+"\"\n")
 	write(t, filepath.Join(root, "scripts", "game.gd"), "class_name Game extends Node\nfunc start() -> void:\n\tpass\n")
 	write(t, filepath.Join(root, "scripts", "other.gd"), "extends Node\nfunc start() -> void:\n\tpass\n")
 	write(t, filepath.Join(root, "scripts", "player.gd"), "extends Node\nfunc ready() -> void:\n\tGame.start()\n")
@@ -945,5 +979,63 @@ func TestServiceKeepsContradictedGodotUIDsUnresolved(t *testing.T) {
 	}
 	if len(stale.OutboundInstances) != 0 {
 		t.Fatalf("moved UID left a stale composition edge: %#v", stale.OutboundInstances)
+	}
+}
+
+// TestServiceReparsesScriptsWhenAutoloadEnablementChangesUnderGit exercises the
+// Git selection path, where only changed paths are re-hashed: toggling an
+// autoload's singleton marker must still reach the scripts whose resolution it
+// changes, even though those scripts are untouched and unstaged.
+func TestServiceReparsesScriptsWhenAutoloadEnablementChangesUnderGit(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	runGit(t, root, "init", "-b", "main")
+	write(t, mkdirFor(t, root, "project.godot"),
+		"config_version=5\n\n[autoload]\nGame=\"*res://scripts/game.gd\"\n")
+	write(t, mkdirFor(t, root, "scripts/game.gd"), "extends Node\nfunc start() -> void:\n\tpass\n")
+	write(t, mkdirFor(t, root, "scripts/player.gd"), "extends Node\nfunc ready() -> void:\n\tGame.start()\n")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	service := indexer.NewService(repository, parserapi.NewRegistry(gdscriptparser.New(), godotparser.New()))
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	queries := query.NewService(repository)
+	use, err := queries.Neighborhood(ctx, "scripts/player.ready", "", 1, query.Outgoing, nil, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertReached(t, use, "godot:autoload:project.godot:Game")
+
+	write(t, filepath.Join(root, "project.godot"),
+		"config_version=5\n\n[autoload]\nGame=\"res://scripts/game.gd\"\n")
+	runGit(t, root, "add", "project.godot")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "disable")
+
+	disabled, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(disabled.Updated, "scripts/player.gd") {
+		t.Fatalf("Git selection did not reach the dependent script: %#v", disabled.Updated)
+	}
+	stale, err := queries.Neighborhood(ctx, "scripts/player.ready", "", 1, query.Outgoing, nil, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, reached := range stale.Nodes {
+		if reached.Node.Kind == graph.KindGodotAutoload {
+			t.Fatalf("a disabled autoload kept its script-side edge: %#v", reached.Node)
+		}
 	}
 }

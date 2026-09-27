@@ -147,7 +147,10 @@ the nearest ancestor `project.godot`, so a Godot project in a monorepo
 subdirectory targets identities under that subdirectory instead of identities no
 file owns. Identity and reference resolution are therefore separate entry points
 (`Identity` and `Resolve`); nothing canonicalizes a reference without knowing
-which project owns it.
+which project owns it. The project directory is also a boundary, not just an
+origin: a reference that traverses out of its own project resolves to nothing and
+is diagnosed, because `res://` names a location inside one project by definition
+and in a monorepo whatever it lands on usually belongs to a different project.
 
 UIDs are aliases, never identity: the resource that owns a UID declares it and
 references carry it as evidence. Because a path that contradicts its UID would

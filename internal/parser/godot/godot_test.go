@@ -614,3 +614,90 @@ func TestParserTrustsPathWhenUIDIsDeclaredNowhere(t *testing.T) {
 	}
 	assertFactTarget(t, result.Facts, graph.EdgeInstantiates, "scenes/target")
 }
+
+// TestParserKeepsEveryReferenceThroughABadUIDUnresolved covers stickiness on the
+// UID table: once a UID is contradicted or multiply declared it is permanently
+// unusable, so a later declaration reusing it under a different id must not
+// resolve from its path either.
+func TestParserKeepsEveryReferenceThroughABadUIDUnresolved(t *testing.T) {
+	root := t.TempDir()
+	writeProjectFile(t, root, "project.godot", "config_version=5\n")
+	writeProjectFile(t, root, "scenes/a.tscn", "[gd_scene format=3 uid=\"uid://shared\"]\n\n[node name=\"A\" type=\"Node\"]\n")
+	writeProjectFile(t, root, "scenes/b.tscn", "[gd_scene format=3 uid=\"uid://b\"]\n\n[node name=\"B\" type=\"Node\"]\n")
+	writeProjectFile(t, root, "scenes/c.tscn", "[gd_scene format=3 uid=\"uid://c\"]\n\n[node name=\"C\" type=\"Node\"]\n")
+
+	for _, testCase := range []struct {
+		name    string
+		content string
+	}{
+		{
+			name: "later declaration with a different id reuses the contradicted uid",
+			content: `[gd_scene load_steps=3 format=3]
+
+[ext_resource type="PackedScene" uid="uid://shared" path="res://scenes/b.tscn" id="1_b"]
+[ext_resource type="PackedScene" uid="uid://shared" path="res://scenes/c.tscn" id="2_c"]
+
+[node name="Root" type="Node"]
+
+[node name="Child" parent="." instance=ExtResource("2_c")]
+`,
+		},
+		{
+			name: "later declaration reuses a uid already ambiguous within the document",
+			content: `[gd_scene load_steps=4 format=3]
+
+[ext_resource type="PackedScene" uid="uid://dup" path="res://scenes/b.tscn" id="1_b"]
+[ext_resource type="PackedScene" uid="uid://dup" path="res://scenes/c.tscn" id="2_c"]
+[ext_resource type="PackedScene" uid="uid://dup" path="res://scenes/a.tscn" id="3_a"]
+
+[node name="Root" type="Node"]
+
+[node name="Child" parent="." instance=ExtResource("3_a")]
+`,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			result := parseIn(t, root, "scenes/caller.tscn", testCase.content)
+			if len(result.Diagnostics) == 0 {
+				t.Fatalf("expected a diagnostic; got none")
+			}
+			for _, fact := range result.Facts {
+				switch fact.Kind {
+				case graph.EdgeInstantiates, graph.EdgeAttachesScript:
+					t.Fatalf("a reference through a bad UID resolved: %#v", fact)
+				case graph.EdgeImports:
+					t.Fatalf("a bad UID still produced an import: %#v", fact)
+				}
+			}
+		})
+	}
+}
+
+// TestParserKeepsProjectEscapingReferencesUnresolved covers the project boundary:
+// res:// is project-relative, so a reference that traverses out of its own
+// project is not a valid reference and must not resolve into a sibling project.
+func TestParserKeepsProjectEscapingReferencesUnresolved(t *testing.T) {
+	root := t.TempDir()
+	writeProjectFile(t, root, "client/project.godot", "config_version=5\n")
+	writeProjectFile(t, root, "tools/probe/project.godot", "config_version=5\n")
+	writeProjectFile(t, root, "tools/probe/scenes/probe.tscn",
+		"[gd_scene format=3 uid=\"uid://probe\"]\n\n[node name=\"Probe\" type=\"Node\"]\n")
+
+	result := parseIn(t, root, "client/scenes/main.tscn", `[gd_scene load_steps=2 format=3]
+
+[ext_resource type="PackedScene" path="res://../tools/probe/scenes/probe.tscn" id="1_probe"]
+
+[node name="Main" type="Node"]
+
+[node name="Probe" parent="." instance=ExtResource("1_probe")]
+`)
+	assertDiagnostic(t, result.Diagnostics, "res://../tools/probe/scenes/probe.tscn")
+	for _, fact := range result.Facts {
+		if fact.Target == "tools/probe/scenes/probe" {
+			t.Fatalf("a res:// reference escaped its project: %#v", fact)
+		}
+		if fact.Kind == graph.EdgeInstantiates {
+			t.Fatalf("an escaping reference produced an instantiates fact: %#v", fact)
+		}
+	}
+}

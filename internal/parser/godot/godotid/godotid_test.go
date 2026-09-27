@@ -3,6 +3,7 @@ package godotid_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/parser/godot/godotid"
@@ -156,5 +157,145 @@ func write(t *testing.T, root, name, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestAliasesNeverTreatTruncatedEvidenceAsApproval covers the rule that unknown
+// evidence must never be read as approval: a UID declared beyond the scanner's
+// byte bound must not look undeclared, because an undeclared UID is treated as
+// agreeing with whatever path a reference pairs with it.
+func TestAliasesNeverTreatTruncatedEvidenceAsApproval(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "project.godot", "config_version=5\n")
+	// A header long enough that the UID sits past any fixed prefix read.
+	padding := strings.Repeat("x", 32<<10)
+	write(t, root, "scenes/target.tscn",
+		"[gd_scene load_steps=2 format=3 script_class=\""+padding+"\" uid=\"uid://target\"]\n\n"+
+			"[node name=\"Target\" type=\"Node\"]\n")
+	write(t, root, "scripts/late.gd.uid", strings.Repeat("\n", 4<<10)+"uid://late\n")
+
+	aliases, err := godotid.LoadAliases(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aliases.Agrees("uid://target", "scenes/other") {
+		t.Fatal("a UID beyond the scan bound was treated as undeclared, approving a contradictory path")
+	}
+	if !aliases.Agrees("uid://target", "scenes/target") {
+		t.Fatal("the declaring resource must still agree with its own UID")
+	}
+	if aliases.Agrees("uid://late", "scripts/other") {
+		t.Fatal("a UID beyond the .uid scan bound was treated as undeclared")
+	}
+}
+
+// TestResolveRefusesToLeaveTheOwningProject pins the project boundary: res:// is
+// project-relative, so a reference that traverses out of its project is invalid
+// rather than a reference to whatever it lands on.
+func TestResolveRefusesToLeaveTheOwningProject(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		projectDir string
+		reference  string
+		want       string
+		escapes    bool
+	}{
+		{name: "into a sibling project", projectDir: "client", reference: "res://../tools/probe/x.tscn", escapes: true},
+		{name: "to the repository root", projectDir: "client", reference: "res://../x.tscn", escapes: true},
+		{name: "out of a deep project", projectDir: "tools/probe", reference: "res://../../client/x.tscn", escapes: true},
+		{name: "out of the repository", projectDir: "", reference: "res://../outside.tscn", escapes: true},
+		{name: "user data escaping too", projectDir: "client", reference: "user://../../etc/passwd", escapes: true},
+		{name: "traversal that stays inside", projectDir: "client", reference: "res://scenes/../scenes/x.tscn", want: "client/scenes/x"},
+		{name: "project root itself", projectDir: "client", reference: "res://x.tscn", want: "client/x"},
+		{name: "sibling directory name is not a prefix match", projectDir: "client", reference: "res://../clientele/x.tscn", escapes: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := godotid.Resolve(testCase.projectDir, testCase.reference)
+			if got != testCase.want {
+				t.Fatalf("Resolve(%q, %q) = %q, want %q",
+					testCase.projectDir, testCase.reference, got, testCase.want)
+			}
+			if escaped := godotid.EscapesProject(testCase.projectDir, testCase.reference); escaped != testCase.escapes {
+				t.Fatalf("EscapesProject(%q, %q) = %t, want %t",
+					testCase.projectDir, testCase.reference, escaped, testCase.escapes)
+			}
+		})
+	}
+}
+
+// TestAliasesFailClosedWhileAnyFileIsUnknown covers the general rule behind the
+// truncation case: while the table cannot prove a UID is undeclared, it must not
+// report agreement for a UID it simply did not find.
+func TestAliasesFailClosedWhileAnyFileIsUnknown(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "project.godot", "config_version=5\n")
+	write(t, root, "scenes/ok.tscn", "[gd_scene format=3 uid=\"uid://ok\"]\n\n[node name=\"A\" type=\"Node\"]\n")
+
+	complete, err := godotid.LoadAliases(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if complete.Incomplete() {
+		t.Fatalf("a readable project is not incomplete: %#v", complete.Unknown)
+	}
+	if !complete.Agrees("uid://absent", "scenes/anything") {
+		t.Fatal("a provably undeclared UID must leave exact path evidence standing")
+	}
+
+	// A first section that never ends within the scan budget leaves this file's
+	// declaration status unknown.
+	write(t, root, "scenes/huge.tscn", "[gd_scene format=3 script_class=\""+strings.Repeat("x", 2<<20)+"\"]\n")
+	incomplete, err := godotid.LoadAliases(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !incomplete.Incomplete() || len(incomplete.Unknown) != 1 || incomplete.Unknown[0] != "scenes/huge.tscn" {
+		t.Fatalf("unknown files = %#v", incomplete.Unknown)
+	}
+	if incomplete.Agrees("uid://absent", "scenes/anything") {
+		t.Fatal("unknown evidence was read as approval")
+	}
+	if !incomplete.Agrees("uid://ok", "scenes/ok") {
+		t.Fatal("a UID that was read must still agree with its declaring resource")
+	}
+	if incomplete.Digest == complete.Digest {
+		t.Fatal("an unknown file must change the digest so dependent files reparse")
+	}
+}
+
+// TestProjectDigestCoversEveryDeclarationField pins the rule that keeps an
+// incremental index equal to a clean rebuild: any field an extractor might read
+// has to change the digest, so a change no parser is watching cannot leave a
+// stale edge behind.
+func TestProjectDigestCoversEveryDeclarationField(t *testing.T) {
+	base := "[autoload]\nGame=\"*res://scripts/game.gd\"\n"
+	for _, testCase := range []struct{ name, content string }{
+		{name: "singleton marker removed", content: "[autoload]\nGame=\"res://scripts/game.gd\"\n"},
+		{name: "target changed", content: "[autoload]\nGame=\"*res://scripts/other.gd\"\n"},
+		{name: "name changed", content: "[autoload]\nOther=\"*res://scripts/game.gd\"\n"},
+		{name: "declaration line moved", content: "\n\n[autoload]\nGame=\"*res://scripts/game.gd\"\n"},
+		{name: "uid form instead of a path", content: "[autoload]\nGame=\"*uid://game123\"\n"},
+		{name: "became a conflict", content: "[autoload]\nGame=\"*res://scripts/game.gd\"\nGame=\"*res://scripts/two.gd\"\n"},
+		{name: "became malformed", content: "[autoload]\nGame=5\n"},
+		{name: "another autoload added", content: base + "Menu=\"*res://scripts/menu.gd\"\n"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			before := godotid.ParseProject("project.godot", []byte(base))
+			after := godotid.ParseProject("project.godot", []byte(testCase.content))
+			if before.Digest == after.Digest {
+				t.Fatalf("digest unchanged; dependent scripts would keep stale edges")
+			}
+			if before.SemanticKey() == after.SemanticKey() {
+				t.Fatalf("semantic key unchanged")
+			}
+		})
+	}
+	same := godotid.ParseProject("project.godot", []byte(base))
+	again := godotid.ParseProject("project.godot", []byte(base))
+	if same.Digest != again.Digest {
+		t.Fatal("digest is not stable for identical input")
+	}
+	if nested := godotid.ParseProject("client/project.godot", []byte(base)); nested.SemanticKey() == same.SemanticKey() {
+		t.Fatal("the owning project path must be part of the semantic key")
 	}
 }

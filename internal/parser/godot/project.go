@@ -66,10 +66,17 @@ func extractConfigAssignments(b *parserapi.Builder, input parserapi.Input, fileS
 			if !strings.HasPrefix(value, "res://") && !strings.HasPrefix(value, "user://") {
 				return true
 			}
-			if target := fileScope.resolve(value); target != "" {
-				b.AddFact(id, graph.EdgeReferences, "", target, godotid.TargetKind(value),
-					configLocation(input.Path, literal), map[string]string{"resource": literal.Value})
+			target := fileScope.resolve(value)
+			if target == "" {
+				if fileScope.escapes(value) {
+					b.Diagnostic(configLocation(input.Path, literal).Line, "warning", fmt.Sprintf(
+						"configuration key %q points at %s, which leaves its Godot project; "+
+							"keeping the reference unresolved", key, value))
+				}
+				return true
 			}
+			b.AddFact(id, graph.EdgeReferences, "", target, godotid.TargetKind(value),
+				configLocation(input.Path, literal), map[string]string{"resource": literal.Value})
 			return true
 		})
 	}

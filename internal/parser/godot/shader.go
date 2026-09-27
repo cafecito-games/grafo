@@ -145,6 +145,15 @@ func (e *shaderExtractor) extractShaderDirective(directive *shaderast.Preprocess
 	} else {
 		target = godotid.Identity(pathpkg.Clean(pathpkg.Join(pathpkg.Dir(e.input.Path), target)))
 	}
+	if target == "" {
+		reason := "cannot be resolved"
+		if e.scope.escapes(value) {
+			reason = "leaves its Godot project"
+		}
+		e.b.Diagnostic(shaderLocation(e.input.Path, directive).Line, "warning", fmt.Sprintf(
+			"#include %q %s; keeping it unresolved", value, reason))
+		return
+	}
 	e.b.AddFact(e.moduleID, graph.EdgeImports, "", target, graph.KindModule,
 		shaderLocation(e.input.Path, directive), map[string]string{"include": value})
 }

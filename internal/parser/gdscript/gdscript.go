@@ -101,6 +101,9 @@ type extractor struct {
 	// autoloads records identifier nodes already reported as an autoload use,
 	// so a call through an autoload is not also reported as a bare reference.
 	autoloads map[gdast.Node]bool
+	// projectKnown is false when the owning Godot project could not be read, in
+	// which case no res:// reference in this script resolves.
+	projectKnown bool
 }
 
 func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseResult, error) {
@@ -116,9 +119,12 @@ func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseRes
 		return b.Finish(), err
 	}
 	e := &extractor{b: b, input: input, module: parserapi.ModuleName(input.Path),
-		methods: map[string]string{}, autoloads: map[gdast.Node]bool{}}
+		methods: map[string]string{}, autoloads: map[gdast.Node]bool{}, projectKnown: true}
 	project, projectErr := godotid.LoadProject(input.Root, input.Path)
 	if projectErr != nil {
+		// The owning project is unknown rather than absent, so res:// references
+		// cannot be canonicalized without guessing which project they belong to.
+		e.projectKnown = false
 		b.Diagnostic(1, "warning", fmt.Sprintf("read Godot project configuration: %v", projectErr))
 	}
 	e.project = project
@@ -838,8 +844,13 @@ func literalString(expression gdast.Expression) (string, bool) {
 
 // resourceModule canonicalizes a res:// reference against the Godot project
 // that owns this script, because such a reference is project-relative and a
-// project can sit in any subdirectory of a repository.
+// project can sit in any subdirectory of a repository. A reference that leaves
+// its project, or one in a script whose project could not be read, resolves to
+// nothing rather than to whatever repository path it lands on.
 func (e *extractor) resourceModule(resource string) string {
+	if !e.projectKnown {
+		return ""
+	}
 	return e.project.Resolve(resource)
 }
 

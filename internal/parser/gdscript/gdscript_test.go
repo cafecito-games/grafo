@@ -315,3 +315,31 @@ func findFactWithTarget(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, t
 	t.Fatalf("missing %s fact to %q; got %#v", kind, target, facts)
 	return graph.Fact{}
 }
+
+// TestParserKeepsProjectEscapingPreloadsUnresolved covers the project boundary on
+// the script side: a preload that traverses out of its own project must not
+// resolve into a sibling project.
+func TestParserKeepsProjectEscapingPreloadsUnresolved(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "client/project.godot", "config_version=5\n")
+	writeFile(t, root, "tools/probe/project.godot", "config_version=5\n")
+
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "client/scripts/hud.gd", Repository: "sample", RepoID: "repo:sample",
+		Content: []byte("extends Node\n" +
+			"const Inside = preload('res://scripts/inside.gd')\n" +
+			"const Outside = preload('res://../tools/probe/scripts/probe.gd')\n"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasFact(t, result.Facts, graph.EdgeImports, "client/scripts/inside")
+	for _, fact := range result.Facts {
+		if strings.HasPrefix(fact.Target, "tools/probe") {
+			t.Fatalf("a preload escaped its project: %#v", fact)
+		}
+		if fact.Kind == graph.EdgeImports && fact.Target == "" {
+			t.Fatalf("an unresolvable preload emitted an empty target: %#v", fact)
+		}
+	}
+}

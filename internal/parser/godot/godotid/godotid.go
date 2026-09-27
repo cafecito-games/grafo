@@ -25,6 +25,7 @@ import (
 	pathpkg "path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -123,11 +124,31 @@ func Identity(path string) string {
 // identity no file owns. A reference with no scheme is already
 // repository-relative and is left where it is. A bare uid:// alias carries no
 // path evidence and resolves to "".
+//
+// A scheme-qualified reference that traverses out of its own project resolves to
+// "" rather than to whatever it lands on. res:// names a location inside one
+// project by definition, so escaping it is not a valid reference, and in a
+// monorepo the thing it lands on usually belongs to a different Godot project.
+// Callers distinguish that case from "no path evidence" with EscapesProject.
 func Resolve(projectDir, reference string) string {
+	identity, _ := resolve(projectDir, reference)
+	return identity
+}
+
+// EscapesProject reports whether a reference carries path evidence that leaves
+// the project (or the repository, for a project rooted at it). Such a reference
+// resolves to nothing, and a caller that can diagnose should say so rather than
+// stay silent.
+func EscapesProject(projectDir, reference string) bool {
+	_, escaped := resolve(projectDir, reference)
+	return escaped
+}
+
+func resolve(projectDir, reference string) (string, bool) {
 	reference = strings.TrimPrefix(strings.TrimSpace(reference), "*")
 	reference = strings.TrimSpace(reference)
 	if reference == "" || IsUID(reference) {
-		return ""
+		return "", false
 	}
 	scoped := false
 	for _, prefix := range []string{"res://", "user://"} {
@@ -138,16 +159,22 @@ func Resolve(projectDir, reference string) string {
 	}
 	reference = strings.TrimLeft(filepath.ToSlash(reference), "/")
 	if reference == "" {
-		return ""
+		return "", false
 	}
+	projectDir = strings.Trim(strings.TrimSpace(filepath.ToSlash(projectDir)), "/")
 	if scoped && projectDir != "" {
-		reference = projectDir + "/" + reference
+		// Resolve inside the project first, then confirm the result stayed there.
+		cleaned := pathpkg.Clean(projectDir + "/" + reference)
+		if cleaned != projectDir && !strings.HasPrefix(cleaned, projectDir+"/") {
+			return "", true
+		}
+		return Identity(cleaned), false
 	}
-	reference = pathpkg.Clean(reference)
-	if reference == "." || reference == ".." || strings.HasPrefix(reference, "../") {
-		return ""
+	cleaned := pathpkg.Clean(reference)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", scoped
 	}
-	return Identity(reference)
+	return Identity(cleaned), false
 }
 
 // IsUID reports whether a reference is a uid:// alias rather than a path.
@@ -363,7 +390,7 @@ func ParseProject(relative string, content []byte) Project {
 func ProjectFromFile(relative string, file *configast.File) Project {
 	project := Project{Path: relative, Autoloads: map[string]Autoload{}, Lines: map[string]int{}}
 	digest := sha256.New()
-	_, _ = digest.Write([]byte("godotid-autoload-v1"))
+	_, _ = digest.Write([]byte("godotid-project-v2"))
 	if file == nil {
 		project.Digest = hex.EncodeToString(digest.Sum(nil))
 		return project
@@ -408,18 +435,26 @@ func ProjectFromFile(relative string, file *configast.File) Project {
 	}
 	// Extend this loop, not just the Project fields, when adding a declaration
 	// kind: the digest is what makes an incremental index equal a clean rebuild.
+	//
+	// Every field of a declaration is folded in, not only the ones an extractor
+	// reads today, because a later extractor that starts reading one must not
+	// depend on someone remembering to extend this. Enabled is the live example:
+	// script-side resolution reads it, and a digest over the marker-stripped
+	// reference alone would let a toggled singleton leave a stale edge behind.
 	for _, name := range sortedKeys(project.Autoloads) {
 		declaration := project.Autoloads[name]
-		_, _ = digest.Write([]byte(name + "\x00" + declaration.Reference + "\x00"))
-		if declaration.Enabled {
-			_, _ = digest.Write([]byte("*"))
-		}
-		_, _ = digest.Write([]byte{0})
+		_, _ = digest.Write([]byte("autoload\x00" + name + "\x00" + declaration.Reference + "\x00" +
+			declaration.Target + "\x00" + declaration.UID + "\x00" +
+			strconv.FormatBool(declaration.Enabled) + "\x00" +
+			strconv.Itoa(declaration.Line) + "\x00"))
 	}
 	project.Conflicts = setKeys(conflicts)
 	project.Malformed = setKeys(malformed)
 	for _, name := range project.Conflicts {
-		_, _ = digest.Write([]byte("conflict:" + name + "\x00"))
+		_, _ = digest.Write([]byte("conflict\x00" + name + "\x00"))
+	}
+	for _, name := range project.Malformed {
+		_, _ = digest.Write([]byte("malformed\x00" + name + "\x00"))
 	}
 	project.Digest = hex.EncodeToString(digest.Sum(nil))
 	return project

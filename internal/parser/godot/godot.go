@@ -103,21 +103,41 @@ func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseRes
 }
 
 // scope carries the Godot project that owns a file plus the repository-wide UID
-// alias table. Both are read once per file and never guessed: a missing project
-// or an unreadable table degrades to repository-relative resolution with no
-// cross-file UID verification, which is reported as a diagnostic rather than
-// silently changing how references resolve.
+// alias table. Neither is ever guessed. A repository with no project.godot at all
+// resolves references repository-relatively, which is the only reading available
+// and matches a single-project repository. But a project or alias table that
+// could not be *read* is unknown rather than absent, and unknown must not take
+// the permissive branch: resolution is refused for that file and the failure is
+// reported, because resolving res:// without knowing which project owns it is a
+// guess and treating an unreadable alias table as "nothing is declared" would
+// approve contradictory evidence.
 type scope struct {
 	project godotid.Project
 	aliases *godotid.Aliases
+	// known is false when the owning project could not be determined, which
+	// makes every reference in this file unresolvable rather than resolved
+	// against an assumed project root.
+	known bool
 }
 
 // resolve canonicalizes a Godot resource reference seen from this file, against
 // the directory of the project that owns it.
-func (s scope) resolve(reference string) string { return s.project.Resolve(reference) }
+func (s scope) resolve(reference string) string {
+	if !s.known {
+		return ""
+	}
+	return s.project.Resolve(reference)
+}
+
+// escapes reports whether a reference carries path evidence that leaves this
+// file's Godot project, which resolves to nothing and is worth a diagnostic
+// rather than silence.
+func (s scope) escapes(reference string) bool {
+	return godotid.EscapesProject(s.project.Dir(), reference)
+}
 
 func newScope(input parserapi.Input) (scope, error) {
-	result := scope{}
+	result := scope{known: true}
 	project, projectErr := godotid.LoadProject(input.Root, input.Path)
 	if strings.EqualFold(filepath.Base(input.Path), godotid.ProjectFileName) {
 		// This file is the project declaration, so its own path is authoritative
@@ -126,8 +146,14 @@ func newScope(input parserapi.Input) (scope, error) {
 	}
 	result.project = project
 	aliases, aliasErr := godotid.AliasesFor(input.Root)
+	if aliasErr != nil {
+		// An unreadable table knows nothing, so absence of a declaration proves
+		// nothing either: mark it incomplete so every UID check fails closed.
+		aliases = godotid.UnknownAliases(input.Root)
+	}
 	result.aliases = aliases
 	if projectErr != nil {
+		result.known = false
 		return result, projectErr
 	}
 	return result, aliasErr

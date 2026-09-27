@@ -216,14 +216,18 @@ path, and instance-placeholder marker. Scene inheritance is an `instantiates`
 edge, never language `extends`.
 
 `res://` references resolve against the nearest ancestor `project.godot`, so a
-Godot project in a monorepo subdirectory resolves correctly, and autoload
-identity is scoped to that file
+Godot project in a monorepo subdirectory resolves correctly and a reference that
+traverses out of its own project is diagnosed rather than resolved into a sibling
+project. Autoload identity is scoped to that file
 (`godot:autoload:<project.godot path>:<Name>`) so sibling projects that share an
 autoload name stay distinct. A reference whose UID is declared by a different
 resource, whose `ExtResource` id is declared more than once, or whose autoload
 name is declared more than once is reported as a diagnostic and stays unresolved
 instead of resolving to a guess, and an autoload declared without Godot's `*`
-singleton marker never satisfies a global identifier in a script.
+singleton marker never satisfies a global identifier in a script. Evidence that
+could not be read is never treated as agreement: if Grafo cannot determine
+whether a UID is declared, the reference stays unresolved instead of trusting the
+path that came with it.
 
 ### Bounded source search
 
