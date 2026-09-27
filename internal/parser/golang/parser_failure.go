@@ -34,7 +34,7 @@ func emitSyntaxFailureFlow(b *parserapi.Builder, fset *token.FileSet, input pars
 			return executableClosures[value] && !asyncClosures[value]
 		case *goast.DeferStmt:
 			conditional := strconv.FormatBool(nodeWithinConditional(body, value.Pos()))
-			target := ""
+			var target string
 			targetKind := graph.NodeKind("")
 			if _, closure := value.Call.Fun.(*goast.FuncLit); closure {
 				loc := location(input.Path, fset, value.Pos(), value.End())

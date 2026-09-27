@@ -122,6 +122,9 @@ func TestServerListsAndCallsGraphTools(t *testing.T) {
 		t.Fatalf("failure-flow tool returned an error: %#v", failureFlow.Content)
 	}
 	structured, ok = failureFlow.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("missing structured failure-flow result: %#v", failureFlow.StructuredContent)
+	}
 	root, _ := structured["root"].(map[string]any)
 	if root["qualified_name"] != "sample.Checkout" {
 		t.Fatalf("unexpected failure-flow result: %#v", failureFlow.StructuredContent)
