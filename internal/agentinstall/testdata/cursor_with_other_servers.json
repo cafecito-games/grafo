@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "github": {
+      "command": "/usr/local/bin/github-mcp",
+      "args": ["stdio"],
+      "env": {
+        "GITHUB_TOKEN": "secret"
+      }
+    },
+    "postgres": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-postgres"]
+    }
+  },
+  "unrelatedTopLevel": {
+    "telemetry": false,
+    "nested": [1, 2, 3]
+  },
+  "anotherKey": "keep me"
+}

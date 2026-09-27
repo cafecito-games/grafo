@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "grafo": {
+      "command": "/usr/bin/somethingelse",
+      "args": ["serve"]
+    }
+  }
+}

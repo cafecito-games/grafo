@@ -22,18 +22,32 @@ grafo status
 grafo find "MyHandler"
 grafo neighbors "MyHandler" --depth 2
 grafo path "HandleCheckout" "Charge"
+grafo impact "Charge"
+grafo search "chargeRetryLimit"
 grafo source "HandleCheckout"
 grafo watch
 grafo mcp
 ```
 
-`grafo install` detects Claude Code, Codex, and OpenCode on `PATH` and adds
-Grafo to each one as a user-level MCP server. To configure only selected
-agents, name them explicitly:
+### Installing into MCP clients
+
+`grafo install` detects every supported MCP client and registers Grafo with
+each one as a user-level stdio server. Supported clients are Claude Code,
+Claude Desktop, Cline, Codex, Cursor, Gemini CLI, OpenCode, VS Code, and
+Windsurf. Clients with an official CLI are configured through it; the rest are
+configured by editing their documented user-level config file.
 
 ```sh
-grafo install claude codex
+grafo install --list          # detect only; never writes
+grafo install --all --dry-run # report every file and command a real run touches
+grafo install claude codex    # or: grafo install --client cursor,vscode
+grafo uninstall --all         # remove only Grafo's own registration
 ```
+
+Config files are parsed structurally, written atomically, and unrelated servers
+and settings are preserved. `--list` and `--dry-run` cannot write. Naming a
+client that is not installed is an error; automatic and `--all` mode skip
+missing clients and say so. All of these accept `--json`.
 
 The generated MCP configuration uses the absolute path of the installed Grafo
 binary, so agents do not depend on their launch environment's `PATH`. Re-run
@@ -46,8 +60,45 @@ the complete command surface.
 
 `grafo mcp` starts a standards-compatible MCP server over stdio with tools for
 symbol discovery, node lookup, traversal, shortest paths, callers, callees,
-blast radius, graph-addressed source retrieval, reusable-code discovery, and
-index status.
+change impact, graph-addressed source retrieval, bounded source search,
+reusable-code discovery, and index status.
+
+Symbol, node, source, caller, callee, path, and impact tools accept a batch of
+inputs and return one result or error per input in the caller's order, so one
+bad selector never erases unrelated results. The scalar input fields remain
+supported.
+
+### Change impact
+
+`grafo impact` (also `grafo blast-radius`, and the MCP `get_blast_radius` tool)
+returns one bidirectional report instead of an incoming-only traversal: what
+depends on the symbol, what the symbol depends on, the impacted files, any
+cross-repository hops, and the related configuration, data, and event facts.
+
+```sh
+grafo impact "Charge" --upstream-depth 3 --downstream-depth 2
+grafo impact "Charge" --source --max-lines 40 --json
+```
+
+Upstream and downstream depth and node limits are bounded independently and
+each section reports its own truncation. Source excerpts are opt-in and read
+through the same bounded reader `grafo source` uses.
+
+### Bounded source search
+
+`grafo search` (MCP `search_source`) answers content questions the graph does
+not model. It searches only files that belong to a refreshed Grafo index,
+reading them from the matching worktree, and never copies source into SQLite.
+
+```sh
+grafo search "chargeRetryLimit" --context-lines 2
+grafo search "func \(s \*Service\) [A-Z]" --regex --language go --path-prefix internal
+```
+
+Patterns are literal by default, or Go RE2 with `--regex`. Binary and oversized
+files are skipped, every cap is reported rather than silently applied, and
+ordering is by repository, path, line, and column so results never depend on
+filesystem enumeration. Prefer the graph tools when the question is structural.
 
 `grafo source` resolves a graph node first, then reads its exact bounded source
 span from the active worktree. In a federation, the node ID selects the correct
