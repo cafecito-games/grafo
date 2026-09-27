@@ -44,3 +44,8 @@ tasks:
       - task: test
       - task: vet
       - task: build
+
+  bench:corpus:
+    desc: Run the opt-in production indexing corpus benchmark
+    cmds:
+      - go run ./cmd/grafo-benchmark

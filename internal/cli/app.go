@@ -22,9 +22,10 @@ import (
 	"github.com/cafecito-games/grafo/internal/semantic"
 	sourcecontext "github.com/cafecito-games/grafo/internal/source"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/version"
 )
 
-const Version = "0.1.0-dev"
+const Version = version.Value
 
 type App struct {
 	stdout io.Writer

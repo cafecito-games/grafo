@@ -56,7 +56,7 @@ func uniquePaths(groups ...[]string) []string {
 	seen := map[string]bool{}
 	for _, group := range groups {
 		for _, path := range group {
-			if ignoredPath(path) || ignoredFiles[strings.ToLower(filepath.Base(path))] {
+			if PathIgnored(path) {
 				continue
 			}
 			seen[path] = true

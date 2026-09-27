@@ -48,6 +48,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.countExternalNodesStmt, err = db.PrepareContext(ctx, countExternalNodes); err != nil {
 		return nil, fmt.Errorf("error preparing query CountExternalNodes: %w", err)
 	}
+	if q.countFactsStmt, err = db.PrepareContext(ctx, countFacts); err != nil {
+		return nil, fmt.Errorf("error preparing query CountFacts: %w", err)
+	}
 	if q.countFilesStmt, err = db.PrepareContext(ctx, countFiles); err != nil {
 		return nil, fmt.Errorf("error preparing query CountFiles: %w", err)
 	}
@@ -214,6 +217,11 @@ func (q *Queries) Close() error {
 	if q.countExternalNodesStmt != nil {
 		if cerr := q.countExternalNodesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing countExternalNodesStmt: %w", cerr)
+		}
+	}
+	if q.countFactsStmt != nil {
+		if cerr := q.countFactsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countFactsStmt: %w", cerr)
 		}
 	}
 	if q.countFilesStmt != nil {
@@ -468,6 +476,7 @@ type Queries struct {
 	countEdgesStmt                   *sql.Stmt
 	countEdgesByKindStmt             *sql.Stmt
 	countExternalNodesStmt           *sql.Stmt
+	countFactsStmt                   *sql.Stmt
 	countFilesStmt                   *sql.Stmt
 	countNodesStmt                   *sql.Stmt
 	countNodesByKindStmt             *sql.Stmt
@@ -523,6 +532,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		countEdgesStmt:                   q.countEdgesStmt,
 		countEdgesByKindStmt:             q.countEdgesByKindStmt,
 		countExternalNodesStmt:           q.countExternalNodesStmt,
+		countFactsStmt:                   q.countFactsStmt,
 		countFilesStmt:                   q.countFilesStmt,
 		countNodesStmt:                   q.countNodesStmt,
 		countNodesByKindStmt:             q.countNodesByKindStmt,

@@ -22,7 +22,12 @@ var ignoredFiles = map[string]bool{
 	"package-lock.json": true, "npm-shrinkwrap.json": true, "composer.lock": true,
 }
 
-func discoverFiles(ctx context.Context, project Project, registry *parserapi.Registry) ([]string, error) {
+type discoveredFiles struct {
+	paths   []string
+	skipped []string
+}
+
+func discoverFiles(ctx context.Context, project Project, registry *parserapi.Registry) (discoveredFiles, error) {
 	var candidates []string
 	if project.GitManaged {
 		command := exec.CommandContext(ctx, "git", "-C", project.Root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
@@ -54,26 +59,35 @@ func discoverFiles(ctx context.Context, project Project, registry *parserapi.Reg
 			return nil
 		})
 		if err != nil {
-			return nil, err
+			return discoveredFiles{}, err
 		}
 	}
-	result := make([]string, 0, len(candidates))
+	result := discoveredFiles{paths: make([]string, 0, len(candidates))}
 	seen := map[string]bool{}
 	for _, path := range candidates {
-		if seen[path] || ignoredPath(path) || ignoredFiles[strings.ToLower(filepath.Base(path))] {
+		if seen[path] || PathIgnored(path) {
 			continue
 		}
 		if _, ok := registry.For(path); !ok {
 			continue
 		}
-		info, err := os.Stat(filepath.Join(project.Root, filepath.FromSlash(path)))
-		if err != nil || !info.Mode().IsRegular() {
+		info, err := os.Lstat(filepath.Join(project.Root, filepath.FromSlash(path)))
+		if err != nil {
+			continue
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			seen[path] = true
+			result.skipped = append(result.skipped, path)
+			continue
+		}
+		if !info.Mode().IsRegular() {
 			continue
 		}
 		seen[path] = true
-		result = append(result, path)
+		result.paths = append(result.paths, path)
 	}
-	sort.Strings(result)
+	sort.Strings(result.paths)
+	sort.Strings(result.skipped)
 	return result, nil
 }
 
@@ -84,4 +98,10 @@ func ignoredPath(path string) bool {
 		}
 	}
 	return false
+}
+
+// PathIgnored reports whether the production indexer excludes a repository
+// path before parser routing.
+func PathIgnored(path string) bool {
+	return ignoredPath(path) || ignoredFiles[strings.ToLower(filepath.Base(path))]
 }

@@ -91,8 +91,16 @@ func TestRepositoryReconcilesMoreThanOneBatchAndTruncatesWAL(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.Reconcile(ctx); err != nil {
+	var observed []int
+	stats, err := repository.ReconcileWithStats(ctx, func(stats graph.ReconciliationStats) error {
+		observed = append(observed, stats.Batches)
+		return nil
+	})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if stats.Batches != 2 || len(observed) != 2 || observed[0] != 1 || observed[1] != 2 {
+		t.Fatalf("unexpected reconciliation progress: stats=%#v observed=%v", stats, observed)
 	}
 	edges, err := repository.EdgesFrom(ctx, caller.ID)
 	if err != nil {

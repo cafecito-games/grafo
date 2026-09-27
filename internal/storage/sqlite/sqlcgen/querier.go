@@ -17,6 +17,7 @@ type Querier interface {
 	CountEdges(ctx context.Context) (int64, error)
 	CountEdgesByKind(ctx context.Context) ([]CountEdgesByKindRow, error)
 	CountExternalNodes(ctx context.Context) (int64, error)
+	CountFacts(ctx context.Context) (int64, error)
 	CountFiles(ctx context.Context) (int64, error)
 	CountNodes(ctx context.Context) (int64, error)
 	CountNodesByKind(ctx context.Context) ([]CountNodesByKindRow, error)

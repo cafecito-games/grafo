@@ -17,6 +17,22 @@ type IndexRepository interface {
 	Counts(context.Context) (Counts, error)
 }
 
+// ReconciliationStats describes durable work completed during reconciliation.
+type ReconciliationStats struct {
+	Batches int `json:"batches"`
+}
+
+// ReconciliationObserver runs after a reconciliation batch commits and before
+// its WAL checkpoint. Returning an error stops at that durable boundary.
+type ReconciliationObserver func(ReconciliationStats) error
+
+// InstrumentedIndexRepository optionally exposes reconciliation progress.
+// Indexers retain compatibility with repositories that implement only
+// IndexRepository.
+type InstrumentedIndexRepository interface {
+	ReconcileWithStats(context.Context, ReconciliationObserver) (ReconciliationStats, error)
+}
+
 // QueryRepository is the read-only port used by graph traversal use cases.
 type QueryRepository interface {
 	SearchNodes(context.Context, string, int) ([]Node, error)
@@ -64,6 +80,7 @@ type FileRecord struct {
 type Counts struct {
 	Files    int            `json:"files"`
 	Nodes    int            `json:"nodes"`
+	Facts    int            `json:"facts"`
 	Edges    int            `json:"edges"`
 	External int            `json:"external_nodes"`
 	ByKind   map[string]int `json:"nodes_by_kind"`

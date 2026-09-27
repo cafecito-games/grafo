@@ -19,6 +19,9 @@ ON CONFLICT(id) DO UPDATE SET
 -- name: DeleteFactsByOwner :exec
 DELETE FROM facts WHERE owner_file = ?;
 
+-- name: CountFacts :one
+SELECT COUNT(*) FROM facts;
+
 -- name: ListDirtyFactBatch :many
 SELECT facts.*, CASE WHEN facts.target_id = '' OR target_node.id IS NOT NULL THEN 1 ELSE 0 END AS target_exists
 FROM dirty_facts INDEXED BY dirty_facts_order
