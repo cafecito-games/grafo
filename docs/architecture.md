@@ -454,14 +454,19 @@ and fact ID used to construct them. Mermaid rendering is a deterministic,
 escaped view of this structure rather than a second source of truth.
 
 Outbound HTTP facts are grouped by fact identity so the unresolved edge and
-any federated replacement cannot become duplicate calls. An exact method and
-route with one declaration resolves; no declaration stays external; several
-declarations remain an ambiguous boundary with all candidates and no confirmed
-service link. Asynchronous links pair publisher and subscriber evidence for the
-same event without persisting a derived relationship. Federation retains its
-edge marker, and cross-repository publish/subscribe evidence marks the resulting
-service link as federated even when both facts still meet at one explicit
-external event node.
+any federated replacement cannot become duplicate calls. `internal/httpmodel`
+is the single owner of method normalization, route parsing and joining,
+canonical template identity, and directional compatibility. Queries and
+fragments remain raw evidence but do not participate in endpoint identity;
+parameter names are interchangeable, while regex constraints and catchalls are
+preserved. Candidate resolution ranks exact literals, compatible templates,
+then catchalls, and equal best candidates remain an ambiguous boundary with no
+confirmed service link. An authority on an absolute request URL prevents a
+path-only local match, while scheme plus authority distinguish its external
+service identity. Asynchronous links pair publisher and subscriber
+evidence for the same event without persisting a derived relationship.
+Federation retains its edge marker, and cross-repository evidence also marks
+template-compatible HTTP links as federated.
 
 ## Persistence
 

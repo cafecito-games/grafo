@@ -1,7 +1,9 @@
 package server
 
-func Handler() {}
+func Handler()     {}
+func WrongMethod() {}
 
 func Routes() {
-	router.Get("/charge", Handler)
+	router.Get("/charge/{chargeID}", Handler)
+	router.Post("/charge/{chargeID}", WrongMethod)
 }

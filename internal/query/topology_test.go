@@ -2,6 +2,7 @@ package query_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"reflect"
 	"strings"
@@ -159,6 +160,141 @@ func TestOutboundRequestBoundsAmbiguousCandidates(t *testing.T) {
 		!result.Requests[0].Truncated || !result.Truncated {
 		t.Fatalf("ambiguous candidates were not bounded explicitly: %#v", result)
 	}
+}
+
+func TestOutboundRequestsRankCanonicalRouteCompatibility(t *testing.T) {
+	repository := newHTTPCompatibilityFixture()
+	service := query.NewTopology(repository)
+	result, err := service.OutboundRequests(context.Background(), query.TopologyOptions{Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bySource := map[string]query.OutboundRequest{}
+	for _, request := range result.Requests {
+		bySource[request.Source.Name] = request
+	}
+
+	tests := []struct {
+		source, route, destination, scheme, authority string
+		status                                        query.BoundaryStatus
+		candidates                                    int
+	}{
+		{source: "Exact", route: "/users/42", destination: "literal", status: query.BoundaryResolved},
+		{source: "Template", route: "/people/42", destination: "parameter", status: query.BoundaryResolved},
+		{source: "Regex", route: "/codes/42", destination: "regex", status: query.BoundaryResolved},
+		{source: "Catchall", route: "/assets/css/app.css", destination: "catchall", status: query.BoundaryResolved},
+		{source: "Ambiguous", route: "/teams/blue", status: query.BoundaryAmbiguous, candidates: 2},
+		{source: "RegexMismatch", route: "/codes/nope", status: query.BoundaryUnresolved},
+		{source: "UnknownRegex", route: "/codes/{_}", status: query.BoundaryUnresolved},
+		{source: "MethodMismatch", route: "/people/42", status: query.BoundaryUnresolved},
+		{source: "ExternalAuthority", route: "/users/42", scheme: "https", authority: "external.test", status: query.BoundaryUnresolved},
+		{source: "HTTPAuthority", route: "/users/42", scheme: "http", authority: "external.test", status: query.BoundaryUnresolved},
+		{source: "LegacyAuthority", route: "/users/42", scheme: "https", authority: "legacy.test", status: query.BoundaryUnresolved},
+		{source: "Invalid", route: "/users/%zz", status: query.BoundaryUnresolved},
+	}
+	for _, test := range tests {
+		t.Run(test.source, func(t *testing.T) {
+			request := bySource[test.source]
+			if request.Status != test.status || request.Route != test.route || request.Scheme != test.scheme || request.Authority != test.authority || len(request.Candidates) != test.candidates {
+				t.Fatalf("request = %#v", request)
+			}
+			if test.destination != "" && request.Destination.Name != test.destination {
+				t.Fatalf("destination = %#v", request.Destination)
+			}
+			if request.Evidence.EdgeID == "" || request.Evidence.Location.Path != "client.go" {
+				t.Fatalf("request evidence was lost: %#v", request.Evidence)
+			}
+		})
+	}
+	if got := bySource["Exact"].Evidence.Properties["http_raw_route"]; got != "/users/42/?expand=true#details" {
+		t.Fatalf("raw route evidence = %q", got)
+	}
+	topology, err := service.ServiceTopology(context.Background(), query.TopologyOptions{Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	externalIDs := map[string]bool{}
+	for _, link := range topology.Links {
+		if link.Route == "/users/42" && link.ToServiceID != "service:server" {
+			externalIDs[link.ToServiceID] = true
+		}
+	}
+	if len(externalIDs) != 3 {
+		t.Fatalf("distinct authorities shared an external service: %#v", topology)
+	}
+}
+
+func TestRouteFiltersUseCanonicalCompatibility(t *testing.T) {
+	service := query.NewTopology(newHTTPCompatibilityFixture())
+	result, err := service.Endpoints(context.Background(), query.TopologyOptions{
+		Method: "get", Route: "/people/{id}/", Limit: 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Endpoints) != 1 || result.Endpoints[0].Name != "parameter" {
+		t.Fatalf("compatible template filter = %#v", result.Endpoints)
+	}
+	if _, err := service.Endpoints(context.Background(), query.TopologyOptions{Route: "/bad/%zz"}); err == nil {
+		t.Fatal("malformed route filter succeeded")
+	}
+}
+
+func newHTTPCompatibilityFixture() *catalogRepository {
+	repository := &catalogRepository{nodes: map[string]graph.Node{}, owners: map[string]string{}, repositories: []string{"client", "server"}}
+	addEndpoint := func(id, name, method, route string) {
+		repository.add("server", graph.Node{ID: id, Kind: graph.KindEndpoint, Name: name,
+			QualifiedName: "endpoint:" + method + " " + route + "@routes.go:1",
+			Properties:    map[string]string{"method": method, "route": route}})
+	}
+	addEndpoint("n:literal", "literal", "GET", "/users/42")
+	addEndpoint("n:user-param", "user parameter", "GET", "/users/{id}")
+	addEndpoint("n:parameter", "parameter", "GET", "/people/{characterID}")
+	addEndpoint("n:regex", "regex", "GET", `/codes/{id:[0-9]+}`)
+	addEndpoint("n:catchall", "catchall", "GET", "/assets/{path...}")
+	addEndpoint("n:team-a", "team a", "GET", "/teams/{id}")
+	addEndpoint("n:team-b", "team b", "GET", "/teams/{teamID}")
+
+	requests := []struct {
+		name, method, raw, canonical, scheme, authority string
+		legacy                                          bool
+	}{
+		{name: "Exact", method: "GET", raw: "/users/42/?expand=true#details", canonical: "/users/42"},
+		{name: "Template", method: "GET", raw: "/people/42", canonical: "/people/42"},
+		{name: "Regex", method: "GET", raw: "/codes/42", canonical: "/codes/42"},
+		{name: "Catchall", method: "GET", raw: "/assets/css/app.css", canonical: "/assets/css/app.css"},
+		{name: "Ambiguous", method: "GET", raw: "/teams/blue", canonical: "/teams/blue"},
+		{name: "RegexMismatch", method: "GET", raw: "/codes/nope", canonical: "/codes/nope"},
+		{name: "UnknownRegex", method: "GET", raw: "/codes/{value}", canonical: "/codes/{_}"},
+		{name: "MethodMismatch", method: "POST", raw: "/people/42", canonical: "/people/42"},
+		{name: "ExternalAuthority", method: "GET", raw: "https://external.test/users/42", canonical: "/users/42", scheme: "https", authority: "external.test"},
+		{name: "HTTPAuthority", method: "GET", raw: "http://external.test/users/42", canonical: "/users/42", scheme: "http", authority: "external.test"},
+		{name: "LegacyAuthority", method: "GET", raw: "https://legacy.test/users/42?view=full#details", canonical: "/users/42", legacy: true},
+		{name: "Invalid", method: "GET", raw: "/users/%zz", canonical: "/users/%zz"},
+	}
+	for index, request := range requests {
+		sourceID := fmt.Sprintf("n:request-source-%d", index)
+		targetID := fmt.Sprintf("n:request-target-%d", index)
+		edgeID := fmt.Sprintf("e:request-%d", index)
+		repository.add("client", graph.Node{ID: sourceID, Kind: graph.KindFunction, Name: request.name,
+			QualifiedName: "client." + request.name})
+		repository.add("", graph.Node{ID: targetID, Kind: graph.KindEndpoint, Name: request.method + " " + request.raw,
+			QualifiedName: request.method + " " + request.raw, External: true, Properties: map[string]string{"unresolved": "true"}})
+		properties := map[string]string{"http_method": request.method, "http_raw_route": request.raw, "http_route": request.canonical}
+		if request.legacy {
+			properties = nil
+		}
+		if request.authority != "" {
+			properties["http_authority"] = request.authority
+			properties["http_scheme"] = request.scheme
+		}
+		if request.name == "Invalid" {
+			properties["http_invalid"] = "true"
+		}
+		repository.edges = append(repository.edges, graph.Edge{ID: edgeID, FactID: edgeID, FromID: sourceID,
+			ToID: targetID, Kind: graph.EdgeRequests, Location: graph.Location{Path: "client.go", Line: index + 1}, Properties: properties})
+	}
+	return repository
 }
 
 func TestServiceTopologyIncludesHTTPAndEventLinksWithEvidence(t *testing.T) {

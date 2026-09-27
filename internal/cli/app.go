@@ -2058,8 +2058,9 @@ repository, and report truncation whenever a bound is reached. A --name fragment
 is matched literally and is trimmed, so a blank one narrows nothing.
 
 The endpoint and topology commands use each indexed repository as a stable
-service boundary. HTTP method matching is exact, route and event filters are
-literal fragments, and unresolved or ambiguous destinations remain explicit.
+service boundary. HTTP method matching is exact, route filters use canonical
+template compatibility, event filters are literal fragments, and unresolved or
+ambiguous destinations remain explicit.
 Service-topology JSON contains the endpoint/event node IDs and edge evidence;
 --mermaid renders that same result without replacing the structured evidence.
 `

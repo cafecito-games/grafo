@@ -16,7 +16,7 @@
       {
         "repo": "client",
         "kind": "endpoint",
-        "qualified_name": "GET /charge",
+        "qualified_name": "GET /charge/{_}",
         "external": true
       },
       {
@@ -59,7 +59,12 @@
       {
         "repo": "server",
         "kind": "endpoint",
-        "qualified_name": "endpoint:GET /charge@server.go:6"
+        "qualified_name": "endpoint:GET /charge/{_}@server.go:7:2"
+      },
+      {
+        "repo": "server",
+        "kind": "endpoint",
+        "qualified_name": "endpoint:POST /charge/{_}@server.go:8:2"
       },
       {
         "repo": "server",
@@ -80,6 +85,11 @@
         "repo": "server",
         "kind": "function",
         "qualified_name": "example.com/server.Routes"
+      },
+      {
+        "repo": "server",
+        "kind": "function",
+        "qualified_name": "example.com/server.WrongMethod"
       },
       {
         "repo": "server",
@@ -161,7 +171,7 @@
         "to": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:GET /charge@server.go:6"
+          "qualified_name": "endpoint:GET /charge/{_}@server.go:7:2"
         },
         "source": {
           "path": "client.go",
@@ -169,7 +179,12 @@
           "column": 2
         },
         "properties": {
-          "federated": "true"
+          "federated": "true",
+          "http_method": "GET",
+          "http_query": "view=full",
+          "http_raw_method": "get",
+          "http_raw_route": "/charge/{requestID}/?view=full",
+          "http_route": "/charge/{_}"
         }
       },
       {
@@ -236,7 +251,7 @@
         "from": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:GET /charge@server.go:6"
+          "qualified_name": "endpoint:GET /charge/{_}@server.go:7:2"
         },
         "relation": "handled_by",
         "to": {
@@ -246,7 +261,25 @@
         },
         "source": {
           "path": "server.go",
-          "line": 6,
+          "line": 7,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:POST /charge/{_}@server.go:8:2"
+        },
+        "relation": "handled_by",
+        "to": {
+          "repo": "server",
+          "kind": "function",
+          "qualified_name": "example.com/server.WrongMethod"
+        },
+        "source": {
+          "path": "server.go",
+          "line": 8,
           "column": 2
         }
       },
@@ -300,7 +333,25 @@
         },
         "source": {
           "path": "server.go",
-          "line": 5,
+          "line": 6,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "file",
+          "qualified_name": "server.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "server",
+          "kind": "function",
+          "qualified_name": "example.com/server.WrongMethod"
+        },
+        "source": {
+          "path": "server.go",
+          "line": 4,
           "column": 1
         }
       },
@@ -314,11 +365,29 @@
         "to": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:GET /charge@server.go:6"
+          "qualified_name": "endpoint:GET /charge/{_}@server.go:7:2"
         },
         "source": {
           "path": "server.go",
-          "line": 6,
+          "line": 7,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "function",
+          "qualified_name": "example.com/server.Routes"
+        },
+        "relation": "exposes",
+        "to": {
+          "repo": "server",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:POST /charge/{_}@server.go:8:2"
+        },
+        "source": {
+          "path": "server.go",
+          "line": 8,
           "column": 2
         }
       },
@@ -363,7 +432,14 @@
       {
         "repo": "server",
         "path": "server.go",
-        "line": 6,
+        "line": 7,
+        "level": "warning",
+        "message_contains": "router"
+      },
+      {
+        "repo": "server",
+        "path": "server.go",
+        "line": 8,
         "level": "warning",
         "message_contains": "router"
       }
@@ -387,7 +463,7 @@
           {
             "repo": "server",
             "kind": "endpoint",
-            "qualified_name": "endpoint:GET /charge@server.go:6"
+            "qualified_name": "endpoint:GET /charge/{_}@server.go:7:2"
           },
           {
             "repo": "server",
@@ -406,7 +482,7 @@
             "to": {
               "repo": "server",
               "kind": "endpoint",
-              "qualified_name": "endpoint:GET /charge@server.go:6"
+              "qualified_name": "endpoint:GET /charge/{_}@server.go:7:2"
             },
             "source": {
               "path": "client.go",
@@ -414,14 +490,19 @@
               "column": 2
             },
             "properties": {
-              "federated": "true"
+              "federated": "true",
+              "http_method": "GET",
+              "http_query": "view=full",
+              "http_raw_method": "get",
+              "http_raw_route": "/charge/{requestID}/?view=full",
+              "http_route": "/charge/{_}"
             }
           },
           {
             "from": {
               "repo": "server",
               "kind": "endpoint",
-              "qualified_name": "endpoint:GET /charge@server.go:6"
+              "qualified_name": "endpoint:GET /charge/{_}@server.go:7:2"
             },
             "relation": "handled_by",
             "to": {
@@ -431,10 +512,36 @@
             },
             "source": {
               "path": "server.go",
-              "line": 6,
+              "line": 7,
               "column": 2
             }
           }
+        ]
+      }
+    ],
+    "forbidden_edges": [
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.Call"
+        },
+        "relation": "requests",
+        "to": {
+          "repo": "server",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:POST /charge/{_}@server.go:8:2"
+        }
+      }
+    ],
+    "forbidden_paths": [
+      {
+        "from": "example.com/client.Call",
+        "to": "example.com/server.WrongMethod",
+        "direction": "outgoing",
+        "relations": [
+          "requests",
+          "handled_by"
         ]
       }
     ]

@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/httpmodel"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 )
 
@@ -515,7 +516,7 @@ func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input,
 	method := strings.ToLower(graph.SimpleName(callee))
 	if isHTTPMethod(method) && len(call.Args) > 0 && (strings.HasPrefix(callee, "net/http.") || strings.HasPrefix(callee, "http.")) {
 		if route, ok := stringArgument(call.Args, 0); ok {
-			b.AddFact(fromID, graph.EdgeRequests, "", strings.ToUpper(method)+" "+route, graph.KindEndpoint, loc, nil)
+			addHTTPRequest(b, fromID, loc, method, route)
 			return
 		}
 	}
@@ -654,10 +655,81 @@ func isBuiltinGoType(value string) bool {
 }
 
 func addEndpoint(b *parserapi.Builder, loc graph.Location, method, route string) string {
-	name := method + " " + route
+	normalizedMethod, methodErr := httpmodel.NormalizeMethod(method)
+	parsedRoute, routeErr := httpmodel.ParseRoute(route)
+	properties := map[string]string{"raw_method": method, "raw_route": route}
+	identityMethod, identityRoute := normalizedMethod, route
+	if methodErr == nil {
+		properties["method"] = normalizedMethod
+	} else {
+		identityMethod = method
+		properties["method"] = method
+	}
+	if routeErr == nil {
+		identityRoute = parsedRoute.Canonical
+		properties["route"] = parsedRoute.Canonical
+		copyHTTPRouteEvidence(properties, parsedRoute, "")
+	} else {
+		properties["route"] = route
+	}
+	if methodErr != nil || routeErr != nil {
+		properties["http_invalid"] = "true"
+		b.Diagnostic(loc.Line, "warning", fmt.Sprintf("invalid HTTP endpoint %q %q: %v", method, route, firstError(methodErr, routeErr)))
+	}
+	name := identityMethod + " " + identityRoute
 	return b.AddNode(graph.Node{Kind: graph.KindEndpoint, Name: name,
-		QualifiedName: fmt.Sprintf("endpoint:%s@%s:%d", name, loc.Path, loc.Line), Location: loc,
-		Properties: map[string]string{"method": method, "route": route}})
+		QualifiedName: fmt.Sprintf("endpoint:%s@%s:%d:%d", name, loc.Path, loc.Line, loc.Column), Location: loc,
+		Properties: properties})
+}
+
+func addHTTPRequest(b *parserapi.Builder, fromID string, loc graph.Location, method, route string) {
+	normalizedMethod, methodErr := httpmodel.NormalizeMethod(method)
+	parsedRoute, routeErr := httpmodel.ParseRoute(route)
+	properties := map[string]string{"http_raw_method": method, "http_raw_route": route}
+	identityMethod := normalizedMethod
+	if methodErr != nil {
+		identityMethod = method
+	} else {
+		properties["http_method"] = normalizedMethod
+	}
+	identityRoute := route
+	if routeErr == nil {
+		copyHTTPRouteEvidence(properties, parsedRoute, "http_")
+		identityRoute = parsedRoute.Canonical
+		if parsedRoute.Authority != "" {
+			identityRoute = parsedRoute.Scheme + "://" + parsedRoute.Authority + parsedRoute.Canonical
+		}
+	} else {
+		properties["http_invalid"] = "true"
+	}
+	if methodErr != nil || routeErr != nil {
+		properties["http_invalid"] = "true"
+		b.Diagnostic(loc.Line, "warning", fmt.Sprintf("invalid outbound HTTP request %q %q: %v", method, route, firstError(methodErr, routeErr)))
+	}
+	b.AddFact(fromID, graph.EdgeRequests, "", identityMethod+" "+identityRoute, graph.KindEndpoint, loc, properties)
+}
+
+func copyHTTPRouteEvidence(properties map[string]string, route httpmodel.Route, prefix string) {
+	properties[prefix+"route"] = route.Canonical
+	if route.Query != "" {
+		properties[prefix+"query"] = route.Query
+	}
+	if route.Fragment != "" {
+		properties[prefix+"fragment"] = route.Fragment
+	}
+	if route.Authority != "" {
+		properties[prefix+"authority"] = route.Authority
+		properties[prefix+"scheme"] = route.Scheme
+	}
+}
+
+func firstError(errors ...error) error {
+	for _, err := range errors {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func isHTTPMethod(method string) bool {
