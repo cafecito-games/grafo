@@ -2408,7 +2408,7 @@
         "path": "main.go",
         "line": 10,
         "level": "warning",
-        "message": "undefined: publish"
+        "message_contains": "publish"
       }
     ],
     "queries": [

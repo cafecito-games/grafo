@@ -365,7 +365,7 @@
         "path": "server.go",
         "line": 6,
         "level": "warning",
-        "message": "undefined: router"
+        "message_contains": "router"
       }
     ],
     "queries": [

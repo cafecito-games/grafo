@@ -137,8 +137,9 @@ are marked `federated` and retain their original evidence.
 
 Grafo combines syntactic extraction with Go toolchain type evidence for exact
 Go function and method dispatch, promotions, generic instantiations, and
-interface method sets. Other languages remain syntactic and name-based, and
-Grafo does not perform whole-program pointer analysis or full SSA data flow.
+repository-local interface method sets. Other languages remain syntactic and
+name-based, and Grafo does not perform whole-program pointer analysis or full
+SSA data flow.
 Structural retrieval remains graph-based; vector similarity is confined to
 optional candidate discovery.
 

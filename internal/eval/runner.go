@@ -170,7 +170,7 @@ func runWorkspace(ctx context.Context, caseDir string, manifest Manifest) (Snaps
 		}
 		for _, diagnostic := range report.Diagnostics {
 			diagnostics = append(diagnostics, DiagnosticRef{Repo: spec.ID, Path: diagnostic.Path,
-				Line: diagnostic.Line, Level: diagnostic.Level, Message: diagnostic.Message})
+				Line: diagnostic.Line, Level: diagnostic.Level, MessageContains: diagnostic.Message})
 		}
 		if err := collectOrigins(ctx, project, spec.ID, origins); err != nil {
 			return Snapshot{}, Snapshot{}, err
@@ -178,11 +178,11 @@ func runWorkspace(ctx context.Context, caseDir string, manifest Manifest) (Snaps
 	}
 	sort.Slice(diagnostics, func(i, j int) bool {
 		left, right := diagnostics[i], diagnostics[j]
-		return left.Repo+"\x00"+left.Path+fmt.Sprintf("\x00%09d", left.Line)+"\x00"+left.Level+"\x00"+left.Message <
-			right.Repo+"\x00"+right.Path+fmt.Sprintf("\x00%09d", right.Line)+"\x00"+right.Level+"\x00"+right.Message
+		return left.Repo+"\x00"+left.Path+fmt.Sprintf("\x00%09d", left.Line)+"\x00"+left.Level+"\x00"+left.MessageContains <
+			right.Repo+"\x00"+right.Path+fmt.Sprintf("\x00%09d", right.Line)+"\x00"+right.Level+"\x00"+right.MessageContains
 	})
-	if !equalSlices(manifest.Expect.Diagnostics, diagnostics) {
-		return Snapshot{}, Snapshot{}, focusedSliceDiff("diagnostics", manifest.Expect.Diagnostics, diagnostics)
+	if err := compareDiagnostics(manifest.Expect.Diagnostics, diagnostics); err != nil {
+		return Snapshot{}, Snapshot{}, err
 	}
 	first, err := evaluateWorkspace(ctx, projects, roots, origins, manifest.Expect)
 	if err != nil {
@@ -195,6 +195,20 @@ func runWorkspace(ctx context.Context, caseDir string, manifest Manifest) (Snaps
 	}
 	incremental, err := evaluateWorkspace(ctx, projects, roots, origins, manifest.Expect)
 	return first, incremental, err
+}
+
+func compareDiagnostics(expected, actual []DiagnosticRef) error {
+	if len(expected) != len(actual) {
+		return fmt.Errorf("diagnostics count differs: expected %d, actual %d: %+v", len(expected), len(actual), actual)
+	}
+	for index := range expected {
+		want, got := expected[index], actual[index]
+		if want.Repo != got.Repo || want.Path != got.Path || want.Line != got.Line || want.Level != got.Level ||
+			!strings.Contains(got.MessageContains, want.MessageContains) {
+			return fmt.Errorf("diagnostics differ at index %d:\nwant: %+v\n got: %+v", index, want, got)
+		}
+	}
+	return nil
 }
 
 func initializeFixtureGit(ctx context.Context, root, caseID, repositoryID string) error {

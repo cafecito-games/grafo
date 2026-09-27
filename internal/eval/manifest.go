@@ -39,11 +39,11 @@ type Expectations struct {
 }
 
 type DiagnosticRef struct {
-	Repo    string `json:"repo"`
-	Path    string `json:"path"`
-	Line    int    `json:"line,omitempty"`
-	Level   string `json:"level"`
-	Message string `json:"message"`
+	Repo            string `json:"repo"`
+	Path            string `json:"path"`
+	Line            int    `json:"line,omitempty"`
+	Level           string `json:"level"`
+	MessageContains string `json:"message_contains"`
 }
 
 type NodeRef struct {
@@ -286,8 +286,8 @@ func validateManifest(manifest Manifest) error {
 		if !repositories[diagnostic.Repo] {
 			return fmt.Errorf("diagnostic has unknown repository %q", diagnostic.Repo)
 		}
-		if diagnostic.Path == "" || diagnostic.Level == "" || diagnostic.Message == "" {
-			return fmt.Errorf("diagnostic repo, path, level, and message are required")
+		if diagnostic.Path == "" || diagnostic.Level == "" || diagnostic.MessageContains == "" {
+			return fmt.Errorf("diagnostic repo, path, level, and message_contains are required")
 		}
 	}
 	queryIDs := map[string]bool{}

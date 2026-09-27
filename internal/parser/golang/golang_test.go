@@ -224,6 +224,70 @@ func TestPackageSemanticLoaderUsesWorkspaceModuleImportPath(t *testing.T) {
 	assertHasFact(t, result.Facts, graph.EdgeCalls, "example.com/workspace/service.helper")
 }
 
+func TestPackageSemanticLoaderFallsBackForUnloadedGoFiles(t *testing.T) {
+	tests := []struct {
+		name        string
+		path        string
+		prepareRoot func(*testing.T, string)
+		content     string
+		function    string
+	}{
+		{
+			name: "test file", path: "sample_test.go", function: "TestHelper",
+			prepareRoot: func(t *testing.T, root string) {
+				writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26\n")
+				writeFile(t, filepath.Join(root, "sample.go"), "package sample\nfunc Helper() {}\n")
+			},
+			content: "package sample\nfunc TestHelper() { Helper() }\n",
+		},
+		{
+			name: "unlisted nested module", path: "nested/nested.go", function: "Nested",
+			prepareRoot: func(t *testing.T, root string) {
+				writeFile(t, filepath.Join(root, "go.mod"), "module example.com/outer\n\ngo 1.26\n")
+				writeFile(t, filepath.Join(root, "outer.go"), "package outer\n")
+				writeFile(t, filepath.Join(root, "nested", "go.mod"), "module example.com/nested\n\ngo 1.26\n")
+			},
+			content: "package nested\nfunc Nested() {}\n",
+		},
+		{
+			name: "cgo source", path: "cgo.go", function: "CGOHelper",
+			prepareRoot: func(t *testing.T, root string) {
+				writeFile(t, filepath.Join(root, "go.mod"), "module example.com/cgo\n\ngo 1.26\n")
+			},
+			content: "package cgo\n/* static void grafo_noop(void) {} */\nimport \"C\"\nfunc CGOHelper() { C.grafo_noop() }\n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			test.prepareRoot(t, root)
+			writeFile(t, filepath.Join(root, filepath.FromSlash(test.path)), test.content)
+			result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+				Root: root, Path: test.path, Content: []byte(test.content), Repository: "sample", RepoID: "repo", GoModule: "example.com/outer",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertHasNode(t, result.Nodes, graph.KindFunction, test.function)
+			if result.Nodes[0].Properties["go_build_excluded"] == "true" {
+				t.Fatalf("unloaded source was misclassified as build-excluded: %#v", result.Nodes[0])
+			}
+		})
+	}
+}
+
+func TestSemanticKeySkipsSpecialGoEntries(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/special\n\ngo 1.26\n")
+	if err := os.Symlink(filepath.Join(root, "does-not-exist"), filepath.Join(root, "dangling.go")); err != nil {
+		t.Fatal(err)
+	}
+	parser := golangparser.New()
+	if _, err := parser.SemanticKey(context.Background(), parserapi.Input{Root: root}); err != nil {
+		t.Fatalf("special Go entry aborted workspace keying: %v", err)
+	}
+}
+
 func TestPackageSemanticLoaderRetainsProvenFactsForBrokenPackage(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/broken\n\ngo 1.26\n")

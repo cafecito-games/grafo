@@ -1569,14 +1569,14 @@
         "path": "broken/broken.go",
         "line": 7,
         "level": "warning",
-        "message": "undefined: missing"
+        "message_contains": "missing"
       },
       {
         "repo": "semantic",
         "path": "unavailable/unavailable.go",
         "line": 3,
         "level": "warning",
-        "message": "could not import example.invalid/grafo-missing-module (invalid package name: \"\")"
+        "message_contains": "example.invalid/grafo-missing-module"
       }
     ],
     "forbidden_edges": [

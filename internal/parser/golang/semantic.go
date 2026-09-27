@@ -140,10 +140,7 @@ func (l *PackageLoader) Load(ctx context.Context, input parserapi.Input) (Semant
 	if view, ok := views[path]; ok {
 		return cloneSemanticView(view), nil
 	}
-	// A successfully loaded workspace that omitted this source file did so for
-	// the active build constraints. The parser records the context but emits no
-	// declarations from the excluded file.
-	return SemanticView{Available: true, Included: false, BuildContext: buildContext}, nil
+	return unloadedSemanticView(root, path, buildContext), nil
 }
 
 func (l *PackageLoader) cached(root, key, path string) (SemanticView, bool) {
@@ -156,9 +153,61 @@ func (l *PackageLoader) cached(root, key, path string) (SemanticView, bool) {
 	l.cacheHits.Add(1)
 	view, exists := entry.views[path]
 	if !exists {
-		view = SemanticView{Available: true, Included: false, BuildContext: buildContextString(root)}
+		view = unloadedSemanticView(root, path, buildContextString(root))
 	}
 	return cloneSemanticView(view), true
+}
+
+func unloadedSemanticView(root, path, buildContext string) SemanticView {
+	included, err := matchesBuildContext(root, path)
+	if err == nil && !included {
+		return SemanticView{Available: true, Included: false, BuildContext: buildContext}
+	}
+	message := "Go semantic package omitted source; using syntax evidence"
+	if err != nil {
+		message += ": " + err.Error()
+	}
+	return SemanticView{
+		Included: true, BuildContext: buildContext,
+		Diagnostics: []graph.Diagnostic{{Path: path, Level: "warning", Message: message}},
+	}
+}
+
+func matchesBuildContext(root, path string) (bool, error) {
+	context := build.Default
+	if value := strings.TrimSpace(os.Getenv("GOOS")); value != "" {
+		context.GOOS = value
+	}
+	if value := strings.TrimSpace(os.Getenv("GOARCH")); value != "" {
+		context.GOARCH = value
+	}
+	if value := strings.TrimSpace(os.Getenv("CGO_ENABLED")); value != "" {
+		context.CgoEnabled = value != "0"
+	}
+	context.BuildTags = goBuildTags(os.Getenv("GOFLAGS"))
+	absolute := filepath.Join(root, filepath.FromSlash(path))
+	return context.MatchFile(filepath.Dir(absolute), filepath.Base(absolute))
+}
+
+func goBuildTags(flags string) []string {
+	fields := strings.Fields(flags)
+	var tags []string
+	for index := 0; index < len(fields); index++ {
+		value := ""
+		if strings.HasPrefix(fields[index], "-tags=") {
+			value = strings.TrimPrefix(fields[index], "-tags=")
+		} else if fields[index] == "-tags" && index+1 < len(fields) {
+			index++
+			value = fields[index]
+		}
+		value = strings.Trim(value, "'\"")
+		for _, tag := range strings.FieldsFunc(value, func(r rune) bool { return r == ',' || r == ' ' }) {
+			if tag != "" {
+				tags = append(tags, tag)
+			}
+		}
+	}
+	return tags
 }
 
 func cloneSemanticView(view SemanticView) SemanticView {
@@ -550,7 +599,10 @@ func semanticWorkspaceKey(root string) (string, string, error) {
 	_, _ = digest.Write([]byte(buildContext))
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			return walkErr
+			if path == root {
+				return walkErr
+			}
+			return nil
 		}
 		if entry.IsDir() {
 			switch entry.Name() {
@@ -561,13 +613,20 @@ func semanticWorkspaceKey(root string) (string, string, error) {
 			}
 			return nil
 		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			return nil
+		}
 		name := entry.Name()
 		if filepath.Ext(name) != ".go" && name != "go.mod" && name != "go.sum" && name != "go.work" && name != "go.work.sum" && !(name == "modules.txt" && filepath.Base(filepath.Dir(path)) == "vendor") {
 			return nil
 		}
 		content, err := os.ReadFile(path)
 		if err != nil {
-			return err
+			return nil
 		}
 		relative, err := filepath.Rel(root, path)
 		if err != nil {
@@ -587,10 +646,7 @@ func semanticWorkspaceKey(root string) (string, string, error) {
 		for _, path := range []string{workspace, workspace + ".sum"} {
 			content, readErr := os.ReadFile(path)
 			if readErr != nil {
-				if os.IsNotExist(readErr) {
-					continue
-				}
-				return "", "", readErr
+				continue
 			}
 			_, _ = digest.Write([]byte(filepath.Clean(path)))
 			_, _ = digest.Write([]byte{0})

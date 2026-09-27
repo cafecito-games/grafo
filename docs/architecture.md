@@ -81,6 +81,8 @@ syntax/type graphs. Its cache key includes source and module/workspace digests
 plus GOOS, GOARCH, CGO, tags/flags, workspace selection, and toolchain version.
 Type errors remain diagnostics while proven facts augment AST output; excluded
 build-tag files record the active context without emitting declarations.
+`implements` comparisons are bounded to interfaces declared in loaded workspace
+packages; dependency and standard-library interfaces remain external facts.
 
 ## Federation
 
