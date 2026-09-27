@@ -64,3 +64,12 @@ SELECT COUNT(*) FROM nodes WHERE external = 1;
 
 -- name: CountNodesByKind :many
 SELECT kind, COUNT(*) AS count FROM nodes GROUP BY kind ORDER BY kind;
+
+-- name: ListNodesByKind :many
+SELECT * FROM nodes
+WHERE kind = @kind
+  AND external >= @min_external
+  AND external <= @max_external
+  AND (instr(lower(name), @name_fragment) > 0 OR instr(lower(qualified_name), @name_fragment) > 0)
+ORDER BY qualified_name, id
+LIMIT @max_results;

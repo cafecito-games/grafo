@@ -175,6 +175,38 @@ a receipt under the Grafo configuration directory recording target, digest,
 guidance version, and marker, so uninstall and upgrade prove ownership from
 receipts plus exact markers instead of substring matching.
 
+## Catalogs and orphan detection
+
+`internal/graph` owns the resource kind and relationship vocabulary; a single
+catalog use case in `internal/query` owns usage direction and orphan
+classification. Storage adapters implement one narrow listing port,
+`graph.NodeListRepository`, which enumerates nodes by exact kind and attributes
+each one to an indexed repository. Adapters never interpret semantics, so a new
+catalog needs no new SQL and a new resource kind needs no presentation change.
+
+Node visibility is explicit rather than implicit: an enumeration asks for local
+declarations, unresolved external targets, or both, so a catalog never silently
+mixes a declaration with an unresolved reference. Each catalog reports the two
+classes in separate sections.
+
+Orphan status is a query result, never a persisted edge or diagnostic. An event
+with both a producer and a consumer is not reported. A one-sided event is
+classified as published-without-consumer, consumed-without-producer, or
+declared-with-neither, and its status is downgraded from orphaned to unknown
+whenever an unresolved target could be the missing counterpart or a bound cut
+off part of the evidence. Each relation is bounded independently, because a
+budget shared in edge order would let one relation starve another into looking
+empty and turn a bound into a false absence claim. Because a
+federated edge keeps the fact identity of the unresolved edge it replaced,
+resolved cross-repository evidence is never double-counted as uncertainty. An
+event name that no declaration resolves is always unknown: the index does not
+bound where such a name is published or consumed.
+
+Configuration output is value-free by construction. Only properties on an
+explicit non-secret metadata list are returned, and the names of withheld
+properties are reported so a future parser that records a value cannot leak it
+through a catalog.
+
 ## Persistence
 
 Each branch has a separate SQLite file under `.grafo/indexes`. The database is
@@ -196,7 +228,9 @@ Grafo does not require sqlc.
   the router. Dialects emit the shared table/view/column/index graph vocabulary,
   while the router records the selected dialect in node metadata.
 - Add storage by implementing the small `IndexRepository`, `QueryRepository`,
-  `StatusRepository`, and `FileCatalog` ports.
+  `StatusRepository`, `FileCatalog`, and `NodeListRepository` ports.
+- Add a catalog by reusing `NodeListRepository` with another node kind; extend
+  `graph.DataResourceKinds` to widen the data catalog.
 - Add an MCP client by adding one adapter to the `internal/agentinstall`
   registry. Declare a client only when both install and uninstall use a
   documented surface covered by fixtures. Add a guidance surface for it only when

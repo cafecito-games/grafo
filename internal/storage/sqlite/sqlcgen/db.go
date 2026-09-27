@@ -129,6 +129,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listFilesStmt, err = db.PrepareContext(ctx, listFiles); err != nil {
 		return nil, fmt.Errorf("error preparing query ListFiles: %w", err)
 	}
+	if q.listNodesByKindStmt, err = db.PrepareContext(ctx, listNodesByKind); err != nil {
+		return nil, fmt.Errorf("error preparing query ListNodesByKind: %w", err)
+	}
 	if q.listSemanticCandidateNodesStmt, err = db.PrepareContext(ctx, listSemanticCandidateNodes); err != nil {
 		return nil, fmt.Errorf("error preparing query ListSemanticCandidateNodes: %w", err)
 	}
@@ -354,6 +357,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listFilesStmt: %w", cerr)
 		}
 	}
+	if q.listNodesByKindStmt != nil {
+		if cerr := q.listNodesByKindStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listNodesByKindStmt: %w", cerr)
+		}
+	}
 	if q.listSemanticCandidateNodesStmt != nil {
 		if cerr := q.listSemanticCandidateNodesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listSemanticCandidateNodesStmt: %w", cerr)
@@ -503,6 +511,7 @@ type Queries struct {
 	listEmbeddingsByModelStmt        *sql.Stmt
 	listExternalEdgesMatchingStmt    *sql.Stmt
 	listFilesStmt                    *sql.Stmt
+	listNodesByKindStmt              *sql.Stmt
 	listSemanticCandidateNodesStmt   *sql.Stmt
 	markDirtyNodeStmt                *sql.Stmt
 	markDirtyOwnerStmt               *sql.Stmt
@@ -559,6 +568,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listEmbeddingsByModelStmt:        q.listEmbeddingsByModelStmt,
 		listExternalEdgesMatchingStmt:    q.listExternalEdgesMatchingStmt,
 		listFilesStmt:                    q.listFilesStmt,
+		listNodesByKindStmt:              q.listNodesByKindStmt,
 		listSemanticCandidateNodesStmt:   q.listSemanticCandidateNodesStmt,
 		markDirtyNodeStmt:                q.markDirtyNodeStmt,
 		markDirtyOwnerStmt:               q.markDirtyOwnerStmt,

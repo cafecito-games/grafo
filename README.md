@@ -25,6 +25,11 @@ grafo path "HandleCheckout" "Charge"
 grafo impact "Charge"
 grafo search "chargeRetryLimit"
 grafo source "HandleCheckout"
+grafo data-resources
+grafo data-usage "orders"
+grafo config-keys
+grafo events
+grafo orphaned-events
 grafo watch
 grafo mcp
 ```
@@ -98,7 +103,8 @@ the complete command surface.
 `grafo mcp` starts a standards-compatible MCP server over stdio with tools for
 symbol discovery, node lookup, traversal, shortest paths, callers, callees,
 change impact, graph-addressed source retrieval, bounded source search,
-reusable-code discovery, and index status.
+reusable-code discovery, index status, and the data, configuration, and event
+catalogs.
 
 Symbol, node, source, caller, callee, path, and impact tools accept a batch of
 inputs and return one result or error per input in the caller's order, so one
@@ -262,6 +268,53 @@ Supported keywords are `function`, `method`, `class`, `interface`, `type`, and
 `endpoint`. Resolution uses exact qualified names or an unambiguous simple name.
 If several declarations match, Grafo retains an explicit unresolved node rather
 than guessing an edge.
+
+## Data, configuration, and event catalogs
+
+The catalogs answer inventory and usage questions directly instead of leaving
+them to manual traversal:
+
+```sh
+grafo data-resources --kind table,view --name order --json
+grafo data-usage "orders" --json
+grafo config-keys --name DATABASE_ --json
+grafo events --json
+grafo orphaned-events --json
+```
+
+The same results are available as the `list_data_resources`,
+`get_data_resource_usage`, `list_config_keys`, `list_events`, and
+`find_orphaned_events` MCP tools. Every catalog accepts a repository filter and
+an explicit bound, reports truncation, and orders results deterministically. The
+list catalogs also accept a name filter, and the data-resource catalog a kind
+filter; usage names its resource with a selector instead. A name filter matches literally, so it narrows a catalog and
+never widens it. The bound applies to each catalog section and, separately, to
+the evidence sites of each relation.
+
+`data-usage` partitions the edges reaching a table or view into readers,
+writers, and references, each with the source site that proves it. An ambiguous
+name returns its candidates and asks for a qualified name or node ID rather than
+choosing one. An unsupported kind is rejected instead of answered with an empty
+catalog that would imply absence, and a name filter is rejected here rather than
+accepted and ignored, because the selector already names the resource. A name
+filter is trimmed before use, so a blank one narrows nothing at every surface
+rather than narrowing to nothing at some of them.
+
+`config-keys` reports where a key is defined and read. Stored values are never
+returned: only properties classified as non-secret configuration metadata appear,
+and the names of anything withheld are listed in `withheld_properties`.
+
+`orphaned-events` separates three categories — published without a consumer,
+consumed without a producer, and declared with neither — and separates a
+confirmed orphan from an uncertain one. When an unresolved target could be the
+missing counterpart, the finding's status is `unknown` and the response carries
+the counterpart counts and their evidence. Evidence a bound cut off is treated
+the same way, so a truncated event is never a confirmed orphan. Each relation
+carries its own bound, so a busy reader or publisher list can never make another
+relation look empty. Event names that no declaration
+resolves are always `unknown`, because nothing in the index bounds where they
+are published or consumed. Federation applies the same contract: a producer in
+one repository and a consumer in another clear the orphan.
 
 ## SQL dialects
 

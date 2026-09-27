@@ -199,6 +199,66 @@ func (q *Queries) GetNode(ctx context.Context, id string) (Node, error) {
 	return i, err
 }
 
+const listNodesByKind = `-- name: ListNodesByKind :many
+SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, owner_file, external FROM nodes
+WHERE kind = ?1
+  AND external >= ?2
+  AND external <= ?3
+  AND (instr(lower(name), ?4) > 0 OR instr(lower(qualified_name), ?4) > 0)
+ORDER BY qualified_name, id
+LIMIT ?5
+`
+
+type ListNodesByKindParams struct {
+	Kind         string `json:"kind"`
+	MinExternal  int64  `json:"min_external"`
+	MaxExternal  int64  `json:"max_external"`
+	NameFragment string `json:"name_fragment"`
+	MaxResults   int64  `json:"max_results"`
+}
+
+func (q *Queries) ListNodesByKind(ctx context.Context, arg ListNodesByKindParams) ([]Node, error) {
+	rows, err := q.query(ctx, q.listNodesByKindStmt, listNodesByKind,
+		arg.Kind,
+		arg.MinExternal,
+		arg.MaxExternal,
+		arg.NameFragment,
+		arg.MaxResults,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Node{}
+	for rows.Next() {
+		var i Node
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Name,
+			&i.QualifiedName,
+			&i.Language,
+			&i.Path,
+			&i.Line,
+			&i.ColumnNo,
+			&i.EndLine,
+			&i.Properties,
+			&i.OwnerFile,
+			&i.External,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const searchNodes = `-- name: SearchNodes :many
 SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, owner_file, external FROM nodes
 WHERE lower(name) LIKE '%' || lower(?1) || '%'

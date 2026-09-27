@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ type Service struct {
 	reusable   func(context.Context, string, int) (semantic.SearchResult, error)
 	source     func(context.Context, string, int, int) (sourcecontext.Excerpt, error)
 	search     *search.Service
+	catalog    *query.Catalog
 	refreshMu  sync.Mutex
 }
 
@@ -31,7 +33,11 @@ func New(repository graph.Repository, project indexer.Project) *Service {
 }
 
 func NewFederated(repository graph.ReadRepository, projects []indexer.Project) *Service {
-	return &Service{repository: repository, query: query.NewService(repository), projects: projects}
+	service := &Service{repository: repository, query: query.NewService(repository), projects: projects}
+	if catalogRepository, ok := repository.(graph.CatalogRepository); ok {
+		service.catalog = query.NewCatalog(catalogRepository)
+	}
+	return service
 }
 
 // WithRefresh configures a synchronization hook that runs before every tool
@@ -86,6 +92,13 @@ func (s *Service) Server(version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{Name: "get_blast_radius", Title: "Get change impact", Description: "Return a bounded bidirectional change-impact report: what depends on the symbol, what it depends on, impacted files, cross-repository hops, and config, data, and event relationships.", Annotations: annotations}, s.getBlastRadius)
 	if s.search != nil {
 		mcp.AddTool(server, &mcp.Tool{Name: "search_source", Title: "Search indexed source", Description: "Search literal text or RE2 patterns across files belonging to the refreshed indexes. Use graph tools first when the question is structural; use this for content questions the graph does not model.", Annotations: annotations}, s.searchSource)
+	}
+	if s.catalog != nil {
+		mcp.AddTool(server, &mcp.Tool{Name: "list_data_resources", Title: "List data resources", Description: "Catalog indexed tables and views with normalized dialect and object metadata, plus unresolved external targets kept explicit.", Annotations: annotations}, s.listDataResources)
+		mcp.AddTool(server, &mcp.Tool{Name: "get_data_resource_usage", Title: "Get data resource usage", Description: "Report the readers and writers of one table or view separately, each with its source evidence. An ambiguous name fails with its candidates named instead of guessing one.", Annotations: annotations}, s.getDataResourceUsage)
+		mcp.AddTool(server, &mcp.Tool{Name: "list_config_keys", Title: "List configuration keys", Description: "Catalog configuration keys with their definitions, readers, and unresolved references. Stored values are never returned.", Annotations: annotations}, s.listConfigKeys)
+		mcp.AddTool(server, &mcp.Tool{Name: "list_events", Title: "List events", Description: "Catalog events with their declarations, producers, consumers, and handlers.", Annotations: annotations}, s.listEvents)
+		mcp.AddTool(server, &mcp.Tool{Name: "find_orphaned_events", Title: "Find orphaned events", Description: "Report events published without a consumer, consumed without a producer, or declared with neither. An unresolved possible counterpart makes the status unknown rather than orphaned.", Annotations: annotations}, s.findOrphanedEvents)
 	}
 	mcp.AddTool(server, &mcp.Tool{Name: "get_index_status", Title: "Get index status", Description: "Return the active repository, branch, indexed commit, and graph counts.", Annotations: annotations}, s.getIndexStatus)
 	if s.reusable != nil {
@@ -152,9 +165,9 @@ func (s *Service) getSource(ctx context.Context, _ *mcp.CallToolRequest, input S
 	if err != nil {
 		return nil, SourceOutput{}, err
 	}
-	results := runBatch(ctx, selectors, func(readContext context.Context, selector string) (sourcecontext.Excerpt, error) {
+	results := runBatch(ctx, selectors, namingCandidates(func(readContext context.Context, selector string) (sourcecontext.Excerpt, error) {
 		return s.source(readContext, selector, input.ContextLines, input.MaxLines)
-	})
+	}))
 	excerpt, err := firstValue(results, batched)
 	return nil, SourceOutput{Excerpt: excerpt, Results: results}, err
 }
@@ -172,7 +185,7 @@ func (s *Service) getNode(ctx context.Context, _ *mcp.CallToolRequest, input Sel
 	if err != nil {
 		return nil, NodeOutput{}, err
 	}
-	results := runBatch(ctx, selectors, s.query.Resolve)
+	results := runBatch(ctx, selectors, namingCandidates(s.query.Resolve))
 	node, err := firstValue(results, batched)
 	return nil, NodeOutput{Node: node, Results: results}, err
 }
@@ -208,9 +221,9 @@ func (s *Service) traverse(ctx context.Context, input TraversalInput, depthDefau
 	if depth == 0 {
 		depth = depthDefault
 	}
-	results := runBatch(ctx, selectors, func(walkContext context.Context, selector string) (query.Traversal, error) {
+	results := runBatch(ctx, selectors, namingCandidates(func(walkContext context.Context, selector string) (query.Traversal, error) {
 		return s.query.Neighborhood(walkContext, selector, depth, direction, relations, input.Limit)
-	})
+	}))
 	traversal, err := firstValue(results, batched)
 	return TraversalOutput{Traversal: traversal, Results: results}, err
 }
@@ -293,7 +306,7 @@ func (s *Service) findPath(ctx context.Context, _ *mcp.CallToolRequest, input Pa
 	for index, pair := range pairs {
 		envelope := ResultEnvelope[query.Path]{Index: index, Input: pair.From + " -> " + pair.To}
 		value, pathErr := s.query.ShortestPath(ctx, pair.From, pair.To, direction, relations, input.Limit)
-		if pathErr != nil {
+		if pathErr = withCandidates(pathErr); pathErr != nil {
 			envelope.Error = pathErr.Error()
 		} else {
 			envelope.Value = &value
@@ -371,9 +384,9 @@ func (s *Service) getBlastRadius(ctx context.Context, _ *mcp.CallToolRequest, in
 		return nil, ImpactOutput{}, err
 	}
 	options := input.options()
-	results := runBatch(ctx, selectors, func(impactContext context.Context, selector string) (query.ImpactReport, error) {
+	results := runBatch(ctx, selectors, namingCandidates(func(impactContext context.Context, selector string) (query.ImpactReport, error) {
 		return s.query.Impact(impactContext, selector, options)
-	})
+	}))
 	report, err := firstValue(results, batched)
 	return nil, ImpactOutput{ImpactReport: report, Results: results}, err
 }
@@ -408,6 +421,74 @@ func (s *Service) searchSource(ctx context.Context, _ *mcp.CallToolRequest, inpu
 		MaxMatchesPattern: input.MaxMatchesPattern, MaxMatches: input.MaxMatches,
 		MaxFileBytes: input.MaxFileBytes,
 	})
+	return nil, result, err
+}
+
+type CatalogInput struct {
+	Repository string `json:"repository,omitempty" jsonschema:"restrict results to one indexed repository by name"`
+	Name       string `json:"name,omitempty" jsonschema:"optional name or qualified-name fragment"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"maximum catalog entries per section, and separately the maximum evidence sites per relation; defaults to 100 and may not exceed 1000"`
+}
+
+func (i CatalogInput) options() query.CatalogOptions {
+	return query.CatalogOptions{Repository: i.Repository, Name: i.Name, Limit: i.Limit}
+}
+
+type DataResourceInput struct {
+	CatalogInput
+	Kinds []string `json:"kinds,omitempty" jsonschema:"data resource kinds to catalog; defaults to table and view"`
+}
+
+func (s *Service) listDataResources(ctx context.Context, _ *mcp.CallToolRequest, input DataResourceInput) (*mcp.CallToolResult, query.DataResourceList, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.DataResourceList{}, err
+	}
+	kinds, err := nodeKinds(input.Kinds)
+	if err != nil {
+		return nil, query.DataResourceList{}, err
+	}
+	result, err := s.catalog.DataResources(ctx, kinds, input.options())
+	return nil, result, err
+}
+
+// DataResourceUsageInput deliberately omits the catalog name filter: the
+// selector already names the resource.
+type DataResourceUsageInput struct {
+	Selector   string `json:"selector" jsonschema:"table or view name, qualified name, or stable node ID"`
+	Repository string `json:"repository,omitempty" jsonschema:"restrict resolution to one indexed repository by name"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"maximum evidence sites per relation; defaults to 100 and may not exceed 1000"`
+}
+
+func (s *Service) getDataResourceUsage(ctx context.Context, _ *mcp.CallToolRequest, input DataResourceUsageInput) (*mcp.CallToolResult, query.DataResourceUsage, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.DataResourceUsage{}, err
+	}
+	options := query.CatalogOptions{Repository: input.Repository, Limit: input.Limit}
+	result, err := s.catalog.DataResourceUsage(ctx, input.Selector, options)
+	return nil, result, withCandidates(err)
+}
+
+func (s *Service) listConfigKeys(ctx context.Context, _ *mcp.CallToolRequest, input CatalogInput) (*mcp.CallToolResult, query.ConfigKeyList, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.ConfigKeyList{}, err
+	}
+	result, err := s.catalog.ConfigKeys(ctx, input.options())
+	return nil, result, err
+}
+
+func (s *Service) listEvents(ctx context.Context, _ *mcp.CallToolRequest, input CatalogInput) (*mcp.CallToolResult, query.EventList, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.EventList{}, err
+	}
+	result, err := s.catalog.Events(ctx, input.options())
+	return nil, result, err
+}
+
+func (s *Service) findOrphanedEvents(ctx context.Context, _ *mcp.CallToolRequest, input CatalogInput) (*mcp.CallToolResult, query.OrphanedEventList, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.OrphanedEventList{}, err
+	}
+	result, err := s.catalog.OrphanedEvents(ctx, input.options())
 	return nil, result, err
 }
 
@@ -453,6 +534,47 @@ func (s *Service) getIndexStatus(ctx context.Context, _ *mcp.CallToolRequest, _ 
 		return nil, StatusOutput{}, err
 	}
 	return nil, StatusOutput{Projects: s.projects, IndexedAt: indexedAt, IndexedCommit: commit, Counts: counts}, nil
+}
+
+// nodeKinds rejects a list that names no usable kind. Degrading it to the
+// default would answer a malformed request with a full catalog.
+func nodeKinds(values []string) ([]graph.NodeKind, error) {
+	result := make([]graph.NodeKind, 0, len(values))
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			result = append(result, graph.NodeKind(value))
+		}
+	}
+	if len(values) > 0 && len(result) == 0 {
+		return nil, fmt.Errorf("kinds contains no node kind")
+	}
+	return result, nil
+}
+
+// withCandidates names the ambiguous candidates in the error, because a tool
+// error carries no structured payload for a client to read them from. Batched
+// operations apply it through namingCandidates, since an envelope keeps only
+// the error's text.
+func withCandidates(err error) error {
+	var ambiguous *query.AmbiguousError
+	if !errors.As(err, &ambiguous) {
+		return err
+	}
+	names := make([]string, 0, len(ambiguous.Candidates))
+	for _, candidate := range ambiguous.Candidates {
+		names = append(names, fmt.Sprintf("%s [%s] %s", candidate.QualifiedName, candidate.Kind, candidate.ID))
+	}
+	return fmt.Errorf("%w; candidates: %s", err, strings.Join(names, "; "))
+}
+
+// namingCandidates wraps one batched operation so an ambiguous selector reports
+// its candidates in every response shape. runBatch flattens an error to its
+// text, so the candidates must be added before the envelope is built.
+func namingCandidates[T any](run func(context.Context, string) (T, error)) func(context.Context, string) (T, error) {
+	return func(ctx context.Context, input string) (T, error) {
+		value, err := run(ctx, input)
+		return value, withCandidates(err)
+	}
 }
 
 func edgeKinds(values []string) []graph.EdgeKind {
