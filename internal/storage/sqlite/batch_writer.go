@@ -37,6 +37,9 @@ type batchSpec struct {
 }
 
 var (
+	// The pinned SQLite driver applies VALUES rows in order, including repeated
+	// IDs in one upsert. Exact-equivalence tests lock that last-row-wins behavior
+	// to the sqlc single-row reference path.
 	nodeBatchSpec = batchSpec{
 		name:    "nodes",
 		columns: 12,

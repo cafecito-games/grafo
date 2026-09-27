@@ -31,7 +31,8 @@ func BenchmarkGeneratedFixtureWrites(b *testing.B) {
 	for _, implementation := range []string{"single", "bulk"} {
 		b.Run(implementation, func(b *testing.B) {
 			ctx := context.Background()
-			b.ReportMetric(rowCount*3, "rows/op")
+			b.ReportMetric(rowCount*3, "graph_rows/op")
+			b.ReportMetric(rowCount*3, "dirty_rows/op")
 			b.ResetTimer()
 			for range b.N {
 				b.StopTimer()
