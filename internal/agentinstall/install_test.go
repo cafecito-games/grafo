@@ -19,12 +19,38 @@ func cliEnvironment(lookups map[string]string) *fakeEnvironment {
 	return environment
 }
 
+// changesByName indexes the MCP registration outcome of each client. Guidance
+// artifacts are reported as their own actions and are asserted separately.
 func changesByName(actions []Action) map[string]string {
 	changes := make(map[string]string, len(actions))
 	for _, action := range actions {
-		changes[action.Client.Name] = action.Change
+		if action.Kind == KindMCP {
+			changes[action.Client.Name] = action.Change
+		}
 	}
 	return changes
+}
+
+// mcpActions keeps only the MCP registration actions.
+func mcpActions(actions []Action) []Action {
+	kept := make([]Action, 0, len(actions))
+	for _, action := range actions {
+		if action.Kind == KindMCP {
+			kept = append(kept, action)
+		}
+	}
+	return kept
+}
+
+// actionsOfKind keeps the actions of one artifact kind for one client.
+func actionsOfKind(actions []Action, client, kind string) []Action {
+	kept := make([]Action, 0, len(actions))
+	for _, action := range actions {
+		if action.Client.Name == client && action.Kind == kind {
+			kept = append(kept, action)
+		}
+	}
+	return kept
 }
 
 func TestClientsAreDeterministicAndComplete(t *testing.T) {
@@ -63,8 +89,8 @@ func TestInstallAutoDetectsClients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(actions) != len(registry) {
-		t.Fatalf("actions = %d, want one per client", len(actions))
+	if got := mcpActions(actions); len(got) != len(registry) {
+		t.Fatalf("MCP actions = %d, want one per client", len(got))
 	}
 	got := changesByName(actions)
 	for name, change := range got {
@@ -117,8 +143,8 @@ func TestInstallReplacesExistingClaudeConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(actions) != 1 || actions[0].Change != changeUpdated {
-		t.Fatalf("actions = %#v", actions)
+	if got := mcpActions(actions); len(got) != 1 || got[0].Change != changeUpdated {
+		t.Fatalf("MCP actions = %#v", got)
 	}
 	want := []invocation{
 		{name: "/bin/claude", arguments: []string{"mcp", "add", "--scope", "user", "grafo", "--", grafoPath, "mcp"}},
@@ -166,7 +192,8 @@ func TestInstallContinuesAfterClientFailure(t *testing.T) {
 	environment := cliEnvironment(map[string]string{"claude": "/bin/claude", "codex": "/bin/codex"})
 	environment.runErrs["/bin/claude"] = errors.New("exit 1")
 
-	actions, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"claude", "codex"}})
+	actions, err := Install(context.Background(), environment, grafoPath,
+		Options{Targets: []string{"claude", "codex"}, MCPOnly: true})
 	if err == nil || err.Error() != "configure Claude Code: client command failed" {
 		t.Fatalf("error = %v", err)
 	}
@@ -419,7 +446,7 @@ func TestUninstallReportsUnchangedWhenNotRegistered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(actions) != 1 || actions[0].Change != changeUnchanged {
+	if actions = mcpActions(actions); len(actions) != 1 || actions[0].Change != changeUnchanged {
 		t.Fatalf("actions = %#v", actions)
 	}
 	if len(environment.invocations) != 0 {

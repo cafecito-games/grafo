@@ -16,18 +16,33 @@ const (
 	cursorFile = linuxHome + "/.cursor/mcp.json"
 	geminiFile = linuxHome + "/.gemini/settings.json"
 	vsCodeFile = linuxHome + "/.config/Code/User/mcp.json"
+	// receiptLedger is Grafo's own installed-artifact ledger, written alongside any
+	// real mutation.
+	receiptLedger = linuxHome + "/.config/grafo/installed-artifacts.json"
 )
+
+// configWrites returns the writes that are not Grafo's own receipt ledger.
+func configWrites(environment *fakeEnvironment) []writeRecord {
+	kept := make([]writeRecord, 0, len(environment.writes))
+	for _, write := range environment.writes {
+		if write.path != receiptLedger {
+			kept = append(kept, write)
+		}
+	}
+	return kept
+}
 
 // parseWritten parses the single configuration file the run rewrote.
 func parseWritten(t *testing.T, environment *fakeEnvironment, path string) *jsonObject {
 	t.Helper()
-	if len(environment.writes) != 1 {
-		t.Fatalf("writes = %v, want exactly one", environment.writes)
+	writes := configWrites(environment)
+	if len(writes) != 1 {
+		t.Fatalf("configuration writes = %v, want exactly one", writes)
 	}
-	if environment.writes[0].path != path {
-		t.Fatalf("wrote %q, want %q", environment.writes[0].path, path)
+	if writes[0].path != path {
+		t.Fatalf("wrote %q, want %q", writes[0].path, path)
 	}
-	document, err := decodeJSONObject([]byte(environment.writes[0].data))
+	document, err := decodeJSONObject([]byte(writes[0].data))
 	if err != nil {
 		t.Fatalf("parse written configuration: %v", err)
 	}
@@ -70,6 +85,7 @@ func TestFileAdapterInstallPreservesUnrelatedSettings(t *testing.T) {
 	}
 	want := []Action{{
 		Client: Client{Name: "cursor", Display: "Cursor", Scope: "user", Method: methodConfig},
+		Kind:   KindMCP,
 		Scope:  "user", Target: cursorFile, Change: changeInstalled,
 	}}
 	if !reflect.DeepEqual(actions, want) {
@@ -150,8 +166,8 @@ func TestFileAdapterInstallUpdatesAndDetectsUnchanged(t *testing.T) {
 	if len(actions) != 1 || actions[0].Change != changeUnchanged {
 		t.Fatalf("second run actions = %#v", actions)
 	}
-	if len(environment.writes) != 0 {
-		t.Fatalf("second run wrote %v", environment.writes)
+	if got := configWrites(environment); len(got) != 0 {
+		t.Fatalf("second run wrote %v", got)
 	}
 }
 
@@ -177,7 +193,8 @@ func TestVSCodeAdapterUsesServersKeyAndTransportType(t *testing.T) {
 func TestFileAdapterToleratesComments(t *testing.T) {
 	environment := newFakeEnvironment("linux", linuxHome).withFixture(t, geminiFile, "gemini_with_comments.json")
 
-	if _, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"gemini"}}); err != nil {
+	if _, err := Install(context.Background(), environment, grafoPath,
+		Options{Targets: []string{"gemini"}, MCPOnly: true}); err != nil {
 		t.Fatal(err)
 	}
 	document := parseWritten(t, environment, geminiFile)
@@ -224,8 +241,8 @@ func TestFileAdapterUninstallRemovesOnlyGrafo(t *testing.T) {
 	if len(actions) != 1 || actions[0].Change != changeUnchanged {
 		t.Fatalf("second uninstall actions = %#v", actions)
 	}
-	if len(environment.writes) != 0 {
-		t.Fatalf("second uninstall wrote %v", environment.writes)
+	if got := configWrites(environment); len(got) != 0 {
+		t.Fatalf("second uninstall wrote %v", got)
 	}
 }
 

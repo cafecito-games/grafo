@@ -161,6 +161,20 @@ macOS, Linux, and Windows layouts are all testable anywhere. File-backed
 adapters parse structurally, preserve unknown keys and ordering, and replace
 files atomically; uninstall removes only a registration Grafo owns.
 
+Agent guidance is a second artifact kind on the same seam. `internal/agentguide`
+owns one embedded playbook, one format version, and the exact begin/end markers
+that make an installed copy provably Grafo-owned; it renders either an isolated
+skill file or a delimited managed block and never touches bytes outside its
+markers. `internal/agentinstall` declares, per client, which documented
+user-scoped surfaces exist, refuses targets that are symlinks, non-regular,
+world-writable, or outside the user configuration roots, and treats a conflicting
+or unowned file as a reported conflict rather than something to repair. Advisory
+hooks are opt-in, capability-gated to a client whose hook API is documented, and
+fail open because the hook command always exits 0. Every mutation is followed by
+a receipt under the Grafo configuration directory recording target, digest,
+guidance version, and marker, so uninstall and upgrade prove ownership from
+receipts plus exact markers instead of substring matching.
+
 ## Persistence
 
 Each branch has a separate SQLite file under `.grafo/indexes`. The database is
@@ -185,7 +199,9 @@ Grafo does not require sqlc.
   `StatusRepository`, and `FileCatalog` ports.
 - Add an MCP client by adding one adapter to the `internal/agentinstall`
   registry. Declare a client only when both install and uninstall use a
-  documented surface covered by fixtures.
+  documented surface covered by fixtures. Add a guidance surface for it only when
+  the client documents a user-scoped instruction or hook API that install and
+  uninstall can both drive safely.
 - Add new relationships as facts first; keep graph-candidate reconciliation in
   the repository. A parser may provide an exact qualified target when its
   language's authoritative semantic model proves object identity.
