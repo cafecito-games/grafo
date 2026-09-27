@@ -104,6 +104,7 @@ type IndexReport struct {
 	SkippedPaths          []string               `json:"skipped_paths,omitempty"`
 	Counts                graph.Counts           `json:"counts"`
 	Phases                indexer.PhaseDurations `json:"phases"`
+	Writes                graph.WriteStats       `json:"writes"`
 	ReconciliationBatches int                    `json:"reconciliation_batches"`
 }
 
@@ -442,7 +443,7 @@ func summarizeIndex(report indexer.Report) IndexReport {
 	return IndexReport{Updated: len(report.Updated), UpdatedPaths: report.Updated, ContentChecked: report.Checked,
 		Unchanged: report.Unchanged, Removed: len(report.Removed), RemovedPaths: report.Removed,
 		Skipped: len(report.Skipped), SkippedPaths: report.Skipped, Counts: report.Counts,
-		Phases: report.Phases, ReconciliationBatches: report.ReconciliationBatches}
+		Phases: report.Phases, Writes: report.Writes, ReconciliationBatches: report.ReconciliationBatches}
 }
 
 func restoreTrackedFile(path string, content []byte, mode os.FileMode) error {

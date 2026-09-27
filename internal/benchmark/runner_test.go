@@ -220,6 +220,10 @@ func TestRunExercisesIncrementalScenariosWithoutChangingSource(t *testing.T) {
 	if cold.Index.Counts.Facts == 0 {
 		t.Fatalf("fact count was not reported: %#v", cold.Index.Counts)
 	}
+	if cold.Index.Writes.Nodes.Rows == 0 || cold.Index.Writes.Facts.Rows == 0 || cold.Index.Writes.Edges.Rows == 0 ||
+		cold.Index.Writes.Nodes.Batches == 0 || cold.Index.Writes.Facts.Batches == 0 || cold.Index.Writes.Edges.Batches == 0 {
+		t.Fatalf("bounded write metrics were not reported: %#v", cold.Index.Writes)
+	}
 	if cold.Index.Phases.DiscoveryNS <= 0 || cold.Index.Phases.ReadHashNS <= 0 || cold.Index.Phases.ParseNS <= 0 ||
 		cold.Index.Phases.PersistenceNS <= 0 || cold.Index.Phases.ReconciliationNS <= 0 || cold.Index.Phases.TotalNS <= 0 {
 		t.Fatalf("phase durations were not reported: %#v", cold.Index.Phases)

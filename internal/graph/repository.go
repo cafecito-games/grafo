@@ -19,7 +19,24 @@ type IndexRepository interface {
 
 // ReconciliationStats describes durable work completed during reconciliation.
 type ReconciliationStats struct {
-	Batches int `json:"batches"`
+	Batches int        `json:"batches"`
+	Writes  WriteStats `json:"writes"`
+}
+
+// WriteBatchStats describes bounded adapter writes without exposing a storage
+// dialect or its configured limits to indexing callers.
+type WriteBatchStats struct {
+	Batches int64 `json:"batches"`
+	Rows    int64 `json:"rows"`
+	Bytes   int64 `json:"bytes"`
+}
+
+// WriteStats reports rows and encoded payload bytes sent through bounded
+// write batches. Adapters that do not batch writes may leave it empty.
+type WriteStats struct {
+	Nodes WriteBatchStats `json:"nodes"`
+	Facts WriteBatchStats `json:"facts"`
+	Edges WriteBatchStats `json:"edges"`
 }
 
 // ReconciliationObserver runs after a reconciliation batch commits and before
@@ -31,6 +48,12 @@ type ReconciliationObserver func(ReconciliationStats) error
 // IndexRepository.
 type InstrumentedIndexRepository interface {
 	ReconcileWithStats(context.Context, ReconciliationObserver) (ReconciliationStats, error)
+}
+
+// InstrumentedWriteRepository optionally exposes cumulative bounded-write
+// metrics. Indexers take a per-run delta so a repository can be reused.
+type InstrumentedWriteRepository interface {
+	WriteStats() WriteStats
 }
 
 // QueryRepository is the read-only port used by graph traversal use cases.
