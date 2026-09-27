@@ -68,6 +68,14 @@ matches the parser's target and edge-kind constraints. Ambiguous names remain
 explicit external nodes until a parser can supply a qualified target; Grafo
 does not turn uncertainty into speculative fan-out.
 
+Node-name substring search uses shadow values written with Go's Unicode-aware
+lowercase rule. Both the stored `name` and `qualified_name` values and every
+search fragment pass through that same rule, so catalog filters and symbol
+search agree for ASCII and non-ASCII names without locale-sensitive or
+accent-insensitive collation. Migration 00005 preserves the old ASCII behavior
+for existing rows; semantic-index version 18 then requires a one-time reindex
+to populate Unicode-correct shadow values for every node.
+
 For Git worktrees, the indexer narrows content hashing to files changed since
 the indexed commit, current untracked files, and paths that were dirty during
 the previous run. Remembering the previous dirty set closes the restore case:
@@ -422,6 +430,30 @@ Configuration output is value-free by construction. Only properties on an
 explicit non-secret metadata list are returned, and the names of withheld
 properties are reported so a future parser that records a value cannot leak it
 through a catalog.
+
+## Endpoint and service topology
+
+`internal/query.Topology` is the single owner of HTTP endpoint, handler,
+outbound-request, and service-link interpretation. It consumes the same narrow
+`graph.NodeListRepository` contract as the catalogs; storage and federation
+enumerate exact endpoint/event nodes but do not infer service semantics.
+
+Repository identity defines a service boundary. Presentation labels are kept
+separate from that identity, while the code components involved in a link stay
+nested under their service and retain qualified names, kinds, languages, and
+source locations. Links carry the endpoint or event node IDs plus every edge
+and fact ID used to construct them. Mermaid rendering is a deterministic,
+escaped view of this structure rather than a second source of truth.
+
+Outbound HTTP facts are grouped by fact identity so the unresolved edge and
+any federated replacement cannot become duplicate calls. An exact method and
+route with one declaration resolves; no declaration stays external; several
+declarations remain an ambiguous boundary with all candidates and no confirmed
+service link. Asynchronous links pair publisher and subscriber evidence for the
+same event without persisting a derived relationship. Federation retains its
+edge marker, and cross-repository publish/subscribe evidence marks the resulting
+service link as federated even when both facts still meet at one explicit
+external event node.
 
 ## Persistence
 

@@ -29,6 +29,9 @@ Use Grafo, not text or embedding search, for these questions:
 | Who calls it? What does it call? | `get_callers`, `get_callees` |
 | How are these two symbols connected? | `find_path` |
 | What else touches this symbol, config key, endpoint, event, or data store? | `get_neighbors` |
+| Which HTTP endpoints exist, and who handles them? | `list_endpoints`, `find_handler` |
+| Which outbound calls cross a service boundary? | `list_outbound_requests` |
+| How do repositories communicate over HTTP and events? | `get_service_topology` |
 | What breaks if I change this? | `get_blast_radius` |
 
 Resolve a name to a node first, then pass the returned qualified name or stable

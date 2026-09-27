@@ -261,7 +261,7 @@ func (q *Queries) FindNodesExactKind(ctx context.Context, arg FindNodesExactKind
 }
 
 const getNode = `-- name: GetNode :one
-SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, owner_file, external FROM nodes WHERE id = ?
+SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, owner_file, external, name_folded, qualified_name_folded FROM nodes WHERE id = ?
 `
 
 func (q *Queries) GetNode(ctx context.Context, id string) (Node, error) {
@@ -280,16 +280,18 @@ func (q *Queries) GetNode(ctx context.Context, id string) (Node, error) {
 		&i.Properties,
 		&i.OwnerFile,
 		&i.External,
+		&i.NameFolded,
+		&i.QualifiedNameFolded,
 	)
 	return i, err
 }
 
 const listNodesByKind = `-- name: ListNodesByKind :many
-SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, owner_file, external FROM nodes
+SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, owner_file, external, name_folded, qualified_name_folded FROM nodes
 WHERE kind = ?1
   AND external >= ?2
   AND external <= ?3
-  AND (instr(lower(name), ?4) > 0 OR instr(lower(qualified_name), ?4) > 0)
+  AND (instr(name_folded, ?4) > 0 OR instr(qualified_name_folded, ?4) > 0)
 ORDER BY qualified_name, id
 LIMIT ?5
 `
@@ -330,6 +332,8 @@ func (q *Queries) ListNodesByKind(ctx context.Context, arg ListNodesByKindParams
 			&i.Properties,
 			&i.OwnerFile,
 			&i.External,
+			&i.NameFolded,
+			&i.QualifiedNameFolded,
 		); err != nil {
 			return nil, err
 		}
@@ -346,9 +350,9 @@ func (q *Queries) ListNodesByKind(ctx context.Context, arg ListNodesByKindParams
 
 const matchNodesByName = `-- name: MatchNodesByName :many
 SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line,
-       properties, owner_file, external
+       properties, owner_file, external, name_folded, qualified_name_folded
 FROM (
-    SELECT nodes.id, nodes.kind, nodes.name, nodes.qualified_name, nodes.language, nodes.path, nodes.line, nodes.column_no, nodes.end_line, nodes.properties, nodes.owner_file, nodes.external, CASE WHEN name = ?1 THEN 0 ELSE 1 END AS strict_rank
+    SELECT nodes.id, nodes.kind, nodes.name, nodes.qualified_name, nodes.language, nodes.path, nodes.line, nodes.column_no, nodes.end_line, nodes.properties, nodes.owner_file, nodes.external, nodes.name_folded, nodes.qualified_name_folded, CASE WHEN name = ?1 THEN 0 ELSE 1 END AS strict_rank
     FROM nodes
     WHERE name = ?1 COLLATE NOCASE
       AND external = CAST(?2 AS INTEGER)
@@ -392,6 +396,8 @@ func (q *Queries) MatchNodesByName(ctx context.Context, arg MatchNodesByNamePara
 			&i.Properties,
 			&i.OwnerFile,
 			&i.External,
+			&i.NameFolded,
+			&i.QualifiedNameFolded,
 		); err != nil {
 			return nil, err
 		}
@@ -409,9 +415,9 @@ func (q *Queries) MatchNodesByName(ctx context.Context, arg MatchNodesByNamePara
 const matchNodesByQualifiedName = `-- name: MatchNodesByQualifiedName :many
 
 SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line,
-       properties, owner_file, external
+       properties, owner_file, external, name_folded, qualified_name_folded
 FROM (
-    SELECT nodes.id, nodes.kind, nodes.name, nodes.qualified_name, nodes.language, nodes.path, nodes.line, nodes.column_no, nodes.end_line, nodes.properties, nodes.owner_file, nodes.external, CASE WHEN qualified_name = ?1 THEN 0 ELSE 1 END AS strict_rank
+    SELECT nodes.id, nodes.kind, nodes.name, nodes.qualified_name, nodes.language, nodes.path, nodes.line, nodes.column_no, nodes.end_line, nodes.properties, nodes.owner_file, nodes.external, nodes.name_folded, nodes.qualified_name_folded, CASE WHEN qualified_name = ?1 THEN 0 ELSE 1 END AS strict_rank
     FROM nodes
     WHERE qualified_name = ?1 COLLATE NOCASE
       AND external = CAST(?2 AS INTEGER)
@@ -464,6 +470,8 @@ func (q *Queries) MatchNodesByQualifiedName(ctx context.Context, arg MatchNodesB
 			&i.Properties,
 			&i.OwnerFile,
 			&i.External,
+			&i.NameFolded,
+			&i.QualifiedNameFolded,
 		); err != nil {
 			return nil, err
 		}
@@ -480,9 +488,9 @@ func (q *Queries) MatchNodesByQualifiedName(ctx context.Context, arg MatchNodesB
 
 const matchNodesBySubstring = `-- name: MatchNodesBySubstring :many
 SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line,
-       properties, owner_file, external
+       properties, owner_file, external, name_folded, qualified_name_folded
 FROM (
-    SELECT nodes.id, nodes.kind, nodes.name, nodes.qualified_name, nodes.language, nodes.path, nodes.line, nodes.column_no, nodes.end_line, nodes.properties, nodes.owner_file, nodes.external,
+    SELECT nodes.id, nodes.kind, nodes.name, nodes.qualified_name, nodes.language, nodes.path, nodes.line, nodes.column_no, nodes.end_line, nodes.properties, nodes.owner_file, nodes.external, nodes.name_folded, nodes.qualified_name_folded,
         CASE WHEN instr(qualified_name, ?1) > 0 OR instr(name, ?1) > 0 THEN 0 ELSE 1 END AS strict_rank
     FROM nodes
     WHERE (lower(name) LIKE '%' || lower(?1) || '%'
@@ -528,6 +536,8 @@ func (q *Queries) MatchNodesBySubstring(ctx context.Context, arg MatchNodesBySub
 			&i.Properties,
 			&i.OwnerFile,
 			&i.External,
+			&i.NameFolded,
+			&i.QualifiedNameFolded,
 		); err != nil {
 			return nil, err
 		}
@@ -543,9 +553,9 @@ func (q *Queries) MatchNodesBySubstring(ctx context.Context, arg MatchNodesBySub
 }
 
 const searchNodes = `-- name: SearchNodes :many
-SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, owner_file, external FROM nodes
-WHERE lower(name) LIKE '%' || lower(?1) || '%'
-   OR lower(qualified_name) LIKE '%' || lower(?1) || '%'
+SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, owner_file, external, name_folded, qualified_name_folded FROM nodes
+WHERE name_folded LIKE '%' || CAST(?1 AS TEXT) || '%'
+   OR qualified_name_folded LIKE '%' || CAST(?1 AS TEXT) || '%'
 ORDER BY
     external, length(qualified_name), qualified_name, id
 LIMIT ?2
@@ -578,6 +588,8 @@ func (q *Queries) SearchNodes(ctx context.Context, arg SearchNodesParams) ([]Nod
 			&i.Properties,
 			&i.OwnerFile,
 			&i.External,
+			&i.NameFolded,
+			&i.QualifiedNameFolded,
 		); err != nil {
 			return nil, err
 		}
@@ -595,8 +607,8 @@ func (q *Queries) SearchNodes(ctx context.Context, arg SearchNodesParams) ([]Nod
 const upsertNode = `-- name: UpsertNode :exec
 INSERT INTO nodes(
     id, kind, name, qualified_name, language, path, line, column_no, end_line,
-    properties, owner_file, external
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    properties, owner_file, external, name_folded, qualified_name_folded
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     kind = excluded.kind,
     name = excluded.name,
@@ -608,22 +620,26 @@ ON CONFLICT(id) DO UPDATE SET
     end_line = excluded.end_line,
     properties = excluded.properties,
     owner_file = excluded.owner_file,
-    external = excluded.external
+    external = excluded.external,
+    name_folded = excluded.name_folded,
+    qualified_name_folded = excluded.qualified_name_folded
 `
 
 type UpsertNodeParams struct {
-	ID            string `json:"id"`
-	Kind          string `json:"kind"`
-	Name          string `json:"name"`
-	QualifiedName string `json:"qualified_name"`
-	Language      string `json:"language"`
-	Path          string `json:"path"`
-	Line          int64  `json:"line"`
-	ColumnNo      int64  `json:"column_no"`
-	EndLine       int64  `json:"end_line"`
-	Properties    string `json:"properties"`
-	OwnerFile     string `json:"owner_file"`
-	External      int64  `json:"external"`
+	ID                  string `json:"id"`
+	Kind                string `json:"kind"`
+	Name                string `json:"name"`
+	QualifiedName       string `json:"qualified_name"`
+	Language            string `json:"language"`
+	Path                string `json:"path"`
+	Line                int64  `json:"line"`
+	ColumnNo            int64  `json:"column_no"`
+	EndLine             int64  `json:"end_line"`
+	Properties          string `json:"properties"`
+	OwnerFile           string `json:"owner_file"`
+	External            int64  `json:"external"`
+	NameFolded          string `json:"name_folded"`
+	QualifiedNameFolded string `json:"qualified_name_folded"`
 }
 
 func (q *Queries) UpsertNode(ctx context.Context, arg UpsertNodeParams) error {
@@ -640,6 +656,8 @@ func (q *Queries) UpsertNode(ctx context.Context, arg UpsertNodeParams) error {
 		arg.Properties,
 		arg.OwnerFile,
 		arg.External,
+		arg.NameFolded,
+		arg.QualifiedNameFolded,
 	)
 	return err
 }

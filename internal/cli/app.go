@@ -125,6 +125,14 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		runErr = a.events(ctx, parsed)
 	case "orphaned-events":
 		runErr = a.orphanedEvents(ctx, parsed)
+	case "endpoints", "list-endpoints", "list_endpoints":
+		runErr = a.endpoints(ctx, parsed)
+	case "outbound-requests", "list-outbound-requests", "list_outbound_requests":
+		runErr = a.outboundRequests(ctx, parsed)
+	case "find-handler", "find_handler":
+		runErr = a.findHandler(ctx, parsed)
+	case "service-topology", "get-service-topology", "get_service_topology":
+		runErr = a.serviceTopology(ctx, parsed)
 	default:
 		if namespace, known := toolchainNamespaces[parsed.command]; known {
 			runErr = a.toolchainCommand(ctx, namespace, parsed)
@@ -1314,6 +1322,184 @@ func openCatalog(ctx context.Context, args parsedArguments) (*query.Catalog, fun
 	return query.NewCatalog(catalogRepository), closeRepository, nil
 }
 
+func (a *App) topologyOptions(args parsedArguments) (query.TopologyOptions, error) {
+	limit, err := intOption(args, "limit", query.DefaultCatalogLimit)
+	if err != nil {
+		return query.TopologyOptions{}, err
+	}
+	return query.TopologyOptions{
+		Repository: args.values["repo-name"], Method: args.values["method"],
+		Route: args.values["route"], Event: args.values["event"],
+		Direction: query.Direction(args.values["direction"]), Limit: limit,
+	}, nil
+}
+
+func openTopology(ctx context.Context, args parsedArguments) (*query.Topology, func() error, error) {
+	repository, _, closeRepository, err := openRead(ctx, args)
+	if err != nil {
+		return nil, nil, err
+	}
+	catalogRepository, ok := repository.(graph.CatalogRepository)
+	if !ok {
+		_ = closeRepository()
+		return nil, nil, errors.New("repository does not support topology queries")
+	}
+	return query.NewTopology(catalogRepository), closeRepository, nil
+}
+
+func (a *App) endpoints(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) != 0 {
+		return fmt.Errorf("usage: grafo endpoints [--method GET] [--route path] [--repo-name name] [--limit 100] [--json]")
+	}
+	options, err := a.topologyOptions(args)
+	if err != nil {
+		return err
+	}
+	service, closeRepository, err := openTopology(ctx, args)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = closeRepository() }()
+	result, err := service.Endpoints(ctx, options)
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, result)
+	}
+	for _, endpoint := range append(append([]query.Endpoint{}, result.Endpoints...), result.Unresolved...) {
+		a.printf("%-8s %-36s %-12s %-20s %s\n", endpoint.Method, endpoint.Route,
+			endpoint.HandlerStatus, endpoint.Repository, formatLocation(endpoint.Location))
+		for _, handler := range endpoint.Handlers {
+			a.printf("    handler      %-48s %s\n", handler.Node.QualifiedName, formatLocation(handler.Location))
+		}
+	}
+	a.printCatalogSummary(len(result.Endpoints), len(result.Unresolved), "endpoints", result.Truncated)
+	return nil
+}
+
+func (a *App) outboundRequests(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) != 0 {
+		return fmt.Errorf("usage: grafo outbound-requests [--method GET] [--route path] [--repo-name name] [--limit 100] [--json]")
+	}
+	options, err := a.topologyOptions(args)
+	if err != nil {
+		return err
+	}
+	service, closeRepository, err := openTopology(ctx, args)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = closeRepository() }()
+	result, err := service.OutboundRequests(ctx, options)
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, result)
+	}
+	for _, request := range result.Requests {
+		destination := request.Destination.Repository
+		if request.Status == query.BoundaryAmbiguous {
+			destination = fmt.Sprintf("%d candidates", len(request.Candidates))
+		} else if destination == "" {
+			destination = "external"
+		}
+		a.printf("%-12s %-8s %-36s %-20s -> %-20s %s\n", request.Status, request.Method,
+			request.Route, request.Source.Repository, destination, formatLocation(request.Evidence.Location))
+	}
+	a.printf("%d outbound requests", len(result.Requests))
+	if result.Truncated {
+		a.print(" · truncated")
+	}
+	a.println()
+	return nil
+}
+
+func (a *App) findHandler(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) != 0 {
+		return fmt.Errorf("usage: grafo find-handler [--method GET] [--route path | --event name] [--repo-name name] [--limit 100] [--json]")
+	}
+	options, err := a.topologyOptions(args)
+	if err != nil {
+		return err
+	}
+	service, closeRepository, err := openTopology(ctx, args)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = closeRepository() }()
+	result, err := service.Handlers(ctx, options)
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, result)
+	}
+	for _, match := range result.Matches {
+		name := match.Event
+		if match.Kind == query.HandlerHTTP {
+			name = match.Method + " " + match.Route
+		}
+		a.printf("%-8s %-12s %-48s\n", match.Kind, match.Status, name)
+		for _, handler := range match.Handlers {
+			a.printf("    handler      %-48s %s\n", handler.Node.QualifiedName, formatLocation(handler.Location))
+		}
+	}
+	a.printf("%d handler matches", len(result.Matches))
+	if result.Truncated {
+		a.print(" · truncated")
+	}
+	a.println()
+	return nil
+}
+
+func (a *App) serviceTopology(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) != 0 {
+		return fmt.Errorf("usage: grafo service-topology [--repo-name name] [--method GET] [--route path | --event name] [--direction incoming|outgoing|both] [--limit 100] [--json | --mermaid]")
+	}
+	if args.flags["json"] && args.flags["mermaid"] {
+		return errors.New("--json and --mermaid are mutually exclusive")
+	}
+	options, err := a.topologyOptions(args)
+	if err != nil {
+		return err
+	}
+	service, closeRepository, err := openTopology(ctx, args)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = closeRepository() }()
+	result, err := service.ServiceTopology(ctx, options)
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, result)
+	}
+	if args.flags["mermaid"] {
+		a.print(query.RenderMermaid(result))
+		return nil
+	}
+	for _, service := range result.Services {
+		state := "service"
+		if service.External {
+			state = "external"
+		}
+		a.printf("%-10s %-32s %s\n", state, service.ID, service.Label)
+	}
+	for _, link := range result.Links {
+		a.printf("%-8s %-12s %-28s -> %-28s %s\n", link.Kind, link.Status,
+			link.FromServiceID, link.ToServiceID, link.Name)
+	}
+	a.printf("%d services · %d links", len(result.Services), len(result.Links))
+	if result.Truncated {
+		a.print(" · truncated")
+	}
+	a.println()
+	return nil
+}
+
 func (a *App) dataResources(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
 		return fmt.Errorf("usage: grafo data-resources [--kind table,view] [--name text] [--repo-name name] [--limit 100] [--json]")
@@ -1629,7 +1815,7 @@ type parsedArguments struct {
 var booleanOptions = map[string]bool{
 	"json": true, "force": true, "help": true, "source": true, "regex": true, "case-sensitive": true,
 	"list": true, "all": true, "dry-run": true, "mcp-only": true, "hooks": true, "refresh": true,
-	"repair": true, "once": true, "paused": true,
+	"repair": true, "once": true, "paused": true, "mermaid": true,
 }
 var valueOptions = map[string]bool{
 	"repo": true, "repos": true, "depth": true, "direction": true, "relation": true,
@@ -1640,7 +1826,7 @@ var valueOptions = map[string]bool{
 	"repo-name": true, "max-matches": true, "max-matches-per-file": true,
 	"max-matches-per-pattern": true, "client": true, "hook": true,
 	"kind": true, "name": true, "state-dir": true, "lines": true, "concurrency": true,
-	"filter": true,
+	"filter": true, "method": true, "route": true, "event": true,
 }
 
 func parseArguments(arguments []string) (parsedArguments, error) {
@@ -1800,6 +1986,13 @@ Usage:
   grafo config-keys [--name text] [--repo-name name] [--limit 100] [--json]
   grafo events [--name text] [--repo-name name] [--limit 100] [--json]
   grafo orphaned-events [--name text] [--repo-name name] [--limit 100] [--json]
+  grafo endpoints [--method GET] [--route path] [--repo-name name] [--limit 100] [--json]
+  grafo outbound-requests [--method GET] [--route path] [--repo-name name] [--limit 100] [--json]
+  grafo find-handler [--method GET] [--route path | --event name] [--repo-name name]
+                     [--limit 100] [--json]
+  grafo service-topology [--repo-name name] [--method GET] [--route path | --event name]
+                         [--direction incoming|outgoing|both] [--limit 100]
+                         [--json | --mermaid]
   grafo version
 
 Options may appear before or after positional arguments. All query commands
@@ -1863,4 +2056,10 @@ index and never persists source text.
 The catalog commands accept --repo-name to restrict results to one indexed
 repository, and report truncation whenever a bound is reached. A --name fragment
 is matched literally and is trimmed, so a blank one narrows nothing.
+
+The endpoint and topology commands use each indexed repository as a stable
+service boundary. HTTP method matching is exact, route and event filters are
+literal fragments, and unresolved or ambiguous destinations remain explicit.
+Service-topology JSON contains the endpoint/event node IDs and edge evidence;
+--mermaid renders that same result without replacing the structured evidence.
 `
