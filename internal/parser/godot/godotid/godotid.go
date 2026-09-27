@@ -39,12 +39,29 @@ import (
 // indexed repository.
 const ProjectFileName = "project.godot"
 
-// AutoloadSection is the project.godot section that declares autoloads.
-const AutoloadSection = "autoload"
+// The project.godot sections whose declarations become first-class Godot
+// vocabulary. Every one of them is project-scoped: the declaring project.godot
+// path is part of the identity, so two Godot projects in one repository never
+// collide on a shared name.
+const (
+	// AutoloadSection declares globally available singletons.
+	AutoloadSection = "autoload"
+	// InputSection declares named input actions.
+	InputSection = "input"
+	// GlobalGroupSection declares project-wide scene-node groups. Godot only
+	// records a group here when the project declares it globally, so a group a
+	// scene or script merely uses is a reference and not a declaration.
+	GlobalGroupSection = "global_group"
+)
 
-// AutoloadPrefix scopes autoload identities to the Godot project vocabulary so
-// an autoload named Game never collides with a class or module named Game.
-const AutoloadPrefix = "godot:autoload:"
+// Identity prefixes scope each declaration kind to the Godot project
+// vocabulary, so an autoload named Game never collides with a class or module
+// named Game, and an input action named "attack" never collides with a method.
+const (
+	AutoloadPrefix    = "godot:autoload:"
+	InputActionPrefix = "godot:input_action:"
+	NodeGroupPrefix   = "godot:node_group:"
+)
 
 // Class is the kind of resource a Godot path names. It is derived from the
 // file extension only: no file is read and no import metadata is consulted, so
@@ -191,6 +208,21 @@ func UID(reference string) string {
 	return reference
 }
 
+// InputActionQualifiedName returns the identity of an input action declared by,
+// or referenced inside, the Godot project rooted at projectPath. Action names
+// are a per-project namespace in Godot, so the project is part of the identity
+// for the same reason it is part of an autoload's.
+func InputActionQualifiedName(projectPath, name string) string {
+	return projectScoped(InputActionPrefix, projectPath, name)
+}
+
+// NodeGroupQualifiedName returns the identity of a scene-node group inside the
+// Godot project rooted at projectPath. Groups are a per-project namespace too:
+// "enemies" in one project is not "enemies" in another.
+func NodeGroupQualifiedName(projectPath, name string) string {
+	return projectScoped(NodeGroupPrefix, projectPath, name)
+}
+
 // AutoloadQualifiedName returns the identity of an autoload, scoped to the
 // repository-relative project.godot that declares it. Ownership is per project,
 // so two Godot projects in one repository that both declare Game are two
@@ -216,6 +248,106 @@ func SceneNodeQualifiedName(scene, nodePath string) string { return scene + ":" 
 // SubResourceQualifiedName returns the identity of a resource embedded in a
 // scene or resource file under its declared section id.
 func SubResourceQualifiedName(owner, id string) string { return owner + "#" + id }
+
+// Section is the resolved vocabulary of one project.godot section.
+//
+// Declarations holds only unambiguous entries. A name declared more than once is
+// deliberately absent and listed in Conflicts, and a name whose value is not the
+// shape the section requires is absent and listed in Malformed: conflicting or
+// malformed configuration must resolve nothing rather than have one reading
+// picked for it. Lines records the first declaration line of every declared
+// name, including the rejected ones, so a diagnostic keeps its source location.
+type Section[T any] struct {
+	Declarations map[string]T
+	Conflicts    []string
+	Malformed    []string
+	Lines        map[string]int
+}
+
+// Lookup returns the unambiguous declaration for a name.
+func (s Section[T]) Lookup(name string) (T, bool) {
+	declaration, ok := s.Declarations[strings.TrimSpace(name)]
+	return declaration, ok
+}
+
+// Names lists the unambiguously declared names in sorted order, so every
+// producer emits them deterministically.
+func (s Section[T]) Names() []string { return sortedKeys(s.Declarations) }
+
+// collectSection resolves one project.godot section. parse decodes a single
+// assignment and reports whether its value had the shape the section requires;
+// a false report makes the name malformed rather than a declaration.
+func collectSection[T any](file *configast.File, name string, parse func(*configast.Assignment) (T, bool)) Section[T] {
+	section := Section[T]{Declarations: map[string]T{}, Lines: map[string]int{}}
+	if file == nil {
+		return section
+	}
+	seen := map[string]bool{}
+	conflicts, malformed := map[string]bool{}, map[string]bool{}
+	for _, candidate := range file.Sections {
+		if !strings.EqualFold(candidate.Name, name) {
+			continue
+		}
+		for _, statement := range candidate.Statements {
+			assignment, ok := statement.(*configast.Assignment)
+			if !ok {
+				continue
+			}
+			key := strings.TrimSpace(assignment.Key)
+			if key == "" {
+				continue
+			}
+			if _, recorded := section.Lines[key]; !recorded {
+				section.Lines[key] = assignment.Span().Start.Line
+			}
+			if seen[key] {
+				// A conflict is sticky: no later declaration can make a name
+				// that was declared twice resolvable again.
+				conflicts[key] = true
+				delete(section.Declarations, key)
+				continue
+			}
+			seen[key] = true
+			declaration, valid := parse(assignment)
+			if !valid {
+				malformed[key] = true
+				continue
+			}
+			section.Declarations[key] = declaration
+		}
+	}
+	section.Conflicts, section.Malformed = setKeys(conflicts), setKeys(malformed)
+	return section
+}
+
+// InputAction is one declaration from the project.godot [input] section.
+//
+// Only non-secret declaration metadata is kept: the deadzone as written and how
+// many input events the declaration lists. The events themselves are device
+// bindings, which Grafo deliberately does not model, so no keycode, device
+// index, or joypad axis ever enters the graph.
+type InputAction struct {
+	// Name is the action name scripts pass to Input and InputMap calls.
+	Name string
+	// Deadzone is the declared deadzone exactly as written, or "" when the
+	// declaration omits it.
+	Deadzone string
+	// Events counts the declared input events without interpreting any of them.
+	Events int
+	// Line is the declaration's line in project.godot.
+	Line int
+}
+
+// NodeGroup is one declaration from the project.godot [global_group] section.
+type NodeGroup struct {
+	// Name is the group name scenes and scripts use.
+	Name string
+	// Description is the project-authored description, which Godot writes as
+	// the declaration's value and may be empty.
+	Description string
+	// Line is the declaration's line in project.godot.
+	Line int
+}
 
 // Autoload is one declaration from the project.godot [autoload] section.
 type Autoload struct {
@@ -253,11 +385,38 @@ type Project struct {
 	// including conflicting and malformed ones, so diagnostics keep their
 	// source location.
 	Lines map[string]int
+	// Inputs is the [input] vocabulary: the named actions this project
+	// declares, plus the names it declares ambiguously or malformed.
+	Inputs Section[InputAction]
+	// Groups is the [global_group] vocabulary. A group a scene or script only
+	// uses is absent here, because Godot records a declaration only when the
+	// project declares the group globally.
+	Groups Section[NodeGroup]
 	// Digest fingerprints the project vocabulary that dependent files resolve
 	// against, so an incremental index reparses them when it changes. Every
 	// declaration kind this type grows must be folded into it, or an edit to
 	// that section will not invalidate the files whose extraction it changes.
 	Digest string
+}
+
+// InputAction returns the unambiguous [input] declaration for an action name.
+func (p Project) InputAction(name string) (InputAction, bool) { return p.Inputs.Lookup(name) }
+
+// NodeGroup returns the unambiguous [global_group] declaration for a group name.
+func (p Project) NodeGroup(name string) (NodeGroup, bool) { return p.Groups.Lookup(name) }
+
+// InputActionQualifiedName returns the identity an action name has inside this
+// project, whether or not the project declares it. A reference to an undeclared
+// action is still exactly one identity, which is what lets the missing
+// declaration surface as one unresolved node instead of disappearing.
+func (p Project) InputActionQualifiedName(name string) string {
+	return InputActionQualifiedName(p.Path, name)
+}
+
+// NodeGroupQualifiedName returns the identity a group name has inside this
+// project, whether or not the project declares it globally.
+func (p Project) NodeGroupQualifiedName(name string) string {
+	return NodeGroupQualifiedName(p.Path, name)
 }
 
 // Autoload returns the unambiguous declaration for a name, enabled or not.
@@ -390,8 +549,13 @@ func ParseProject(relative string, content []byte) Project {
 func ProjectFromFile(relative string, file *configast.File) Project {
 	project := Project{Path: relative, Autoloads: map[string]Autoload{}, Lines: map[string]int{}}
 	digest := sha256.New()
-	_, _ = digest.Write([]byte("godotid-project-v2"))
+	_, _ = digest.Write([]byte("godotid-project-v3"))
 	if file == nil {
+		// A project.godot that did not parse declares nothing, but every
+		// section still has to be present and empty so a caller never has to
+		// distinguish "no declarations" from "no vocabulary".
+		project.Inputs = collectSection(nil, InputSection, parseInputAction)
+		project.Groups = collectSection(nil, GlobalGroupSection, parseNodeGroup)
 		project.Digest = hex.EncodeToString(digest.Sum(nil))
 		return project
 	}
@@ -456,8 +620,124 @@ func ProjectFromFile(relative string, file *configast.File) Project {
 	for _, name := range project.Malformed {
 		_, _ = digest.Write([]byte("malformed\x00" + name + "\x00"))
 	}
+	project.Inputs = collectSection(file, InputSection, parseInputAction)
+	project.Groups = collectSection(file, GlobalGroupSection, parseNodeGroup)
+	// Every field of every declaration is folded in under a per-kind tag, not
+	// only the fields an extractor reads today. No extractor reads an action's
+	// deadzone or event count yet; they are hashed so the first one that does
+	// inherits a correct incremental index instead of depending on someone
+	// remembering to extend this loop. The same applies to a group description.
+	for _, name := range project.Inputs.Names() {
+		action := project.Inputs.Declarations[name]
+		_, _ = digest.Write([]byte("input\x00" + name + "\x00" + action.Name + "\x00" +
+			action.Deadzone + "\x00" + strconv.Itoa(action.Events) + "\x00" +
+			strconv.Itoa(action.Line) + "\x00"))
+	}
+	for _, name := range project.Groups.Names() {
+		group := project.Groups.Declarations[name]
+		_, _ = digest.Write([]byte("group\x00" + name + "\x00" + group.Name + "\x00" +
+			group.Description + "\x00" + strconv.Itoa(group.Line) + "\x00"))
+	}
+	for _, name := range project.Inputs.Conflicts {
+		_, _ = digest.Write([]byte("input-conflict\x00" + name + "\x00"))
+	}
+	for _, name := range project.Inputs.Malformed {
+		_, _ = digest.Write([]byte("input-malformed\x00" + name + "\x00"))
+	}
+	for _, name := range project.Groups.Conflicts {
+		_, _ = digest.Write([]byte("group-conflict\x00" + name + "\x00"))
+	}
+	for _, name := range project.Groups.Malformed {
+		_, _ = digest.Write([]byte("group-malformed\x00" + name + "\x00"))
+	}
 	project.Digest = hex.EncodeToString(digest.Sum(nil))
 	return project
+}
+
+// parseInputAction decodes one [input] assignment. Godot writes an action as a
+// dictionary holding a deadzone and an events array, so a value of any other
+// shape is malformed and declares no action: a use of that name must stay
+// unresolved rather than be answered from a value nothing could read.
+func parseInputAction(assignment *configast.Assignment) (InputAction, bool) {
+	dictionary, ok := dictionaryLiteral(assignment.Value)
+	if !ok {
+		return InputAction{}, false
+	}
+	action := InputAction{Name: strings.TrimSpace(assignment.Key), Line: assignment.Span().Start.Line}
+	for _, item := range dictionary.Items {
+		entry, ok := item.(*configast.DictionaryEntry)
+		if !ok {
+			continue
+		}
+		key, ok := entry.Key.(*configast.StringLiteral)
+		if !ok {
+			continue
+		}
+		switch key.Value {
+		case "deadzone":
+			action.Deadzone = scalarText(entry.Value)
+		case "events":
+			array, ok := entry.Value.(*configast.ArrayLiteral)
+			if !ok {
+				continue
+			}
+			for _, element := range array.Items {
+				if _, ok := element.(*configast.ArrayElement); ok {
+					action.Events++
+				}
+			}
+		}
+	}
+	return action, true
+}
+
+// parseNodeGroup decodes one [global_group] assignment. Godot writes the
+// group's description as the value, so a non-string value is malformed.
+func parseNodeGroup(assignment *configast.Assignment) (NodeGroup, bool) {
+	literal, ok := assignment.Value.(*configast.StringLiteral)
+	if !ok {
+		return NodeGroup{}, false
+	}
+	return NodeGroup{Name: strings.TrimSpace(assignment.Key), Description: literal.Value,
+		Line: assignment.Span().Start.Line}, true
+}
+
+// dictionaryLiteral accepts both dictionary spellings Godot writes, the plain
+// {...} form and the typed Dictionary[K, V]({...}) form.
+func dictionaryLiteral(expression configast.Expression) (*configast.DictionaryLiteral, bool) {
+	switch current := expression.(type) {
+	case *configast.DictionaryLiteral:
+		return current, true
+	case *configast.TypedDictionaryLiteral:
+		if current.Value == nil {
+			return nil, false
+		}
+		return current.Value, true
+	default:
+		return nil, false
+	}
+}
+
+// scalarText renders a scalar configuration literal verbatim. A non-scalar
+// value renders empty rather than being summarized, so nothing is invented.
+func scalarText(expression configast.Expression) string {
+	switch current := expression.(type) {
+	case *configast.IntegerLiteral:
+		return current.Raw
+	case *configast.FloatLiteral:
+		return current.Raw
+	case *configast.StringLiteral:
+		return current.Value
+	case *configast.BoolLiteral:
+		return strconv.FormatBool(current.Value)
+	case *configast.UnaryExpression:
+		if inner := scalarText(current.Operand); inner != "" {
+			return current.Operator + inner
+		}
+		return ""
+	default:
+		return ""
+	}
 }
 
 // NewAutoload interprets one raw [autoload] value. The target is resolved

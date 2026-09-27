@@ -61,6 +61,12 @@ func TestIsDeclarationMemberClassifiesTheWholeVocabulary(t *testing.T) {
 		graph.KindGodotSceneNode: false,
 		// An autoload is a project-scoped global resolved by bare name.
 		graph.KindGodotAutoload: false,
+		// An input action and a node group are project-scoped declarations whose
+		// qualified names extend the declaring project.godot path, but every
+		// producer names them by their own bare name: Input.is_action_pressed
+		// ("jump") and add_to_group("enemies") carry the name and nothing else.
+		graph.KindGodotInputAction: false,
+		graph.KindGodotNodeGroup:   false,
 	}
 
 	for _, kind := range graph.NodeKinds() {

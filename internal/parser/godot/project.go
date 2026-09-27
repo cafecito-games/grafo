@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	configast "github.com/cafecito-games/gdparser/configfile/ast"
@@ -26,7 +27,12 @@ func extractConfig(input parserapi.Input, fileScope scope, file *configast.File)
 		extractConfigAssignments(b, input, fileScope, moduleID, format, section.Name, section.Statements, keys)
 	}
 	if format == godotid.ProjectFileName {
-		extractAutoloads(b, input, moduleID, file, keys)
+		// One parse of the project vocabulary feeds every declaration kind, so
+		// godotid stays the single authority on which entries are exact.
+		project := godotid.ProjectFromFile(input.Path, file)
+		extractAutoloads(b, input, moduleID, project, keys)
+		extractInputActions(b, input, moduleID, project, keys)
+		extractNodeGroups(b, input, moduleID, project, keys)
 	}
 	return b.Finish()
 }
@@ -91,8 +97,7 @@ func extractConfigAssignments(b *parserapi.Builder, input parserapi.Input, fileS
 // and no autoload node, so a conflicting or malformed entry resolves nothing on
 // the script side: see godotid.ParseProject, which owns that decision for every
 // Godot producer.
-func extractAutoloads(b *parserapi.Builder, input parserapi.Input, moduleID string, file *configast.File, keys map[string]string) {
-	project := godotid.ProjectFromFile(input.Path, file)
+func extractAutoloads(b *parserapi.Builder, input parserapi.Input, moduleID string, project godotid.Project, keys map[string]string) {
 	for _, name := range project.Conflicts {
 		b.Diagnostic(project.Lines[name], "warning", fmt.Sprintf(
 			"autoload %q is declared more than once; keeping its uses unresolved", name))
@@ -129,6 +134,84 @@ func extractAutoloads(b *parserapi.Builder, input parserapi.Input, moduleID stri
 		b.AddFact(id, graph.EdgeAutoloads, "", declaration.Target, godotid.TargetKind(declaration.Reference),
 			loc, map[string]string{"autoload": name, "resource": declaration.Reference,
 				"enabled": fmt.Sprint(declaration.Enabled)})
+	}
+}
+
+// extractInputActions promotes the tracked project.godot [input] section into
+// first-class input actions, the declarations that Input and InputMap calls read
+// back by name. The generic configuration key stays where it was so config
+// catalogs keep working; the action node is the queryable declaration layered on
+// top of it.
+//
+// Only non-secret declaration metadata reaches the graph: the deadzone as
+// written and how many input events the declaration lists. Device bindings are
+// deliberately not modelled, so no keycode or joypad index is ever recorded.
+//
+// A name declared more than once, or one whose value is not an action
+// dictionary, produces a diagnostic and no action node. Uses of that name then
+// resolve to an unresolved boundary node rather than to a declaration nothing
+// could read: godotid.ProjectFromFile owns that verdict for every producer.
+func extractInputActions(b *parserapi.Builder, input parserapi.Input, moduleID string, project godotid.Project, keys map[string]string) {
+	for _, name := range project.Inputs.Conflicts {
+		b.Diagnostic(project.Inputs.Lines[name], "warning", fmt.Sprintf(
+			"input action %q is declared more than once; keeping its uses unresolved", name))
+	}
+	for _, name := range project.Inputs.Malformed {
+		b.Diagnostic(project.Inputs.Lines[name], "warning", fmt.Sprintf(
+			"input action %q is not an action dictionary; keeping the configuration key only", name))
+	}
+	for _, name := range project.Inputs.Names() {
+		action := project.Inputs.Declarations[name]
+		configKey := godotid.InputSection + "/" + name
+		properties := map[string]string{
+			"form": "input_action", "events": strconv.Itoa(action.Events), "config_key": configKey,
+		}
+		if action.Deadzone != "" {
+			properties["deadzone"] = action.Deadzone
+		}
+		loc := graph.Location{Path: input.Path, Line: action.Line, Column: 1, EndLine: action.Line}
+		id := b.Declare(moduleID, graph.Node{
+			Kind: graph.KindGodotInputAction, Name: name,
+			QualifiedName: project.InputActionQualifiedName(name), Location: loc, Properties: properties,
+		})
+		if configKeyID := keys[configKey]; configKeyID != "" {
+			b.AddFact(configKeyID, graph.EdgeDefines, id, "", graph.KindGodotInputAction, loc, nil)
+		}
+	}
+}
+
+// extractNodeGroups promotes the tracked project.godot [global_group] section
+// into first-class node groups.
+//
+// Godot records a group here only when the project declares it globally, so a
+// group that a scene or a script merely uses is a reference and never a
+// declaration: it stays an unresolved boundary node until the project declares
+// it, which is what keeps missing wiring visible instead of letting the first
+// use silently define the vocabulary.
+func extractNodeGroups(b *parserapi.Builder, input parserapi.Input, moduleID string, project godotid.Project, keys map[string]string) {
+	for _, name := range project.Groups.Conflicts {
+		b.Diagnostic(project.Groups.Lines[name], "warning", fmt.Sprintf(
+			"node group %q is declared more than once; keeping its uses unresolved", name))
+	}
+	for _, name := range project.Groups.Malformed {
+		b.Diagnostic(project.Groups.Lines[name], "warning", fmt.Sprintf(
+			"node group %q has no description string; keeping the configuration key only", name))
+	}
+	for _, name := range project.Groups.Names() {
+		group := project.Groups.Declarations[name]
+		configKey := godotid.GlobalGroupSection + "/" + name
+		properties := map[string]string{"form": "node_group", "global": "true", "config_key": configKey}
+		if group.Description != "" {
+			properties["description"] = group.Description
+		}
+		loc := graph.Location{Path: input.Path, Line: group.Line, Column: 1, EndLine: group.Line}
+		id := b.Declare(moduleID, graph.Node{
+			Kind: graph.KindGodotNodeGroup, Name: name,
+			QualifiedName: project.NodeGroupQualifiedName(name), Location: loc, Properties: properties,
+		})
+		if configKeyID := keys[configKey]; configKeyID != "" {
+			b.AddFact(configKeyID, graph.EdgeDefines, id, "", graph.KindGodotNodeGroup, loc, nil)
+		}
 	}
 }
 

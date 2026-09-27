@@ -340,3 +340,121 @@ func TestAliasesRefuseAFoundUIDWhileAnyFileIsUnknown(t *testing.T) {
 		t.Fatalf("the reason must name the UID; got %q", reason)
 	}
 }
+
+// TestParseProjectResolvesInputActionsAndGlobalGroups covers the two new
+// project.godot sections end to end: an exact declaration resolves, a name
+// declared twice resolves nothing, a value of the wrong shape resolves nothing,
+// and both kinds are scoped to the declaring project rather than to the
+// repository.
+func TestParseProjectResolvesInputActionsAndGlobalGroups(t *testing.T) {
+	content := `config_version=5
+
+[input]
+
+jump={
+"deadzone": 0.25,
+"events": [Object(InputEventKey,"keycode":32), Object(InputEventJoypadButton,"button_index":0)]
+}
+attack={"deadzone": 0.5, "events": []}
+attack={"deadzone": 0.9, "events": []}
+broken=5
+
+[global_group]
+
+enemies="Hostile actors"
+pickups=""
+props=7
+props="a string this time"
+`
+	project := godotid.ParseProject("client/project.godot", []byte(content))
+
+	jump, ok := project.InputAction("jump")
+	if !ok {
+		t.Fatal("jump must be an exact input action declaration")
+	}
+	if jump.Name != "jump" || jump.Deadzone != "0.25" || jump.Events != 2 || jump.Line == 0 {
+		t.Fatalf("unexpected jump declaration: %#v", jump)
+	}
+	if _, ok := project.InputAction("attack"); ok {
+		t.Fatal("an action declared twice must resolve nothing")
+	}
+	if _, ok := project.InputAction("broken"); ok {
+		t.Fatal("an action whose value is not a dictionary must resolve nothing")
+	}
+	if got := project.Inputs.Conflicts; len(got) != 1 || got[0] != "attack" {
+		t.Fatalf("input conflicts = %v, want [attack]", got)
+	}
+	if got := project.Inputs.Malformed; len(got) != 1 || got[0] != "broken" {
+		t.Fatalf("input malformed = %v, want [broken]", got)
+	}
+	if project.Inputs.Lines["attack"] == 0 || project.Inputs.Lines["broken"] == 0 {
+		t.Fatal("every declared action name must keep its first declaration line")
+	}
+
+	enemies, ok := project.NodeGroup("enemies")
+	if !ok {
+		t.Fatal("enemies must be an exact global group declaration")
+	}
+	if enemies.Description != "Hostile actors" {
+		t.Fatalf("unexpected group declaration: %#v", enemies)
+	}
+	if _, ok := project.NodeGroup("pickups"); !ok {
+		t.Fatal("an empty description is still a declaration")
+	}
+	if _, ok := project.NodeGroup("props"); ok {
+		t.Fatal("a group declared twice must resolve nothing even when one value is well formed")
+	}
+	if got := project.Groups.Conflicts; len(got) != 1 || got[0] != "props" {
+		t.Fatalf("group conflicts = %v, want [props]", got)
+	}
+
+	if got, want := project.InputActionQualifiedName("jump"),
+		"godot:input_action:client/project.godot:jump"; got != want {
+		t.Fatalf("InputActionQualifiedName = %q, want %q", got, want)
+	}
+	if got, want := project.NodeGroupQualifiedName("enemies"),
+		"godot:node_group:client/project.godot:enemies"; got != want {
+		t.Fatalf("NodeGroupQualifiedName = %q, want %q", got, want)
+	}
+	other := godotid.ParseProject("server/project.godot", []byte(content))
+	if other.InputActionQualifiedName("jump") == project.InputActionQualifiedName("jump") {
+		t.Fatal("two Godot projects must not share one action identity")
+	}
+	if other.NodeGroupQualifiedName("enemies") == project.NodeGroupQualifiedName("enemies") {
+		t.Fatal("two Godot projects must not share one group identity")
+	}
+}
+
+// TestProjectDigestCoversInputAndGroupDeclarationFields extends the rule
+// TestProjectDigestCoversEveryDeclarationField pins to the sections this change
+// adds: every field of every declaration has to move the digest, including the
+// fields no extractor reads yet, so the first one that reads one inherits a
+// correct incremental index.
+func TestProjectDigestCoversInputAndGroupDeclarationFields(t *testing.T) {
+	base := "[input]\njump={\"deadzone\": 0.5, \"events\": []}\n\n[global_group]\nenemies=\"Hostile\"\n"
+	for _, testCase := range []struct{ name, content string }{
+		{name: "action renamed", content: "[input]\nleap={\"deadzone\": 0.5, \"events\": []}\n\n[global_group]\nenemies=\"Hostile\"\n"},
+		{name: "deadzone changed", content: "[input]\njump={\"deadzone\": 0.2, \"events\": []}\n\n[global_group]\nenemies=\"Hostile\"\n"},
+		{name: "event added", content: "[input]\njump={\"deadzone\": 0.5, \"events\": [Object(InputEventKey,\"keycode\":32)]}\n\n[global_group]\nenemies=\"Hostile\"\n"},
+		{name: "action line moved", content: "\n[input]\njump={\"deadzone\": 0.5, \"events\": []}\n\n[global_group]\nenemies=\"Hostile\"\n"},
+		{name: "action added", content: base + "attack={\"deadzone\": 0.5, \"events\": []}\n"},
+		{name: "action became a conflict", content: "[input]\njump={\"deadzone\": 0.5, \"events\": []}\njump={\"deadzone\": 0.1, \"events\": []}\n\n[global_group]\nenemies=\"Hostile\"\n"},
+		{name: "action became malformed", content: "[input]\njump=1\n\n[global_group]\nenemies=\"Hostile\"\n"},
+		{name: "group renamed", content: "[input]\njump={\"deadzone\": 0.5, \"events\": []}\n\n[global_group]\nhostiles=\"Hostile\"\n"},
+		{name: "group description changed", content: "[input]\njump={\"deadzone\": 0.5, \"events\": []}\n\n[global_group]\nenemies=\"Friendly\"\n"},
+		{name: "group became a conflict", content: "[input]\njump={\"deadzone\": 0.5, \"events\": []}\n\n[global_group]\nenemies=\"Hostile\"\nenemies=\"Hostile\"\n"},
+		{name: "group became malformed", content: "[input]\njump={\"deadzone\": 0.5, \"events\": []}\n\n[global_group]\nenemies=4\n"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			before := godotid.ParseProject("project.godot", []byte(base))
+			after := godotid.ParseProject("project.godot", []byte(testCase.content))
+			if before.Digest == after.Digest {
+				t.Fatal("digest unchanged; dependent files would keep stale edges")
+			}
+		})
+	}
+	if godotid.ParseProject("project.godot", []byte(base)).Digest !=
+		godotid.ParseProject("project.godot", []byte(base)).Digest {
+		t.Fatal("digest is not stable for identical input")
+	}
+}

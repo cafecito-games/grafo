@@ -90,6 +90,7 @@ func (s *Service) Server(version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{Name: "get_callers", Title: "Get callers", Description: "Walk incoming call and handler edges to find callers of a symbol.", Annotations: annotations}, s.getCallers)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_callees", Title: "Get callees", Description: "Walk outgoing call and handler edges to find callees of a symbol.", Annotations: annotations}, s.getCallees)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_godot_composition", Title: "Get Godot composition", Description: "Return Godot runtime composition for a scene, scene node, resource, script, or autoload: which scenes it instantiates, which scenes instantiate it, attached scripts, and autoload availability, each with its original resource evidence.", Annotations: annotations}, s.getGodotComposition)
+	mcp.AddTool(server, &mcp.Tool{Name: "get_godot_interactions", Title: "Get Godot interactions", Description: "Return Godot gameplay wiring for a scene, scene node, script symbol, input action, node group, or signal: the input actions it uses, the node groups it joins, inspects, and dispatches to, and the signal routes it takes part in, whether a scene declared them or a script established them. Filter by action, group, or signal and by direction; unresolved actions, groups, and signals stay in the report and are counted so missing wiring is visible.", Annotations: annotations}, s.getGodotInteractions)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_blast_radius", Title: "Get change impact", Description: "Return a bounded bidirectional change-impact report: what depends on the symbol, what it depends on, impacted files, cross-repository hops, and config, data, and event relationships.", Annotations: annotations}, s.getBlastRadius)
 	if s.search != nil {
 		mcp.AddTool(server, &mcp.Tool{Name: "search_source", Title: "Search indexed source", Description: "Search literal text or RE2 patterns across files belonging to the refreshed indexes. Use graph tools first when the question is structural; use this for content questions the graph does not model.", Annotations: annotations}, s.searchSource)
@@ -422,6 +423,66 @@ func (s *Service) getGodotComposition(ctx context.Context, _ *mcp.CallToolReques
 	})
 	report, err := firstValue(results, batched)
 	return nil, GodotCompositionOutput{GodotComposition: report, Results: results}, err
+}
+
+// GodotInteractionsInput bounds one interactions report or a batch of them.
+type GodotInteractionsInput struct {
+	Selector  string   `json:"selector,omitempty" jsonschema:"qualified Godot scene, scene node, script symbol, input action, node group, or signal name, or stable node ID"`
+	Selectors []string `json:"selectors,omitempty" jsonschema:"batch of Godot selectors reported in caller order"`
+	Kind      string   `json:"kind,omitempty" jsonschema:"optional node kind the selector must resolve to, such as godot_scene, godot_scene_node, godot_input_action, godot_node_group, event, or method"`
+	Filters   []string `json:"filters,omitempty" jsonschema:"optional interaction categories to report: action, group, signal; omit for every category"`
+	Direction string   `json:"direction,omitempty" jsonschema:"outgoing, incoming, or both; defaults to both"`
+	Depth     int      `json:"depth,omitempty" jsonschema:"maximum scene-tree depth explored for a scene; defaults to 8"`
+	Limit     int      `json:"limit,omitempty" jsonschema:"maximum interactions per direction; defaults to 1000"`
+}
+
+// GodotInteractionsOutput embeds the single report so scalar callers read it at
+// the top level while batched callers read Results.
+type GodotInteractionsOutput struct {
+	query.GodotInteractions
+	Results []ResultEnvelope[query.GodotInteractions] `json:"results,omitempty"`
+}
+
+func (s *Service) getGodotInteractions(ctx context.Context, _ *mcp.CallToolRequest, input GodotInteractionsInput) (*mcp.CallToolResult, GodotInteractionsOutput, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, GodotInteractionsOutput{}, err
+	}
+	selectors, batched, err := batchInputs("selector", input.Selector, input.Selectors)
+	if err != nil {
+		return nil, GodotInteractionsOutput{}, err
+	}
+	kind, err := graph.ParseNodeKind(input.Kind)
+	if err != nil {
+		return nil, GodotInteractionsOutput{}, err
+	}
+	// An unknown filter or direction is an error rather than a filter that can
+	// never match or a silent fall back to a question the caller did not ask.
+	var categories []query.GodotInteractionCategory
+	for _, value := range input.Filters {
+		category, err := query.ParseGodotInteractionCategory(value)
+		if err != nil {
+			return nil, GodotInteractionsOutput{}, err
+		}
+		if category != "" {
+			categories = append(categories, category)
+		}
+	}
+	direction := query.Both
+	switch trimmed := strings.TrimSpace(input.Direction); trimmed {
+	case "":
+	case string(query.Outgoing), string(query.Incoming), string(query.Both):
+		direction = query.Direction(trimmed)
+	default:
+		return nil, GodotInteractionsOutput{}, fmt.Errorf("unknown direction %q; expected %s, %s, or %s",
+			input.Direction, query.Outgoing, query.Incoming, query.Both)
+	}
+	options := query.GodotInteractionsOptions{Depth: input.Depth, Limit: input.Limit, Kind: kind,
+		Direction: direction, Categories: categories}
+	results := runBatch(ctx, selectors, func(reportContext context.Context, selector string) (query.GodotInteractions, error) {
+		return s.query.GodotInteractions(reportContext, selector, options)
+	})
+	report, err := firstValue(results, batched)
+	return nil, GodotInteractionsOutput{GodotInteractions: report, Results: results}, err
 }
 
 func (s *Service) getBlastRadius(ctx context.Context, _ *mcp.CallToolRequest, input ImpactInput) (*mcp.CallToolResult, ImpactOutput, error) {

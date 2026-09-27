@@ -576,6 +576,10 @@ func filterCandidates(fact graph.Fact, rows []resolutionCandidate) []resolutionC
 		allowed = func(kind graph.NodeKind) bool {
 			return kind == graph.KindModule || kind == graph.KindClass || kind == graph.KindGodotScene
 		}
+	case graph.EdgeUsesInputAction:
+		allowed = func(kind graph.NodeKind) bool { return kind == graph.KindGodotInputAction }
+	case graph.EdgeInGroup, graph.EdgeUsesGroup:
+		allowed = func(kind graph.NodeKind) bool { return kind == graph.KindGodotNodeGroup }
 	case graph.EdgeExtends, graph.EdgeImplements, graph.EdgeEmbeds:
 		allowed = func(kind graph.NodeKind) bool {
 			return kind == graph.KindType || kind == graph.KindClass || kind == graph.KindInterface

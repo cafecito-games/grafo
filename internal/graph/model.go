@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 type NodeKind string
 
@@ -46,6 +46,16 @@ const (
 	KindGodotResource  NodeKind = "godot_resource"
 	KindGodotSceneNode NodeKind = "godot_scene_node"
 	KindGodotAutoload  NodeKind = "godot_autoload"
+
+	// Godot gameplay-interaction vocabulary. An input action is a named action
+	// declared in a project.godot [input] section and read back by Input and
+	// InputMap calls; a node group is a named set of scene nodes declared in a
+	// [global_group] section and joined, tested, and dispatched to by name.
+	// Both are project-scoped declarations rather than generic config keys, so
+	// "who uses this action" and "who is in this group" are answerable by kind
+	// and edge instead of by matching a key-name prefix.
+	KindGodotInputAction NodeKind = "godot_input_action"
+	KindGodotNodeGroup   NodeKind = "godot_node_group"
 )
 
 // nodeKinds is the closed node vocabulary, in declaration order. It backs
@@ -57,6 +67,7 @@ var nodeKinds = []NodeKind{
 	KindTable, KindView, KindColumn, KindIndex, KindConfigKey, KindEndpoint,
 	KindEvent, KindDocSection, KindExternal,
 	KindGodotScene, KindGodotResource, KindGodotSceneNode, KindGodotAutoload,
+	KindGodotInputAction, KindGodotNodeGroup,
 }
 
 // NodeKinds returns the node vocabulary. Callers must not mutate the result.
@@ -120,6 +131,22 @@ const (
 	EdgeInstantiates   EdgeKind = "instantiates"
 	EdgeAttachesScript EdgeKind = "attaches_script"
 	EdgeAutoloads      EdgeKind = "autoloads"
+
+	// Godot gameplay-interaction relations. uses_input_action records a read of
+	// a declared input action; in_group records that a node belongs to (or
+	// leaves) a node group; uses_group records a lookup of, or a dispatch to,
+	// the members of a group without asserting membership.
+	//
+	// The operation that produced each edge lives in its "form" property rather
+	// than in a separate edge kind, because direction and meaning are shared
+	// within each relation: a group lookup and a group call both read the
+	// group's members, and add_to_group and remove_from_group both name a
+	// membership between the same two nodes. A membership test (is_in_group) is
+	// deliberately a uses_group lookup and never an in_group edge: asking
+	// whether a node is in a group is not evidence that it is.
+	EdgeUsesInputAction EdgeKind = "uses_input_action"
+	EdgeInGroup         EdgeKind = "in_group"
+	EdgeUsesGroup       EdgeKind = "uses_group"
 )
 
 type Location struct {

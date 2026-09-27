@@ -129,6 +129,28 @@ func (s scope) resolve(reference string) string {
 	return s.project.Resolve(reference)
 }
 
+// nodeGroup returns the identity a node-group name has inside the Godot project
+// that owns this file, or "" when that project could not be read. An unknown
+// project cannot scope a name, and a group identity that is not project-scoped
+// would merge the groups of every project in a monorepo, so the reference is
+// refused rather than scoped to a guess.
+func (s scope) nodeGroup(name string) string {
+	if !s.known || strings.TrimSpace(name) == "" {
+		return ""
+	}
+	return s.project.NodeGroupQualifiedName(name)
+}
+
+// inputAction returns the identity an input-action name has inside the Godot
+// project that owns this file, refusing an unknown project for the same reason
+// nodeGroup does.
+func (s scope) inputAction(name string) string {
+	if !s.known || strings.TrimSpace(name) == "" {
+		return ""
+	}
+	return s.project.InputActionQualifiedName(name)
+}
+
 // escapes reports whether a reference carries path evidence that leaves this
 // file's Godot project, which resolves to nothing and is worth a diagnostic
 // rather than silence.

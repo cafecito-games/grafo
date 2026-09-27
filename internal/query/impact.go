@@ -518,6 +518,15 @@ func bucketFor(edge graph.EdgeKind, node graph.NodeKind) relationBucket {
 		if edge == graph.EdgePublishes || edge == graph.EdgeSubscribes {
 			return relationEvent
 		}
+	case graph.KindGodotInputAction:
+		// An input action is a project.godot declaration promoted to its own
+		// kind, so it belongs with configuration rather than needing a section
+		// of its own. Node groups are deliberately not mapped here: they are
+		// neither configuration, data, nor events, and inventing a bucket for
+		// them would change the shape of every impact report.
+		if edge == graph.EdgeUsesInputAction || edge == graph.EdgeDefines {
+			return relationConfig
+		}
 	}
 	return relationNone
 }
