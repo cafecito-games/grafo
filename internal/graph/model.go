@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 type NodeKind string
 
@@ -35,7 +35,53 @@ const (
 	KindEvent      NodeKind = "event"
 	KindDocSection NodeKind = "document_section"
 	KindExternal   NodeKind = "external"
+
+	// Godot runtime composition vocabulary. Scenes and resources are the
+	// engine's two text-resource forms, scene nodes are the tree a scene
+	// declares, and an autoload is a globally available singleton declared in
+	// project.godot. They are distinct kinds rather than generic modules and
+	// variables so composition questions are answerable by kind and edge
+	// instead of property inspection.
+	KindGodotScene     NodeKind = "godot_scene"
+	KindGodotResource  NodeKind = "godot_resource"
+	KindGodotSceneNode NodeKind = "godot_scene_node"
+	KindGodotAutoload  NodeKind = "godot_autoload"
 )
+
+// nodeKinds is the closed node vocabulary, in declaration order. It backs
+// ParseNodeKind so a caller-supplied kind filter is validated against the
+// vocabulary instead of silently matching nothing.
+var nodeKinds = []NodeKind{
+	KindRepository, KindFile, KindPackage, KindModule, KindFunction, KindMethod,
+	KindType, KindClass, KindInterface, KindField, KindVariable, KindParameter,
+	KindTable, KindView, KindColumn, KindIndex, KindConfigKey, KindEndpoint,
+	KindEvent, KindDocSection, KindExternal,
+	KindGodotScene, KindGodotResource, KindGodotSceneNode, KindGodotAutoload,
+}
+
+// NodeKinds returns the node vocabulary. Callers must not mutate the result.
+func NodeKinds() []NodeKind { return append([]NodeKind(nil), nodeKinds...) }
+
+// ParseNodeKind validates a caller-supplied node kind. An empty value parses to
+// the empty kind, which every filter treats as "any kind"; an unknown value is
+// an error rather than a filter that can never match.
+func ParseNodeKind(value string) (NodeKind, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", nil
+	}
+	candidate := NodeKind(strings.ToLower(trimmed))
+	for _, kind := range nodeKinds {
+		if kind == candidate {
+			return kind, nil
+		}
+	}
+	names := make([]string, 0, len(nodeKinds))
+	for _, kind := range nodeKinds {
+		names = append(names, string(kind))
+	}
+	return "", fmt.Errorf("unknown node kind %q; expected one of %s", value, strings.Join(names, ", "))
+}
 
 type EdgeKind string
 
@@ -43,6 +89,7 @@ const (
 	EdgeContains    EdgeKind = "contains"
 	EdgeDeclares    EdgeKind = "declares"
 	EdgeImports     EdgeKind = "imports"
+	EdgeExports     EdgeKind = "exports"
 	EdgeCalls       EdgeKind = "calls"
 	EdgeEmbeds      EdgeKind = "embeds"
 	EdgeExtends     EdgeKind = "extends"
@@ -63,6 +110,16 @@ const (
 	EdgeRequests    EdgeKind = "requests"
 	EdgeDependsOn   EdgeKind = "depends_on"
 	EdgeDocuments   EdgeKind = "documents"
+
+	// Godot composition relations. instantiates records a scene instance
+	// (nested or inherited) and is deliberately distinct from extends so
+	// scene composition is never mislabeled as language class inheritance.
+	// attaches_script records a script bound to a scene node, scene, or
+	// resource. autoloads records the target a project.godot autoload
+	// declaration exposes globally.
+	EdgeInstantiates   EdgeKind = "instantiates"
+	EdgeAttachesScript EdgeKind = "attaches_script"
+	EdgeAutoloads      EdgeKind = "autoloads"
 )
 
 type Location struct {
@@ -174,4 +231,19 @@ func SimpleName(name string) string {
 		return name[i+1:]
 	}
 	return name
+}
+
+// DataResourceKinds lists the node kinds that represent stored data resources.
+// Extending this list extends every data catalog without changing query or
+// presentation code.
+func DataResourceKinds() []NodeKind { return []NodeKind{KindTable, KindView} }
+
+// IsDataResourceKind reports whether kind names a stored data resource.
+func IsDataResourceKind(kind NodeKind) bool {
+	for _, candidate := range DataResourceKinds() {
+		if candidate == kind {
+			return true
+		}
+	}
+	return false
 }

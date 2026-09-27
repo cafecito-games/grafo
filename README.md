@@ -25,6 +25,11 @@ grafo path "HandleCheckout" "Charge"
 grafo impact "Charge"
 grafo search "chargeRetryLimit"
 grafo source "HandleCheckout"
+grafo data-resources
+grafo data-usage "orders"
+grafo config-keys
+grafo events
+grafo orphaned-events
 grafo watch
 grafo mcp
 ```
@@ -41,7 +46,10 @@ configured by editing their documented user-level config file.
 grafo install --list          # detect only; never writes
 grafo install --all --dry-run # report every file and command a real run touches
 grafo install claude codex    # or: grafo install --client cursor,vscode
-grafo uninstall --all         # remove only Grafo's own registration
+grafo install --mcp-only      # register the server without installing guidance
+grafo install --refresh       # update only artifacts that already exist
+grafo install --hooks         # also install advisory, fail-open hooks
+grafo uninstall --all         # remove only Grafo-owned artifacts
 ```
 
 Config files are parsed structurally, written atomically, and unrelated servers
@@ -49,24 +57,127 @@ and settings are preserved. `--list` and `--dry-run` cannot write. Naming a
 client that is not installed is an error; automatic and `--all` mode skip
 missing clients and say so. All of these accept `--json`.
 
+### Installed agent guidance
+
+Registration alone does not teach an agent when to use the graph, so `grafo
+install` also installs one canonical, embedded guidance playbook: prefer graph
+structure over content search for symbol, call, endpoint, event, data, and impact
+questions; check `get_index_status` before trusting the graph; search for reusable
+code before adding code; run bidirectional `get_blast_radius` before a
+behaviour-changing edit; and fall back to native tools deliberately when the
+content is not code or the branch has no index.
+
+Guidance is installed only through documented, user-scoped surfaces: an isolated
+Grafo-owned skill file for Claude Code, and one delimited managed block
+(`<!-- BEGIN grafo-guidance -->` … `<!-- END grafo-guidance -->`) for Codex,
+Gemini CLI, OpenCode, and Windsurf. Everything outside the markers is preserved
+byte-for-byte, a file with no Grafo ownership marker is never overwritten, and
+duplicated or half-present markers are reported instead of repaired.
+Repository-local instruction files are never edited, no permission is granted,
+and no edit is ever blocked.
+
+`--hooks` opts in to advisory `PreToolUse` hooks in Claude Code's documented
+personal settings. They only inject context: `grafo guidance --hook pre-search`
+and `--hook pre-edit` print one advisory line and always exit 0, so a missing or
+broken Grafo can never block a tool call. `grafo guidance` prints the same
+canonical text plus whether the current repository and branch actually have an
+index.
+
+Every installed artifact is recorded in a receipt under the Grafo configuration
+directory (`$XDG_CONFIG_HOME/grafo/installed-artifacts.json`) with its target,
+digest, guidance version, and ownership marker, so an upgrade replaces exactly
+the previous Grafo-owned content and `grafo uninstall` removes only what it can
+prove Grafo wrote. Anything it cannot prove is left in place and reported with
+the manual step. Re-running install is idempotent, `--dry-run` writes nothing,
+and a real run prints every target and action before mutating anything.
+
 The generated MCP configuration uses the absolute path of the installed Grafo
 binary, so agents do not depend on their launch environment's `PATH`. Re-run
 the command after moving the binary. Each repository still needs an initial
 `grafo index .`; subsequent MCP queries refresh its active branch index
 incrementally.
 
+### Background indexing and diagnostics
+
+`grafo watch` keeps one repository current while a terminal stays open. For
+several repositories at once, register them and install a local background
+service instead:
+
+```sh
+grafo service add .              # register this repository root
+grafo service list               # show the user-level registry of watched roots
+grafo service install            # macOS launchd agent or Linux user systemd unit
+grafo service status             # platform state plus per-root last pass
+grafo service logs --lines 50    # bounded, rotating, source-free log
+grafo service uninstall          # remove only the definition Grafo owns
+grafo service run --once         # one reconciliation pass in the foreground
+```
+
+The service is entirely local. Exactly one supervisor runs at a time, every
+indexing run holds its branch index's lock so a foreground `grafo index` can
+never race it, and a killed supervisor leaves committed indexes intact: the next
+pass reconciles from them. Branch switches and worktrees stay isolated, a
+temporarily unavailable root is paused rather than pruned, and one failing root
+never stops the others.
+
+```sh
+grafo doctor                     # read-only report; nothing is mutated
+grafo doctor --json
+grafo doctor --repair            # only the four documented repairs
+```
+
+`grafo doctor` reports the binary, the registry, every root's branch and index,
+the service definition, the supervisor, and the agent registrations. `--repair`
+unregisters a definitively missing, unshared root, refreshes Grafo-owned agent
+artifacts, recreates a service definition Grafo installed, and restarts a stale
+service. It never deletes repository indexes, never guesses where a moved
+repository went, and never rewrites content Grafo cannot prove it wrote.
+
+Ownership is bound to one resolved path, so a receipt for one definition never
+authorizes writing another, and a unit Grafo cannot prove it wrote is never even
+stopped. Service definitions must name a durable binary: installing or repairing
+from a `go run` build is refused, because the unit would outlive the build
+directory it points into.
+
 Every query supports `--json` for agent-friendly output. Run `grafo help` for
 the complete command surface.
 
 `grafo mcp` starts a standards-compatible MCP server over stdio with tools for
 symbol discovery, node lookup, traversal, shortest paths, callers, callees,
-change impact, graph-addressed source retrieval, bounded source search,
-reusable-code discovery, and index status.
+change impact, Godot composition, graph-addressed source retrieval, bounded
+source search, reusable-code discovery, index status, and the data,
+configuration, and event catalogs.
 
 Symbol, node, source, caller, callee, path, and impact tools accept a batch of
 inputs and return one result or error per input in the caller's order, so one
 bad selector never erases unrelated results. The scalar input fields remain
 supported.
+
+### Selector resolution
+
+Every command and tool that takes a symbol resolves it through one code path, and
+that path either returns a single node on evidence or reports the complete set of
+equally good matches. It never returns one of several matches as though it were
+unique.
+
+Only the strongest kind of evidence a selector produced is considered: an exact
+qualified name, else an exact name, else a substring, and within each of those a
+local declaration outranks an external boundary node. Case-sensitive evidence
+outranks all of that, so a case-insensitive-only hit at a strong level never beats
+a case-sensitive match at a weaker one — the selector `Path` is decided by the
+nodes named exactly `Path`, not by a module whose qualified name is `path`. Within
+one kind of evidence a case-sensitive match decides on its own, so `impact`
+resolves to `App.impact` rather than tying with `Service.Impact`;
+case-insensitive-only matches are still listed when the selector is ambiguous,
+because they are usually what has to be told apart. A symbol's own parameters, local variables, and fields do not make its
+selector ambiguous, but a nested qualified name alone never suppresses a
+candidate: `type Charge struct{}` and `func (Charge) Charge()` are two
+declarations sharing one name, so `Charge` stays ambiguous between them.
+
+An ambiguity error reports the total number of matches in the graph and says when
+the listed candidates are only part of it. Commands and tools that take a selector
+also accept an optional node kind (`--kind` on the CLI, `kind` in MCP input), so a
+caller can say it means the function rather than a parameter of the same name.
 
 ### Change impact
 
@@ -83,6 +194,41 @@ grafo impact "Charge" --source --max-lines 40 --json
 Upstream and downstream depth and node limits are bounded independently and
 each section reports its own truncation. Source excerpts are opt-in and read
 through the same bounded reader `grafo source` uses.
+
+### Godot composition
+
+`grafo godot-composition` (MCP `get_godot_composition`) answers Godot runtime
+composition questions directly from the graph: which scenes a scene
+instantiates, which scenes instantiate it, which scripts are attached to which
+scene nodes, scenes, and resources, and which autoload singletons expose a
+script or scene globally.
+
+```sh
+grafo godot-composition "scenes/main"
+grafo godot-composition "godot:autoload:client/project.godot:GameSession" --json
+```
+
+Scenes, resources, scene nodes, and autoloads are first-class node kinds
+(`godot_scene`, `godot_resource`, `godot_scene_node`, `godot_autoload`) linked
+by `instantiates`, `attaches_script`, and `autoloads` edges. Every edge keeps
+its original evidence - resource path, UID alias, `ExtResource` id, scene node
+path, and instance-placeholder marker. Scene inheritance is an `instantiates`
+edge, never language `extends`.
+
+`res://` references resolve against the nearest ancestor `project.godot`, so a
+Godot project in a monorepo subdirectory resolves correctly and a reference that
+traverses out of its own project is diagnosed rather than resolved into a sibling
+project. Autoload identity is scoped to that file
+(`godot:autoload:<project.godot path>:<Name>`) so sibling projects that share an
+autoload name stay distinct. A reference whose UID is declared by a different
+resource, whose `ExtResource` id is declared more than once, or whose autoload
+name is declared more than once is reported as a diagnostic and stays unresolved
+instead of resolving to a guess, and an autoload declared without Godot's `*`
+singleton marker never satisfies a global identifier in a script. Evidence that
+could not be read is never treated as agreement: a UID resolves only when Grafo
+can prove it is declared exactly once, so while any candidate file is unreadable
+the reference stays unresolved and the diagnostic names the file that blocked the
+proof.
 
 ### Bounded source search
 
@@ -180,9 +326,12 @@ are marked `federated` and retain their original evidence.
   signal declarations, emissions, and connections. `$Node/Path`, `%UniqueName`,
   and literal `get_node`-family lookups reference matching scene nodes when the
   name is unambiguous.
-- Godot text scenes and resources (`.tscn`, `.tres`, and `.escn`), including
-  scene nodes, subresources, properties, external resources, node paths, and
-  declarative signal connections; ConfigFile documents (`project.godot`,
+- Godot text scenes and resources (`.tscn`, `.tres`, and `.escn`) as first-class
+  scenes, resources, and scene nodes, including subresources, properties,
+  external resources, node paths, declarative signal connections, scene
+  instances and inheritance, and script attachments; `project.godot` autoload
+  singletons and their script or scene targets, resolved in GDScript uses of the
+  autoload name; ConfigFile documents (`project.godot`,
   `.cfg`, `.gdextension`, `.import`, and `.remap`) and `.uid` sidecars; and
   shader/include modules, uniforms, structs, functions, parameters, locals,
   calls, global references, and `#include` relationships.
@@ -225,6 +374,53 @@ Supported keywords are `function`, `method`, `class`, `interface`, `type`, and
 `endpoint`. Resolution uses exact qualified names or an unambiguous simple name.
 If several declarations match, Grafo retains an explicit unresolved node rather
 than guessing an edge.
+
+## Data, configuration, and event catalogs
+
+The catalogs answer inventory and usage questions directly instead of leaving
+them to manual traversal:
+
+```sh
+grafo data-resources --kind table,view --name order --json
+grafo data-usage "orders" --json
+grafo config-keys --name DATABASE_ --json
+grafo events --json
+grafo orphaned-events --json
+```
+
+The same results are available as the `list_data_resources`,
+`get_data_resource_usage`, `list_config_keys`, `list_events`, and
+`find_orphaned_events` MCP tools. Every catalog accepts a repository filter and
+an explicit bound, reports truncation, and orders results deterministically. The
+list catalogs also accept a name filter, and the data-resource catalog a kind
+filter; usage names its resource with a selector instead. A name filter matches literally, so it narrows a catalog and
+never widens it. The bound applies to each catalog section and, separately, to
+the evidence sites of each relation.
+
+`data-usage` partitions the edges reaching a table or view into readers,
+writers, and references, each with the source site that proves it. An ambiguous
+name returns its candidates and asks for a qualified name or node ID rather than
+choosing one. An unsupported kind is rejected instead of answered with an empty
+catalog that would imply absence, and a name filter is rejected here rather than
+accepted and ignored, because the selector already names the resource. A name
+filter is trimmed before use, so a blank one narrows nothing at every surface
+rather than narrowing to nothing at some of them.
+
+`config-keys` reports where a key is defined and read. Stored values are never
+returned: only properties classified as non-secret configuration metadata appear,
+and the names of anything withheld are listed in `withheld_properties`.
+
+`orphaned-events` separates three categories — published without a consumer,
+consumed without a producer, and declared with neither — and separates a
+confirmed orphan from an uncertain one. When an unresolved target could be the
+missing counterpart, the finding's status is `unknown` and the response carries
+the counterpart counts and their evidence. Evidence a bound cut off is treated
+the same way, so a truncated event is never a confirmed orphan. Each relation
+carries its own bound, so a busy reader or publisher list can never make another
+relation look empty. Event names that no declaration
+resolves are always `unknown`, because nothing in the index bounds where they
+are published or consumed. Federation applies the same contract: a producer in
+one repository and a consumer in another clear the orphan.
 
 ## SQL dialects
 

@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -21,8 +22,9 @@ type Service struct {
 	projects   []indexer.Project
 	refresh    func(context.Context) error
 	reusable   func(context.Context, string, int) (semantic.SearchResult, error)
-	source     func(context.Context, string, int, int) (sourcecontext.Excerpt, error)
+	source     func(context.Context, string, graph.NodeKind, int, int) (sourcecontext.Excerpt, error)
 	search     *search.Service
+	catalog    *query.Catalog
 	refreshMu  sync.Mutex
 }
 
@@ -31,7 +33,11 @@ func New(repository graph.Repository, project indexer.Project) *Service {
 }
 
 func NewFederated(repository graph.ReadRepository, projects []indexer.Project) *Service {
-	return &Service{repository: repository, query: query.NewService(repository), projects: projects}
+	service := &Service{repository: repository, query: query.NewService(repository), projects: projects}
+	if catalogRepository, ok := repository.(graph.CatalogRepository); ok {
+		service.catalog = query.NewCatalog(catalogRepository)
+	}
+	return service
 }
 
 // WithRefresh configures a synchronization hook that runs before every tool
@@ -46,7 +52,7 @@ func (s *Service) WithReusable(search func(context.Context, string, int) (semant
 	return s
 }
 
-func (s *Service) WithSource(read func(context.Context, string, int, int) (sourcecontext.Excerpt, error)) *Service {
+func (s *Service) WithSource(read func(context.Context, string, graph.NodeKind, int, int) (sourcecontext.Excerpt, error)) *Service {
 	s.source = read
 	// Impact reports read excerpts through the same bounded reader, so
 	// repository-root confinement and line/byte limits are enforced once.
@@ -83,9 +89,17 @@ func (s *Service) Server(version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{Name: "find_path", Title: "Find graph path", Description: "Find the deterministic shortest structural path between two symbols.", Annotations: annotations}, s.findPath)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_callers", Title: "Get callers", Description: "Walk incoming call and handler edges to find callers of a symbol.", Annotations: annotations}, s.getCallers)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_callees", Title: "Get callees", Description: "Walk outgoing call and handler edges to find callees of a symbol.", Annotations: annotations}, s.getCallees)
+	mcp.AddTool(server, &mcp.Tool{Name: "get_godot_composition", Title: "Get Godot composition", Description: "Return Godot runtime composition for a scene, scene node, resource, script, or autoload: which scenes it instantiates, which scenes instantiate it, attached scripts, and autoload availability, each with its original resource evidence.", Annotations: annotations}, s.getGodotComposition)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_blast_radius", Title: "Get change impact", Description: "Return a bounded bidirectional change-impact report: what depends on the symbol, what it depends on, impacted files, cross-repository hops, and config, data, and event relationships.", Annotations: annotations}, s.getBlastRadius)
 	if s.search != nil {
 		mcp.AddTool(server, &mcp.Tool{Name: "search_source", Title: "Search indexed source", Description: "Search literal text or RE2 patterns across files belonging to the refreshed indexes. Use graph tools first when the question is structural; use this for content questions the graph does not model.", Annotations: annotations}, s.searchSource)
+	}
+	if s.catalog != nil {
+		mcp.AddTool(server, &mcp.Tool{Name: "list_data_resources", Title: "List data resources", Description: "Catalog indexed tables and views with normalized dialect and object metadata, plus unresolved external targets kept explicit.", Annotations: annotations}, s.listDataResources)
+		mcp.AddTool(server, &mcp.Tool{Name: "get_data_resource_usage", Title: "Get data resource usage", Description: "Report the readers and writers of one table or view separately, each with its source evidence. An ambiguous name fails with its candidates named instead of guessing one.", Annotations: annotations}, s.getDataResourceUsage)
+		mcp.AddTool(server, &mcp.Tool{Name: "list_config_keys", Title: "List configuration keys", Description: "Catalog configuration keys with their definitions, readers, and unresolved references. Stored values are never returned.", Annotations: annotations}, s.listConfigKeys)
+		mcp.AddTool(server, &mcp.Tool{Name: "list_events", Title: "List events", Description: "Catalog events with their declarations, producers, consumers, and handlers.", Annotations: annotations}, s.listEvents)
+		mcp.AddTool(server, &mcp.Tool{Name: "find_orphaned_events", Title: "Find orphaned events", Description: "Report events published without a consumer, consumed without a producer, or declared with neither. An unresolved possible counterpart makes the status unknown rather than orphaned.", Annotations: annotations}, s.findOrphanedEvents)
 	}
 	mcp.AddTool(server, &mcp.Tool{Name: "get_index_status", Title: "Get index status", Description: "Return the active repository, branch, indexed commit, and graph counts.", Annotations: annotations}, s.getIndexStatus)
 	if s.reusable != nil {
@@ -128,6 +142,7 @@ func (s *Service) findSymbols(ctx context.Context, _ *mcp.CallToolRequest, input
 type SelectorInput struct {
 	Selector  string   `json:"selector,omitempty" jsonschema:"qualified symbol name or stable node ID"`
 	Selectors []string `json:"selectors,omitempty" jsonschema:"batch of qualified symbol names or stable node IDs resolved in caller order"`
+	Kind      string   `json:"kind,omitempty" jsonschema:"optional node kind the selector must resolve to, such as function, method, type, or field"`
 }
 
 type SourceInput struct {
@@ -135,6 +150,7 @@ type SourceInput struct {
 	Selectors    []string `json:"selectors,omitempty" jsonschema:"batch of symbol names or node IDs read in caller order"`
 	ContextLines int      `json:"context_lines,omitempty" jsonschema:"surrounding lines from 0 to 20"`
 	MaxLines     int      `json:"max_lines,omitempty" jsonschema:"maximum returned lines per excerpt; defaults to 200 and may not exceed 1000"`
+	Kind         string   `json:"kind,omitempty" jsonschema:"optional node kind the selector must resolve to, such as function, method, type, or field"`
 }
 
 // SourceOutput embeds the single excerpt so scalar callers keep reading the
@@ -152,9 +168,10 @@ func (s *Service) getSource(ctx context.Context, _ *mcp.CallToolRequest, input S
 	if err != nil {
 		return nil, SourceOutput{}, err
 	}
-	results := runBatch(ctx, selectors, func(readContext context.Context, selector string) (sourcecontext.Excerpt, error) {
-		return s.source(readContext, selector, input.ContextLines, input.MaxLines)
-	})
+	kind := graph.NodeKind(strings.TrimSpace(input.Kind))
+	results := runBatch(ctx, selectors, namingCandidates(func(readContext context.Context, selector string) (sourcecontext.Excerpt, error) {
+		return s.source(readContext, selector, kind, input.ContextLines, input.MaxLines)
+	}))
 	excerpt, err := firstValue(results, batched)
 	return nil, SourceOutput{Excerpt: excerpt, Results: results}, err
 }
@@ -172,7 +189,10 @@ func (s *Service) getNode(ctx context.Context, _ *mcp.CallToolRequest, input Sel
 	if err != nil {
 		return nil, NodeOutput{}, err
 	}
-	results := runBatch(ctx, selectors, s.query.Resolve)
+	kind := graph.NodeKind(strings.TrimSpace(input.Kind))
+	results := runBatch(ctx, selectors, namingCandidates(func(resolveContext context.Context, selector string) (graph.Node, error) {
+		return s.query.ResolveKind(resolveContext, selector, kind)
+	}))
 	node, err := firstValue(results, batched)
 	return nil, NodeOutput{Node: node, Results: results}, err
 }
@@ -184,6 +204,7 @@ type TraversalInput struct {
 	Direction string   `json:"direction,omitempty" jsonschema:"outgoing, incoming, or both"`
 	Relations []string `json:"relations,omitempty" jsonschema:"optional edge kinds to follow"`
 	Limit     int      `json:"limit,omitempty" jsonschema:"maximum visited nodes"`
+	Kind      string   `json:"kind,omitempty" jsonschema:"optional node kind the selector must resolve to, such as function, method, type, or field"`
 }
 
 // TraversalOutput embeds the single traversal so scalar callers keep reading
@@ -208,9 +229,10 @@ func (s *Service) traverse(ctx context.Context, input TraversalInput, depthDefau
 	if depth == 0 {
 		depth = depthDefault
 	}
-	results := runBatch(ctx, selectors, func(walkContext context.Context, selector string) (query.Traversal, error) {
-		return s.query.Neighborhood(walkContext, selector, depth, direction, relations, input.Limit)
-	})
+	kind := graph.NodeKind(strings.TrimSpace(input.Kind))
+	results := runBatch(ctx, selectors, namingCandidates(func(walkContext context.Context, selector string) (query.Traversal, error) {
+		return s.query.Neighborhood(walkContext, selector, kind, depth, direction, relations, input.Limit)
+	}))
 	traversal, err := firstValue(results, batched)
 	return TraversalOutput{Traversal: traversal, Results: results}, err
 }
@@ -237,6 +259,7 @@ type PathInput struct {
 	Direction string     `json:"direction,omitempty" jsonschema:"outgoing, incoming, or both"`
 	Relations []string   `json:"relations,omitempty" jsonschema:"optional edge kinds to follow"`
 	Limit     int        `json:"limit,omitempty" jsonschema:"maximum visited nodes"`
+	Kind      string     `json:"kind,omitempty" jsonschema:"optional node kind both endpoints must resolve to, such as function, method, type, or field"`
 }
 
 // PathOutput embeds the single path so scalar callers keep reading the
@@ -292,8 +315,9 @@ func (s *Service) findPath(ctx context.Context, _ *mcp.CallToolRequest, input Pa
 	results := make([]ResultEnvelope[query.Path], 0, len(pairs))
 	for index, pair := range pairs {
 		envelope := ResultEnvelope[query.Path]{Index: index, Input: pair.From + " -> " + pair.To}
-		value, pathErr := s.query.ShortestPath(ctx, pair.From, pair.To, direction, relations, input.Limit)
-		if pathErr != nil {
+		value, pathErr := s.query.ShortestPath(ctx, pair.From, pair.To,
+			graph.NodeKind(strings.TrimSpace(input.Kind)), direction, relations, input.Limit)
+		if pathErr = withCandidates(pathErr); pathErr != nil {
 			envelope.Error = pathErr.Error()
 		} else {
 			envelope.Value = &value
@@ -331,6 +355,7 @@ type ImpactInput struct {
 	ContextLines    int      `json:"context_lines,omitempty" jsonschema:"excerpt context lines from 0 to 20"`
 	MaxLines        int      `json:"max_lines,omitempty" jsonschema:"maximum lines per excerpt; defaults to 200"`
 	SourceLimit     int      `json:"source_limit,omitempty" jsonschema:"maximum excerpts; defaults to 10"`
+	Kind            string   `json:"kind,omitempty" jsonschema:"optional node kind the selector must resolve to, such as function, method, type, or field"`
 }
 
 // ImpactOutput embeds the single report so scalar callers read it at the top
@@ -346,6 +371,7 @@ func (input ImpactInput) options() query.ImpactOptions {
 		UpstreamLimit: input.UpstreamLimit, DownstreamLimit: input.DownstreamLimit,
 		IncludeSource: input.IncludeSource, SourceContextLines: input.ContextLines,
 		SourceMaxLines: input.MaxLines, SourceLimit: input.SourceLimit,
+		Kind: graph.NodeKind(strings.TrimSpace(input.Kind)),
 	}
 	if options.UpstreamDepth == 0 {
 		options.UpstreamDepth = input.Depth
@@ -362,6 +388,42 @@ func (input ImpactInput) options() query.ImpactOptions {
 	return options
 }
 
+// GodotCompositionInput bounds one composition report or a batch of them.
+type GodotCompositionInput struct {
+	Selector  string   `json:"selector,omitempty" jsonschema:"qualified Godot scene, scene node, resource, script, or autoload name, or stable node ID"`
+	Selectors []string `json:"selectors,omitempty" jsonschema:"batch of Godot selectors reported in caller order"`
+	Kind      string   `json:"kind,omitempty" jsonschema:"optional node kind the selector must resolve to, such as godot_scene, godot_scene_node, godot_resource, godot_autoload, or module"`
+	Depth     int      `json:"depth,omitempty" jsonschema:"maximum scene-tree depth explored for a scene; defaults to 8"`
+	Limit     int      `json:"limit,omitempty" jsonschema:"maximum relations per section; defaults to 1000"`
+}
+
+// GodotCompositionOutput embeds the single report so scalar callers read it at
+// the top level while batched callers read Results.
+type GodotCompositionOutput struct {
+	query.GodotComposition
+	Results []ResultEnvelope[query.GodotComposition] `json:"results,omitempty"`
+}
+
+func (s *Service) getGodotComposition(ctx context.Context, _ *mcp.CallToolRequest, input GodotCompositionInput) (*mcp.CallToolResult, GodotCompositionOutput, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, GodotCompositionOutput{}, err
+	}
+	selectors, batched, err := batchInputs("selector", input.Selector, input.Selectors)
+	if err != nil {
+		return nil, GodotCompositionOutput{}, err
+	}
+	kind, err := graph.ParseNodeKind(input.Kind)
+	if err != nil {
+		return nil, GodotCompositionOutput{}, err
+	}
+	options := query.GodotCompositionOptions{Depth: input.Depth, Limit: input.Limit, Kind: kind}
+	results := runBatch(ctx, selectors, func(reportContext context.Context, selector string) (query.GodotComposition, error) {
+		return s.query.GodotComposition(reportContext, selector, options)
+	})
+	report, err := firstValue(results, batched)
+	return nil, GodotCompositionOutput{GodotComposition: report, Results: results}, err
+}
+
 func (s *Service) getBlastRadius(ctx context.Context, _ *mcp.CallToolRequest, input ImpactInput) (*mcp.CallToolResult, ImpactOutput, error) {
 	if err := s.ready(ctx); err != nil {
 		return nil, ImpactOutput{}, err
@@ -371,9 +433,9 @@ func (s *Service) getBlastRadius(ctx context.Context, _ *mcp.CallToolRequest, in
 		return nil, ImpactOutput{}, err
 	}
 	options := input.options()
-	results := runBatch(ctx, selectors, func(impactContext context.Context, selector string) (query.ImpactReport, error) {
+	results := runBatch(ctx, selectors, namingCandidates(func(impactContext context.Context, selector string) (query.ImpactReport, error) {
 		return s.query.Impact(impactContext, selector, options)
-	})
+	}))
 	report, err := firstValue(results, batched)
 	return nil, ImpactOutput{ImpactReport: report, Results: results}, err
 }
@@ -408,6 +470,74 @@ func (s *Service) searchSource(ctx context.Context, _ *mcp.CallToolRequest, inpu
 		MaxMatchesPattern: input.MaxMatchesPattern, MaxMatches: input.MaxMatches,
 		MaxFileBytes: input.MaxFileBytes,
 	})
+	return nil, result, err
+}
+
+type CatalogInput struct {
+	Repository string `json:"repository,omitempty" jsonschema:"restrict results to one indexed repository by name"`
+	Name       string `json:"name,omitempty" jsonschema:"optional name or qualified-name fragment"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"maximum catalog entries per section, and separately the maximum evidence sites per relation; defaults to 100 and may not exceed 1000"`
+}
+
+func (i CatalogInput) options() query.CatalogOptions {
+	return query.CatalogOptions{Repository: i.Repository, Name: i.Name, Limit: i.Limit}
+}
+
+type DataResourceInput struct {
+	CatalogInput
+	Kinds []string `json:"kinds,omitempty" jsonschema:"data resource kinds to catalog; defaults to table and view"`
+}
+
+func (s *Service) listDataResources(ctx context.Context, _ *mcp.CallToolRequest, input DataResourceInput) (*mcp.CallToolResult, query.DataResourceList, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.DataResourceList{}, err
+	}
+	kinds, err := nodeKinds(input.Kinds)
+	if err != nil {
+		return nil, query.DataResourceList{}, err
+	}
+	result, err := s.catalog.DataResources(ctx, kinds, input.options())
+	return nil, result, err
+}
+
+// DataResourceUsageInput deliberately omits the catalog name filter: the
+// selector already names the resource.
+type DataResourceUsageInput struct {
+	Selector   string `json:"selector" jsonschema:"table or view name, qualified name, or stable node ID"`
+	Repository string `json:"repository,omitempty" jsonschema:"restrict resolution to one indexed repository by name"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"maximum evidence sites per relation; defaults to 100 and may not exceed 1000"`
+}
+
+func (s *Service) getDataResourceUsage(ctx context.Context, _ *mcp.CallToolRequest, input DataResourceUsageInput) (*mcp.CallToolResult, query.DataResourceUsage, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.DataResourceUsage{}, err
+	}
+	options := query.CatalogOptions{Repository: input.Repository, Limit: input.Limit}
+	result, err := s.catalog.DataResourceUsage(ctx, input.Selector, options)
+	return nil, result, withCandidates(err)
+}
+
+func (s *Service) listConfigKeys(ctx context.Context, _ *mcp.CallToolRequest, input CatalogInput) (*mcp.CallToolResult, query.ConfigKeyList, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.ConfigKeyList{}, err
+	}
+	result, err := s.catalog.ConfigKeys(ctx, input.options())
+	return nil, result, err
+}
+
+func (s *Service) listEvents(ctx context.Context, _ *mcp.CallToolRequest, input CatalogInput) (*mcp.CallToolResult, query.EventList, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.EventList{}, err
+	}
+	result, err := s.catalog.Events(ctx, input.options())
+	return nil, result, err
+}
+
+func (s *Service) findOrphanedEvents(ctx context.Context, _ *mcp.CallToolRequest, input CatalogInput) (*mcp.CallToolResult, query.OrphanedEventList, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.OrphanedEventList{}, err
+	}
+	result, err := s.catalog.OrphanedEvents(ctx, input.options())
 	return nil, result, err
 }
 
@@ -453,6 +583,47 @@ func (s *Service) getIndexStatus(ctx context.Context, _ *mcp.CallToolRequest, _ 
 		return nil, StatusOutput{}, err
 	}
 	return nil, StatusOutput{Projects: s.projects, IndexedAt: indexedAt, IndexedCommit: commit, Counts: counts}, nil
+}
+
+// nodeKinds rejects a list that names no usable kind. Degrading it to the
+// default would answer a malformed request with a full catalog.
+func nodeKinds(values []string) ([]graph.NodeKind, error) {
+	result := make([]graph.NodeKind, 0, len(values))
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			result = append(result, graph.NodeKind(value))
+		}
+	}
+	if len(values) > 0 && len(result) == 0 {
+		return nil, fmt.Errorf("kinds contains no node kind")
+	}
+	return result, nil
+}
+
+// withCandidates names the ambiguous candidates in the error, because a tool
+// error carries no structured payload for a client to read them from. Batched
+// operations apply it through namingCandidates, since an envelope keeps only
+// the error's text.
+func withCandidates(err error) error {
+	var ambiguous *query.AmbiguousError
+	if !errors.As(err, &ambiguous) {
+		return err
+	}
+	names := make([]string, 0, len(ambiguous.Candidates))
+	for _, candidate := range ambiguous.Candidates {
+		names = append(names, fmt.Sprintf("%s [%s] %s", candidate.QualifiedName, candidate.Kind, candidate.ID))
+	}
+	return fmt.Errorf("%w; candidates: %s", err, strings.Join(names, "; "))
+}
+
+// namingCandidates wraps one batched operation so an ambiguous selector reports
+// its candidates in every response shape. runBatch flattens an error to its
+// text, so the candidates must be added before the envelope is built.
+func namingCandidates[T any](run func(context.Context, string) (T, error)) func(context.Context, string) (T, error) {
+	return func(ctx context.Context, input string) (T, error) {
+		value, err := run(ctx, input)
+		return value, withCandidates(err)
+	}
 }
 
 func edgeKinds(values []string) []graph.EdgeKind {

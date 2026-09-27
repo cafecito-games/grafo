@@ -55,6 +55,21 @@ type plan struct {
 	write    *fileWrite
 	commands [][]string
 	retry    *cliRetry
+	// removes are files this plan deletes; removeDirs are directories Grafo
+	// created that are deleted only when they end up empty.
+	removes    []string
+	removeDirs []string
+	// digest labels the content this plan writes, for the installed-artifact
+	// receipt; ownedCommands records the exact command lines the receipt must
+	// remember so a later uninstall can prove ownership. dropReceipt forgets the
+	// receipt instead.
+	digest        string
+	ownedCommands []string
+	dropReceipt   bool
+	// guardRoot re-checks user-configuration containment immediately before each
+	// write and delete. It is set for guidance artifacts, whose targets are
+	// root-bounded, and not for client configuration files a client CLI owns.
+	guardRoot bool
 }
 
 // adapter owns one client's identity, detection, and command or file surface.
@@ -66,8 +81,66 @@ type adapter interface {
 }
 
 // apply commits a plan through the mutating half of the environment.
+// guard re-validates a root-bounded target immediately before it is mutated.
+//
+// Containment is checked during planning, but the plan is applied afterwards, so
+// re-checking here narrows the window in which a parent directory could be
+// swapped for a symlink from the whole plan/apply cycle down to the interval
+// between this check and the syscall that follows it. That residual window is
+// accepted deliberately: closing it entirely would need directory file
+// descriptors threaded through the Environment seam, and the threat model does
+// not justify it. Grafo is a local, single-user CLI writing into the invoking
+// user's own configuration directory, so an attacker able to win this race
+// already has write access to that directory and could simply edit the target
+// files directly.
+//
+// O_NOFOLLOW is deliberately not used: the write path is a fresh temporary file
+// renamed over the leaf, and rename(2) replaces a leaf symlink rather than
+// writing through it, while deletion uses unlink(2), which never follows one. The
+// Lstat below therefore covers the leaf, and O_NOFOLLOW would only add
+// build-tagged platform code (it does not exist on Windows) without closing a
+// write-through hole.
+func (p plan) guard(reader Reader, display, path string) error {
+	if !p.guardRoot {
+		return nil
+	}
+	if err := checkUserConfigRoot(reader, path); err != nil {
+		return fmt.Errorf("%s artifact %s: %w", display, path, err)
+	}
+	if info, err := reader.Lstat(path); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to mutate %s artifact %s: the path is a symlink", display, path)
+	}
+	return nil
+}
+
 func (p plan) apply(ctx context.Context, env Environment, display, executable string) error {
+	for _, path := range p.removes {
+		if err := p.guard(env, display, path); err != nil {
+			return err
+		}
+		if err := env.Remove(path); err != nil {
+			return fmt.Errorf("remove %s artifact %s: %w", display, path, err)
+		}
+	}
+	// Directories Grafo created are removed only when empty, which os.Remove
+	// enforces for us, so a directory the user also uses survives.
+	for _, path := range p.removeDirs {
+		if path == "" {
+			continue
+		}
+		if err := p.guard(env, display, path); err != nil {
+			return err
+		}
+		_ = env.Remove(path)
+	}
 	if p.write != nil {
+		if err := p.guard(env, display, p.write.path); err != nil {
+			return err
+		}
+		// Final guard: never replace a symlink with a regular file.
+		if info, err := env.Lstat(p.write.path); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to replace %s configuration %s: the path is a symlink", display, p.write.path)
+		}
 		directory := parentPath(env.GOOS(), p.write.path)
 		if directory != "" {
 			if err := env.MkdirAll(directory, 0o755); err != nil {
@@ -374,13 +447,18 @@ func verifyGrafoOwnership(display, path string, raw json.RawMessage) error {
 }
 
 func ownedByGrafo(command string, arguments []string) bool {
+	if !grafoBinary(command) {
+		return false
+	}
+	return len(arguments) > 0 && arguments[0] == "mcp"
+}
+
+// grafoBinary reports whether a command path names the Grafo executable.
+func grafoBinary(command string) bool {
 	base := command
 	if index := strings.LastIndexAny(base, `/\`); index >= 0 {
 		base = base[index+1:]
 	}
 	base = strings.ToLower(strings.TrimSuffix(base, ".exe"))
-	if base != serverName {
-		return false
-	}
-	return len(arguments) > 0 && arguments[0] == "mcp"
+	return base == serverName
 }

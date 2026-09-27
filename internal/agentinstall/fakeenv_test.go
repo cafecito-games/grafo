@@ -19,25 +19,29 @@ type invocation struct {
 type writeRecord struct {
 	path string
 	data string
+	perm fs.FileMode
 }
 
 // fakeEnvironment is an in-memory Environment. Every mutating operation is
 // recorded, and strict mode turns any mutation into a recorded violation so a
 // test can prove that detection and dry-run wrote nothing.
 type fakeEnvironment struct {
-	goos    string
-	home    string
-	temp    string
-	vars    map[string]string
-	files   map[string]string
-	dirs    map[string]bool
-	lookups map[string]string
-	outputs map[string]string
-	runErrs map[string]error
+	goos     string
+	home     string
+	temp     string
+	vars     map[string]string
+	files    map[string]string
+	dirs     map[string]bool
+	lookups  map[string]string
+	outputs  map[string]string
+	runErrs  map[string]error
+	symlinks map[string]string
+	modes    map[string]fs.FileMode
 
 	onRun       func(name string, arguments []string) ([]byte, error)
 	invocations []invocation
 	writes      []writeRecord
+	removes     []string
 	mkdirs      []string
 	violations  []string
 	strict      bool
@@ -49,15 +53,17 @@ func newFakeEnvironment(goos, home string) *fakeEnvironment {
 		temp = `C:\Users\u\AppData\Local\Temp`
 	}
 	return &fakeEnvironment{
-		goos:    goos,
-		home:    home,
-		temp:    temp,
-		vars:    map[string]string{},
-		files:   map[string]string{},
-		dirs:    map[string]bool{},
-		lookups: map[string]string{},
-		outputs: map[string]string{},
-		runErrs: map[string]error{},
+		goos:     goos,
+		home:     home,
+		temp:     temp,
+		vars:     map[string]string{},
+		files:    map[string]string{},
+		dirs:     map[string]bool{},
+		lookups:  map[string]string{},
+		outputs:  map[string]string{},
+		runErrs:  map[string]error{},
+		symlinks: map[string]string{},
+		modes:    map[string]fs.FileMode{},
 	}
 }
 
@@ -100,11 +106,20 @@ type fakeInfo struct {
 	name  string
 	size  int64
 	isDir bool
+	mode  fs.FileMode
 }
 
-func (i fakeInfo) Name() string       { return i.name }
-func (i fakeInfo) Size() int64        { return i.size }
-func (i fakeInfo) Mode() fs.FileMode  { return 0o644 }
+func (i fakeInfo) Name() string { return i.name }
+func (i fakeInfo) Size() int64  { return i.size }
+func (i fakeInfo) Mode() fs.FileMode {
+	if i.mode != 0 {
+		return i.mode
+	}
+	if i.isDir {
+		return fs.ModeDir | 0o755
+	}
+	return 0o644
+}
 func (i fakeInfo) ModTime() time.Time { return time.Time{} }
 func (i fakeInfo) IsDir() bool        { return i.isDir }
 func (i fakeInfo) Sys() any           { return nil }
@@ -128,6 +143,52 @@ func (f *fakeEnvironment) Stat(name string) (fs.FileInfo, error) {
 		}
 	}
 	return nil, fs.ErrNotExist
+}
+
+// Lstat reports on a path without following symlinks. Seeded symlinks and file
+// modes let a test drive the installer's refusal paths.
+func (f *fakeEnvironment) Lstat(name string) (fs.FileInfo, error) {
+	if target, ok := f.symlinks[name]; ok {
+		return fakeInfo{name: name, size: int64(len(target)), mode: fs.ModeSymlink | 0o777}, nil
+	}
+	if contents, ok := f.files[name]; ok {
+		return fakeInfo{name: name, size: int64(len(contents)), mode: f.modes[name]}, nil
+	}
+	if f.dirs[name] {
+		return fakeInfo{name: name, isDir: true}, nil
+	}
+	return nil, fs.ErrNotExist
+}
+
+func (f *fakeEnvironment) Readlink(name string) (string, error) {
+	if target, ok := f.symlinks[name]; ok {
+		return target, nil
+	}
+	return "", errors.New("not a symlink")
+}
+
+func (f *fakeEnvironment) Remove(path string) error {
+	if f.strict {
+		f.violations = append(f.violations, "Remove "+path)
+		return errors.New("unexpected mutation")
+	}
+	if _, ok := f.files[path]; ok {
+		f.removes = append(f.removes, path)
+		delete(f.files, path)
+		return nil
+	}
+	if f.dirs[path] {
+		prefix := path + pathSeparator(f.goos)
+		for existing := range f.files {
+			if strings.HasPrefix(existing, prefix) {
+				return errors.New("directory not empty")
+			}
+		}
+		f.removes = append(f.removes, path)
+		delete(f.dirs, path)
+		return nil
+	}
+	return fs.ErrNotExist
 }
 
 func (f *fakeEnvironment) GOOS() string { return f.goos }
@@ -168,13 +229,14 @@ func (f *fakeEnvironment) MkdirAll(path string, _ fs.FileMode) error {
 	return nil
 }
 
-func (f *fakeEnvironment) WriteFileAtomic(path string, data []byte, _ fs.FileMode) error {
+func (f *fakeEnvironment) WriteFileAtomic(path string, data []byte, perm fs.FileMode) error {
 	if f.strict {
 		f.violations = append(f.violations, "WriteFileAtomic "+path)
 		return errors.New("unexpected mutation")
 	}
-	f.writes = append(f.writes, writeRecord{path: path, data: string(data)})
+	f.writes = append(f.writes, writeRecord{path: path, data: string(data), perm: perm})
 	f.files[path] = string(data)
+	f.modes[path] = perm
 	return nil
 }
 
@@ -185,7 +247,8 @@ func (f *fakeEnvironment) assertNoMutations(t *testing.T) {
 	if len(f.violations) > 0 {
 		t.Fatalf("unexpected mutations: %v", f.violations)
 	}
-	if len(f.writes) > 0 || len(f.mkdirs) > 0 || len(f.invocations) > 0 {
-		t.Fatalf("unexpected mutations: writes=%v mkdirs=%v invocations=%v", f.writes, f.mkdirs, f.invocations)
+	if len(f.writes) > 0 || len(f.mkdirs) > 0 || len(f.invocations) > 0 || len(f.removes) > 0 {
+		t.Fatalf("unexpected mutations: writes=%v mkdirs=%v invocations=%v removes=%v",
+			f.writes, f.mkdirs, f.invocations, f.removes)
 	}
 }

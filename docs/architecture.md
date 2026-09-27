@@ -21,6 +21,7 @@ storage can evolve independently.
        ├─ defaults/*       production registry shared by CLI and evaluation
        ├─ gdscript/*       gdparser GDScript AST adapter
        ├─ godot/*          gdparser scene, resource, config, UID, and shader adapters
+       │   └─ godotid/*    Godot resource identity, project scope, and UID aliases
        ├─ java/*           Tree-sitter Java AST adapter
        ├─ swift/*          Tree-sitter Swift AST adapter
        └─ sql/*            dialect adapters such as PostgreSQL
@@ -128,6 +129,59 @@ never the only evidence. Optional source excerpts arrive through a narrow
 `SourceReader` port; `internal/source` adapts to it, which keeps the dependency
 pointing from source retrieval to query and not back.
 
+## Godot composition
+
+`internal/graph` owns the Godot composition vocabulary: `godot_scene`,
+`godot_resource`, `godot_scene_node`, and `godot_autoload` nodes joined by
+`instantiates`, `attaches_script`, and `autoloads` edges. Promoting these from
+generic modules and variables is a semantic schema change, so the graph schema
+and semantic index versions move together and an older index rebuilds instead of
+serving both vocabularies at once.
+
+`internal/parser/godot/godotid` is the single Godot resource identity resolver,
+shared by the text-resource, UID sidecar, configuration, shader, and GDScript
+producers so one resource has one qualified name whatever evidence named it.
+Canonical identity is the repository-relative path without its extension, but a
+`res://` reference is *project*-relative: it resolves against the directory of
+the nearest ancestor `project.godot`, so a Godot project in a monorepo
+subdirectory targets identities under that subdirectory instead of identities no
+file owns. Identity and reference resolution are therefore separate entry points
+(`Identity` and `Resolve`); nothing canonicalizes a reference without knowing
+which project owns it. The project directory is also a boundary, not just an
+origin: a reference that traverses out of its own project resolves to nothing and
+is diagnosed, because `res://` names a location inside one project by definition
+and in a monorepo whatever it lands on usually belongs to a different project.
+
+UIDs are aliases, never identity: the resource that owns a UID declares it and
+references carry it as evidence. Because a path that contradicts its UID would
+otherwise produce a confident edge to the wrong resource, the package also owns a
+repository-wide alias table of UID declarations, built from text-resource
+headers, `.uid` sidecars, and `.import` sidecars with bounded header reads. A
+reference whose UID is declared by a different resource, or by several, produces
+a diagnostic and no resolved edge; a UID that is not declared anywhere cannot
+contradict anything, so the path stands and an absent target remains an explicit
+external node. The check runs in that direction only, because canonical identity
+drops the extension: a scene and its script share one identity while declaring
+two UIDs of their own, so "this path declares some other UID" is not evidence of
+disagreement. That table plus the set of `project.godot` locations is the Godot
+parser's workspace semantic key, so a UID or project move reparses the files
+whose resolution it changes even when their own content is untouched.
+
+Autoload identity is scoped to the declaring `project.godot`
+(`godot:autoload:<project.godot path>:<Name>`), which keeps two projects in one
+repository that both declare `Game` independently addressable. A GDScript use of
+an autoload name resolves only against an exact, unshadowed, singly declared
+autoload that Godot actually exposes as a global singleton: a declaration
+without the leading `*` marker keeps its node and its `autoloads` edge, because
+the declaration is real, but satisfies no global identifier reference.
+
+Scene inheritance is an `instantiates` edge from both the inheriting scene and
+its root node, never language `extends`, so scene composition is never confused
+with class inheritance. `internal/query` assembles inbound and outbound
+instances, script attachments, and autoload availability from those edges only;
+it introduces no vocabulary of its own and reports an unresolved target as an
+external node rather than omitting it.
+
 ## Source retrieval
 
 Source retrieval begins with normal deterministic node resolution; it never
@@ -161,6 +215,133 @@ macOS, Linux, and Windows layouts are all testable anywhere. File-backed
 adapters parse structurally, preserve unknown keys and ordering, and replace
 files atomically; uninstall removes only a registration Grafo owns.
 
+Agent guidance is a second artifact kind on the same seam. `internal/agentguide`
+owns one embedded playbook, one format version, and the exact begin/end markers
+that make an installed copy provably Grafo-owned; it renders either an isolated
+skill file or a delimited managed block and never touches bytes outside its
+markers. `internal/agentinstall` declares, per client, which documented
+user-scoped surfaces exist, refuses targets that are symlinks, non-regular,
+world-writable, or outside the user configuration roots, and treats a conflicting
+or unowned file as a reported conflict rather than something to repair. Advisory
+hooks are opt-in, capability-gated to a client whose hook API is documented, and
+fail open because the hook command always exits 0. Every mutation is followed by
+a receipt under the Grafo configuration directory recording target, digest,
+guidance version, and marker, so uninstall and upgrade prove ownership from
+receipts plus exact markers instead of substring matching.
+
+## Background service and diagnostics
+
+`internal/service` orchestrates indexing across repositories; it never implements
+a second indexer. Three authorities are consumed rather than duplicated: a
+user-level registry (`$XDG_CONFIG_HOME/grafo/watched-roots.json`, written
+atomically at mode 0600 under an exclusive lock) owns which roots are watched,
+`indexer.DiscoverProject` owns branch and index identity, and
+`internal/indexer` owns indexing semantics. A malformed or unreadable registry
+blocks every mutation and reports how to recover.
+
+The concurrency model has three layers. Exactly one supervisor process per user
+is admitted by an exclusive kernel-backed lock on `service.lock` in the state
+directory. Inside it, at most one goroutine works on a root at a time and at most
+`--concurrency` roots index at once. Every indexing run - background or
+foreground `grafo index`/`grafo watch` - holds the per-index lock beside the
+branch database, so the two can never write one index concurrently. A killed
+supervisor therefore needs no cleanup: the kernel drops its locks, SQLite rolls
+back the uncommitted transaction, and the next pass rediscovers and reconciles
+from the committed index, which makes restarts idempotent.
+
+Change hints are debounced and advisory; periodic reconciliation runs regardless,
+so a lossy or missing platform watcher only affects latency. A watcher overflow
+hint schedules one bounded full reconciliation of that root. A root that is
+temporarily unreadable is paused for the pass with its registration and indexes
+preserved; a definitively deleted root is reported and never pruned implicitly. If
+branch identity cannot be proven, the root is not indexed at all, so one branch is
+never written into another branch's database. One failing root never stops
+another: failures are recorded per root and exposed in the status file. The
+bounded, rotating log records paths, counts, timings, and errors, with every field
+collapsed to a single line; there is no API that accepts file content, so source
+text cannot reach it.
+
+Platform adapters own the generated launchd plist and systemd user unit, each
+carrying an exact version marker and pointing at the absolute installed binary
+and a stable `--state-dir`. Installation is idempotent; a definition that differs
+from the generated content is replaced only when a receipt in the shared
+`agentinstall` ledger proves Grafo wrote the bytes on disk, and is otherwise
+reported as a conflict. Ownership and path containment reuse `agentinstall`'s
+receipt ledger and user-configuration-root check rather than adding a second
+mechanism.
+
+Four rules keep that boundary honest:
+
+- Ownership is bound to one **resolved path**, not to the artifact kind
+  (`agentinstall.OwnedFileAt`). A receipt written for one definition location can
+  never authorize creating, replacing, or activating a definition somewhere else.
+  This is the contract PR #53 established for hook receipts.
+- Ownership is decided **before any action**. Stopping or disabling a service is
+  itself a mutation, so a unit at Grafo's path that Grafo cannot prove it wrote is
+  never stopped, disabled, or removed - only reported.
+- Generated content is **escaped for its own syntax**. `ExecStart` is a systemd
+  command line, so each path is quoted with systemd's escapes and `%` is doubled
+  so no specifier expands; a path carrying a control character cannot be
+  represented and is refused with a diagnostic rather than emitted broken. plist
+  arguments are separate XML elements and are XML-escaped.
+- A definition may only name a **durable executable**. `InstallableBinary` refuses
+  a path inside the temporary directory (`$TMPDIR`/`$GOTMPDIR`), inside the Go
+  build cache (`$GOCACHE` or the per-user cache directory's `go-build` subtree),
+  or inside a `go-build<digits>` build directory, because a unit that outlives the
+  command must not point into a directory the toolchain deletes. The first two are
+  decided by containment in directories the environment reports. The third is the
+  only name rule, applies when those signals are absent, and matches just the
+  shape the toolchain creates: refusing a durable prefix such as
+  `/opt/go-builder/bin` would be as much a defect as accepting an ephemeral path,
+  so `go-builder`, `go-build-tools` and a plain `go-build` directory outside every
+  cache root all remain installable.
+
+Whether an installed definition still starts the running binary is decided by
+parsing the platform's documented command field and comparing whole resolved
+paths, never by searching the file for the binary path: a substring test reports
+`/opt/grafo-next/grafo` as correct while `/opt/grafo` is running.
+
+`grafo doctor` reads the binary, registry, per-root branch and index state, the
+platform service, the supervisor status file, and the agent registrations from the
+same client registry the installer uses; without `--repair` it mutates nothing.
+`--repair` performs only four enumerated repairs: unregister a definitively
+missing root that overlaps no other registration, refresh Grafo-owned agent
+artifacts that a receipt proves Grafo installed, recreate a service definition
+Grafo installed, and restart a stale service. Everything else is reported with an
+actionable manual step.
+
+## Catalogs and orphan detection
+
+`internal/graph` owns the resource kind and relationship vocabulary; a single
+catalog use case in `internal/query` owns usage direction and orphan
+classification. Storage adapters implement one narrow listing port,
+`graph.NodeListRepository`, which enumerates nodes by exact kind and attributes
+each one to an indexed repository. Adapters never interpret semantics, so a new
+catalog needs no new SQL and a new resource kind needs no presentation change.
+
+Node visibility is explicit rather than implicit: an enumeration asks for local
+declarations, unresolved external targets, or both, so a catalog never silently
+mixes a declaration with an unresolved reference. Each catalog reports the two
+classes in separate sections.
+
+Orphan status is a query result, never a persisted edge or diagnostic. An event
+with both a producer and a consumer is not reported. A one-sided event is
+classified as published-without-consumer, consumed-without-producer, or
+declared-with-neither, and its status is downgraded from orphaned to unknown
+whenever an unresolved target could be the missing counterpart or a bound cut
+off part of the evidence. Each relation is bounded independently, because a
+budget shared in edge order would let one relation starve another into looking
+empty and turn a bound into a false absence claim. Because a
+federated edge keeps the fact identity of the unresolved edge it replaced,
+resolved cross-repository evidence is never double-counted as uncertainty. An
+event name that no declaration resolves is always unknown: the index does not
+bound where such a name is published or consumed.
+
+Configuration output is value-free by construction. Only properties on an
+explicit non-secret metadata list are returned, and the names of withheld
+properties are reported so a future parser that records a value cannot leak it
+through a catalog.
+
 ## Persistence
 
 Each branch has a separate SQLite file under `.grafo/indexes`. The database is
@@ -182,10 +363,14 @@ Grafo does not require sqlc.
   the router. Dialects emit the shared table/view/column/index graph vocabulary,
   while the router records the selected dialect in node metadata.
 - Add storage by implementing the small `IndexRepository`, `QueryRepository`,
-  `StatusRepository`, and `FileCatalog` ports.
+  `StatusRepository`, `FileCatalog`, and `NodeListRepository` ports.
+- Add a catalog by reusing `NodeListRepository` with another node kind; extend
+  `graph.DataResourceKinds` to widen the data catalog.
 - Add an MCP client by adding one adapter to the `internal/agentinstall`
   registry. Declare a client only when both install and uninstall use a
-  documented surface covered by fixtures.
+  documented surface covered by fixtures. Add a guidance surface for it only when
+  the client documents a user-scoped instruction or hook API that install and
+  uninstall can both drive safely.
 - Add new relationships as facts first; keep graph-candidate reconciliation in
   the repository. A parser may provide an exact qualified target when its
   language's authoritative semantic model proves object identity.

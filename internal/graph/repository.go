@@ -59,6 +59,9 @@ type InstrumentedWriteRepository interface {
 // QueryRepository is the read-only port used by graph traversal use cases.
 type QueryRepository interface {
 	SearchNodes(context.Context, string, int) ([]Node, error)
+	// MatchNodes returns the strongest non-empty match evidence for a selector.
+	// Selector resolution depends on its contract; see NodeMatchGroup.
+	MatchNodes(context.Context, NodeMatchQuery) (NodeMatchGroup, error)
 	Node(context.Context, string) (Node, error)
 	EdgesFrom(context.Context, string) ([]Edge, error)
 	EdgesTo(context.Context, string) ([]Edge, error)
@@ -68,6 +71,51 @@ type QueryRepository interface {
 // federation. It remains separate so traversal use cases do not require it.
 type ExternalEdgeRepository interface {
 	ExternalEdgesTo(context.Context, Node) ([]Edge, error)
+}
+
+// NodeVisibility selects whether an enumeration returns locally declared
+// nodes, unresolved external nodes, or both.
+type NodeVisibility string
+
+const (
+	LocalNodes    NodeVisibility = "local"
+	ExternalNodes NodeVisibility = "external"
+	AllNodes      NodeVisibility = "all"
+)
+
+// NodeListQuery selects nodes for catalog use cases. It expresses enumeration
+// only: exact kinds, an optional name fragment, and explicit bounds.
+type NodeListQuery struct {
+	Kinds      []NodeKind
+	Name       string
+	Repository string
+	// Visibility defaults to LocalNodes so a catalog never silently mixes
+	// declarations with unresolved external targets.
+	Visibility NodeVisibility
+	// Limit bounds the rows returned for each requested kind. Callers that
+	// merge several kinds apply their own total bound and report truncation.
+	Limit int
+}
+
+// ScopedNode pairs a node with the indexed repository that stores it.
+type ScopedNode struct {
+	Repository string `json:"repository,omitempty"`
+	Node       Node   `json:"node"`
+}
+
+// NodeListRepository enumerates nodes by exact kind and attributes them to an
+// indexed repository. Adapters only enumerate; catalog semantics such as usage
+// direction and orphan classification stay in the query use cases.
+type NodeListRepository interface {
+	Repositories(context.Context) ([]string, error)
+	ListNodesByKind(context.Context, NodeListQuery) ([]ScopedNode, error)
+}
+
+// CatalogRepository is the read port the data, configuration, and event
+// catalogs depend on.
+type CatalogRepository interface {
+	QueryRepository
+	NodeListRepository
 }
 
 // StatusRepository exposes only metadata and aggregate counts.

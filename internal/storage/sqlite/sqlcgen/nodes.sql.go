@@ -20,6 +20,91 @@ func (q *Queries) CountExternalNodes(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countNodeMatchesByName = `-- name: CountNodeMatchesByName :one
+SELECT
+    COUNT(*) AS total,
+    CAST(COALESCE(SUM(CASE WHEN name = ?1 THEN 1 ELSE 0 END), 0) AS INTEGER) AS strict_matches
+FROM nodes
+WHERE name = ?1 COLLATE NOCASE
+  AND external = CAST(?2 AS INTEGER)
+  AND (CAST(?3 AS TEXT) = '' OR kind = CAST(?3 AS TEXT))
+`
+
+type CountNodeMatchesByNameParams struct {
+	Target   string `json:"target"`
+	External int64  `json:"external"`
+	Kind     string `json:"kind"`
+}
+
+type CountNodeMatchesByNameRow struct {
+	Total         int64 `json:"total"`
+	StrictMatches int64 `json:"strict_matches"`
+}
+
+func (q *Queries) CountNodeMatchesByName(ctx context.Context, arg CountNodeMatchesByNameParams) (CountNodeMatchesByNameRow, error) {
+	row := q.queryRow(ctx, q.countNodeMatchesByNameStmt, countNodeMatchesByName, arg.Target, arg.External, arg.Kind)
+	var i CountNodeMatchesByNameRow
+	err := row.Scan(&i.Total, &i.StrictMatches)
+	return i, err
+}
+
+const countNodeMatchesByQualifiedName = `-- name: CountNodeMatchesByQualifiedName :one
+SELECT
+    COUNT(*) AS total,
+    CAST(COALESCE(SUM(CASE WHEN qualified_name = ?1 THEN 1 ELSE 0 END), 0) AS INTEGER) AS strict_matches
+FROM nodes
+WHERE qualified_name = ?1 COLLATE NOCASE
+  AND external = CAST(?2 AS INTEGER)
+  AND (CAST(?3 AS TEXT) = '' OR kind = CAST(?3 AS TEXT))
+`
+
+type CountNodeMatchesByQualifiedNameParams struct {
+	Target   string `json:"target"`
+	External int64  `json:"external"`
+	Kind     string `json:"kind"`
+}
+
+type CountNodeMatchesByQualifiedNameRow struct {
+	Total         int64 `json:"total"`
+	StrictMatches int64 `json:"strict_matches"`
+}
+
+func (q *Queries) CountNodeMatchesByQualifiedName(ctx context.Context, arg CountNodeMatchesByQualifiedNameParams) (CountNodeMatchesByQualifiedNameRow, error) {
+	row := q.queryRow(ctx, q.countNodeMatchesByQualifiedNameStmt, countNodeMatchesByQualifiedName, arg.Target, arg.External, arg.Kind)
+	var i CountNodeMatchesByQualifiedNameRow
+	err := row.Scan(&i.Total, &i.StrictMatches)
+	return i, err
+}
+
+const countNodeMatchesBySubstring = `-- name: CountNodeMatchesBySubstring :one
+SELECT
+    COUNT(*) AS total,
+    CAST(COALESCE(SUM(CASE WHEN instr(qualified_name, ?1) > 0 OR instr(name, ?1) > 0 THEN 1 ELSE 0 END), 0) AS INTEGER) AS strict_matches
+FROM nodes
+WHERE (lower(name) LIKE '%' || lower(?1) || '%'
+    OR lower(qualified_name) LIKE '%' || lower(?1) || '%')
+  AND external = CAST(?2 AS INTEGER)
+  AND (CAST(?3 AS TEXT) = '' OR kind = CAST(?3 AS TEXT))
+`
+
+type CountNodeMatchesBySubstringParams struct {
+	Target   string `json:"target"`
+	External int64  `json:"external"`
+	Kind     string `json:"kind"`
+}
+
+type CountNodeMatchesBySubstringRow struct {
+	Total         int64 `json:"total"`
+	StrictMatches int64 `json:"strict_matches"`
+}
+
+func (q *Queries) CountNodeMatchesBySubstring(ctx context.Context, arg CountNodeMatchesBySubstringParams) (CountNodeMatchesBySubstringRow, error) {
+	row := q.queryRow(ctx, q.countNodeMatchesBySubstringStmt, countNodeMatchesBySubstring, arg.Target, arg.External, arg.Kind)
+	var i CountNodeMatchesBySubstringRow
+	err := row.Scan(&i.Total, &i.StrictMatches)
+	return i, err
+}
+
 const countNodes = `-- name: CountNodes :one
 SELECT COUNT(*) FROM nodes
 `
@@ -197,6 +282,264 @@ func (q *Queries) GetNode(ctx context.Context, id string) (Node, error) {
 		&i.External,
 	)
 	return i, err
+}
+
+const listNodesByKind = `-- name: ListNodesByKind :many
+SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, owner_file, external FROM nodes
+WHERE kind = ?1
+  AND external >= ?2
+  AND external <= ?3
+  AND (instr(lower(name), ?4) > 0 OR instr(lower(qualified_name), ?4) > 0)
+ORDER BY qualified_name, id
+LIMIT ?5
+`
+
+type ListNodesByKindParams struct {
+	Kind         string `json:"kind"`
+	MinExternal  int64  `json:"min_external"`
+	MaxExternal  int64  `json:"max_external"`
+	NameFragment string `json:"name_fragment"`
+	MaxResults   int64  `json:"max_results"`
+}
+
+func (q *Queries) ListNodesByKind(ctx context.Context, arg ListNodesByKindParams) ([]Node, error) {
+	rows, err := q.query(ctx, q.listNodesByKindStmt, listNodesByKind,
+		arg.Kind,
+		arg.MinExternal,
+		arg.MaxExternal,
+		arg.NameFragment,
+		arg.MaxResults,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Node{}
+	for rows.Next() {
+		var i Node
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Name,
+			&i.QualifiedName,
+			&i.Language,
+			&i.Path,
+			&i.Line,
+			&i.ColumnNo,
+			&i.EndLine,
+			&i.Properties,
+			&i.OwnerFile,
+			&i.External,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const matchNodesByName = `-- name: MatchNodesByName :many
+SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line,
+       properties, owner_file, external
+FROM (
+    SELECT nodes.id, nodes.kind, nodes.name, nodes.qualified_name, nodes.language, nodes.path, nodes.line, nodes.column_no, nodes.end_line, nodes.properties, nodes.owner_file, nodes.external, CASE WHEN name = ?1 THEN 0 ELSE 1 END AS strict_rank
+    FROM nodes
+    WHERE name = ?1 COLLATE NOCASE
+      AND external = CAST(?2 AS INTEGER)
+      AND (CAST(?3 AS TEXT) = '' OR kind = CAST(?3 AS TEXT))
+)
+ORDER BY strict_rank, length(qualified_name), qualified_name, id
+LIMIT ?4
+`
+
+type MatchNodesByNameParams struct {
+	Target     string `json:"target"`
+	External   int64  `json:"external"`
+	Kind       string `json:"kind"`
+	MaxResults int64  `json:"max_results"`
+}
+
+func (q *Queries) MatchNodesByName(ctx context.Context, arg MatchNodesByNameParams) ([]Node, error) {
+	rows, err := q.query(ctx, q.matchNodesByNameStmt, matchNodesByName,
+		arg.Target,
+		arg.External,
+		arg.Kind,
+		arg.MaxResults,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Node{}
+	for rows.Next() {
+		var i Node
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Name,
+			&i.QualifiedName,
+			&i.Language,
+			&i.Path,
+			&i.Line,
+			&i.ColumnNo,
+			&i.EndLine,
+			&i.Properties,
+			&i.OwnerFile,
+			&i.External,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const matchNodesByQualifiedName = `-- name: MatchNodesByQualifiedName :many
+
+SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line,
+       properties, owner_file, external
+FROM (
+    SELECT nodes.id, nodes.kind, nodes.name, nodes.qualified_name, nodes.language, nodes.path, nodes.line, nodes.column_no, nodes.end_line, nodes.properties, nodes.owner_file, nodes.external, CASE WHEN qualified_name = ?1 THEN 0 ELSE 1 END AS strict_rank
+    FROM nodes
+    WHERE qualified_name = ?1 COLLATE NOCASE
+      AND external = CAST(?2 AS INTEGER)
+      AND (CAST(?3 AS TEXT) = '' OR kind = CAST(?3 AS TEXT))
+)
+ORDER BY strict_rank, length(qualified_name), qualified_name, id
+LIMIT ?4
+`
+
+type MatchNodesByQualifiedNameParams struct {
+	Target     string `json:"target"`
+	External   int64  `json:"external"`
+	Kind       string `json:"kind"`
+	MaxResults int64  `json:"max_results"`
+}
+
+// Selector resolution queries. Each level is narrow and index-backed so
+// ambiguity is decided from complete counts instead of a truncated substring
+// window. nodes_qualified and nodes_name are COLLATE NOCASE indexes, so the
+// case-insensitive equality below stays an index seek; the case-sensitive
+// ("strict") form is counted separately because it is stronger evidence.
+// @external selects the scope rather than discarding one: the adapter asks for
+// local declarations first and falls back to external boundary nodes, so exact
+// evidence about an external target is still exact rather than being pushed down
+// into the weaker substring level.
+func (q *Queries) MatchNodesByQualifiedName(ctx context.Context, arg MatchNodesByQualifiedNameParams) ([]Node, error) {
+	rows, err := q.query(ctx, q.matchNodesByQualifiedNameStmt, matchNodesByQualifiedName,
+		arg.Target,
+		arg.External,
+		arg.Kind,
+		arg.MaxResults,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Node{}
+	for rows.Next() {
+		var i Node
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Name,
+			&i.QualifiedName,
+			&i.Language,
+			&i.Path,
+			&i.Line,
+			&i.ColumnNo,
+			&i.EndLine,
+			&i.Properties,
+			&i.OwnerFile,
+			&i.External,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const matchNodesBySubstring = `-- name: MatchNodesBySubstring :many
+SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line,
+       properties, owner_file, external
+FROM (
+    SELECT nodes.id, nodes.kind, nodes.name, nodes.qualified_name, nodes.language, nodes.path, nodes.line, nodes.column_no, nodes.end_line, nodes.properties, nodes.owner_file, nodes.external,
+        CASE WHEN instr(qualified_name, ?1) > 0 OR instr(name, ?1) > 0 THEN 0 ELSE 1 END AS strict_rank
+    FROM nodes
+    WHERE (lower(name) LIKE '%' || lower(?1) || '%'
+        OR lower(qualified_name) LIKE '%' || lower(?1) || '%')
+      AND external = CAST(?2 AS INTEGER)
+      AND (CAST(?3 AS TEXT) = '' OR kind = CAST(?3 AS TEXT))
+)
+ORDER BY strict_rank, length(qualified_name), qualified_name, id
+LIMIT ?4
+`
+
+type MatchNodesBySubstringParams struct {
+	Target     string `json:"target"`
+	External   int64  `json:"external"`
+	Kind       string `json:"kind"`
+	MaxResults int64  `json:"max_results"`
+}
+
+func (q *Queries) MatchNodesBySubstring(ctx context.Context, arg MatchNodesBySubstringParams) ([]Node, error) {
+	rows, err := q.query(ctx, q.matchNodesBySubstringStmt, matchNodesBySubstring,
+		arg.Target,
+		arg.External,
+		arg.Kind,
+		arg.MaxResults,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Node{}
+	for rows.Next() {
+		var i Node
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Name,
+			&i.QualifiedName,
+			&i.Language,
+			&i.Path,
+			&i.Line,
+			&i.ColumnNo,
+			&i.EndLine,
+			&i.Properties,
+			&i.OwnerFile,
+			&i.External,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const searchNodes = `-- name: SearchNodes :many

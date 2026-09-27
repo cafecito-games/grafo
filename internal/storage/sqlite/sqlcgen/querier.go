@@ -19,6 +19,9 @@ type Querier interface {
 	CountExternalNodes(ctx context.Context) (int64, error)
 	CountFacts(ctx context.Context) (int64, error)
 	CountFiles(ctx context.Context) (int64, error)
+	CountNodeMatchesByName(ctx context.Context, arg CountNodeMatchesByNameParams) (CountNodeMatchesByNameRow, error)
+	CountNodeMatchesByQualifiedName(ctx context.Context, arg CountNodeMatchesByQualifiedNameParams) (CountNodeMatchesByQualifiedNameRow, error)
+	CountNodeMatchesBySubstring(ctx context.Context, arg CountNodeMatchesBySubstringParams) (CountNodeMatchesBySubstringRow, error)
 	CountNodes(ctx context.Context) (int64, error)
 	CountNodesByKind(ctx context.Context) ([]CountNodesByKindRow, error)
 	DeleteAllEdges(ctx context.Context) error
@@ -44,6 +47,7 @@ type Querier interface {
 	ListEmbeddingsByModel(ctx context.Context, model string) ([]Embedding, error)
 	ListExternalEdgesMatching(ctx context.Context, arg ListExternalEdgesMatchingParams) ([]Edge, error)
 	ListFiles(ctx context.Context) ([]File, error)
+	ListNodesByKind(ctx context.Context, arg ListNodesByKindParams) ([]Node, error)
 	ListSemanticCandidateNodes(ctx context.Context) ([]Node, error)
 	MarkDirtyNode(ctx context.Context, nodeID string) error
 	MarkDirtyOwner(ctx context.Context, ownerFile string) error
@@ -51,6 +55,18 @@ type Querier interface {
 	MarkOwnedNamesDirty(ctx context.Context, arg MarkOwnedNamesDirtyParams) error
 	MarkOwnedNodesDirty(ctx context.Context, ownerFile string) error
 	MarkReconciliationCleanup(ctx context.Context) error
+	MatchNodesByName(ctx context.Context, arg MatchNodesByNameParams) ([]Node, error)
+	// Selector resolution queries. Each level is narrow and index-backed so
+	// ambiguity is decided from complete counts instead of a truncated substring
+	// window. nodes_qualified and nodes_name are COLLATE NOCASE indexes, so the
+	// case-insensitive equality below stays an index seek; the case-sensitive
+	// ("strict") form is counted separately because it is stronger evidence.
+	// @external selects the scope rather than discarding one: the adapter asks for
+	// local declarations first and falls back to external boundary nodes, so exact
+	// evidence about an external target is still exact rather than being pushed down
+	// into the weaker substring level.
+	MatchNodesByQualifiedName(ctx context.Context, arg MatchNodesByQualifiedNameParams) ([]Node, error)
+	MatchNodesBySubstring(ctx context.Context, arg MatchNodesBySubstringParams) ([]Node, error)
 	PruneDirtyFacts(ctx context.Context) error
 	ReconciliationCleanupPending(ctx context.Context) (bool, error)
 	SearchNodes(ctx context.Context, arg SearchNodesParams) ([]Node, error)

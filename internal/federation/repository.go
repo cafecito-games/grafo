@@ -28,6 +28,7 @@ type Repository struct {
 }
 
 var _ graph.ReadRepository = (*Repository)(nil)
+var _ graph.CatalogRepository = (*Repository)(nil)
 var _ semantic.Repository = (*Repository)(nil)
 var _ sourcecontext.ProjectLocator = (*Repository)(nil)
 
@@ -227,6 +228,138 @@ func (r *Repository) SearchNodes(ctx context.Context, term string, limit int) ([
 	return result, nil
 }
 
+// Repositories names every indexed repository in this federation.
+func (r *Repository) Repositories(_ context.Context) ([]string, error) {
+	result := make([]string, 0, len(r.members))
+	for _, item := range r.members {
+		result = append(result, item.project.Name)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+// ListNodesByKind enumerates catalog nodes across members and attributes each
+// one to the repository that declares it. The per-kind bound applies to every
+// member, so the caller still applies its own total bound.
+func (r *Repository) ListNodesByKind(ctx context.Context, request graph.NodeListQuery) ([]graph.ScopedNode, error) {
+	result := []graph.ScopedNode{}
+	seen := map[string]bool{}
+	for _, item := range r.members {
+		if request.Repository != "" && request.Repository != item.project.Name {
+			continue
+		}
+		lister, ok := item.repository.(graph.NodeListRepository)
+		if !ok {
+			return nil, fmt.Errorf("repository %s does not support node catalogs", item.project.Name)
+		}
+		member := request
+		member.Repository = ""
+		scopedNodes, err := lister.ListNodesByKind(ctx, member)
+		if err != nil {
+			return nil, err
+		}
+		for _, scoped := range scopedNodes {
+			if seen[scoped.Node.ID] {
+				continue
+			}
+			seen[scoped.Node.ID] = true
+			// Several members may record the same unresolved target, so
+			// attributing one of them would invent a home for a name no
+			// repository declares.
+			scoped.Repository = ""
+			if !scoped.Node.External {
+				scoped.Repository = item.project.Name
+			}
+			result = append(result, scoped)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Node.QualifiedName != result[j].Node.QualifiedName {
+			return result[i].Node.QualifiedName < result[j].Node.QualifiedName
+		}
+		if result[i].Node.Kind != result[j].Node.Kind {
+			return result[i].Node.Kind < result[j].Node.Kind
+		}
+		if result[i].Repository != result[j].Repository {
+			return result[i].Repository < result[j].Repository
+		}
+		return result[i].Node.ID < result[j].Node.ID
+	})
+	return result, nil
+}
+
+// MatchNodes merges the per-member match evidence for a selector. Only the
+// strongest evidence any member reported contributes - the strongest level, and
+// within it a local group over an external fallback - because a member holding
+// stronger evidence always reports it itself. Totals sum across the contributing
+// members so a federated ambiguity still states the true count.
+func (r *Repository) MatchNodes(ctx context.Context, request graph.NodeMatchQuery) (graph.NodeMatchGroup, error) {
+	selector := strings.TrimSpace(request.Selector)
+	if selector == "" {
+		return graph.NodeMatchGroup{}, nil
+	}
+	limit := request.Limit
+	if limit <= 0 {
+		limit = sqlite.DefaultNodeMatchLimit
+	}
+	request.Selector, request.Limit = selector, limit
+	merged := graph.NodeMatchGroup{Level: graph.MatchNone}
+	byID := map[string]graph.Node{}
+	complete := true
+	for _, item := range r.members {
+		group, err := item.repository.MatchNodes(ctx, request)
+		if err != nil {
+			return graph.NodeMatchGroup{}, err
+		}
+		if group.Total == 0 || merged.StrongerThan(group) {
+			continue
+		}
+		if group.StrongerThan(merged) {
+			merged = graph.NodeMatchGroup{Level: group.Level, External: group.External}
+			byID = map[string]graph.Node{}
+			complete = true
+		}
+		if group.Truncated() {
+			complete = false
+		}
+		merged.Total += group.Total
+		merged.Strict += group.Strict
+		for _, node := range group.Nodes {
+			if existing, ok := byID[node.ID]; !ok || (existing.External && !node.External) {
+				byID[node.ID] = node
+			}
+		}
+	}
+	if merged.Level == graph.MatchNone {
+		return graph.NodeMatchGroup{}, nil
+	}
+	merged.Nodes = make([]graph.Node, 0, len(byID))
+	for _, node := range byID {
+		merged.Nodes = append(merged.Nodes, node)
+	}
+	graph.SortNodeMatches(merged.Level, selector, merged.Nodes)
+	// A node indexed by several members is one candidate, not several. When every
+	// contributing member listed its complete set, the deduplicated list is the
+	// authority for the totals; otherwise summed member totals are the best
+	// available bound and stay an over-count rather than an under-count.
+	if complete {
+		merged.Total = len(merged.Nodes)
+		merged.Strict = 0
+		for _, node := range merged.Nodes {
+			if graph.StrictMatch(merged.Level, selector, node) {
+				merged.Strict++
+			}
+		}
+	}
+	if len(merged.Nodes) > limit {
+		merged.Nodes = merged.Nodes[:limit]
+	}
+	if merged.Total < len(merged.Nodes) {
+		merged.Total = len(merged.Nodes)
+	}
+	return merged, nil
+}
+
 func (r *Repository) Node(ctx context.Context, id string) (graph.Node, error) {
 	var firstErr error
 	for _, item := range r.members {
@@ -384,11 +517,20 @@ func candidateAllowed(relation graph.EdgeKind, kind graph.NodeKind) bool {
 	case graph.EdgeReads, graph.EdgeWrites:
 		return kind == graph.KindTable || kind == graph.KindView
 	case graph.EdgeReferences:
-		return kind == graph.KindConfigKey || kind == graph.KindTable || kind == graph.KindView
+		return kind == graph.KindConfigKey || kind == graph.KindTable || kind == graph.KindView ||
+			kind == graph.KindGodotAutoload || kind == graph.KindGodotScene ||
+			kind == graph.KindGodotResource || kind == graph.KindGodotSceneNode
 	case graph.EdgeExtends, graph.EdgeImplements, graph.EdgeEmbeds:
 		return kind == graph.KindType || kind == graph.KindClass || kind == graph.KindInterface
 	case graph.EdgeImports, graph.EdgeDependsOn:
-		return kind == graph.KindModule || kind == graph.KindPackage
+		return kind == graph.KindModule || kind == graph.KindPackage ||
+			kind == graph.KindGodotScene || kind == graph.KindGodotResource
+	case graph.EdgeInstantiates:
+		return kind == graph.KindGodotScene || kind == graph.KindGodotResource
+	case graph.EdgeAttachesScript:
+		return kind == graph.KindModule || kind == graph.KindClass
+	case graph.EdgeAutoloads:
+		return kind == graph.KindModule || kind == graph.KindClass || kind == graph.KindGodotScene
 	default:
 		return true
 	}

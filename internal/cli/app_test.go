@@ -217,7 +217,7 @@ func TestHelpDocumentsNewCommands(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("help exited with %d", code)
 	}
-	for _, fragment := range []string{"grafo uninstall", "grafo search", "--upstream-depth", "--dry-run", "--list"} {
+	for _, fragment := range []string{"grafo uninstall", "grafo search", "--upstream-depth", "--dry-run", "--list", "--kind"} {
 		if !strings.Contains(stdout, fragment) {
 			t.Fatalf("help does not document %q:\n%s", fragment, stdout)
 		}
@@ -227,5 +227,206 @@ func TestHelpDocumentsNewCommands(t *testing.T) {
 func TestUnknownCommandStillFails(t *testing.T) {
 	if code := run(t, "nope"); code != 1 {
 		t.Fatalf("unknown command should exit 1, got %d", code)
+	}
+}
+
+func TestInstallOptionsSelectArtifactKinds(t *testing.T) {
+	args, err := parseArguments([]string{"install", "--all", "--mcp-only", "--hooks", "--refresh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := installTargets(args)
+	if !options.MCPOnly || !options.Hooks || !options.Refresh {
+		t.Fatalf("unexpected options: %#v", options)
+	}
+	// A dry run or JSON output already prints the full plan, so it is not
+	// announced twice.
+	app := New(&bytes.Buffer{}, &bytes.Buffer{})
+	if app.announcer(args) == nil {
+		t.Fatal("a real run must announce its plan before mutating")
+	}
+	dry, err := parseArguments([]string{"install", "--dry-run"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.announcer(dry) != nil {
+		t.Fatal("a dry run must not announce twice")
+	}
+}
+
+func TestGuidancePrintsCanonicalTextAndIndexStatus(t *testing.T) {
+	root := indexedRepository(t)
+	stdout, _, code := output(t, "guidance", "--repo", root)
+	if code != 0 {
+		t.Fatalf("guidance exited with %d", code)
+	}
+	for _, fragment := range []string{"get_blast_radius", "find_reusable_code", "Index status: ready"} {
+		if !strings.Contains(stdout, fragment) {
+			t.Fatalf("guidance does not mention %q:\n%s", fragment, stdout)
+		}
+	}
+}
+
+func TestGuidanceReportsMissingIndex(t *testing.T) {
+	stdout, _, code := output(t, "guidance", "--repo", t.TempDir())
+	if code != 0 {
+		t.Fatalf("guidance exited with %d", code)
+	}
+	if !strings.Contains(stdout, "Index status: none") {
+		t.Fatalf("guidance did not report a missing index:\n%s", stdout)
+	}
+}
+
+func TestGuidanceHooksAlwaysSucceed(t *testing.T) {
+	// Advisory hooks must fail open: even an unindexed or unknown path, and an
+	// unknown phase, exit 0 with usable context.
+	for _, phase := range []string{"pre-search", "pre-edit", "unknown-phase"} {
+		stdout, _, code := output(t, "guidance", "--hook", phase, "--repo", filepath.Join(t.TempDir(), "missing"))
+		if code != 0 {
+			t.Fatalf("hook %q exited with %d", phase, code)
+		}
+		if !strings.Contains(stdout, "Grafo advisory") {
+			t.Fatalf("hook %q printed no advisory context: %s", phase, stdout)
+		}
+	}
+}
+
+func TestHelpDocumentsGuidanceInstallation(t *testing.T) {
+	stdout, _, code := output(t, "help")
+	if code != 0 {
+		t.Fatalf("help exited with %d", code)
+	}
+	for _, fragment := range []string{"grafo guidance", "--mcp-only", "--refresh", "--hooks"} {
+		if !strings.Contains(stdout, fragment) {
+			t.Fatalf("help does not document %q:\n%s", fragment, stdout)
+		}
+	}
+}
+
+// TestShowReportsAmbiguityAndHonorsKind covers the CLI half of selector
+// resolution: an ambiguous selector must fail with a non-zero status and list the
+// candidates, and --kind must make it resolvable without guessing.
+func TestShowReportsAmbiguityAndHonorsKind(t *testing.T) {
+	root := indexedRepository(t)
+	if err := os.WriteFile(filepath.Join(root, "request.go"),
+		[]byte("package sample\n\ntype Request struct {\n\tCharge int\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := run(t, "index", root); code != 0 {
+		t.Fatalf("index exited with %d", code)
+	}
+
+	stdout, stderr, code := output(t, "show", "Charge", "--repo", root)
+	if code == 0 {
+		t.Fatalf("an ambiguous selector must not resolve silently:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "matches 2 nodes by name") {
+		t.Fatalf("ambiguity must report the total and the reason:\n%s", stderr)
+	}
+	if !strings.Contains(stdout, "sample.Charge") || !strings.Contains(stdout, "sample.Request.Charge") {
+		t.Fatalf("both candidates must be listed:\n%s", stdout)
+	}
+
+	stdout, stderr, code = output(t, "show", "Charge", "--repo", root, "--kind", "function")
+	if code != 0 {
+		t.Fatalf("kind-filtered show exited with %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "sample.Charge") || strings.Contains(stdout, "Request.Charge") {
+		t.Fatalf("--kind should select the function:\n%s", stdout)
+	}
+
+	if _, stderr, code = output(t, "show", "Charge", "--repo", root, "--kind", "nonsense"); code == 0 ||
+		!strings.Contains(stderr, "unknown node kind") {
+		t.Fatalf("an unknown kind must fail loudly, got %d: %s", code, stderr)
+	}
+}
+
+// TestShowPrefersTableOverItsOwnColumn is the SQL half of declaration-member
+// suppression, end to end through the real parser: "CREATE TABLE charge (charge
+// TEXT)" produces a table named charge and a column named charge whose qualified
+// name extends it, and the selector must name the table rather than reporting them
+// as rivals. The column stays reachable by kind and by qualified name.
+func TestShowPrefersTableOverItsOwnColumn(t *testing.T) {
+	root := t.TempDir()
+	// The statement is valid in both dialects, so name the dialect explicitly
+	// rather than letting the router report ambiguous syntax.
+	if err := os.WriteFile(filepath.Join(root, "grafo.yaml"),
+		[]byte("sql:\n  default_dialect: sqlite\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "schema.sql"),
+		[]byte("CREATE TABLE charge (charge TEXT);\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := run(t, "index", root); code != 0 {
+		t.Fatalf("index exited with %d", code)
+	}
+
+	stdout, stderr, code := output(t, "show", "charge", "--repo", root)
+	if code != 0 {
+		t.Fatalf("a table must win over its own column, got %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "table") || strings.Contains(stdout, "column") {
+		t.Fatalf("expected the table, got:\n%s", stdout)
+	}
+
+	stdout, stderr, code = output(t, "show", "charge", "--repo", root, "--kind", "column")
+	if code != 0 {
+		t.Fatalf("kind-filtered show exited with %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "column") || !strings.Contains(stdout, "charge.charge") {
+		t.Fatalf("--kind column should select the column, got:\n%s", stdout)
+	}
+
+	stdout, stderr, code = output(t, "show", "charge.charge", "--repo", root)
+	if code != 0 {
+		t.Fatalf("a column's qualified name must resolve, got %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "column") {
+		t.Fatalf("expected the column, got:\n%s", stdout)
+	}
+}
+
+// TestShowReportsAmbiguousSceneNodeHierarchy is the Godot half of the suppression
+// invariant, end to end through the real .tscn parser. Scene nodes are modelled as
+// hierarchical graph.KindVariable nodes, so a child sharing its parent's name
+// produces two equally strong exact-name matches. Both are declarations GDScript
+// can reference by name, so the selector must be ambiguous rather than silently
+// resolving to the parent.
+func TestShowReportsAmbiguousSceneNodeHierarchy(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "scenes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	scene := "[gd_scene format=3]\n\n[node name=\"Root\" type=\"Node2D\"]\n\n" +
+		"[node name=\"Player\" type=\"Node2D\" parent=\".\"]\n\n" +
+		"[node name=\"Player\" type=\"Sprite2D\" parent=\"Player\"]\n"
+	if err := os.WriteFile(filepath.Join(root, "scenes", "main.tscn"), []byte(scene), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := run(t, "index", root); code != 0 {
+		t.Fatalf("index exited with %d", code)
+	}
+
+	stdout, stderr, code := output(t, "show", "Player", "--repo", root)
+	if code == 0 {
+		t.Fatalf("a child scene node sharing its parent's name must not resolve silently:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "matches 2 nodes by name") {
+		t.Fatalf("expected both scene nodes to be reported:\n%s", stderr)
+	}
+	for _, qualified := range []string{"scenes/main:Root/Player", "scenes/main:Root/Player/Player"} {
+		if !strings.Contains(stdout, qualified) {
+			t.Fatalf("candidate %s is missing:\n%s", qualified, stdout)
+		}
+	}
+
+	// Each node stays reachable by its own qualified name.
+	stdout, stderr, code = output(t, "show", "scenes/main:Root/Player/Player", "--repo", root)
+	if code != 0 {
+		t.Fatalf("a scene node's qualified name must resolve, got %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "scenes/main:Root/Player/Player") {
+		t.Fatalf("expected the child scene node:\n%s", stdout)
 	}
 }

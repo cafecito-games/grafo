@@ -12,6 +12,7 @@ import (
 	gdast "github.com/cafecito-games/gdparser/ast"
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	"github.com/cafecito-games/grafo/internal/parser/godot/godotid"
 )
 
 // Parser extracts semantic graph nodes and relationships from Godot 4
@@ -23,6 +24,52 @@ func (*Parser) Language() string { return "gdscript" }
 
 func (*Parser) Supports(path string) bool {
 	return strings.EqualFold(filepath.Ext(path), ".gd")
+}
+
+// SemanticKey makes the owning Godot project's autoload vocabulary part of the
+// incremental cache key, so editing project.godot reparses scripts whose
+// autoload uses can now resolve differently.
+func (*Parser) SemanticKey(_ context.Context, input parserapi.Input) (string, error) {
+	project, err := godotid.LoadProject(input.Root, input.Path)
+	if err != nil {
+		return "", err
+	}
+	return "gdscript-godot-project-v1:" + project.SemanticKey(), nil
+}
+
+// SemanticAffectedPaths reparses every script under a Godot project whose
+// project.godot changed. SemanticDependencies matches only repository-root
+// paths, and a Godot project can sit in any subdirectory of a monorepo.
+func (*Parser) SemanticAffectedPaths(allPaths, changedPaths []string) []string {
+	var roots []string
+	for _, path := range changedPaths {
+		if filepath.Base(path) != godotid.ProjectFileName {
+			continue
+		}
+		directory := filepath.ToSlash(filepath.Dir(path))
+		if directory == "." {
+			directory = ""
+		} else {
+			directory += "/"
+		}
+		roots = append(roots, directory)
+	}
+	if len(roots) == 0 {
+		return nil
+	}
+	var affected []string
+	for _, path := range allPaths {
+		if !strings.EqualFold(filepath.Ext(path), ".gd") {
+			continue
+		}
+		for _, root := range roots {
+			if root == "" || strings.HasPrefix(filepath.ToSlash(path), root) {
+				affected = append(affected, path)
+				break
+			}
+		}
+	}
+	return affected
 }
 
 type signalRef struct {
@@ -47,6 +94,16 @@ type extractor struct {
 	input   parserapi.Input
 	module  string
 	methods map[string]string
+	// project holds the autoload vocabulary of the Godot project that owns
+	// this script. Only exact declarations appear in it, so an autoload name
+	// that is declared twice or malformed resolves nothing here.
+	project godotid.Project
+	// autoloads records identifier nodes already reported as an autoload use,
+	// so a call through an autoload is not also reported as a bare reference.
+	autoloads map[gdast.Node]bool
+	// projectKnown is false when the owning Godot project could not be read, in
+	// which case no res:// reference in this script resolves.
+	projectKnown bool
 }
 
 func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseResult, error) {
@@ -61,7 +118,16 @@ func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseRes
 	if err := ctx.Err(); err != nil {
 		return b.Finish(), err
 	}
-	e := &extractor{b: b, input: input, module: parserapi.ModuleName(input.Path), methods: map[string]string{}}
+	e := &extractor{b: b, input: input, module: parserapi.ModuleName(input.Path),
+		methods: map[string]string{}, autoloads: map[gdast.Node]bool{}, projectKnown: true}
+	project, projectErr := godotid.LoadProject(input.Root, input.Path)
+	if projectErr != nil {
+		// The owning project is unknown rather than absent, so res:// references
+		// cannot be canonicalized without guessing which project they belong to.
+		e.projectKnown = false
+		b.Diagnostic(1, "warning", fmt.Sprintf("read Godot project configuration: %v", projectErr))
+	}
+	e.project = project
 	e.extract(file)
 	return b.Finish(), nil
 }
@@ -89,7 +155,15 @@ func (e *extractor) extract(file *gdast.File) {
 	if qualified == "" {
 		qualified = className
 	}
-	classID := e.b.Declare(e.b.FileID(), graph.Node{Kind: graph.KindClass, Name: className,
+	// The script file is also a Godot resource. Declaring it as a module named
+	// by its canonical repository-relative path gives scenes, resources,
+	// configuration, and UID sidecars one exact node to attach a script to,
+	// including when the script declares a class_name of its own.
+	moduleID := e.b.Declare(e.b.FileID(), graph.Node{Kind: graph.KindModule,
+		Name: graph.SimpleName(e.module), QualifiedName: e.module,
+		Location:   graph.Location{Path: e.input.Path, Line: 1, Column: 1, EndLine: 1},
+		Properties: map[string]string{"form": "script", "format": "gd"}})
+	classID := e.b.Declare(moduleID, graph.Node{Kind: graph.KindClass, Name: className,
 		QualifiedName: qualified, Location: loc, Properties: properties})
 	root := scope{currentID: classID, parentID: classID, container: qualified, receiver: qualified,
 		classID: classID, classBody: true, symbols: map[string]string{}, types: map[string]string{}, signals: map[string]signalRef{}}
@@ -393,6 +467,8 @@ func (e *extractor) walkExpression(expression gdast.Expression, current scope) {
 			properties["form"] = "unique_name"
 		}
 		e.addNodeReference(current.currentID, node.Path, e.location(node), properties)
+	case *gdast.Identifier:
+		e.addAutoloadUse(node, node.Name, "autoload_reference", "", current)
 	case *gdast.LambdaExpression:
 		lambdaScope := current
 		lambdaScope.symbols = cloneMap(current.symbols)
@@ -419,11 +495,16 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 		fromID = e.b.FileID()
 	}
 	loc := e.location(node)
+	if member, ok := node.Callee.(*gdast.MemberExpression); ok {
+		if object, ok := member.Object.(*gdast.Identifier); ok {
+			e.addAutoloadUse(object, object.Name, "autoload_call", member.Property, current)
+		}
+	}
 	method := strings.ToLower(graph.SimpleName(callee))
 	if method == "preload" || method == "load" {
 		if len(node.Arguments) > 0 {
 			if resource, ok := literalString(node.Arguments[0]); ok {
-				target, targetKind := resourceModule(resource), graph.KindModule
+				target, targetKind := e.resourceModule(resource), graph.KindModule
 				properties := map[string]string{"resource": resource}
 				if strings.HasPrefix(strings.TrimSpace(resource), "uid://") {
 					target, targetKind = strings.TrimSpace(resource), graph.KindConfigKey
@@ -502,6 +583,46 @@ func isNodeLookup(method string) bool {
 	}
 }
 
+// addAutoloadUse links a script use of a globally available autoload to its
+// project.godot declaration. Only an exact, unshadowed, enabled declaration
+// resolves: a name declared more than once, a malformed declaration, an
+// autoload Godot does not expose as a global singleton, or a local symbol of
+// the same name produces nothing rather than a guess. The member of an
+// autoload call is kept as evidence and is deliberately not resolved to a
+// method, because the autoload target's class name is not knowable here.
+func (e *extractor) addAutoloadUse(node gdast.Node, name, form, member string, current scope) {
+	if name == "" || e.autoloads[node] {
+		return
+	}
+	declaration, ok := e.project.Singleton(name)
+	if !ok || e.shadowed(name, current) {
+		return
+	}
+	e.autoloads[node] = true
+	fromID := current.currentID
+	if fromID == "" {
+		fromID = e.b.FileID()
+	}
+	properties := map[string]string{"form": form, "autoload": name, "resource": declaration.Reference}
+	if member != "" {
+		properties["member"] = member
+	}
+	if declaration.UID != "" {
+		properties["uid"] = declaration.UID
+	}
+	e.b.AddFact(fromID, graph.EdgeReferences, "", e.project.AutoloadQualifiedName(name),
+		graph.KindGodotAutoload, e.location(node), properties)
+}
+
+// shadowed reports whether a local declaration hides a global autoload name.
+func (e *extractor) shadowed(name string, current scope) bool {
+	if _, ok := current.symbols[name]; ok {
+		return true
+	}
+	_, ok := current.types[name]
+	return ok
+}
+
 func (e *extractor) addNodeReference(fromID, nodePath string, loc graph.Location, properties map[string]string) {
 	if fromID == "" {
 		fromID = e.b.FileID()
@@ -510,7 +631,9 @@ func (e *extractor) addNodeReference(fromID, nodePath string, loc graph.Location
 	if target == "" {
 		return
 	}
-	e.b.AddFact(fromID, graph.EdgeReferences, "", target, graph.KindVariable, loc, properties)
+	// Scene nodes are their own kind, so a node-path lookup resolves only
+	// against declared scene nodes instead of any same-named variable.
+	e.b.AddFact(fromID, graph.EdgeReferences, "", target, graph.KindGodotSceneNode, loc, properties)
 }
 
 func nodeReferenceTarget(nodePath string) string {
@@ -595,7 +718,7 @@ func (e *extractor) inferExpressionType(expression gdast.Expression, current sco
 	if callee == "preload" || callee == "load" {
 		if len(call.Arguments) > 0 {
 			if resource, ok := literalString(call.Arguments[0]); ok {
-				return resourceModule(resource)
+				return e.resourceModule(resource)
 			}
 		}
 		return ""
@@ -614,7 +737,7 @@ func (e *extractor) resolveTypeExpression(expression gdast.Expression, current s
 		callee := e.resolveExpression(call.Callee, current)
 		if (callee == "preload" || callee == "load") && len(call.Arguments) > 0 {
 			if resource, ok := literalString(call.Arguments[0]); ok {
-				return resourceModule(resource)
+				return e.resourceModule(resource)
 			}
 		}
 	}
@@ -719,13 +842,16 @@ func literalString(expression gdast.Expression) (string, bool) {
 	return value.String(), true
 }
 
-func resourceModule(resource string) string {
-	if strings.HasPrefix(strings.TrimSpace(resource), "uid://") {
+// resourceModule canonicalizes a res:// reference against the Godot project
+// that owns this script, because such a reference is project-relative and a
+// project can sit in any subdirectory of a repository. A reference that leaves
+// its project, or one in a script whose project could not be read, resolves to
+// nothing rather than to whatever repository path it lands on.
+func (e *extractor) resourceModule(resource string) string {
+	if !e.projectKnown {
 		return ""
 	}
-	resource = strings.TrimPrefix(strings.TrimSpace(resource), "res://")
-	resource = strings.TrimPrefix(resource, "user://")
-	return parserapi.ModuleName(filepath.ToSlash(resource))
+	return e.project.Resolve(resource)
 }
 
 func formatParameters(parameters []gdast.Parameter) string {

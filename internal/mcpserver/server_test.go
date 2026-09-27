@@ -38,7 +38,7 @@ func TestServerListsAndCallsGraphTools(t *testing.T) {
 		WithReusable(func(_ context.Context, text string, _ int) (semantic.SearchResult, error) {
 			return semantic.SearchResult{Query: text, Model: "test"}, nil
 		}).
-		WithSource(func(_ context.Context, _ string, _, _ int) (sourcecontext.Excerpt, error) {
+		WithSource(func(_ context.Context, _ string, _ graph.NodeKind, _, _ int) (sourcecontext.Excerpt, error) {
 			return sourcecontext.Excerpt{Path: "checkout.go", StartLine: 1, EndLine: 2, Content: "func Checkout() {}"}, nil
 		}).
 		Server("test").Connect(ctx, serverTransport, nil)
@@ -57,8 +57,8 @@ func TestServerListsAndCallsGraphTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Tools) != 10 {
-		t.Fatalf("expected 10 tools, got %d", len(listed.Tools))
+	if len(listed.Tools) != 16 {
+		t.Fatalf("expected 16 tools, got %d", len(listed.Tools))
 	}
 	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name: "find_symbols", Arguments: map[string]any{"query": "Checkout"},

@@ -58,7 +58,17 @@ func NewService(repository graph.QueryRepository, locator ProjectLocator) *Servi
 	return &Service{repository: repository, locator: locator}
 }
 
+// Read resolves a selector and returns its bounded source excerpt. It accepts
+// any node kind; ReadKind narrows resolution to one kind.
 func (s *Service) Read(ctx context.Context, selector string, contextLines, maxLines int) (Excerpt, error) {
+	return s.ReadKind(ctx, selector, "", contextLines, maxLines)
+}
+
+// ReadKind resolves a selector restricted to one node kind and returns its
+// bounded source excerpt. Resolution runs through query.Service, so an ambiguous
+// selector fails here with *query.AmbiguousError instead of reading confident
+// source for an arbitrary one of several matches.
+func (s *Service) ReadKind(ctx context.Context, selector string, kind graph.NodeKind, contextLines, maxLines int) (Excerpt, error) {
 	if strings.TrimSpace(selector) == "" {
 		return Excerpt{}, errors.New("source selector is required")
 	}
@@ -71,7 +81,7 @@ func (s *Service) Read(ctx context.Context, selector string, contextLines, maxLi
 	if maxLines < 1 || maxLines > 1000 {
 		return Excerpt{}, errors.New("max lines must be between 1 and 1000")
 	}
-	node, err := query.NewService(s.repository).Resolve(ctx, selector)
+	node, err := query.NewService(s.repository).ResolveKind(ctx, selector, kind)
 	if err != nil {
 		return Excerpt{}, err
 	}
