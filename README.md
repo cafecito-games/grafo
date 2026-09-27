@@ -190,9 +190,10 @@ grafo orphaned-events --json
 
 The same results are available as the `list_data_resources`,
 `get_data_resource_usage`, `list_config_keys`, `list_events`, and
-`find_orphaned_events` MCP tools. Every catalog accepts repository and name
-filters plus an explicit bound, reports truncation, and orders results
-deterministically; the data-resource catalog also accepts a kind filter. A name filter matches literally, so it narrows a catalog and
+`find_orphaned_events` MCP tools. Every catalog accepts a repository filter and
+an explicit bound, reports truncation, and orders results deterministically. The
+list catalogs also accept a name filter, and the data-resource catalog a kind
+filter; usage names its resource with a selector instead. A name filter matches literally, so it narrows a catalog and
 never widens it. The bound applies to each catalog section and, separately, to
 the evidence sites of each relation.
 
@@ -201,7 +202,9 @@ writers, and references, each with the source site that proves it. An ambiguous
 name returns its candidates and asks for a qualified name or node ID rather than
 choosing one. An unsupported kind is rejected instead of answered with an empty
 catalog that would imply absence, and a name filter is rejected here rather than
-accepted and ignored, because the selector already names the resource.
+accepted and ignored, because the selector already names the resource. A name
+filter is trimmed before use, so a blank one narrows nothing at every surface
+rather than narrowing to nothing at some of them.
 
 `config-keys` reports where a key is defined and read. Stored values are never
 returned: only properties classified as non-secret configuration metadata appear,

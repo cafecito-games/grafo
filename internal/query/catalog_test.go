@@ -136,6 +136,25 @@ func TestDataResourceUsageRejectsAnInertNameFilter(t *testing.T) {
 	}
 }
 
+func TestBlankNameFilterMeansTheSameAtEverySurface(t *testing.T) {
+	catalog := query.NewCatalog(newCatalogFixture())
+	blank, err := catalog.DataResources(context.Background(), nil, query.CatalogOptions{Name: "   ", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	absent, err := catalog.DataResources(context.Background(), nil, query.CatalogOptions{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(blank, absent) {
+		t.Fatalf("a blank name filter narrowed the catalog:\n%#v\n%#v", blank, absent)
+	}
+	if _, err := catalog.DataResourceUsage(context.Background(), "orders",
+		query.CatalogOptions{Name: "   "}); err != nil {
+		t.Fatalf("a blank name filter must be treated as absent: %v", err)
+	}
+}
+
 func TestDataResourceUsageRejectsNonResourceSelectors(t *testing.T) {
 	catalog := query.NewCatalog(newCatalogFixture())
 	if _, err := catalog.DataResourceUsage(context.Background(), "shop.ListOrders", query.CatalogOptions{}); err == nil {

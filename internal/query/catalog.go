@@ -25,6 +25,14 @@ type CatalogOptions struct {
 	Limit      int
 }
 
+// normalized trims the name fragment so a blank filter means the same thing at
+// every surface. Without it a whitespace-only fragment would narrow one catalog
+// to nothing and be ignored by another.
+func (o CatalogOptions) normalized() CatalogOptions {
+	o.Name = strings.TrimSpace(o.Name)
+	return o
+}
+
 // Catalog answers read-only inventory and usage questions about data
 // resources, configuration keys, and events. Classification lives here so
 // storage adapters only enumerate.
@@ -174,6 +182,7 @@ var configMetadataProperties = map[string]bool{
 // DataResources catalogs stored data resources. Passing no kinds catalogs
 // every kind the graph model classifies as a data resource.
 func (c *Catalog) DataResources(ctx context.Context, kinds []graph.NodeKind, options CatalogOptions) (DataResourceList, error) {
+	options = options.normalized()
 	if len(kinds) == 0 {
 		kinds = graph.DataResourceKinds()
 	}
@@ -218,9 +227,10 @@ func (c *Catalog) DataResources(ctx context.Context, kinds []graph.NodeKind, opt
 // DataResourceUsage reports the readers and writers of one data resource. An
 // ambiguous name returns candidates instead of guessing one of them.
 func (c *Catalog) DataResourceUsage(ctx context.Context, selector string, options CatalogOptions) (DataResourceUsage, error) {
+	options = options.normalized()
 	// The selector already names the resource. Accepting a name filter here and
 	// ignoring it would let a caller believe it narrowed a result it did not.
-	if strings.TrimSpace(options.Name) != "" {
+	if options.Name != "" {
 		return DataResourceUsage{}, fmt.Errorf("a name filter does not apply to one data resource; pass the name as the selector")
 	}
 	limit, err := c.bounds(ctx, options)
@@ -254,6 +264,7 @@ func (c *Catalog) DataResourceUsage(ctx context.Context, selector string, option
 // ConfigKeys catalogs configuration keys with their definitions and readers.
 // Stored values never appear in the response.
 func (c *Catalog) ConfigKeys(ctx context.Context, options CatalogOptions) (ConfigKeyList, error) {
+	options = options.normalized()
 	limit, err := c.bounds(ctx, options)
 	if err != nil {
 		return ConfigKeyList{}, err
@@ -285,6 +296,7 @@ func (c *Catalog) ConfigKeys(ctx context.Context, options CatalogOptions) (Confi
 // Events catalogs event declarations with their producers, consumers, and
 // handlers.
 func (c *Catalog) Events(ctx context.Context, options CatalogOptions) (EventList, error) {
+	options = options.normalized()
 	limit, err := c.bounds(ctx, options)
 	if err != nil {
 		return EventList{}, err
@@ -317,6 +329,7 @@ func (c *Catalog) Events(ctx context.Context, options CatalogOptions) (EventList
 // unresolved target that may be the missing counterpart downgrades the finding
 // to unknown; it is never reported as a confirmed orphan.
 func (c *Catalog) OrphanedEvents(ctx context.Context, options CatalogOptions) (OrphanedEventList, error) {
+	options = options.normalized()
 	limit, err := c.bounds(ctx, options)
 	if err != nil {
 		return OrphanedEventList{}, err
