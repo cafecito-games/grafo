@@ -239,11 +239,12 @@ func TestParserDeclaresScriptModuleForResourceIdentity(t *testing.T) {
 
 func TestParserResolvesAutoloadUsesFromProjectDeclarations(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, root, "project.godot", `config_version=5
+	writeFile(t, root, "client/project.godot", `config_version=5
 
 [autoload]
 Game="*res://scripts/game.gd"
-Menu="res://scenes/menu.tscn"
+Menu="*res://scenes/menu.tscn"
+Disabled="res://scripts/disabled.gd"
 Twice="*res://scripts/a.gd"
 Twice="*res://scripts/b.gd"
 `)
@@ -252,27 +253,32 @@ Twice="*res://scripts/b.gd"
 func ready() -> void:
 	Game.start()
 	var scene = Menu
+	Disabled.start()
 	Twice.start()
 	Unknown.start()
 `)
 	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
-		Root: root, Path: "scripts/hud.gd", Content: content, Repository: "sample", RepoID: "repo:sample",
+		Root: root, Path: "client/scripts/hud.gd", Content: content, Repository: "sample", RepoID: "repo:sample",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	call := findFactWithTarget(t, result.Facts, graph.EdgeReferences, "godot:autoload:Game")
+	call := findFactWithTarget(t, result.Facts, graph.EdgeReferences, "godot:autoload:client/project.godot:Game")
 	if call.TargetKind != graph.KindGodotAutoload || call.Properties["form"] != "autoload_call" ||
 		call.Properties["member"] != "start" {
 		t.Fatalf("autoload call fact = %#v", call)
 	}
-	reference := findFactWithTarget(t, result.Facts, graph.EdgeReferences, "godot:autoload:Menu")
+	reference := findFactWithTarget(t, result.Facts, graph.EdgeReferences, "godot:autoload:client/project.godot:Menu")
 	if reference.Properties["form"] != "autoload_reference" {
 		t.Fatalf("autoload reference fact = %#v", reference)
 	}
-	for _, fact := range result.Facts {
-		if strings.HasPrefix(fact.Target, "godot:autoload:Twice") || strings.HasPrefix(fact.Target, "godot:autoload:Unknown") {
-			t.Fatalf("ambiguous or undeclared autoload produced a fact: %#v", fact)
+	// A conflicting declaration, an undeclared name, and an autoload Godot does
+	// not expose as a global singleton must all resolve nothing.
+	for _, name := range []string{"Twice", "Unknown", "Disabled"} {
+		for _, fact := range result.Facts {
+			if strings.HasSuffix(fact.Target, ":"+name) && strings.HasPrefix(fact.Target, "godot:autoload:") {
+				t.Fatalf("autoload %q must not resolve: %#v", name, fact)
+			}
 		}
 	}
 }

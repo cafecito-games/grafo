@@ -34,7 +34,7 @@ func (*Parser) SemanticKey(_ context.Context, input parserapi.Input) (string, er
 	if err != nil {
 		return "", err
 	}
-	return "gdscript-autoload-v1:" + project.Digest, nil
+	return "gdscript-godot-project-v1:" + project.SemanticKey(), nil
 }
 
 // SemanticAffectedPaths reparses every script under a Godot project whose
@@ -498,7 +498,7 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 	if method == "preload" || method == "load" {
 		if len(node.Arguments) > 0 {
 			if resource, ok := literalString(node.Arguments[0]); ok {
-				target, targetKind := resourceModule(resource), graph.KindModule
+				target, targetKind := e.resourceModule(resource), graph.KindModule
 				properties := map[string]string{"resource": resource}
 				if strings.HasPrefix(strings.TrimSpace(resource), "uid://") {
 					target, targetKind = strings.TrimSpace(resource), graph.KindConfigKey
@@ -578,16 +578,17 @@ func isNodeLookup(method string) bool {
 }
 
 // addAutoloadUse links a script use of a globally available autoload to its
-// project.godot declaration. Only an exact, unshadowed declaration resolves:
-// a name declared more than once, a malformed declaration, or a local symbol
-// of the same name produces nothing rather than a guess. The member of an
+// project.godot declaration. Only an exact, unshadowed, enabled declaration
+// resolves: a name declared more than once, a malformed declaration, an
+// autoload Godot does not expose as a global singleton, or a local symbol of
+// the same name produces nothing rather than a guess. The member of an
 // autoload call is kept as evidence and is deliberately not resolved to a
 // method, because the autoload target's class name is not knowable here.
 func (e *extractor) addAutoloadUse(node gdast.Node, name, form, member string, current scope) {
 	if name == "" || e.autoloads[node] {
 		return
 	}
-	declaration, ok := e.project.Autoload(name)
+	declaration, ok := e.project.Singleton(name)
 	if !ok || e.shadowed(name, current) {
 		return
 	}
@@ -603,7 +604,7 @@ func (e *extractor) addAutoloadUse(node gdast.Node, name, form, member string, c
 	if declaration.UID != "" {
 		properties["uid"] = declaration.UID
 	}
-	e.b.AddFact(fromID, graph.EdgeReferences, "", godotid.AutoloadQualifiedName(name),
+	e.b.AddFact(fromID, graph.EdgeReferences, "", e.project.AutoloadQualifiedName(name),
 		graph.KindGodotAutoload, e.location(node), properties)
 }
 
@@ -711,7 +712,7 @@ func (e *extractor) inferExpressionType(expression gdast.Expression, current sco
 	if callee == "preload" || callee == "load" {
 		if len(call.Arguments) > 0 {
 			if resource, ok := literalString(call.Arguments[0]); ok {
-				return resourceModule(resource)
+				return e.resourceModule(resource)
 			}
 		}
 		return ""
@@ -730,7 +731,7 @@ func (e *extractor) resolveTypeExpression(expression gdast.Expression, current s
 		callee := e.resolveExpression(call.Callee, current)
 		if (callee == "preload" || callee == "load") && len(call.Arguments) > 0 {
 			if resource, ok := literalString(call.Arguments[0]); ok {
-				return resourceModule(resource)
+				return e.resourceModule(resource)
 			}
 		}
 	}
@@ -835,13 +836,11 @@ func literalString(expression gdast.Expression) (string, bool) {
 	return value.String(), true
 }
 
-func resourceModule(resource string) string {
-	if strings.HasPrefix(strings.TrimSpace(resource), "uid://") {
-		return ""
-	}
-	resource = strings.TrimPrefix(strings.TrimSpace(resource), "res://")
-	resource = strings.TrimPrefix(resource, "user://")
-	return parserapi.ModuleName(filepath.ToSlash(resource))
+// resourceModule canonicalizes a res:// reference against the Godot project
+// that owns this script, because such a reference is project-relative and a
+// project can sit in any subdirectory of a repository.
+func (e *extractor) resourceModule(resource string) string {
+	return e.project.Resolve(resource)
 }
 
 func formatParameters(parameters []gdast.Parameter) string {

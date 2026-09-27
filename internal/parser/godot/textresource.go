@@ -28,12 +28,12 @@ type extResource struct {
 	uid          string
 	kind         graph.NodeKind
 	declaredType string
-	ambiguous    bool
 }
 
 type textResourceExtractor struct {
 	b             *parserapi.Builder
 	input         parserapi.Input
+	scope         scope
 	module        string
 	moduleID      string
 	moduleKind    graph.NodeKind
@@ -43,16 +43,20 @@ type textResourceExtractor struct {
 	sectionOwners map[*textresource.Section]resourceOwner
 	events        map[string]string
 	ambiguousUIDs map[string]bool
-	root          string
+	// ambiguousIDs is sticky: once an ExtResource id is declared twice it can
+	// never become resolvable again, no matter what later declarations say.
+	ambiguousIDs map[string]bool
+	root         string
 }
 
-func extractTextResource(input parserapi.Input, document *textresource.Document) graph.ParseResult {
+func extractTextResource(input parserapi.Input, fileScope scope, document *textresource.Document) graph.ParseResult {
 	b := parserapi.NewBuilder(input, "godot-resource")
 	e := &textResourceExtractor{
-		b: b, input: input, module: godotid.Canonical(input.Path), extResources: map[string]extResource{},
+		b: b, input: input, scope: fileScope, module: godotid.Identity(input.Path),
+		extResources: map[string]extResource{},
 		subResources: map[string]string{}, nodes: map[string]resourceOwner{},
 		sectionOwners: map[*textresource.Section]resourceOwner{}, events: map[string]string{},
-		ambiguousUIDs: map[string]bool{},
+		ambiguousUIDs: map[string]bool{}, ambiguousIDs: map[string]bool{},
 	}
 	properties, location := e.documentProperties(document)
 	e.moduleKind = graph.KindGodotResource
@@ -127,7 +131,16 @@ func (e *textResourceExtractor) prepare(document *textresource.Document) {
 	}
 }
 
+// prepareExtResources classifies every [ext_resource] declaration before any
+// fact is emitted. Classification has to complete first because ambiguity is
+// sticky: an id proved ambiguous by a later declaration must resolve nothing,
+// including for uses and imports that appear earlier in the document.
 func (e *textResourceExtractor) prepareExtResources(document *textresource.Document) {
+	type declaration struct {
+		entry extResource
+		loc   graph.Location
+	}
+	var declarations []declaration
 	uidPaths := map[string]string{}
 	for _, item := range document.Items {
 		section, ok := item.(*textresource.Section)
@@ -138,7 +151,7 @@ func (e *textResourceExtractor) prepareExtResources(document *textresource.Docum
 		id := sectionAttribute(section, "id")
 		resource := sectionAttribute(section, "path")
 		uid := godotid.UID(sectionAttribute(section, "uid"))
-		canonical := godotid.Canonical(resource)
+		canonical := e.scope.resolve(resource)
 		if uid != "" {
 			if previous, seen := uidPaths[uid]; seen && previous != canonical {
 				e.ambiguousUIDs[uid] = true
@@ -155,40 +168,54 @@ func (e *textResourceExtractor) prepareExtResources(document *textresource.Docum
 			}
 			continue
 		}
+		// UID evidence outranks path evidence: the resource that declares a UID
+		// is the authority on what it names, so a path that contradicts it
+		// resolves to nothing rather than to a confident edge to the wrong
+		// resource. Evidence that nothing declares is not a contradiction.
+		if uid != "" && !e.ambiguousUIDs[uid] && !e.scope.aliases.Agrees(uid, canonical) {
+			e.ambiguousUIDs[uid] = true
+			if id != "" {
+				e.ambiguousIDs[id] = true
+			}
+			e.b.Diagnostic(loc.Line, "warning", fmt.Sprintf(
+				"ext_resource %q pairs UID %s with %s, but %s declares %s; keeping the reference unresolved",
+				id, uid, resource, uid, e.scope.aliases.Describe(uid)))
+			continue
+		}
 		entry := extResource{
 			id: id, resource: resource, canonical: canonical, uid: uid,
 			kind: godotid.TargetKind(resource), declaredType: sectionAttribute(section, "type"),
 		}
 		if id != "" {
-			if previous, seen := e.extResources[id]; seen && previous.canonical != canonical {
-				entry.ambiguous = true
+			if _, seen := e.extResources[id]; seen {
+				e.ambiguousIDs[id] = true
 				e.b.Diagnostic(loc.Line, "warning", fmt.Sprintf(
-					"ext_resource id %q declares both %s and %s; keeping its uses unresolved",
-					id, previous.canonical, canonical))
+					"ext_resource id %q is declared more than once; keeping its uses unresolved", id))
 			}
 			e.extResources[id] = entry
 		}
-		properties := map[string]string{"resource": resource, "id": id}
+		declarations = append(declarations, declaration{entry: entry, loc: loc})
+	}
+	for _, item := range declarations {
+		entry := item.entry
+		if e.ambiguousIDs[entry.id] {
+			continue
+		}
+		properties := map[string]string{"resource": entry.resource, "id": entry.id}
 		if entry.declaredType != "" {
 			properties["type"] = entry.declaredType
 		}
-		if uid != "" && !e.ambiguousUIDs[uid] {
-			properties["uid"] = uid
+		if entry.uid != "" && !e.ambiguousUIDs[entry.uid] {
+			properties["uid"] = entry.uid
 		}
-		e.b.AddFact(e.moduleID, graph.EdgeImports, "", canonical, entry.kind, loc, properties)
+		e.b.AddFact(e.moduleID, graph.EdgeImports, "", entry.canonical, entry.kind, item.loc, properties)
 	}
-	for _, item := range document.Items {
-		section, ok := item.(*textresource.Section)
-		if !ok || section.Type != "ext_resource" {
+	for _, item := range declarations {
+		if item.entry.uid == "" || e.ambiguousUIDs[item.entry.uid] {
 			continue
 		}
-		uid := godotid.UID(sectionAttribute(section, "uid"))
-		if uid == "" || e.ambiguousUIDs[uid] {
-			continue
-		}
-		e.b.AddFact(e.moduleID, graph.EdgeReferences, "", uid, graph.KindConfigKey,
-			textLocation(e.input.Path, section),
-			map[string]string{"uid": uid, "id": sectionAttribute(section, "id")})
+		e.b.AddFact(e.moduleID, graph.EdgeReferences, "", item.entry.uid, graph.KindConfigKey, item.loc,
+			map[string]string{"uid": item.entry.uid, "id": item.entry.id})
 	}
 }
 
@@ -196,8 +223,13 @@ func (e *textResourceExtractor) prepareExtResources(document *textresource.Docum
 // unknown or ambiguous id yields no target so no edge is guessed.
 func (e *textResourceExtractor) resolveExtResource(id string) (extResource, bool) {
 	entry, ok := e.extResources[id]
-	if !ok || entry.ambiguous || entry.canonical == "" {
+	if !ok || e.ambiguousIDs[id] || entry.canonical == "" {
 		return extResource{}, false
+	}
+	if e.ambiguousUIDs[entry.uid] {
+		// The path is still exact evidence; the contradicted alias is not, so it
+		// is dropped from the evidence rather than published as agreement.
+		entry.uid = ""
 	}
 	return entry, true
 }
@@ -297,7 +329,7 @@ func (e *textResourceExtractor) addInstance(section *textresource.Section, owner
 	if placeholder == "" {
 		return
 	}
-	canonical := godotid.Canonical(placeholder)
+	canonical := e.scope.resolve(placeholder)
 	if canonical == "" {
 		e.b.Diagnostic(loc.Line, "warning", fmt.Sprintf(
 			"scene node %q declares instance_placeholder %q without a path; keeping it unresolved",

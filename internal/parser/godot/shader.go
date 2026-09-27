@@ -14,15 +14,17 @@ import (
 type shaderExtractor struct {
 	b         *parserapi.Builder
 	input     parserapi.Input
+	scope     scope
 	module    string
 	moduleID  string
 	globals   map[string]string
 	functions map[string]string
 }
 
-func extractShader(input parserapi.Input, file *shaderast.File) graph.ParseResult {
+func extractShader(input parserapi.Input, fileScope scope, file *shaderast.File) graph.ParseResult {
 	b := parserapi.NewBuilder(input, "godot-shader")
-	e := &shaderExtractor{b: b, input: input, module: moduleName(input.Path), globals: map[string]string{}, functions: map[string]string{}}
+	e := &shaderExtractor{b: b, input: input, scope: fileScope, module: godotid.Identity(input.Path),
+		globals: map[string]string{}, functions: map[string]string{}}
 	properties, location := shaderProperties(input.Path, file)
 	e.moduleID = b.Declare(b.FileID(), graph.Node{
 		Kind: graph.KindModule, Name: graph.SimpleName(e.module), QualifiedName: e.module,
@@ -139,9 +141,9 @@ func (e *shaderExtractor) extractShaderDirective(directive *shaderast.Preprocess
 	}
 	target := value
 	if strings.HasPrefix(target, "res://") || strings.HasPrefix(target, "user://") {
-		target = godotid.Canonical(target)
+		target = e.scope.resolve(target)
 	} else {
-		target = parserapi.ModuleName(pathpkg.Clean(pathpkg.Join(pathpkg.Dir(e.input.Path), target)))
+		target = godotid.Identity(pathpkg.Clean(pathpkg.Join(pathpkg.Dir(e.input.Path), target)))
 	}
 	e.b.AddFact(e.moduleID, graph.EdgeImports, "", target, graph.KindModule,
 		shaderLocation(e.input.Path, directive), map[string]string{"include": value})

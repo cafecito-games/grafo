@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -583,7 +585,7 @@ func TestServiceModelsGodotCompositionAcrossFiles(t *testing.T) {
 	assertComposition(t, scene.OutboundInstances, "scenes/enemy", graph.KindGodotScene)
 	assertComposition(t, scene.AttachedScripts, "scripts/player", graph.KindModule)
 
-	autoload, err := queries.GodotComposition(ctx, "godot:autoload:Game", query.GodotCompositionOptions{})
+	autoload, err := queries.GodotComposition(ctx, "godot:autoload:project.godot:Game", query.GodotCompositionOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -592,7 +594,7 @@ func TestServiceModelsGodotCompositionAcrossFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertReached(t, use, "godot:autoload:Game")
+	assertReached(t, use, "godot:autoload:project.godot:Game")
 
 	before, err := repository.Counts(ctx)
 	if err != nil {
@@ -617,7 +619,7 @@ func TestServiceModelsGodotCompositionAcrossFiles(t *testing.T) {
 	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
 		t.Fatal(err)
 	}
-	moved, err := queries.GodotComposition(ctx, "godot:autoload:Game", query.GodotCompositionOptions{})
+	moved, err := queries.GodotComposition(ctx, "godot:autoload:project.godot:Game", query.GodotCompositionOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -754,5 +756,194 @@ func assertNodeKinds(t *testing.T, repository graph.ReadRepository, qualified st
 	}
 	if !reflect.DeepEqual(counts, want) {
 		t.Fatalf("node kinds for %q = %#v, want %#v", qualified, counts, want)
+	}
+}
+
+// TestServiceScopesGodotProjectsNestedInOneRepository covers a monorepo whose
+// Godot projects live in subdirectories. res:// references are project-relative,
+// so each project's relationships must resolve inside its own directory, and two
+// sibling projects that both declare an autoload named Game must stay
+// independently addressable instead of colliding.
+func TestServiceScopesGodotProjectsNestedInOneRepository(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	for _, project := range []string{"client", "tools/probe"} {
+		write(t, mkdirFor(t, root, project+"/project.godot"),
+			"config_version=5\n\n[autoload]\nGame=\"*res://scripts/game.gd\"\n")
+		write(t, mkdirFor(t, root, project+"/scripts/game.gd"),
+			"extends Node\nfunc start() -> void:\n\tpass\n")
+		write(t, mkdirFor(t, root, project+"/scripts/hud.gd"),
+			"extends Node\nfunc ready() -> void:\n\tGame.start()\n")
+		write(t, mkdirFor(t, root, project+"/scenes/enemy.tscn"),
+			"[gd_scene format=3 uid=\"uid://"+strings.ReplaceAll(project, "/", "_")+"_enemy\"]\n\n[node name=\"Enemy\" type=\"Node\"]\n")
+		write(t, mkdirFor(t, root, project+"/scenes/main.tscn"),
+			"[gd_scene load_steps=3 format=3]\n\n"+
+				"[ext_resource type=\"Script\" path=\"res://scripts/hud.gd\" id=\"1_hud\"]\n"+
+				"[ext_resource type=\"PackedScene\" path=\"res://scenes/enemy.tscn\" id=\"2_enemy\"]\n\n"+
+				"[node name=\"Main\" type=\"Node\"]\nscript = ExtResource(\"1_hud\")\n\n"+
+				"[node name=\"Enemy\" parent=\".\" instance=ExtResource(\"2_enemy\")]\n")
+	}
+
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	if _, err := indexer.NewService(repository,
+		parserapi.NewRegistry(gdscriptparser.New(), godotparser.New())).Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	queries := query.NewService(repository)
+
+	for _, directory := range []string{"client", "tools/probe"} {
+		scene, err := queries.GodotComposition(ctx, directory+"/scenes/main", query.GodotCompositionOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertComposition(t, scene.OutboundInstances, directory+"/scenes/enemy", graph.KindGodotScene)
+		assertComposition(t, scene.AttachedScripts, directory+"/scripts/hud", graph.KindModule)
+
+		// Inbound attribution must also stay inside the project: the instancing
+		// scene is found from the scene node's own project-scoped identity.
+		instanced, err := queries.GodotComposition(ctx, directory+"/scenes/enemy", query.GodotCompositionOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertComposition(t, instanced.InboundInstances, directory+"/scenes/main", graph.KindGodotScene)
+		if instanced.InboundInstances[0].Via == nil ||
+			instanced.InboundInstances[0].Via.QualifiedName != directory+"/scenes/main:Main/Enemy" {
+			t.Fatalf("inbound instance lost its scene node evidence: %#v", instanced.InboundInstances[0])
+		}
+
+		autoload, err := queries.GodotComposition(ctx,
+			"godot:autoload:"+directory+"/project.godot:Game", query.GodotCompositionOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertComposition(t, autoload.AutoloadTargets, directory+"/scripts/game", graph.KindModule)
+		use, err := queries.Neighborhood(ctx, directory+"/scripts/hud.ready", 1, query.Outgoing, nil, 20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertReached(t, use, "godot:autoload:"+directory+"/project.godot:Game")
+	}
+
+	// Nothing may be attributed to a repository-root identity that no file owns.
+	for _, qualified := range []string{"scenes/main", "scenes/enemy", "scripts/game", "godot:autoload:Game"} {
+		found, err := repository.SearchNodes(ctx, qualified, 50)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, node := range found {
+			if node.QualifiedName == qualified {
+				t.Fatalf("project-relative reference leaked to the repository root: %#v", node)
+			}
+		}
+	}
+}
+
+func mkdirFor(t *testing.T, root, name string) string {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestServiceKeepsContradictedGodotUIDsUnresolved proves the cross-file UID
+// check runs in the real pipeline: the workspace semantic key builds the alias
+// table, so a scene whose ext_resource pairs a UID with a path another resource
+// declares produces a diagnostic and no composition edge, and repairing the
+// path resolves it on the next incremental run.
+func TestServiceKeepsContradictedGodotUIDsUnresolved(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	write(t, mkdirFor(t, root, "project.godot"), "config_version=5\n")
+	write(t, mkdirFor(t, root, "scenes/a.tscn"),
+		"[gd_scene format=3 uid=\"uid://shared\"]\n\n[node name=\"A\" type=\"Node\"]\n")
+	write(t, mkdirFor(t, root, "scenes/b.tscn"),
+		"[gd_scene format=3 uid=\"uid://other\"]\n\n[node name=\"B\" type=\"Node\"]\n")
+	caller := func(path string) string {
+		return "[gd_scene load_steps=2 format=3]\n\n" +
+			"[ext_resource type=\"PackedScene\" uid=\"uid://shared\" path=\"" + path + "\" id=\"1_x\"]\n\n" +
+			"[node name=\"Root\" type=\"Node\"]\n\n" +
+			"[node name=\"Child\" parent=\".\" instance=ExtResource(\"1_x\")]\n"
+	}
+	write(t, mkdirFor(t, root, "scenes/caller.tscn"), caller("res://scenes/b.tscn"))
+
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	service := indexer.NewService(repository, parserapi.NewRegistry(gdscriptparser.New(), godotparser.New()))
+	report, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contradiction := false
+	for _, diagnostic := range report.Diagnostics {
+		if strings.Contains(diagnostic.Message, "uid://shared") {
+			contradiction = true
+		}
+	}
+	if !contradiction {
+		t.Fatalf("contradicted UID produced no diagnostic: %#v", report.Diagnostics)
+	}
+	scene, err := query.NewService(repository).GodotComposition(ctx, "scenes/caller", query.GodotCompositionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scene.OutboundInstances) != 0 {
+		t.Fatalf("contradicted UID produced a composition edge: %#v", scene.OutboundInstances)
+	}
+
+	// Repairing the path to the resource that actually declares the UID makes
+	// the same reference resolve, which shows the check is evidence-driven
+	// rather than a blanket refusal.
+	write(t, filepath.Join(root, "scenes", "caller.tscn"), caller("res://scenes/a.tscn"))
+	repaired, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, diagnostic := range repaired.Diagnostics {
+		if strings.Contains(diagnostic.Message, "uid://shared") {
+			t.Fatalf("repaired reference still diagnosed: %#v", repaired.Diagnostics)
+		}
+	}
+	fixed, err := query.NewService(repository).GodotComposition(ctx, "scenes/caller", query.GodotCompositionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertComposition(t, fixed.OutboundInstances, "scenes/a", graph.KindGodotScene)
+
+	// Moving the UID to another resource contradicts a caller that was not
+	// itself edited, so the workspace semantic key must reparse it.
+	write(t, filepath.Join(root, "scenes", "a.tscn"),
+		"[gd_scene format=3 uid=\"uid://moved\"]\n\n[node name=\"A\" type=\"Node\"]\n")
+	write(t, filepath.Join(root, "scenes", "b.tscn"),
+		"[gd_scene format=3 uid=\"uid://shared\"]\n\n[node name=\"B\" type=\"Node\"]\n")
+	moved, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(moved.Updated, "scenes/caller.tscn") {
+		t.Fatalf("a moved UID did not reparse the unchanged caller: %#v", moved.Updated)
+	}
+	stale, err := query.NewService(repository).GodotComposition(ctx, "scenes/caller", query.GodotCompositionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stale.OutboundInstances) != 0 {
+		t.Fatalf("moved UID left a stale composition edge: %#v", stale.OutboundInstances)
 	}
 }

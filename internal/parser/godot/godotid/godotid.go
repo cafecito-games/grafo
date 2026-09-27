@@ -2,12 +2,19 @@
 // and for the project-level declarations that several Godot producers share.
 //
 // Every Godot producer - text scenes and resources, UID sidecars, project
-// configuration, and GDScript - must derive resource identity here so one
-// resource has exactly one canonical qualified name no matter which evidence
+// configuration, shaders, and GDScript - must derive resource identity here so
+// one resource has exactly one canonical qualified name no matter which evidence
 // (a repository-relative path, a res:// path, or a uid:// alias) named it.
 // Canonical identity is the repository-relative path without its extension,
 // because sidecars and remaps can change a UID while the path stays stable;
 // UIDs are aliases and evidence, never the identity itself.
+//
+// Identity and reference resolution are separate on purpose. Identity takes a
+// repository-relative path; Resolve takes a Godot reference plus the project
+// that owns it, because res:// is relative to a project.godot directory that can
+// sit anywhere in a repository. Canonicalizing a reference without that
+// directory silently targets identities no file owns, so there is deliberately
+// no single-argument entry point that accepts a res:// reference.
 package godotid
 
 import (
@@ -15,6 +22,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -85,22 +93,61 @@ func NodeKind(class Class) graph.NodeKind {
 // TargetKind classifies a path and returns the graph kind a fact should target.
 func TargetKind(path string) graph.NodeKind { return NodeKind(Classify(path)) }
 
-// Canonical returns the canonical qualified name for a Godot resource
-// reference, or "" when the reference carries no path evidence (a bare uid://
-// alias, or an empty value). Leading autoload markers and res:// or user://
-// prefixes are stripped, and the extension is dropped so one resource has the
-// same identity in every producer.
-func Canonical(reference string) string {
+// Identity returns the canonical identity of a repository-relative Godot
+// resource path: the path without its extension. Callers that hold a res:// or
+// user:// reference must use Resolve instead, because such a reference is
+// relative to its own Godot project rather than to the repository.
+func Identity(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	path = strings.TrimPrefix(filepath.ToSlash(path), "./")
+	extension := filepath.Ext(path)
+	// A name that is only an extension (".tscn") has no identity to trim; keep
+	// it whole rather than collapsing every such file onto the empty name.
+	if extension != "" && extension != pathpkg.Base(path) {
+		path = path[:len(path)-len(extension)]
+	}
+	return path
+}
+
+// Resolve returns the canonical repository-relative identity of a Godot
+// resource reference as seen from a project rooted at projectDir, which is the
+// repository-relative directory holding project.godot ("" when the project root
+// and the repository root are the same, or when no project file was found).
+//
+// A res:// or user:// reference is project-relative: Godot resolves res://a.tscn
+// against the project directory, so a project in a monorepo subdirectory must
+// resolve it under that subdirectory or every relationship would target an
+// identity no file owns. A reference with no scheme is already
+// repository-relative and is left where it is. A bare uid:// alias carries no
+// path evidence and resolves to "".
+func Resolve(projectDir, reference string) string {
+	reference = strings.TrimPrefix(strings.TrimSpace(reference), "*")
 	reference = strings.TrimSpace(reference)
-	reference = strings.TrimPrefix(reference, "*")
 	if reference == "" || IsUID(reference) {
 		return ""
 	}
-	reference = strings.TrimPrefix(reference, "res://")
-	reference = strings.TrimPrefix(reference, "user://")
-	reference = filepath.ToSlash(reference)
-	extension := strings.ToLower(filepath.Ext(reference))
-	return strings.TrimSuffix(reference, extension)
+	scoped := false
+	for _, prefix := range []string{"res://", "user://"} {
+		if strings.HasPrefix(reference, prefix) {
+			reference, scoped = strings.TrimPrefix(reference, prefix), true
+			break
+		}
+	}
+	reference = strings.TrimLeft(filepath.ToSlash(reference), "/")
+	if reference == "" {
+		return ""
+	}
+	if scoped && projectDir != "" {
+		reference = projectDir + "/" + reference
+	}
+	reference = pathpkg.Clean(reference)
+	if reference == "." || reference == ".." || strings.HasPrefix(reference, "../") {
+		return ""
+	}
+	return Identity(reference)
 }
 
 // IsUID reports whether a reference is a uid:// alias rather than a path.
@@ -117,8 +164,22 @@ func UID(reference string) string {
 	return reference
 }
 
-// AutoloadQualifiedName returns the project-scoped identity of an autoload.
-func AutoloadQualifiedName(name string) string { return AutoloadPrefix + strings.TrimSpace(name) }
+// AutoloadQualifiedName returns the identity of an autoload, scoped to the
+// repository-relative project.godot that declares it. Ownership is per project,
+// so two Godot projects in one repository that both declare Game are two
+// distinct singletons and must not collide on one node.
+//
+// Any further project-scoped Godot vocabulary - input actions and node groups,
+// for instance - must be scoped the same way and for the same reason.
+func AutoloadQualifiedName(projectPath, name string) string {
+	return projectScoped(AutoloadPrefix, projectPath, name)
+}
+
+// projectScoped builds a project-scoped identity from a vocabulary prefix, the
+// declaring project.godot path, and a declared name.
+func projectScoped(prefix, projectPath, name string) string {
+	return prefix + strings.TrimSpace(projectPath) + ":" + strings.TrimSpace(name)
+}
 
 // SceneNodeQualifiedName returns the identity of one node inside a scene. The
 // scene is named canonically and the node path is the scene-root-relative path
@@ -165,15 +226,60 @@ type Project struct {
 	// including conflicting and malformed ones, so diagnostics keep their
 	// source location.
 	Lines map[string]int
-	// Digest fingerprints the autoload vocabulary so an incremental index can
-	// invalidate scripts when it changes.
+	// Digest fingerprints the project vocabulary that dependent files resolve
+	// against, so an incremental index reparses them when it changes. Every
+	// declaration kind this type grows must be folded into it, or an edit to
+	// that section will not invalidate the files whose extraction it changes.
 	Digest string
 }
 
-// Autoload returns the unambiguous declaration for a name.
+// Autoload returns the unambiguous declaration for a name, enabled or not.
 func (p Project) Autoload(name string) (Autoload, bool) {
 	declaration, ok := p.Autoloads[strings.TrimSpace(name)]
 	return declaration, ok
+}
+
+// Singleton returns the declaration for a name only when Godot exposes it as a
+// global singleton. An autoload declared without the leading "*" marker is not
+// available as a global identifier, so a script use of that name must resolve to
+// nothing rather than to a node the engine never registers.
+func (p Project) Singleton(name string) (Autoload, bool) {
+	declaration, ok := p.Autoload(name)
+	if !ok || !declaration.Enabled {
+		return Autoload{}, false
+	}
+	return declaration, true
+}
+
+// Dir returns the repository-relative directory of this Godot project, or ""
+// when the project root is the repository root or no project file was found.
+func (p Project) Dir() string { return DirOf(p.Path) }
+
+// Resolve canonicalizes a Godot resource reference inside this project.
+func (p Project) Resolve(reference string) string { return Resolve(p.Dir(), reference) }
+
+// AutoloadQualifiedName returns the identity of one of this project's autoloads.
+func (p Project) AutoloadQualifiedName(name string) string {
+	return AutoloadQualifiedName(p.Path, name)
+}
+
+// SemanticKey fingerprints everything about this project that can change a
+// dependent file's extraction: which project owns the file, and the autoload
+// vocabulary that file's uses resolve against.
+func (p Project) SemanticKey() string { return p.Path + "\x00" + p.Digest }
+
+// DirOf returns the repository-relative directory holding a project.godot, or
+// "" when the file sits at the repository root or the path is empty.
+func DirOf(projectPath string) string {
+	projectPath = strings.TrimSpace(projectPath)
+	if projectPath == "" {
+		return ""
+	}
+	directory := pathpkg.Dir(filepath.ToSlash(projectPath))
+	if directory == "." || directory == "/" {
+		return ""
+	}
+	return directory
 }
 
 type cacheEntry struct {
@@ -292,7 +398,7 @@ func ProjectFromFile(relative string, file *configast.File) Project {
 				malformed[name] = true
 				continue
 			}
-			declaration := NewAutoload(name, literal.Value, line)
+			declaration := NewAutoload(project.Dir(), name, literal.Value, line)
 			if declaration.Target == "" && declaration.UID == "" {
 				malformed[name] = true
 				continue
@@ -300,6 +406,8 @@ func ProjectFromFile(relative string, file *configast.File) Project {
 			project.Autoloads[name] = declaration
 		}
 	}
+	// Extend this loop, not just the Project fields, when adding a declaration
+	// kind: the digest is what makes an incremental index equal a clean rebuild.
 	for _, name := range sortedKeys(project.Autoloads) {
 		declaration := project.Autoloads[name]
 		_, _ = digest.Write([]byte(name + "\x00" + declaration.Reference + "\x00"))
@@ -317,13 +425,15 @@ func ProjectFromFile(relative string, file *configast.File) Project {
 	return project
 }
 
-// NewAutoload interprets one raw [autoload] value.
-func NewAutoload(name, value string, line int) Autoload {
+// NewAutoload interprets one raw [autoload] value. The target is resolved
+// against the declaring project's directory, because an autoload path is a
+// res:// reference like any other.
+func NewAutoload(projectDir, name, value string, line int) Autoload {
 	trimmed := strings.TrimSpace(value)
 	enabled := strings.HasPrefix(trimmed, "*")
 	reference := strings.TrimPrefix(trimmed, "*")
 	return Autoload{
-		Name: strings.TrimSpace(name), Reference: reference, Target: Canonical(reference),
+		Name: strings.TrimSpace(name), Reference: reference, Target: Resolve(projectDir, reference),
 		UID: UID(reference), Enabled: enabled, Line: line,
 	}
 }

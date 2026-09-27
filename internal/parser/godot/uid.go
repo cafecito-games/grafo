@@ -21,7 +21,7 @@ func extractUID(input parserapi.Input, file *uidfile.File) graph.ParseResult {
 		Kind: graph.KindConfigKey, Name: file.UID.Value, QualifiedName: file.UID.Value,
 		Location: loc, Properties: map[string]string{"format": "uid", "form": "resource_uid", "resource": resourcePath},
 	})
-	if target := godotid.Canonical(resourcePath); target != "" {
+	if target := godotid.Identity(resourcePath); target != "" {
 		b.AddFact(id, graph.EdgeReferences, "", target, godotid.TargetKind(resourcePath), loc,
 			map[string]string{"resource": resourcePath})
 	}

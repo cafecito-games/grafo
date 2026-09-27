@@ -2,6 +2,8 @@ package godot_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -334,14 +336,14 @@ Menu="res://scenes/menu.tscn"
 Broken=5
 `)
 	assertNode(t, result.Nodes, graph.KindConfigKey, "config:project.godot:autoload/Broken")
-	game := assertNode(t, result.Nodes, graph.KindGodotAutoload, "godot:autoload:Game")
+	game := assertNode(t, result.Nodes, graph.KindGodotAutoload, "godot:autoload:project.godot:Game")
 	if game.Name != "Game" || game.Properties["singleton"] != "true" || game.Properties["enabled"] != "true" {
 		t.Fatalf("autoload properties = %#v", game)
 	}
 	if game.Properties["resource"] != "res://scripts/game.gd" {
 		t.Fatalf("autoload resource = %#v", game.Properties)
 	}
-	menu := assertNode(t, result.Nodes, graph.KindGodotAutoload, "godot:autoload:Menu")
+	menu := assertNode(t, result.Nodes, graph.KindGodotAutoload, "godot:autoload:project.godot:Menu")
 	if menu.Properties["enabled"] != "false" {
 		t.Fatalf("disabled autoload properties = %#v", menu.Properties)
 	}
@@ -406,4 +408,209 @@ func assertDiagnostic(t *testing.T, diagnostics []graph.Diagnostic, contains str
 		}
 	}
 	t.Fatalf("missing diagnostic containing %q; got %#v", contains, diagnostics)
+}
+
+// TestParserKeepsUIDPathDisagreementUnresolved covers the fail-closed contract
+// for UID evidence that contradicts its path: the UID is declared by another
+// resource, so trusting the path would produce a confident edge to the wrong
+// scene.
+func TestParserKeepsUIDPathDisagreementUnresolved(t *testing.T) {
+	root := t.TempDir()
+	writeProjectFile(t, root, "project.godot", "config_version=5\n")
+	writeProjectFile(t, root, "scenes/a.tscn", "[gd_scene format=3 uid=\"uid://shared\"]\n\n[node name=\"A\" type=\"Node\"]\n")
+	writeProjectFile(t, root, "scenes/b.tscn", "[gd_scene format=3 uid=\"uid://other\"]\n\n[node name=\"B\" type=\"Node\"]\n")
+
+	for _, testCase := range []struct {
+		name       string
+		content    string
+		diagnostic string
+		resolves   bool
+	}{
+		{
+			name: "uid declared by another resource",
+			content: `[gd_scene load_steps=2 format=3]
+
+[ext_resource type="PackedScene" uid="uid://shared" path="res://scenes/b.tscn" id="1_b"]
+
+[node name="Root" type="Node"]
+
+[node name="Child" parent="." instance=ExtResource("1_b")]
+`,
+			diagnostic: "uid://shared",
+		},
+		{
+			name: "uid agrees with its path",
+			content: `[gd_scene load_steps=2 format=3]
+
+[ext_resource type="PackedScene" uid="uid://other" path="res://scenes/b.tscn" id="1_b"]
+
+[node name="Root" type="Node"]
+
+[node name="Child" parent="." instance=ExtResource("1_b")]
+`,
+			resolves: true,
+		},
+		{
+			name: "unknown uid cannot be contradicted",
+			content: `[gd_scene load_steps=2 format=3]
+
+[ext_resource type="PackedScene" uid="uid://absent" path="res://scenes/missing.tscn" id="1_m"]
+
+[node name="Root" type="Node"]
+
+[node name="Child" parent="." instance=ExtResource("1_m")]
+`,
+			resolves: true,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			result := parseIn(t, root, "scenes/caller.tscn", testCase.content)
+			instantiates := findFact(result.Facts, graph.EdgeInstantiates, "scenes/b")
+			if testCase.resolves {
+				if len(result.Diagnostics) != 0 {
+					t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics)
+				}
+				found := false
+				for _, fact := range result.Facts {
+					if fact.Kind == graph.EdgeInstantiates {
+						found = true
+					}
+				}
+				if !found {
+					t.Fatalf("agreeing evidence produced no instantiates fact: %#v", result.Facts)
+				}
+				return
+			}
+			assertDiagnostic(t, result.Diagnostics, testCase.diagnostic)
+			if instantiates.Kind != "" {
+				t.Fatalf("contradicted UID produced an instantiates fact: %#v", instantiates)
+			}
+			for _, fact := range result.Facts {
+				if fact.Kind == graph.EdgeInstantiates || fact.Target == "scenes/b" {
+					t.Fatalf("contradicted UID produced a resolved fact: %#v", fact)
+				}
+			}
+		})
+	}
+}
+
+// TestParserKeepsRepeatedResourceIDsUnresolved covers sticky ambiguity: any
+// multiply declared ExtResource id must stay unresolved, including when the
+// repeats agree and when a later declaration repeats the previous path.
+func TestParserKeepsRepeatedResourceIDsUnresolved(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		content string
+	}{
+		{
+			name: "repeated with the same path",
+			content: `[gd_scene load_steps=3 format=3]
+
+[ext_resource type="PackedScene" path="res://scenes/a.tscn" id="1_a"]
+[ext_resource type="PackedScene" path="res://scenes/a.tscn" id="1_a"]
+
+[node name="Root" type="Node"]
+
+[node name="Child" parent="." instance=ExtResource("1_a")]
+`,
+		},
+		{
+			name: "third declaration repeats the previous path",
+			content: `[gd_scene load_steps=4 format=3]
+
+[ext_resource type="PackedScene" path="res://scenes/a.tscn" id="1_a"]
+[ext_resource type="PackedScene" path="res://scenes/b.tscn" id="1_a"]
+[ext_resource type="PackedScene" path="res://scenes/b.tscn" id="1_a"]
+
+[node name="Root" type="Node"]
+
+[node name="Child" parent="." instance=ExtResource("1_a")]
+`,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			result := parse(t, "scenes/repeat.tscn", testCase.content)
+			assertDiagnostic(t, result.Diagnostics, `"1_a"`)
+			for _, fact := range result.Facts {
+				if fact.Kind == graph.EdgeInstantiates {
+					t.Fatalf("repeated ExtResource id produced an instantiates fact: %#v", fact)
+				}
+			}
+		})
+	}
+}
+
+// TestParserResolvesResourcesWithinNestedProject covers a Godot project below
+// the repository root: a res:// reference is relative to the project, so it must
+// canonicalize to a repository-relative identity under that project directory.
+func TestParserResolvesResourcesWithinNestedProject(t *testing.T) {
+	root := t.TempDir()
+	writeProjectFile(t, root, "client/project.godot", "config_version=5\n\n[autoload]\nGame=\"*res://scripts/game.gd\"\n")
+	writeProjectFile(t, root, "client/scenes/enemy.tscn", "[gd_scene format=3 uid=\"uid://enemy123\"]\n\n[node name=\"Enemy\" type=\"Node\"]\n")
+
+	scene := parseIn(t, root, "client/scenes/main.tscn", `[gd_scene load_steps=3 format=3 uid="uid://main123"]
+
+[ext_resource type="Script" path="res://scripts/player.gd" id="1_player"]
+[ext_resource type="PackedScene" uid="uid://enemy123" path="res://scenes/enemy.tscn" id="2_enemy"]
+
+[node name="Main" type="Node"]
+script = ExtResource("1_player")
+
+[node name="Enemy" parent="." instance=ExtResource("2_enemy")]
+`)
+	assertNode(t, scene.Nodes, graph.KindGodotScene, "client/scenes/main")
+	assertFactTarget(t, scene.Facts, graph.EdgeInstantiates, "client/scenes/enemy")
+	assertFactTarget(t, scene.Facts, graph.EdgeAttachesScript, "client/scripts/player")
+	assertFactTarget(t, scene.Facts, graph.EdgeImports, "client/scenes/enemy")
+
+	config := parseIn(t, root, "client/project.godot", "config_version=5\n\n[autoload]\nGame=\"*res://scripts/game.gd\"\n")
+	autoload := assertNode(t, config.Nodes, graph.KindGodotAutoload, "godot:autoload:client/project.godot:Game")
+	assertFact(t, config.Facts, graph.EdgeAutoloads, autoload.ID, "client/scripts/game")
+}
+
+func parseIn(t *testing.T, root, path, content string) graph.ParseResult {
+	t.Helper()
+	result, err := godotparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: path, Content: []byte(content), Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func writeProjectFile(t *testing.T, root, name, content string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestParserTrustsPathWhenUIDIsDeclaredNowhere pins the limit of the UID check:
+// absence of a declaration is not contradiction, so an undeclared alias leaves
+// exact path evidence standing. Canonical identity drops the extension, which
+// means a scene and its script share one identity while each declares its own
+// UID, so "this path declares some other UID" is not evidence of disagreement.
+func TestParserTrustsPathWhenUIDIsDeclaredNowhere(t *testing.T) {
+	root := t.TempDir()
+	writeProjectFile(t, root, "project.godot", "config_version=5\n")
+	writeProjectFile(t, root, "scenes/target.tscn", "[gd_scene format=3 uid=\"uid://current\"]\n\n[node name=\"T\" type=\"Node\"]\n")
+	writeProjectFile(t, root, "scenes/target.gd.uid", "uid://script\n")
+
+	result := parseIn(t, root, "scenes/caller.tscn", `[gd_scene load_steps=2 format=3]
+
+[ext_resource type="PackedScene" uid="uid://current" path="res://scenes/target.tscn" id="1_t"]
+
+[node name="Root" type="Node"]
+
+[node name="Child" parent="." instance=ExtResource("1_t")]
+`)
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("a scene sharing its identity with a script was diagnosed: %#v", result.Diagnostics)
+	}
+	assertFactTarget(t, result.Facts, graph.EdgeInstantiates, "scenes/target")
 }

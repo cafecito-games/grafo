@@ -21,6 +21,7 @@ storage can evolve independently.
        ├─ defaults/*       production registry shared by CLI and evaluation
        ├─ gdscript/*       gdparser GDScript AST adapter
        ├─ godot/*          gdparser scene, resource, config, UID, and shader adapters
+       │   └─ godotid/*    Godot resource identity, project scope, and UID aliases
        ├─ java/*           Tree-sitter Java AST adapter
        ├─ swift/*          Tree-sitter Swift AST adapter
        └─ sql/*            dialect adapters such as PostgreSQL
@@ -137,16 +138,39 @@ generic modules and variables is a semantic schema change, so the graph schema
 and semantic index versions move together and an older index rebuilds instead of
 serving both vocabularies at once.
 
-`internal/parser/godot/godotid` is the single Godot resource identity resolver.
-Canonical identity is the repository-relative path without its extension, shared
-by the text-resource, UID sidecar, configuration, and GDScript producers, so one
-resource has one qualified name regardless of whether a `res://` path, a
-repository path, or a `uid://` alias named it. UIDs are aliases: the resource
-that owns a UID declares it, references carry it as evidence, and a UID that
-maps to more than one resource produces a diagnostic and stays unresolved. The
-same package owns the `[autoload]` vocabulary of the nearest `project.godot`,
-which is why a GDScript use of an autoload name resolves only against an exact,
-unshadowed, singly declared autoload.
+`internal/parser/godot/godotid` is the single Godot resource identity resolver,
+shared by the text-resource, UID sidecar, configuration, shader, and GDScript
+producers so one resource has one qualified name whatever evidence named it.
+Canonical identity is the repository-relative path without its extension, but a
+`res://` reference is *project*-relative: it resolves against the directory of
+the nearest ancestor `project.godot`, so a Godot project in a monorepo
+subdirectory targets identities under that subdirectory instead of identities no
+file owns. Identity and reference resolution are therefore separate entry points
+(`Identity` and `Resolve`); nothing canonicalizes a reference without knowing
+which project owns it.
+
+UIDs are aliases, never identity: the resource that owns a UID declares it and
+references carry it as evidence. Because a path that contradicts its UID would
+otherwise produce a confident edge to the wrong resource, the package also owns a
+repository-wide alias table of UID declarations, built from text-resource
+headers, `.uid` sidecars, and `.import` sidecars with bounded header reads. A
+reference whose UID is declared by a different resource, or by several, produces
+a diagnostic and no resolved edge; a UID that is not declared anywhere cannot
+contradict anything, so the path stands and an absent target remains an explicit
+external node. The check runs in that direction only, because canonical identity
+drops the extension: a scene and its script share one identity while declaring
+two UIDs of their own, so "this path declares some other UID" is not evidence of
+disagreement. That table plus the set of `project.godot` locations is the Godot
+parser's workspace semantic key, so a UID or project move reparses the files
+whose resolution it changes even when their own content is untouched.
+
+Autoload identity is scoped to the declaring `project.godot`
+(`godot:autoload:<project.godot path>:<Name>`), which keeps two projects in one
+repository that both declare `Game` independently addressable. A GDScript use of
+an autoload name resolves only against an exact, unshadowed, singly declared
+autoload that Godot actually exposes as a global singleton: a declaration
+without the leading `*` marker keeps its node and its `autoloads` edge, because
+the declaration is real, but satisfies no global identifier reference.
 
 Scene inheritance is an `instantiates` edge from both the inheriting scene and
 its root node, never language `extends`, so scene composition is never confused

@@ -12,7 +12,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/parser/godot/godotid"
 )
 
-func extractConfig(input parserapi.Input, file *configast.File) graph.ParseResult {
+func extractConfig(input parserapi.Input, fileScope scope, file *configast.File) graph.ParseResult {
 	b := parserapi.NewBuilder(input, "godot-config")
 	module := moduleName(input.Path)
 	format := configFormat(input.Path)
@@ -21,9 +21,9 @@ func extractConfig(input parserapi.Input, file *configast.File) graph.ParseResul
 		Location: moduleLocation(input.Path), Properties: map[string]string{"format": format},
 	})
 	keys := map[string]string{}
-	extractConfigAssignments(b, input, moduleID, format, "", file.Preamble, keys)
+	extractConfigAssignments(b, input, fileScope, moduleID, format, "", file.Preamble, keys)
 	for _, section := range file.Sections {
-		extractConfigAssignments(b, input, moduleID, format, section.Name, section.Statements, keys)
+		extractConfigAssignments(b, input, fileScope, moduleID, format, section.Name, section.Statements, keys)
 	}
 	if format == godotid.ProjectFileName {
 		extractAutoloads(b, input, moduleID, file, keys)
@@ -31,7 +31,7 @@ func extractConfig(input parserapi.Input, file *configast.File) graph.ParseResul
 	return b.Finish()
 }
 
-func extractConfigAssignments(b *parserapi.Builder, input parserapi.Input, moduleID, format, section string, statements []configast.Statement, keys map[string]string) {
+func extractConfigAssignments(b *parserapi.Builder, input parserapi.Input, fileScope scope, moduleID, format, section string, statements []configast.Statement, keys map[string]string) {
 	for _, statement := range statements {
 		assignment, ok := statement.(*configast.Assignment)
 		if !ok {
@@ -66,7 +66,7 @@ func extractConfigAssignments(b *parserapi.Builder, input parserapi.Input, modul
 			if !strings.HasPrefix(value, "res://") && !strings.HasPrefix(value, "user://") {
 				return true
 			}
-			if target := godotid.Canonical(value); target != "" {
+			if target := fileScope.resolve(value); target != "" {
 				b.AddFact(id, graph.EdgeReferences, "", target, godotid.TargetKind(value),
 					configLocation(input.Path, literal), map[string]string{"resource": literal.Value})
 			}
@@ -107,7 +107,7 @@ func extractAutoloads(b *parserapi.Builder, input parserapi.Input, moduleID stri
 		loc := graph.Location{Path: input.Path, Line: declaration.Line, Column: 1, EndLine: declaration.Line}
 		id := b.Declare(moduleID, graph.Node{
 			Kind: graph.KindGodotAutoload, Name: name,
-			QualifiedName: godotid.AutoloadQualifiedName(name), Location: loc, Properties: properties,
+			QualifiedName: project.AutoloadQualifiedName(name), Location: loc, Properties: properties,
 		})
 		if configKeyID := keys[godotid.AutoloadSection+"/"+name]; configKeyID != "" {
 			b.AddFact(configKeyID, graph.EdgeDefines, id, "", graph.KindGodotAutoload, loc, nil)

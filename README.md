@@ -205,7 +205,7 @@ script or scene globally.
 
 ```sh
 grafo godot-composition "scenes/main"
-grafo godot-composition "godot:autoload:GameSession" --json
+grafo godot-composition "godot:autoload:client/project.godot:GameSession" --json
 ```
 
 Scenes, resources, scene nodes, and autoloads are first-class node kinds
@@ -213,10 +213,17 @@ Scenes, resources, scene nodes, and autoloads are first-class node kinds
 by `instantiates`, `attaches_script`, and `autoloads` edges. Every edge keeps
 its original evidence - resource path, UID alias, `ExtResource` id, scene node
 path, and instance-placeholder marker. Scene inheritance is an `instantiates`
-edge, never language `extends`. A reference whose UID and path disagree, whose
-`ExtResource` id is declared twice, or whose autoload name is declared more
-than once is reported as a diagnostic and stays unresolved instead of resolving
-to a guess.
+edge, never language `extends`.
+
+`res://` references resolve against the nearest ancestor `project.godot`, so a
+Godot project in a monorepo subdirectory resolves correctly, and autoload
+identity is scoped to that file
+(`godot:autoload:<project.godot path>:<Name>`) so sibling projects that share an
+autoload name stay distinct. A reference whose UID is declared by a different
+resource, whose `ExtResource` id is declared more than once, or whose autoload
+name is declared more than once is reported as a diagnostic and stays unresolved
+instead of resolving to a guess, and an autoload declared without Godot's `*`
+singleton marker never satisfies a global identifier in a script.
 
 ### Bounded source search
 
