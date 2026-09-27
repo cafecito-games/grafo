@@ -26,13 +26,14 @@ SELECT
     CAST(COALESCE(SUM(CASE WHEN name = ?1 THEN 1 ELSE 0 END), 0) AS INTEGER) AS strict_matches
 FROM nodes
 WHERE name = ?1 COLLATE NOCASE
-  AND external = 0
-  AND (CAST(?2 AS TEXT) = '' OR kind = CAST(?2 AS TEXT))
+  AND external = CAST(?2 AS INTEGER)
+  AND (CAST(?3 AS TEXT) = '' OR kind = CAST(?3 AS TEXT))
 `
 
 type CountNodeMatchesByNameParams struct {
-	Target string `json:"target"`
-	Kind   string `json:"kind"`
+	Target   string `json:"target"`
+	External int64  `json:"external"`
+	Kind     string `json:"kind"`
 }
 
 type CountNodeMatchesByNameRow struct {
@@ -41,7 +42,7 @@ type CountNodeMatchesByNameRow struct {
 }
 
 func (q *Queries) CountNodeMatchesByName(ctx context.Context, arg CountNodeMatchesByNameParams) (CountNodeMatchesByNameRow, error) {
-	row := q.queryRow(ctx, q.countNodeMatchesByNameStmt, countNodeMatchesByName, arg.Target, arg.Kind)
+	row := q.queryRow(ctx, q.countNodeMatchesByNameStmt, countNodeMatchesByName, arg.Target, arg.External, arg.Kind)
 	var i CountNodeMatchesByNameRow
 	err := row.Scan(&i.Total, &i.StrictMatches)
 	return i, err
@@ -53,13 +54,14 @@ SELECT
     CAST(COALESCE(SUM(CASE WHEN qualified_name = ?1 THEN 1 ELSE 0 END), 0) AS INTEGER) AS strict_matches
 FROM nodes
 WHERE qualified_name = ?1 COLLATE NOCASE
-  AND external = 0
-  AND (CAST(?2 AS TEXT) = '' OR kind = CAST(?2 AS TEXT))
+  AND external = CAST(?2 AS INTEGER)
+  AND (CAST(?3 AS TEXT) = '' OR kind = CAST(?3 AS TEXT))
 `
 
 type CountNodeMatchesByQualifiedNameParams struct {
-	Target string `json:"target"`
-	Kind   string `json:"kind"`
+	Target   string `json:"target"`
+	External int64  `json:"external"`
+	Kind     string `json:"kind"`
 }
 
 type CountNodeMatchesByQualifiedNameRow struct {
@@ -68,7 +70,7 @@ type CountNodeMatchesByQualifiedNameRow struct {
 }
 
 func (q *Queries) CountNodeMatchesByQualifiedName(ctx context.Context, arg CountNodeMatchesByQualifiedNameParams) (CountNodeMatchesByQualifiedNameRow, error) {
-	row := q.queryRow(ctx, q.countNodeMatchesByQualifiedNameStmt, countNodeMatchesByQualifiedName, arg.Target, arg.Kind)
+	row := q.queryRow(ctx, q.countNodeMatchesByQualifiedNameStmt, countNodeMatchesByQualifiedName, arg.Target, arg.External, arg.Kind)
 	var i CountNodeMatchesByQualifiedNameRow
 	err := row.Scan(&i.Total, &i.StrictMatches)
 	return i, err
@@ -81,12 +83,14 @@ SELECT
 FROM nodes
 WHERE (lower(name) LIKE '%' || lower(?1) || '%'
     OR lower(qualified_name) LIKE '%' || lower(?1) || '%')
-  AND (CAST(?2 AS TEXT) = '' OR kind = CAST(?2 AS TEXT))
+  AND external = CAST(?2 AS INTEGER)
+  AND (CAST(?3 AS TEXT) = '' OR kind = CAST(?3 AS TEXT))
 `
 
 type CountNodeMatchesBySubstringParams struct {
-	Target string `json:"target"`
-	Kind   string `json:"kind"`
+	Target   string `json:"target"`
+	External int64  `json:"external"`
+	Kind     string `json:"kind"`
 }
 
 type CountNodeMatchesBySubstringRow struct {
@@ -95,7 +99,7 @@ type CountNodeMatchesBySubstringRow struct {
 }
 
 func (q *Queries) CountNodeMatchesBySubstring(ctx context.Context, arg CountNodeMatchesBySubstringParams) (CountNodeMatchesBySubstringRow, error) {
-	row := q.queryRow(ctx, q.countNodeMatchesBySubstringStmt, countNodeMatchesBySubstring, arg.Target, arg.Kind)
+	row := q.queryRow(ctx, q.countNodeMatchesBySubstringStmt, countNodeMatchesBySubstring, arg.Target, arg.External, arg.Kind)
 	var i CountNodeMatchesBySubstringRow
 	err := row.Scan(&i.Total, &i.StrictMatches)
 	return i, err
@@ -347,21 +351,27 @@ FROM (
     SELECT nodes.id, nodes.kind, nodes.name, nodes.qualified_name, nodes.language, nodes.path, nodes.line, nodes.column_no, nodes.end_line, nodes.properties, nodes.owner_file, nodes.external, CASE WHEN name = ?1 THEN 0 ELSE 1 END AS strict_rank
     FROM nodes
     WHERE name = ?1 COLLATE NOCASE
-      AND external = 0
-      AND (CAST(?2 AS TEXT) = '' OR kind = CAST(?2 AS TEXT))
+      AND external = CAST(?2 AS INTEGER)
+      AND (CAST(?3 AS TEXT) = '' OR kind = CAST(?3 AS TEXT))
 )
 ORDER BY strict_rank, length(qualified_name), qualified_name, id
-LIMIT ?3
+LIMIT ?4
 `
 
 type MatchNodesByNameParams struct {
 	Target     string `json:"target"`
+	External   int64  `json:"external"`
 	Kind       string `json:"kind"`
 	MaxResults int64  `json:"max_results"`
 }
 
 func (q *Queries) MatchNodesByName(ctx context.Context, arg MatchNodesByNameParams) ([]Node, error) {
-	rows, err := q.query(ctx, q.matchNodesByNameStmt, matchNodesByName, arg.Target, arg.Kind, arg.MaxResults)
+	rows, err := q.query(ctx, q.matchNodesByNameStmt, matchNodesByName,
+		arg.Target,
+		arg.External,
+		arg.Kind,
+		arg.MaxResults,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -404,15 +414,16 @@ FROM (
     SELECT nodes.id, nodes.kind, nodes.name, nodes.qualified_name, nodes.language, nodes.path, nodes.line, nodes.column_no, nodes.end_line, nodes.properties, nodes.owner_file, nodes.external, CASE WHEN qualified_name = ?1 THEN 0 ELSE 1 END AS strict_rank
     FROM nodes
     WHERE qualified_name = ?1 COLLATE NOCASE
-      AND external = 0
-      AND (CAST(?2 AS TEXT) = '' OR kind = CAST(?2 AS TEXT))
+      AND external = CAST(?2 AS INTEGER)
+      AND (CAST(?3 AS TEXT) = '' OR kind = CAST(?3 AS TEXT))
 )
 ORDER BY strict_rank, length(qualified_name), qualified_name, id
-LIMIT ?3
+LIMIT ?4
 `
 
 type MatchNodesByQualifiedNameParams struct {
 	Target     string `json:"target"`
+	External   int64  `json:"external"`
 	Kind       string `json:"kind"`
 	MaxResults int64  `json:"max_results"`
 }
@@ -422,8 +433,17 @@ type MatchNodesByQualifiedNameParams struct {
 // window. nodes_qualified and nodes_name are COLLATE NOCASE indexes, so the
 // case-insensitive equality below stays an index seek; the case-sensitive
 // ("strict") form is counted separately because it is stronger evidence.
+// @external selects the scope rather than discarding one: the adapter asks for
+// local declarations first and falls back to external boundary nodes, so exact
+// evidence about an external target is still exact rather than being pushed down
+// into the weaker substring level.
 func (q *Queries) MatchNodesByQualifiedName(ctx context.Context, arg MatchNodesByQualifiedNameParams) ([]Node, error) {
-	rows, err := q.query(ctx, q.matchNodesByQualifiedNameStmt, matchNodesByQualifiedName, arg.Target, arg.Kind, arg.MaxResults)
+	rows, err := q.query(ctx, q.matchNodesByQualifiedNameStmt, matchNodesByQualifiedName,
+		arg.Target,
+		arg.External,
+		arg.Kind,
+		arg.MaxResults,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -467,20 +487,27 @@ FROM (
     FROM nodes
     WHERE (lower(name) LIKE '%' || lower(?1) || '%'
         OR lower(qualified_name) LIKE '%' || lower(?1) || '%')
-      AND (CAST(?2 AS TEXT) = '' OR kind = CAST(?2 AS TEXT))
+      AND external = CAST(?2 AS INTEGER)
+      AND (CAST(?3 AS TEXT) = '' OR kind = CAST(?3 AS TEXT))
 )
-ORDER BY strict_rank, external, length(qualified_name), qualified_name, id
-LIMIT ?3
+ORDER BY strict_rank, length(qualified_name), qualified_name, id
+LIMIT ?4
 `
 
 type MatchNodesBySubstringParams struct {
 	Target     string `json:"target"`
+	External   int64  `json:"external"`
 	Kind       string `json:"kind"`
 	MaxResults int64  `json:"max_results"`
 }
 
 func (q *Queries) MatchNodesBySubstring(ctx context.Context, arg MatchNodesBySubstringParams) ([]Node, error) {
-	rows, err := q.query(ctx, q.matchNodesBySubstringStmt, matchNodesBySubstring, arg.Target, arg.Kind, arg.MaxResults)
+	rows, err := q.query(ctx, q.matchNodesBySubstringStmt, matchNodesBySubstring,
+		arg.Target,
+		arg.External,
+		arg.Kind,
+		arg.MaxResults,
+	)
 	if err != nil {
 		return nil, err
 	}

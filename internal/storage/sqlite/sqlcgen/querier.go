@@ -61,6 +61,10 @@ type Querier interface {
 	// window. nodes_qualified and nodes_name are COLLATE NOCASE indexes, so the
 	// case-insensitive equality below stays an index seek; the case-sensitive
 	// ("strict") form is counted separately because it is stronger evidence.
+	// @external selects the scope rather than discarding one: the adapter asks for
+	// local declarations first and falls back to external boundary nodes, so exact
+	// evidence about an external target is still exact rather than being pushed down
+	// into the weaker substring level.
 	MatchNodesByQualifiedName(ctx context.Context, arg MatchNodesByQualifiedNameParams) ([]Node, error)
 	MatchNodesBySubstring(ctx context.Context, arg MatchNodesBySubstringParams) ([]Node, error)
 	PruneDirtyFacts(ctx context.Context) error

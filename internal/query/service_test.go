@@ -55,7 +55,8 @@ type fakeRepository struct {
 }
 
 // MatchNodes implements the graph.NodeMatchGroup contract over an in-memory node
-// set: the strongest non-empty level wins, totals cover every match whether or
+// set: the strongest scope wins - strongest level, and within it local
+// declarations over external boundary nodes - totals cover every match whether or
 // not it is listed, and case-sensitive matches are listed first.
 func (f *fakeRepository) MatchNodes(_ context.Context, request graph.NodeMatchQuery) (graph.NodeMatchGroup, error) {
 	selector := strings.TrimSpace(request.Selector)
@@ -69,36 +70,42 @@ func (f *fakeRepository) MatchNodes(_ context.Context, request graph.NodeMatchQu
 	if f.matchLimit > 0 && f.matchLimit < limit {
 		limit = f.matchLimit
 	}
+	var fallback graph.NodeMatchGroup
 	for _, level := range []graph.NodeMatchLevel{graph.MatchQualifiedName, graph.MatchName, graph.MatchSubstring} {
-		group := graph.NodeMatchGroup{Level: level}
-		for _, node := range f.nodes {
-			if request.Kind != "" && node.Kind != request.Kind {
+		for _, external := range []bool{false, true} {
+			group := graph.NodeMatchGroup{Level: level, External: external}
+			for _, node := range f.nodes {
+				if request.Kind != "" && node.Kind != request.Kind {
+					continue
+				}
+				if node.External != external {
+					continue
+				}
+				if !graph.LooseMatch(level, selector, node) {
+					continue
+				}
+				group.Total++
+				if graph.StrictMatch(level, selector, node) {
+					group.Strict++
+				}
+				group.Nodes = append(group.Nodes, node)
+			}
+			if group.Total == 0 {
 				continue
 			}
-			// Exact levels cover declarations only; external boundary nodes stay
-			// reachable through the substring level, as in the SQLite adapter.
-			if level != graph.MatchSubstring && node.External {
-				continue
+			graph.SortNodeMatches(level, selector, group.Nodes)
+			if len(group.Nodes) > limit {
+				group.Nodes = group.Nodes[:limit]
 			}
-			if !graph.LooseMatch(level, selector, node) {
-				continue
+			if group.Strict > 0 {
+				return group, nil
 			}
-			group.Total++
-			if graph.StrictMatch(level, selector, node) {
-				group.Strict++
+			if group.StrongerThan(fallback) {
+				fallback = group
 			}
-			group.Nodes = append(group.Nodes, node)
 		}
-		if group.Total == 0 {
-			continue
-		}
-		graph.SortNodeMatches(level, selector, group.Nodes)
-		if len(group.Nodes) > limit {
-			group.Nodes = group.Nodes[:limit]
-		}
-		return group, nil
 	}
-	return graph.NodeMatchGroup{}, nil
+	return fallback, nil
 }
 
 // SearchNodes mirrors the adapter's substring search, including its ordering and
@@ -360,5 +367,184 @@ func exactSearchNodes() []graph.Node {
 		resolutionNode(graph.KindMethod, "search", "example.com/internal/cli.App.search"),
 		resolutionNode(graph.KindField, "search", "example.com/internal/mcpserver.Service.search"),
 		resolutionNode(graph.KindMethod, "Search", "example.com/internal/semantic.Service.Search"),
+	}
+}
+
+// TestResolveSuppressesOnlyDeclarationMembers is the counterpart to
+// TestResolvePrefersDeclarationOverItsOwnMembers: a nested qualified name alone
+// must never suppress a candidate, because distinct declarations can legitimately
+// nest. Kind is the evidence for "sub-part of a declaration", not the string
+// prefix.
+func TestResolveSuppressesOnlyDeclarationMembers(t *testing.T) {
+	tests := []struct {
+		name     string
+		nodes    []graph.Node
+		selector string
+		resolves string
+		total    int
+	}{
+		{
+			// Go permits "type Charge struct{}" beside "func (Charge) Charge()".
+			// Both are declarations named exactly Charge, so the selector is
+			// ambiguous even though one qualified name is a prefix of the other.
+			name: "a type and its own method stay ambiguous",
+			nodes: []graph.Node{
+				resolutionNode(graph.KindType, "Charge", "example.com/pkg.Charge"),
+				resolutionNode(graph.KindMethod, "Charge", "example.com/pkg.Charge.Charge"),
+			},
+			selector: "Charge",
+			total:    2,
+		},
+		{
+			name: "a package and a nested function of the same name stay ambiguous",
+			nodes: []graph.Node{
+				resolutionNode(graph.KindPackage, "charge", "example.com/charge"),
+				resolutionNode(graph.KindFunction, "charge", "example.com/charge.charge"),
+			},
+			selector: "charge",
+			total:    2,
+		},
+		{
+			name: "a type and a nested inner type stay ambiguous",
+			nodes: []graph.Node{
+				resolutionNode(graph.KindClass, "Charge", "example.com/pkg.Charge"),
+				resolutionNode(graph.KindClass, "Charge", "example.com/pkg.Outer.Charge"),
+			},
+			selector: "Charge",
+			total:    2,
+		},
+		{
+			name: "parameters and locals are suppressed under their declaration",
+			nodes: []graph.Node{
+				resolutionNode(graph.KindMethod, "Charge", "example.com/pkg.Service.Charge"),
+				resolutionNode(graph.KindParameter, "ctx", "example.com/pkg.Service.Charge.ctx"),
+				resolutionNode(graph.KindVariable, "err", "example.com/pkg.Service.Charge.err@12"),
+			},
+			selector: "Service.Charge",
+			resolves: "example.com/pkg.Service.Charge",
+		},
+		{
+			name: "a field is suppressed under the type that declares it",
+			nodes: []graph.Node{
+				resolutionNode(graph.KindType, "Charge", "example.com/pkg.Charge"),
+				resolutionNode(graph.KindField, "Charge", "example.com/pkg.Charge.Charge"),
+			},
+			selector: "Charge",
+			resolves: "example.com/pkg.Charge",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := query.NewService(&fakeRepository{nodes: nodeSet(test.nodes...)})
+			node, err := service.Resolve(context.Background(), test.selector)
+			if test.resolves != "" {
+				if err != nil {
+					t.Fatalf("expected %s to resolve, got %v", test.resolves, err)
+				}
+				if node.QualifiedName != test.resolves {
+					t.Fatalf("expected %s, got %s", test.resolves, node.QualifiedName)
+				}
+				return
+			}
+			var ambiguous *query.AmbiguousError
+			if !errors.As(err, &ambiguous) {
+				t.Fatalf("expected *AmbiguousError, got node %q and error %v", node.QualifiedName, err)
+			}
+			if ambiguous.Total != test.total || len(ambiguous.Candidates) != test.total {
+				t.Fatalf("expected %d candidates, got total %d with %d listed",
+					test.total, ambiguous.Total, len(ambiguous.Candidates))
+			}
+		})
+	}
+}
+
+// TestResolvePrefersLocalDeclarationsOverExternalNodes covers the scope half of
+// the strongest-evidence rule: exact evidence about an external boundary node is
+// still exact, but a local declaration outranks it, and a merely-containing local
+// symbol must not be able to make an exact external match ambiguous.
+func TestResolvePrefersLocalDeclarationsOverExternalNodes(t *testing.T) {
+	external := graph.Node{ID: graph.NodeID(graph.KindExternal, "net/http.Client"),
+		Kind: graph.KindExternal, Name: "Client", QualifiedName: "net/http.Client", External: true}
+	container := resolutionNode(graph.KindType, "ClientRegistry", "example.com/pkg.ClientRegistry")
+	local := resolutionNode(graph.KindType, "Client", "example.com/pkg.Client")
+
+	// With no local declaration, the exact external qualified name resolves rather
+	// than competing at the substring level with the containing local symbol.
+	service := query.NewService(&fakeRepository{nodes: nodeSet(external, container)})
+	node, err := service.Resolve(context.Background(), "net/http.Client")
+	if err != nil {
+		t.Fatalf("an exact external qualified name must resolve: %v", err)
+	}
+	if node.ID != external.ID {
+		t.Fatalf("unexpected resolution: %#v", node)
+	}
+	if node, err = service.Resolve(context.Background(), "Client"); err != nil {
+		t.Fatalf("an exact external name must resolve when nothing local matches: %v", err)
+	}
+	if node.ID != external.ID {
+		t.Fatalf("unexpected resolution: %#v", node)
+	}
+
+	// A local declaration of the same name wins outright, without ambiguity.
+	service = query.NewService(&fakeRepository{nodes: nodeSet(external, container, local)})
+	node, err = service.Resolve(context.Background(), "Client")
+	if err != nil {
+		t.Fatalf("a local declaration must outrank an external boundary node: %v", err)
+	}
+	if node.ID != local.ID {
+		t.Fatalf("unexpected resolution: %#v", node)
+	}
+}
+
+// TestResolveRanksCaseSensitiveEvidenceAboveStrongerFoldedLevels pins the ordering
+// that keeps case handling honest across levels, not just within one. A module
+// whose qualified name is "path" matches the selector "Path" only after folding;
+// it must not outrank the nodes named exactly "Path", even though a qualified-name
+// match is a stronger level than a name match.
+func TestResolveRanksCaseSensitiveEvidenceAboveStrongerFoldedLevels(t *testing.T) {
+	module := resolutionNode(graph.KindModule, "path", "path")
+	first := resolutionNode(graph.KindType, "Path", "example.com/query.Path")
+	second := resolutionNode(graph.KindField, "Path", "example.com/parser.Input.Path")
+
+	service := query.NewService(&fakeRepository{nodes: nodeSet(module, first, second)})
+	node, err := service.Resolve(context.Background(), "Path")
+	var ambiguous *query.AmbiguousError
+	if !errors.As(err, &ambiguous) {
+		t.Fatalf("expected *AmbiguousError, got node %q and error %v", node.QualifiedName, err)
+	}
+	// The name level decides, so the selector stays ambiguous instead of resolving
+	// to the module. The module is still listed, because at the name level it is
+	// one of the folded matches the caller has to tell apart.
+	if ambiguous.Level != graph.MatchName || ambiguous.Total != 3 {
+		t.Fatalf("expected the exact-name matches to decide, got %#v", ambiguous)
+	}
+	strict := 0
+	for _, candidate := range ambiguous.Candidates {
+		if candidate.Name == "Path" {
+			strict++
+		}
+	}
+	if strict != 2 {
+		t.Fatalf("expected both case-sensitive matches to be listed: %#v", ambiguous.Candidates)
+	}
+
+	// The folded match is still the best evidence when nothing matches
+	// case-sensitively, and the error says the grouping ignored case.
+	service = query.NewService(&fakeRepository{nodes: nodeSet(module)})
+	node, err = service.Resolve(context.Background(), "Path")
+	if err != nil {
+		t.Fatalf("a lone folded match must still resolve: %v", err)
+	}
+	if node.ID != module.ID {
+		t.Fatalf("unexpected resolution: %#v", node)
+	}
+	service = query.NewService(&fakeRepository{nodes: nodeSet(
+		resolutionNode(graph.KindMethod, "search", "example.com/a.Service.search"),
+		resolutionNode(graph.KindMethod, "Search", "example.com/b.Service.Search"),
+	)})
+	if _, err = service.Resolve(context.Background(), "SEARCH"); err == nil ||
+		!strings.Contains(err.Error(), "by name ignoring case") {
+		t.Fatalf("a folded-only ambiguity must say it ignored case, got %v", err)
 	}
 }

@@ -79,6 +79,10 @@ LIMIT @max_results;
 -- window. nodes_qualified and nodes_name are COLLATE NOCASE indexes, so the
 -- case-insensitive equality below stays an index seek; the case-sensitive
 -- ("strict") form is counted separately because it is stronger evidence.
+-- @external selects the scope rather than discarding one: the adapter asks for
+-- local declarations first and falls back to external boundary nodes, so exact
+-- evidence about an external target is still exact rather than being pushed down
+-- into the weaker substring level.
 
 -- name: MatchNodesByQualifiedName :many
 SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line,
@@ -87,7 +91,7 @@ FROM (
     SELECT nodes.*, CASE WHEN qualified_name = @target THEN 0 ELSE 1 END AS strict_rank
     FROM nodes
     WHERE qualified_name = @target COLLATE NOCASE
-      AND external = 0
+      AND external = CAST(@external AS INTEGER)
       AND (CAST(@kind AS TEXT) = '' OR kind = CAST(@kind AS TEXT))
 )
 ORDER BY strict_rank, length(qualified_name), qualified_name, id
@@ -99,7 +103,7 @@ SELECT
     CAST(COALESCE(SUM(CASE WHEN qualified_name = @target THEN 1 ELSE 0 END), 0) AS INTEGER) AS strict_matches
 FROM nodes
 WHERE qualified_name = @target COLLATE NOCASE
-  AND external = 0
+  AND external = CAST(@external AS INTEGER)
   AND (CAST(@kind AS TEXT) = '' OR kind = CAST(@kind AS TEXT));
 
 -- name: MatchNodesByName :many
@@ -109,7 +113,7 @@ FROM (
     SELECT nodes.*, CASE WHEN name = @target THEN 0 ELSE 1 END AS strict_rank
     FROM nodes
     WHERE name = @target COLLATE NOCASE
-      AND external = 0
+      AND external = CAST(@external AS INTEGER)
       AND (CAST(@kind AS TEXT) = '' OR kind = CAST(@kind AS TEXT))
 )
 ORDER BY strict_rank, length(qualified_name), qualified_name, id
@@ -121,7 +125,7 @@ SELECT
     CAST(COALESCE(SUM(CASE WHEN name = @target THEN 1 ELSE 0 END), 0) AS INTEGER) AS strict_matches
 FROM nodes
 WHERE name = @target COLLATE NOCASE
-  AND external = 0
+  AND external = CAST(@external AS INTEGER)
   AND (CAST(@kind AS TEXT) = '' OR kind = CAST(@kind AS TEXT));
 
 -- name: MatchNodesBySubstring :many
@@ -133,9 +137,10 @@ FROM (
     FROM nodes
     WHERE (lower(name) LIKE '%' || lower(@target) || '%'
         OR lower(qualified_name) LIKE '%' || lower(@target) || '%')
+      AND external = CAST(@external AS INTEGER)
       AND (CAST(@kind AS TEXT) = '' OR kind = CAST(@kind AS TEXT))
 )
-ORDER BY strict_rank, external, length(qualified_name), qualified_name, id
+ORDER BY strict_rank, length(qualified_name), qualified_name, id
 LIMIT @max_results;
 
 -- name: CountNodeMatchesBySubstring :one
@@ -145,4 +150,5 @@ SELECT
 FROM nodes
 WHERE (lower(name) LIKE '%' || lower(@target) || '%'
     OR lower(qualified_name) LIKE '%' || lower(@target) || '%')
+  AND external = CAST(@external AS INTEGER)
   AND (CAST(@kind AS TEXT) = '' OR kind = CAST(@kind AS TEXT));

@@ -119,12 +119,18 @@ equally good matches. It never returns one of several matches as though it were
 unique.
 
 Only the strongest kind of evidence a selector produced is considered: an exact
-qualified name, else an exact name, else a substring. Within that evidence, a
-case-sensitive match decides on its own, so `impact` resolves to `App.impact`
-rather than tying with `Service.Impact`; case-insensitive-only matches are still
-listed when the selector is ambiguous, because they are usually what has to be
-told apart. A declaration wins over nodes whose qualified name merely extends it,
-so a method is not made ambiguous by its own parameters and local variables.
+qualified name, else an exact name, else a substring, and within each of those a
+local declaration outranks an external boundary node. Case-sensitive evidence
+outranks all of that, so a case-insensitive-only hit at a strong level never beats
+a case-sensitive match at a weaker one — the selector `Path` is decided by the
+nodes named exactly `Path`, not by a module whose qualified name is `path`. Within
+one kind of evidence a case-sensitive match decides on its own, so `impact`
+resolves to `App.impact` rather than tying with `Service.Impact`;
+case-insensitive-only matches are still listed when the selector is ambiguous,
+because they are usually what has to be told apart. A symbol's own parameters, local variables, and fields do not make its
+selector ambiguous, but a nested qualified name alone never suppresses a
+candidate: `type Charge struct{}` and `func (Charge) Charge()` are two
+declarations sharing one name, so `Charge` stays ambiguous between them.
 
 An ambiguity error reports the total number of matches in the graph and says when
 the listed candidates are only part of it. Commands and tools that take a selector

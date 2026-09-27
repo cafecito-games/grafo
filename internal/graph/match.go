@@ -50,13 +50,38 @@ type NodeMatchQuery struct {
 	Limit    int      `json:"limit,omitempty"`
 }
 
+// memberKinds are the node kinds that only ever exist as part of a declaration:
+// a function's parameters and local variables, and a type's fields. Their
+// qualified names are prefixed by the declaring symbol's, so a selector naming
+// the parent also matches them.
+//
+// Every other kind is a declaration in its own right even when its qualified name
+// nests under another candidate's. Go allows "type Charge struct{}" beside
+// "func (Charge) Charge()", whose qualified names are pkg.Charge and
+// pkg.Charge.Charge: two distinct declarations sharing one name, and a selector
+// naming both must stay ambiguous rather than silently picking the outer one.
+var memberKinds = map[NodeKind]bool{
+	KindParameter: true,
+	KindVariable:  true,
+	KindField:     true,
+}
+
+// IsDeclarationMember reports whether kind only ever exists as part of a
+// declaration. Only such a node may be treated as a sub-part of the symbol whose
+// qualified name it extends; anything else is a rival declaration.
+func IsDeclarationMember(kind NodeKind) bool { return memberKinds[kind] }
+
 // NodeMatchGroup is the complete evidence for a selector at one level.
 //
 // Adapters must honor three rules, because selector resolution is only sound
 // if they hold:
 //
-//   - Level is the strongest level that matched anything. Weaker levels are not
-//     reported, so a substring match never competes with an exact name match.
+//   - The group is the strongest evidence that matched anything, ranked by
+//     StrongerThan: a case-sensitive match outranks a case-insensitive-only one at
+//     any level, then a stronger level wins, then a local declaration beats an
+//     external boundary node. Weaker evidence is not reported, so a substring
+//     match never competes with an exact name match and an unresolved boundary
+//     node never competes with a real declaration.
 //   - Total and Strict count every match at that level in the graph, whether or
 //     not it fits in Nodes. Truncation must therefore be observable, and a
 //     truncated list can never silently narrow a match set.
@@ -64,10 +89,37 @@ type NodeMatchQuery struct {
 //     deterministically ordered, so the first Strict entries of Nodes are
 //     exactly the strict matches whenever Strict <= len(Nodes).
 type NodeMatchGroup struct {
-	Level  NodeMatchLevel `json:"level"`
-	Nodes  []Node         `json:"nodes"`
-	Strict int            `json:"strict"`
-	Total  int            `json:"total"`
+	Level NodeMatchLevel `json:"level"`
+	// External marks a group that holds external boundary nodes because no local
+	// declaration matched at this level. It makes the group weaker evidence than a
+	// local group at the same level, which matters when merging federated members.
+	External bool   `json:"external,omitempty"`
+	Nodes    []Node `json:"nodes"`
+	Strict   int    `json:"strict"`
+	Total    int    `json:"total"`
+}
+
+// StrongerThan reports whether g is better evidence than other. The ranking is,
+// in order: a group holding at least one case-sensitive match beats one holding
+// none, because a case-insensitive-only match is a weaker form of evidence and
+// must not outrank a case-sensitive match at a weaker level - a folded
+// qualified-name hit on "path" must not beat the nodes named exactly "Path"; then
+// a stronger level wins; then a local group beats an external fallback. An empty
+// group is never stronger than anything.
+func (g NodeMatchGroup) StrongerThan(other NodeMatchGroup) bool {
+	if g.Total == 0 {
+		return false
+	}
+	if other.Total == 0 {
+		return true
+	}
+	if (g.Strict > 0) != (other.Strict > 0) {
+		return g.Strict > 0
+	}
+	if g.Level != other.Level {
+		return g.Level.Stronger(other.Level)
+	}
+	return !g.External && other.External
 }
 
 // Truncated reports whether the graph holds matches that Nodes omits.

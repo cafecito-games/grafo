@@ -289,9 +289,10 @@ func (r *Repository) ListNodesByKind(ctx context.Context, request graph.NodeList
 }
 
 // MatchNodes merges the per-member match evidence for a selector. Only the
-// strongest level any member reported contributes, because a member that holds a
-// stronger match always reports that level itself; totals sum across the
-// contributing members so a federated ambiguity still states the true count.
+// strongest evidence any member reported contributes - the strongest level, and
+// within it a local group over an external fallback - because a member holding
+// stronger evidence always reports it itself. Totals sum across the contributing
+// members so a federated ambiguity still states the true count.
 func (r *Repository) MatchNodes(ctx context.Context, request graph.NodeMatchQuery) (graph.NodeMatchGroup, error) {
 	selector := strings.TrimSpace(request.Selector)
 	if selector == "" {
@@ -310,14 +311,11 @@ func (r *Repository) MatchNodes(ctx context.Context, request graph.NodeMatchQuer
 		if err != nil {
 			return graph.NodeMatchGroup{}, err
 		}
-		if group.Total == 0 {
+		if group.Total == 0 || merged.StrongerThan(group) {
 			continue
 		}
-		if merged.Level != graph.MatchNone && merged.Level.Stronger(group.Level) {
-			continue
-		}
-		if group.Level.Stronger(merged.Level) {
-			merged = graph.NodeMatchGroup{Level: group.Level}
+		if group.StrongerThan(merged) {
+			merged = graph.NodeMatchGroup{Level: group.Level, External: group.External}
 			byID = map[string]graph.Node{}
 			complete = true
 		}

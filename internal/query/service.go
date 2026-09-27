@@ -55,18 +55,27 @@ func (e *AmbiguousError) Error() string {
 }
 
 // matchReason names the evidence that grouped a set of candidates, for the
-// human-readable half of AmbiguousError.
-func matchReason(level graph.NodeMatchLevel) string {
-	switch level {
+// human-readable half of AmbiguousError. A group with no case-sensitive match says
+// so, because the caller's spelling did not match any candidate exactly.
+func matchReason(group graph.NodeMatchGroup) string {
+	var reason string
+	switch group.Level {
 	case graph.MatchQualifiedName:
-		return "by qualified name"
+		reason = "by qualified name"
 	case graph.MatchName:
-		return "by name"
+		reason = "by name"
 	case graph.MatchSubstring:
-		return "by substring"
+		reason = "by substring"
 	default:
 		return ""
 	}
+	if group.Strict == 0 {
+		reason += " ignoring case"
+	}
+	if group.External {
+		reason += " among external nodes"
+	}
+	return reason
 }
 
 var ErrNotFound = errors.New("node not found")
@@ -177,7 +186,7 @@ func (s *Service) ResolveKind(ctx context.Context, selector string, kind graph.N
 		}
 	}
 	return graph.Node{}, &AmbiguousError{Term: selector, Kind: kind, Level: group.Level,
-		Reason: matchReason(group.Level), Total: total, Candidates: candidates}
+		Reason: matchReason(group), Total: total, Candidates: candidates}
 }
 
 // strictMatches keeps the case-sensitive matches of a group. The group contract
@@ -193,20 +202,26 @@ func strictMatches(group graph.NodeMatchGroup, selector string) []graph.Node {
 	return result
 }
 
-// preferDeclarations drops candidates whose qualified name merely extends
-// another candidate's at a non-identifier boundary. Parameters, local variables,
-// and fields carry their declaring symbol's qualified name as a prefix, so
-// matching would otherwise make every local a rival candidate for the selector
-// that names its parent. Keeping the shorter declaration is always the right
-// call, because the caller named the parent and not the child. The input is
-// returned unchanged when the rule would leave nothing.
+// preferDeclarations drops candidates that are sub-parts of another candidate:
+// a parameter, local variable, or field whose qualified name extends that of a
+// symbol also in the set. Those nodes carry their declaring symbol's qualified
+// name as a prefix, so matching would otherwise make every local a rival
+// candidate for the selector that names its parent, and the caller named the
+// parent rather than the child.
+//
+// A nested qualified name alone is never enough: only graph.IsDeclarationMember
+// kinds may be suppressed. Go allows "type Charge struct{}" beside
+// "func (Charge) Charge()", whose qualified names are pkg.Charge and
+// pkg.Charge.Charge; both are declarations, so that selector must stay ambiguous
+// instead of resolving to the outer one. The input is returned unchanged when the
+// rule would leave nothing.
 func preferDeclarations(nodes []graph.Node) []graph.Node {
 	if len(nodes) < 2 {
 		return nodes
 	}
 	result := make([]graph.Node, 0, len(nodes))
 	for _, node := range nodes {
-		if !extendsAnyQualifiedName(node, nodes) {
+		if !isMemberOfAny(node, nodes) {
 			result = append(result, node)
 		}
 	}
@@ -216,7 +231,12 @@ func preferDeclarations(nodes []graph.Node) []graph.Node {
 	return result
 }
 
-func extendsAnyQualifiedName(node graph.Node, nodes []graph.Node) bool {
+// isMemberOfAny reports whether node is a declaration member nested inside
+// another candidate's qualified name.
+func isMemberOfAny(node graph.Node, nodes []graph.Node) bool {
+	if !graph.IsDeclarationMember(node.Kind) {
+		return false
+	}
 	for _, other := range nodes {
 		if other.ID == node.ID {
 			continue
