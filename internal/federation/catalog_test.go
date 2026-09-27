@@ -45,7 +45,7 @@ type Bus interface{ Subscribe(string) }
 	}
 	isolated, err := query.NewCatalog(single).OrphanedEvents(ctx, query.CatalogOptions{})
 	if err != nil {
-		single.Close()
+		_ = single.Close()
 		t.Fatal(err)
 	}
 	if err := single.Close(); err != nil {
@@ -69,7 +69,7 @@ type Bus interface{ Subscribe(string) }
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	catalog := query.NewCatalog(repository)
 
 	names, err := repository.Repositories(ctx)
@@ -137,7 +137,7 @@ func indexWithDefaults(t *testing.T, ctx context.Context, root string) {
 		t.Fatal(err)
 	}
 	if _, err := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{}); err != nil {
-		repository.Close()
+		_ = repository.Close()
 		t.Fatal(err)
 	}
 	if err := repository.Close(); err != nil {

@@ -175,7 +175,7 @@ func stripJSONComments(data []byte) []byte {
 			}
 		case character == '/' && index+1 < len(data) && data[index+1] == '*':
 			index += 2
-			for index+1 < len(data) && !(data[index] == '*' && data[index+1] == '/') {
+			for index+1 < len(data) && (data[index] != '*' || data[index+1] != '/') {
 				index++
 			}
 			index++

@@ -15,7 +15,7 @@ func TestListNodesByKindEnumeratesExactKinds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	if err := repository.SetMeta(ctx, "root", "/tmp/example/checkout"); err != nil {
 		t.Fatal(err)
 	}

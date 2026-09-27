@@ -54,35 +54,35 @@ func Open(ctx context.Context, path string) (*Repository, error) {
 	db.SetMaxOpenConns(1)
 	for _, pragma := range []string{"PRAGMA journal_mode=WAL", "PRAGMA synchronous=NORMAL", "PRAGMA busy_timeout=5000", "PRAGMA wal_autocheckpoint=1000"} {
 		if _, err := db.ExecContext(ctx, pragma); err != nil {
-			db.Close()
+			_ = db.Close()
 			return nil, fmt.Errorf("configure SQLite: %w", err)
 		}
 	}
 	provider, err := goose.NewProvider(goose.DialectSQLite3, db, migrations.Files)
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("create migration provider: %w", err)
 	}
 	if _, err := provider.Up(ctx); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("migrate graph database: %w", err)
 	}
 	queries, err := sqlcgen.Prepare(ctx, db)
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("prepare graph queries: %w", err)
 	}
 	variableLimit, err := activeVariableLimit(ctx, db)
 	if err != nil {
-		queries.Close()
-		db.Close()
+		_ = queries.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("read SQLite variable limit: %w", err)
 	}
 	repository := &Repository{db: db, queries: queries, path: path, limits: batchLimits{
 		MaxRows: defaultBatchRows, MaxVariables: variableLimit, MaxBytes: defaultBatchBytes,
 	}}
 	if err := repository.SetMeta(ctx, "schema_version", fmt.Sprint(graph.SchemaVersion)); err != nil {
-		repository.Close()
+		_ = repository.Close()
 		return nil, err
 	}
 	return repository, nil
@@ -841,12 +841,12 @@ func (r *Repository) inTransaction(ctx context.Context, fn func(*sqlcgen.Queries
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	writer, err := newBatchWriter(tx, r.limits)
 	if err != nil {
 		return err
 	}
-	defer writer.close()
+	defer func() { _ = writer.close() }()
 	writer.afterBatch = r.afterBatch
 	if err := fn(r.queries.WithTx(tx), writer); err != nil {
 		return err
@@ -871,7 +871,7 @@ func activeVariableLimit(ctx context.Context, db *sql.DB) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer connection.Close()
+	defer func() { _ = connection.Close() }()
 	limit, err := modernsqlite.Limit(connection, sqliteLimitVariables, -1)
 	if err != nil {
 		return 0, err

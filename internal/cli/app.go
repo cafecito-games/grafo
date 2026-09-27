@@ -41,6 +41,22 @@ type App struct {
 
 func New(stdout, stderr io.Writer) *App { return &App{stdout: stdout, stderr: stderr} }
 
+// print, printf, println and errorf are the only way this package writes to the
+// terminal. A failed write to stdout or stderr leaves nothing to fall back on
+// and no exit code the caller has not already decided, so the error is dropped
+// here once instead of at every call site.
+func (a *App) print(text string) { _, _ = fmt.Fprint(a.stdout, text) }
+
+func (a *App) printf(format string, arguments ...any) {
+	_, _ = fmt.Fprintf(a.stdout, format, arguments...)
+}
+
+func (a *App) println(arguments ...any) { _, _ = fmt.Fprintln(a.stdout, arguments...) }
+
+func (a *App) errorf(format string, arguments ...any) {
+	_, _ = fmt.Fprintf(a.stderr, format, arguments...)
+}
+
 func (a *App) Run(ctx context.Context, arguments []string) int {
 	parsed, err := parseArguments(arguments)
 	if err != nil {
@@ -48,11 +64,11 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		return 2
 	}
 	if parsed.command == "" || parsed.command == "help" || parsed.flags["help"] {
-		fmt.Fprint(a.stdout, helpText)
+		a.print(helpText)
 		return 0
 	}
 	if parsed.command == "version" {
-		fmt.Fprintln(a.stdout, "grafo "+Version)
+		a.println("grafo " + Version)
 		return 0
 	}
 	var runErr error
@@ -120,7 +136,7 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		if errors.As(runErr, &ambiguous) {
 			a.printNodes(ambiguous.Candidates)
 			if ambiguous.Total > len(ambiguous.Candidates) {
-				fmt.Fprintf(a.stderr, "grafo: %d further matches are not listed; narrow the selector or add --kind\n",
+				a.errorf("grafo: %d further matches are not listed; narrow the selector or add --kind\n",
 					ambiguous.Total-len(ambiguous.Candidates))
 			}
 		}
@@ -157,12 +173,12 @@ func (a *App) announcer(args parsedArguments) func([]agentinstall.Action) {
 		if len(planned) == 0 {
 			return
 		}
-		fmt.Fprintln(a.stdout, "planned changes:")
+		a.println("planned changes:")
 		for _, action := range planned {
 			action.DryRun = true
 			a.printAgentAction(action, "  ")
 		}
-		fmt.Fprintln(a.stdout, "applying:")
+		a.println("applying:")
 	}
 }
 
@@ -183,7 +199,7 @@ func (a *App) install(ctx context.Context, args parsedArguments) error {
 			} else if status.Installed {
 				state = "installed, grafo not registered"
 			}
-			fmt.Fprintf(a.stdout, "%-14s  %-18s  %-32s  %s\n", status.Client.Name, status.Client.Display, state, status.Path)
+			a.printf("%-14s  %-18s  %-32s  %s\n", status.Client.Name, status.Client.Display, state, status.Path)
 		}
 		return nil
 	}
@@ -204,7 +220,7 @@ func (a *App) install(ctx context.Context, args parsedArguments) error {
 		return installErr
 	}
 	if !args.flags["dry-run"] && !args.flags["json"] {
-		fmt.Fprintln(a.stdout, "run 'grafo index .' once in each repository before using the MCP tools")
+		a.println("run 'grafo index .' once in each repository before using the MCP tools")
 	}
 	return nil
 }
@@ -244,20 +260,20 @@ func (a *App) printAgentAction(action agentinstall.Action, indent string) {
 		}
 		change = "would " + verb
 	}
-	fmt.Fprintf(a.stdout, "%s%s %s", indent, change, action.Client.Display)
+	a.printf("%s%s %s", indent, change, action.Client.Display)
 	if action.Kind != "" {
-		fmt.Fprintf(a.stdout, " %s", action.Kind)
+		a.printf(" %s", action.Kind)
 	}
 	if action.Scope != "" {
-		fmt.Fprintf(a.stdout, " (%s scope)", action.Scope)
+		a.printf(" (%s scope)", action.Scope)
 	}
 	if action.Target != "" {
-		fmt.Fprintf(a.stdout, " · %s", action.Target)
+		a.printf(" · %s", action.Target)
 	}
 	if action.Detail != "" {
-		fmt.Fprintf(a.stdout, " · %s", action.Detail)
+		a.printf(" · %s", action.Detail)
 	}
-	fmt.Fprintln(a.stdout)
+	a.println()
 }
 
 // guidance prints Grafo's canonical agent guidance, or one advisory hook hint.
@@ -268,11 +284,11 @@ func (a *App) printAgentAction(action agentinstall.Action, indent string) {
 func (a *App) guidance(ctx context.Context, args parsedArguments) error {
 	root := repoPath(args)
 	if phase := strings.TrimSpace(args.values["hook"]); phase != "" {
-		fmt.Fprintln(a.stdout, advisoryHint(phase, a.indexSummary(ctx, root)))
+		a.println(advisoryHint(phase, a.indexSummary(ctx, root)))
 		return nil
 	}
-	fmt.Fprint(a.stdout, agentguide.Text())
-	fmt.Fprintf(a.stdout, "\n%s\n", a.indexSummary(ctx, root))
+	a.print(agentguide.Text())
+	a.printf("\n%s\n", a.indexSummary(ctx, root))
 	return nil
 }
 
@@ -327,7 +343,7 @@ func (a *App) index(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	maxSize, err := int64Option(args, "max-file-size", 5<<20)
 	if err != nil {
 		return err
@@ -391,7 +407,7 @@ func (a *App) watch(ctx context.Context, args parsedArguments) error {
 			return nil
 		case <-ticker.C:
 			if err := run(); err != nil {
-				fmt.Fprintf(a.stderr, "grafo watch: %v\n", err)
+				a.errorf("grafo watch: %v\n", err)
 			}
 		}
 	}
@@ -415,7 +431,7 @@ func (a *App) status(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	defer closeRepository()
+	defer func() { _ = closeRepository() }()
 	counts, err := repository.Counts(ctx)
 	if err != nil {
 		return err
@@ -433,10 +449,10 @@ func (a *App) status(ctx context.Context, args parsedArguments) error {
 		return writeJSON(a.stdout, output)
 	}
 	for _, project := range projects {
-		fmt.Fprintf(a.stdout, "%s · branch %s\n", project.Name, project.Branch)
+		a.printf("%s · branch %s\n", project.Name, project.Branch)
 	}
-	fmt.Fprintf(a.stdout, "%d files · %d nodes · %d edges · %d unresolved\n", counts.Files, counts.Nodes, counts.Edges, counts.External)
-	fmt.Fprintf(a.stdout, "indexed %s\n", indexedAt)
+	a.printf("%d files · %d nodes · %d edges · %d unresolved\n", counts.Files, counts.Nodes, counts.Edges, counts.External)
+	a.printf("indexed %s\n", indexedAt)
 	return nil
 }
 
@@ -448,7 +464,7 @@ func (a *App) mcp(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	defer closeRepository()
+	defer func() { _ = closeRepository() }()
 	service := mcpserver.NewFederated(repository, projects).WithRefresh(func(refreshContext context.Context) error {
 		return refreshRead(refreshContext, repository, projects)
 	})
@@ -484,7 +500,7 @@ func (a *App) embed(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	service, err := newSemanticService(repository, args)
 	if err != nil {
 		return err
@@ -496,8 +512,8 @@ func (a *App) embed(ctx context.Context, args parsedArguments) error {
 	if args.flags["json"] {
 		return writeJSON(a.stdout, report)
 	}
-	fmt.Fprintf(a.stdout, "embedded %s · branch %s · model %s\n", project.Name, project.Branch, report.Model)
-	fmt.Fprintf(a.stdout, "%d updated · %d unchanged · %d removed · %d candidates\n",
+	a.printf("embedded %s · branch %s · model %s\n", project.Name, project.Branch, report.Model)
+	a.printf("%d updated · %d unchanged · %d removed · %d candidates\n",
 		report.Updated, report.Unchanged, report.Removed, report.Candidates)
 	return nil
 }
@@ -514,7 +530,7 @@ func (a *App) reusable(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	defer closeRepository()
+	defer func() { _ = closeRepository() }()
 	service, err := newSemanticService(repository, args)
 	if err != nil {
 		return err
@@ -530,7 +546,7 @@ func (a *App) reusable(ctx context.Context, args parsedArguments) error {
 		return writeJSON(a.stdout, result)
 	}
 	for _, match := range result.Matches {
-		fmt.Fprintf(a.stdout, "%.4f  %-12s  %-48s  %s · %d connected nodes\n",
+		a.printf("%.4f  %-12s  %-48s  %s · %d connected nodes\n",
 			match.Score, match.Node.Kind, match.Node.QualifiedName, formatLocation(match.Node.Location), len(match.Context.Nodes)-1)
 	}
 	return nil
@@ -577,7 +593,7 @@ func (a *App) find(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	defer closeRepository()
+	defer func() { _ = closeRepository() }()
 	nodes, err := query.NewService(repository).Find(ctx, strings.Join(args.positionals, " "), limit)
 	if err != nil {
 		return err
@@ -601,7 +617,7 @@ func (a *App) show(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	defer closeRepository()
+	defer func() { _ = closeRepository() }()
 	node, err := query.NewService(repository).ResolveKind(ctx, args.positionals[0], kind)
 	if err != nil {
 		return err
@@ -633,7 +649,7 @@ func (a *App) source(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	defer closeRepository()
+	defer func() { _ = closeRepository() }()
 	service, err := newSourceService(repository, projects)
 	if err != nil {
 		return err
@@ -645,10 +661,10 @@ func (a *App) source(ctx context.Context, args parsedArguments) error {
 	if args.flags["json"] {
 		return writeJSON(a.stdout, excerpt)
 	}
-	fmt.Fprintf(a.stdout, "%s · %s · %s:%d-%d\n", excerpt.Repository, excerpt.Branch, excerpt.Path, excerpt.StartLine, excerpt.EndLine)
-	fmt.Fprintln(a.stdout, excerpt.Content)
+	a.printf("%s · %s · %s:%d-%d\n", excerpt.Repository, excerpt.Branch, excerpt.Path, excerpt.StartLine, excerpt.EndLine)
+	a.println(excerpt.Content)
 	if excerpt.Truncated {
-		fmt.Fprintln(a.stdout, "… truncated")
+		a.println("… truncated")
 	}
 	return nil
 }
@@ -694,7 +710,7 @@ func (a *App) neighbors(ctx context.Context, args parsedArguments, mode string) 
 	if err != nil {
 		return err
 	}
-	defer closeRepository()
+	defer func() { _ = closeRepository() }()
 	result, err := query.NewService(repository).Neighborhood(ctx, args.positionals[0], kind, depth, direction, relations, limit)
 	if err != nil {
 		return err
@@ -702,18 +718,18 @@ func (a *App) neighbors(ctx context.Context, args parsedArguments, mode string) 
 	if args.flags["json"] {
 		return writeJSON(a.stdout, result)
 	}
-	fmt.Fprintf(a.stdout, "%s [%s]\n", result.Root.QualifiedName, result.Root.Kind)
+	a.printf("%s [%s]\n", result.Root.QualifiedName, result.Root.Kind)
 	for _, reached := range result.Nodes {
 		if reached.Depth == 0 {
 			continue
 		}
-		fmt.Fprintf(a.stdout, "%s↳ %s [%s] %s\n", strings.Repeat("  ", reached.Depth-1), reached.Node.QualifiedName, reached.Node.Kind, formatLocation(reached.Node.Location))
+		a.printf("%s↳ %s [%s] %s\n", strings.Repeat("  ", reached.Depth-1), reached.Node.QualifiedName, reached.Node.Kind, formatLocation(reached.Node.Location))
 	}
-	fmt.Fprintf(a.stdout, "%d nodes · %d edges", len(result.Nodes), len(result.Edges))
+	a.printf("%d nodes · %d edges", len(result.Nodes), len(result.Edges))
 	if result.Truncated {
-		fmt.Fprint(a.stdout, " · truncated")
+		a.print(" · truncated")
 	}
-	fmt.Fprintln(a.stdout)
+	a.println()
 	return nil
 }
 
@@ -734,7 +750,7 @@ func (a *App) path(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	defer closeRepository()
+	defer func() { _ = closeRepository() }()
 	result, err := query.NewService(repository).ShortestPath(ctx, args.positionals[0], args.positionals[1], kind, direction, parseRelations(args.values["relation"]), limit)
 	if err != nil {
 		return err
@@ -744,9 +760,9 @@ func (a *App) path(ctx context.Context, args parsedArguments) error {
 	}
 	for index, node := range result.Nodes {
 		if index > 0 {
-			fmt.Fprintf(a.stdout, "  --%s-->\n", result.Edges[index-1].Kind)
+			a.printf("  --%s-->\n", result.Edges[index-1].Kind)
 		}
-		fmt.Fprintf(a.stdout, "%s [%s] %s\n", node.QualifiedName, node.Kind, formatLocation(node.Location))
+		a.printf("%s [%s] %s\n", node.QualifiedName, node.Kind, formatLocation(node.Location))
 	}
 	return nil
 }
@@ -795,7 +811,7 @@ func (a *App) impact(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	defer closeRepository()
+	defer func() { _ = closeRepository() }()
 	service := query.NewService(repository)
 	if options.IncludeSource {
 		sourceService, err := newSourceService(repository, projects)
@@ -835,7 +851,7 @@ func (a *App) godotComposition(ctx context.Context, args parsedArguments) error 
 	if err != nil {
 		return err
 	}
-	defer closeRepository()
+	defer func() { _ = closeRepository() }()
 	report, err := query.NewService(repository).GodotComposition(ctx, args.positionals[0],
 		query.GodotCompositionOptions{Depth: depth, Limit: limit, Kind: kind})
 	if err != nil {
@@ -849,10 +865,10 @@ func (a *App) godotComposition(ctx context.Context, args parsedArguments) error 
 }
 
 func (a *App) printGodotComposition(report query.GodotComposition) {
-	fmt.Fprintf(a.stdout, "%s [%s] %s\n", report.Root.QualifiedName, report.Root.Kind,
+	a.printf("%s [%s] %s\n", report.Root.QualifiedName, report.Root.Kind,
 		formatLocation(report.Root.Location))
 	if len(report.SceneNodes) > 0 {
-		fmt.Fprintf(a.stdout, "\nscene nodes (%d)\n", len(report.SceneNodes))
+		a.printf("\nscene nodes (%d)\n", len(report.SceneNodes))
 	}
 	for _, group := range []struct {
 		label     string
@@ -868,7 +884,7 @@ func (a *App) printGodotComposition(report query.GodotComposition) {
 		if len(group.relations) == 0 {
 			continue
 		}
-		fmt.Fprintf(a.stdout, "\n%s (%d)\n", group.label, len(group.relations))
+		a.printf("\n%s (%d)\n", group.label, len(group.relations))
 		for _, relation := range group.relations {
 			via := ""
 			if relation.Via != nil {
@@ -884,11 +900,11 @@ func (a *App) printGodotComposition(report query.GodotComposition) {
 			if relation.Node.External {
 				marker += " · unresolved"
 			}
-			fmt.Fprintf(a.stdout, "  %s [%s]%s%s\n", relation.Node.QualifiedName, relation.Node.Kind, via, marker)
+			a.printf("  %s [%s]%s%s\n", relation.Node.QualifiedName, relation.Node.Kind, via, marker)
 		}
 	}
 	if report.Truncated {
-		fmt.Fprintln(a.stdout, "\ntruncated")
+		a.println("\ntruncated")
 	}
 }
 
@@ -922,7 +938,7 @@ func (a *App) godotInteractions(ctx context.Context, args parsedArguments) error
 	if err != nil {
 		return err
 	}
-	defer closeRepository()
+	defer func() { _ = closeRepository() }()
 	report, err := query.NewService(repository).GodotInteractions(ctx, args.positionals[0],
 		query.GodotInteractionsOptions{Depth: depth, Limit: limit, Kind: kind,
 			Direction: direction, Categories: categories})
@@ -937,10 +953,10 @@ func (a *App) godotInteractions(ctx context.Context, args parsedArguments) error
 }
 
 func (a *App) printGodotInteractions(report query.GodotInteractions) {
-	fmt.Fprintf(a.stdout, "%s [%s] %s\n", report.Root.QualifiedName, report.Root.Kind,
+	a.printf("%s [%s] %s\n", report.Root.QualifiedName, report.Root.Kind,
 		formatLocation(report.Root.Location))
 	if len(report.SceneNodes) > 0 {
-		fmt.Fprintf(a.stdout, "\nscene nodes (%d)\n", len(report.SceneNodes))
+		a.printf("\nscene nodes (%d)\n", len(report.SceneNodes))
 	}
 	for _, group := range []struct {
 		label        string
@@ -952,7 +968,7 @@ func (a *App) printGodotInteractions(report query.GodotInteractions) {
 		if len(group.interactions) == 0 {
 			continue
 		}
-		fmt.Fprintf(a.stdout, "\n%s (%d)\n", group.label, len(group.interactions))
+		a.printf("\n%s (%d)\n", group.label, len(group.interactions))
 		for _, interaction := range group.interactions {
 			via := ""
 			if interaction.Via != nil {
@@ -974,15 +990,15 @@ func (a *App) printGodotInteractions(report query.GodotInteractions) {
 			if interaction.Node.External {
 				marker += " · unresolved"
 			}
-			fmt.Fprintf(a.stdout, "  %s %s [%s]%s%s\n", interaction.Category,
+			a.printf("  %s %s [%s]%s%s\n", interaction.Category,
 				interaction.Node.QualifiedName, interaction.Node.Kind, via, marker)
 		}
 	}
 	if report.Unresolved > 0 {
-		fmt.Fprintf(a.stdout, "\nunresolved interactions: %d\n", report.Unresolved)
+		a.printf("\nunresolved interactions: %d\n", report.Unresolved)
 	}
 	if report.Truncated {
-		fmt.Fprintln(a.stdout, "\ntruncated")
+		a.println("\ntruncated")
 	}
 }
 
@@ -1018,34 +1034,34 @@ func interactionCategories(args parsedArguments) ([]query.GodotInteractionCatego
 }
 
 func (a *App) printImpactReport(report query.ImpactReport) {
-	fmt.Fprintf(a.stdout, "%s [%s]\n", report.Root.QualifiedName, report.Root.Kind)
+	a.printf("%s [%s]\n", report.Root.QualifiedName, report.Root.Kind)
 	for _, section := range []query.ImpactSection{report.Upstream, report.Downstream} {
 		label := "depends on this"
 		if section.Direction == query.Downstream {
 			label = "this depends on"
 		}
-		fmt.Fprintf(a.stdout, "\n%s · %s (depth %d · %d nodes · %d edges)",
+		a.printf("\n%s · %s (depth %d · %d nodes · %d edges)",
 			section.Direction, label, section.Depth, len(section.Nodes), len(section.Edges))
 		if section.Truncated {
-			fmt.Fprint(a.stdout, " · truncated")
+			a.print(" · truncated")
 		}
-		fmt.Fprintln(a.stdout)
+		a.println()
 		for _, reached := range section.Nodes {
 			if reached.Depth == 0 {
 				continue
 			}
-			fmt.Fprintf(a.stdout, "%s↳ %s [%s] %s\n", strings.Repeat("  ", reached.Depth-1),
+			a.printf("%s↳ %s [%s] %s\n", strings.Repeat("  ", reached.Depth-1),
 				reached.Node.QualifiedName, reached.Node.Kind, formatLocation(reached.Node.Location))
 		}
 	}
 	if len(report.ImpactedFiles) > 0 {
-		fmt.Fprintf(a.stdout, "\nimpacted files (%d)\n", len(report.ImpactedFiles))
+		a.printf("\nimpacted files (%d)\n", len(report.ImpactedFiles))
 		for _, file := range report.ImpactedFiles {
 			marker := ""
 			if file.Federated {
 				marker = " · federated"
 			}
-			fmt.Fprintf(a.stdout, "  %s%s [%s]%s\n", prefixRepository(file.Repository), file.Path,
+			a.printf("  %s%s [%s]%s\n", prefixRepository(file.Repository), file.Path,
 				strings.Join(file.Directions, ","), marker)
 		}
 	}
@@ -1060,25 +1076,25 @@ func (a *App) printImpactReport(report query.ImpactReport) {
 		if len(group.relations) == 0 {
 			continue
 		}
-		fmt.Fprintf(a.stdout, "\n%s (%d)\n", group.label, len(group.relations))
+		a.printf("\n%s (%d)\n", group.label, len(group.relations))
 		for _, relation := range group.relations {
-			fmt.Fprintf(a.stdout, "  %s --%s--> %s [%s]\n", relation.Direction, relation.Edge.Kind,
+			a.printf("  %s --%s--> %s [%s]\n", relation.Direction, relation.Edge.Kind,
 				relation.Node.QualifiedName, relation.Node.Kind)
 		}
 	}
 	if len(report.CrossRepository) > 0 {
-		fmt.Fprintf(a.stdout, "\ncross-repository hops (%d)\n", len(report.CrossRepository))
+		a.printf("\ncross-repository hops (%d)\n", len(report.CrossRepository))
 		for _, hop := range report.CrossRepository {
-			fmt.Fprintf(a.stdout, "  %s --%s--> %s [%s]\n", hop.Direction, hop.Edge.Kind,
+			a.printf("  %s --%s--> %s [%s]\n", hop.Direction, hop.Edge.Kind,
 				hop.Node.QualifiedName, hop.Node.Kind)
 		}
 	}
 	for _, excerpt := range report.Sources {
-		fmt.Fprintf(a.stdout, "\n%s%s:%d-%d\n", prefixRepository(excerpt.Repository), excerpt.Path,
+		a.printf("\n%s%s:%d-%d\n", prefixRepository(excerpt.Repository), excerpt.Path,
 			excerpt.StartLine, excerpt.EndLine)
-		fmt.Fprintln(a.stdout, excerpt.Content)
+		a.println(excerpt.Content)
 		if excerpt.Truncated {
-			fmt.Fprintln(a.stdout, "… truncated")
+			a.println("… truncated")
 		}
 	}
 }
@@ -1130,7 +1146,7 @@ func (a *App) search(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	defer closeRepository()
+	defer func() { _ = closeRepository() }()
 	service, err := newSearchService(repository, projects)
 	if err != nil {
 		return err
@@ -1144,24 +1160,24 @@ func (a *App) search(ctx context.Context, args parsedArguments) error {
 	}
 	for _, match := range result.Matches {
 		for offset, line := range match.Before {
-			fmt.Fprintf(a.stdout, "%s%s-%d- %s\n", prefixRepository(match.Repository), match.Path,
+			a.printf("%s%s-%d- %s\n", prefixRepository(match.Repository), match.Path,
 				match.Line-len(match.Before)+offset, line)
 		}
-		fmt.Fprintf(a.stdout, "%s%s:%d:%d: %s\n", prefixRepository(match.Repository), match.Path,
+		a.printf("%s%s:%d:%d: %s\n", prefixRepository(match.Repository), match.Path,
 			match.Line, match.Column, match.Text)
 		for offset, line := range match.After {
-			fmt.Fprintf(a.stdout, "%s%s-%d- %s\n", prefixRepository(match.Repository), match.Path,
+			a.printf("%s%s-%d- %s\n", prefixRepository(match.Repository), match.Path,
 				match.Line+offset+1, line)
 		}
 	}
-	fmt.Fprintf(a.stdout, "%d matches · %d files searched · %d skipped", len(result.Matches),
+	a.printf("%d matches · %d files searched · %d skipped", len(result.Matches),
 		result.FilesSearched, result.FilesSkipped)
 	if result.Truncated {
-		fmt.Fprint(a.stdout, " · truncated")
+		a.print(" · truncated")
 	}
-	fmt.Fprintln(a.stdout)
+	a.println()
 	for _, note := range result.Notes {
-		fmt.Fprintf(a.stderr, "grafo search: %s\n", note)
+		a.errorf("grafo search: %s\n", note)
 	}
 	return nil
 }
@@ -1213,8 +1229,8 @@ func openCatalog(ctx context.Context, args parsedArguments) (*query.Catalog, fun
 	}
 	catalogRepository, ok := repository.(graph.CatalogRepository)
 	if !ok {
-		closeRepository()
-		return nil, nil, fmt.Errorf("repository does not support catalog queries")
+		_ = closeRepository()
+		return nil, nil, errors.New("repository does not support catalog queries")
 	}
 	return query.NewCatalog(catalogRepository), closeRepository, nil
 }
@@ -1235,7 +1251,7 @@ func (a *App) dataResources(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	defer closeRepository()
+	defer func() { _ = closeRepository() }()
 	result, err := catalog.DataResources(ctx, kinds, options)
 	if err != nil {
 		return err
@@ -1265,7 +1281,7 @@ func (a *App) dataResourceUsage(ctx context.Context, args parsedArguments) error
 	if err != nil {
 		return err
 	}
-	defer closeRepository()
+	defer func() { _ = closeRepository() }()
 	result, err := catalog.DataResourceUsage(ctx, args.positionals[0], options)
 	if err != nil {
 		return err
@@ -1278,7 +1294,7 @@ func (a *App) dataResourceUsage(ctx context.Context, args parsedArguments) error
 	a.printUsage("writer", result.Writers)
 	a.printUsage("reference", result.References)
 	if result.Truncated {
-		fmt.Fprintln(a.stdout, "… truncated")
+		a.println("… truncated")
 	}
 	return nil
 }
@@ -1295,7 +1311,7 @@ func (a *App) configKeys(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	defer closeRepository()
+	defer func() { _ = closeRepository() }()
 	result, err := catalog.ConfigKeys(ctx, options)
 	if err != nil {
 		return err
@@ -1325,7 +1341,7 @@ func (a *App) events(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	defer closeRepository()
+	defer func() { _ = closeRepository() }()
 	result, err := catalog.Events(ctx, options)
 	if err != nil {
 		return err
@@ -1356,7 +1372,7 @@ func (a *App) orphanedEvents(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	defer closeRepository()
+	defer func() { _ = closeRepository() }()
 	result, err := catalog.OrphanedEvents(ctx, options)
 	if err != nil {
 		return err
@@ -1365,18 +1381,18 @@ func (a *App) orphanedEvents(ctx context.Context, args parsedArguments) error {
 		return writeJSON(a.stdout, result)
 	}
 	for _, orphan := range result.Events {
-		fmt.Fprintf(a.stdout, "%-12s  %-10s  %-48s  %s\n", orphan.Category, orphan.Status,
+		a.printf("%-12s  %-10s  %-48s  %s\n", orphan.Category, orphan.Status,
 			orphan.Event.QualifiedName, formatLocation(orphan.Event.Location))
 		if orphan.UnresolvedProducers > 0 || orphan.UnresolvedConsumers > 0 {
-			fmt.Fprintf(a.stdout, "    %d unresolved producers · %d unresolved consumers\n",
+			a.printf("    %d unresolved producers · %d unresolved consumers\n",
 				orphan.UnresolvedProducers, orphan.UnresolvedConsumers)
 		}
 	}
-	fmt.Fprintf(a.stdout, "%d events", len(result.Events))
+	a.printf("%d events", len(result.Events))
 	if result.Truncated {
-		fmt.Fprint(a.stdout, " · truncated")
+		a.print(" · truncated")
 	}
-	fmt.Fprintln(a.stdout)
+	a.println()
 	return nil
 }
 
@@ -1388,22 +1404,22 @@ func (a *App) printResource(resource query.Resource) {
 	if resource.Unresolved {
 		state += " (unresolved)"
 	}
-	fmt.Fprintf(a.stdout, "%-12s  %-20s  %-48s  %s\n", resource.Kind, state,
+	a.printf("%-12s  %-20s  %-48s  %s\n", resource.Kind, state,
 		resource.QualifiedName, formatLocation(resource.Location))
 }
 
 func (a *App) printUsage(label string, sites []query.UsageSite) {
 	for _, site := range sites {
-		fmt.Fprintf(a.stdout, "    %-12s %-48s %s\n", label, site.Node.QualifiedName, formatLocation(site.Location))
+		a.printf("    %-12s %-48s %s\n", label, site.Node.QualifiedName, formatLocation(site.Location))
 	}
 }
 
 func (a *App) printCatalogSummary(declared, unresolved int, noun string, truncated bool) {
-	fmt.Fprintf(a.stdout, "%d %s · %d unresolved", declared, noun, unresolved)
+	a.printf("%d %s · %d unresolved", declared, noun, unresolved)
 	if truncated {
-		fmt.Fprint(a.stdout, " · truncated")
+		a.print(" · truncated")
 	}
-	fmt.Fprintln(a.stdout)
+	a.println()
 }
 
 // parseNodeKinds rejects a --kind value that names no kind. Degrading it to the
@@ -1439,7 +1455,7 @@ func openExisting(ctx context.Context, root string) (indexer.Project, graph.Repo
 		return project, nil, err
 	}
 	if _, err := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{}); err != nil {
-		repository.Close()
+		_ = repository.Close()
 		return project, nil, fmt.Errorf("refresh index: %w", err)
 	}
 	return project, repository, nil
@@ -1456,7 +1472,7 @@ func openRead(ctx context.Context, args parsedArguments) (graph.ReadRepository, 
 			return nil, nil, nil, err
 		}
 		if err := repository.Refresh(ctx, parserdefaults.NewRegistry()); err != nil {
-			repository.Close()
+			_ = repository.Close()
 			return nil, nil, nil, err
 		}
 		return repository, repository.Projects(), repository.Close, nil
@@ -1484,28 +1500,28 @@ func (a *App) printIndexReport(report indexer.Report, asJSON bool) error {
 	if asJSON {
 		return writeJSON(a.stdout, report)
 	}
-	fmt.Fprintf(a.stdout, "indexed %s · branch %s\n", report.Project.Name, report.Project.Branch)
-	fmt.Fprintf(a.stdout, "%d updated · %d unchanged · %d removed · %d skipped\n", len(report.Updated), report.Unchanged, len(report.Removed), len(report.Skipped))
-	fmt.Fprintf(a.stdout, "%d file contents checked\n", report.Checked)
-	fmt.Fprintf(a.stdout, "edge reconciliation: %dms\n", report.ReconcileMS)
+	a.printf("indexed %s · branch %s\n", report.Project.Name, report.Project.Branch)
+	a.printf("%d updated · %d unchanged · %d removed · %d skipped\n", len(report.Updated), report.Unchanged, len(report.Removed), len(report.Skipped))
+	a.printf("%d file contents checked\n", report.Checked)
+	a.printf("edge reconciliation: %dms\n", report.ReconcileMS)
 	if report.Rebuild != "" {
-		fmt.Fprintf(a.stdout, "rebuild: %s\n", report.Rebuild)
+		a.printf("rebuild: %s\n", report.Rebuild)
 	}
-	fmt.Fprintf(a.stdout, "%d files · %d nodes · %d edges · %d unresolved · %dms\n",
+	a.printf("%d files · %d nodes · %d edges · %d unresolved · %dms\n",
 		report.Counts.Files, report.Counts.Nodes, report.Counts.Edges, report.Counts.External, report.ElapsedMS)
 	for _, diagnostic := range report.Diagnostics {
-		fmt.Fprintf(a.stderr, "%s:%d: %s: %s\n", diagnostic.Path, diagnostic.Line, diagnostic.Level, diagnostic.Message)
+		a.errorf("%s:%d: %s: %s\n", diagnostic.Path, diagnostic.Line, diagnostic.Level, diagnostic.Message)
 	}
 	return nil
 }
 
 func (a *App) printNodes(nodes []graph.Node) {
 	for _, node := range nodes {
-		fmt.Fprintf(a.stdout, "%-12s  %-48s  %-24s  %s\n", node.Kind, node.QualifiedName, formatLocation(node.Location), node.ID)
+		a.printf("%-12s  %-48s  %-24s  %s\n", node.Kind, node.QualifiedName, formatLocation(node.Location), node.ID)
 	}
 }
 
-func (a *App) fail(err error) { fmt.Fprintf(a.stderr, "grafo: %v\n", err) }
+func (a *App) fail(err error) { a.errorf("grafo: %v\n", err) }
 
 func formatLocation(location graph.Location) string {
 	if location.Path == "" {

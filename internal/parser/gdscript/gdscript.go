@@ -298,7 +298,7 @@ func (e *extractor) walkStatement(statement gdast.Statement, current scope, anno
 }
 
 func (e *extractor) parseDirective(node *gdast.Directive, current scope) {
-	if node.Name != "extends" && !(node.Name == "class_name" && node.Extends != nil) {
+	if node.Name != "extends" && (node.Name != "class_name" || node.Extends == nil) {
 		return
 	}
 	base := node.Value

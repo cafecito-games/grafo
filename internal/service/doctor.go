@@ -661,7 +661,7 @@ func samePath(reader agentinstall.Reader, left, right string) bool {
 
 // Fprint writes a human-readable diagnosis.
 func (d Diagnosis) Fprint(out interface{ Write([]byte) (int, error) }) {
-	write := func(format string, arguments ...any) { fmt.Fprintf(out, format, arguments...) }
+	write := func(format string, arguments ...any) { _, _ = fmt.Fprintf(out, format, arguments...) }
 	write("binary      %s (grafo %s)\n", orDash(d.Binary.Path), d.Binary.Version)
 	registryState := "unreadable"
 	if d.Registry.Readable {

@@ -2,6 +2,7 @@ package java
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -54,9 +55,9 @@ func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseRes
 	if err := p.SetLanguage(treesitter.NewLanguage(tsjava.Language())); err != nil {
 		return b.Finish(), fmt.Errorf("load Java grammar: %w", err)
 	}
-	tree := p.ParseCtx(ctx, input.Content, nil)
+	tree := parserapi.ParseTreeSitter(ctx, p, input.Content)
 	if tree == nil {
-		return b.Finish(), fmt.Errorf("Java parser returned no syntax tree")
+		return b.Finish(), errors.New("parse Java source: parser returned no syntax tree")
 	}
 	defer tree.Close()
 	root := tree.RootNode()
@@ -636,9 +637,7 @@ func (e *extractor) resolveCallee(object, method string, current scope) string {
 	if object == "super" && current.superclass != "" {
 		return qualify(current.superclass, method)
 	}
-	if strings.HasPrefix(object, "this.") {
-		object = strings.TrimPrefix(object, "this.")
-	}
+	object = strings.TrimPrefix(object, "this.")
 	if inferred := current.types[object]; inferred != "" {
 		return inferred + "." + method
 	}

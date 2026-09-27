@@ -141,16 +141,6 @@ func (s scope) nodeGroup(name string) string {
 	return s.project.NodeGroupQualifiedName(name)
 }
 
-// inputAction returns the identity an input-action name has inside the Godot
-// project that owns this file, refusing an unknown project for the same reason
-// nodeGroup does.
-func (s scope) inputAction(name string) string {
-	if !s.known || strings.TrimSpace(name) == "" {
-		return ""
-	}
-	return s.project.InputActionQualifiedName(name)
-}
-
 // escapes reports whether a reference carries path evidence that leaves this
 // file's Godot project, which resolves to nothing and is worth a diagnostic
 // rather than silence.

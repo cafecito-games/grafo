@@ -20,12 +20,12 @@ func TestRepositoryMatchesSQLiteResolutionAndQueries(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer control.Close()
+			defer func() { _ = control.Close() }()
 			candidate, err := Open(ctx, engine, filepath.Join(t.TempDir(), "candidate"), Options{ReconciliationBatchSize: 2})
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer candidate.Close()
+			defer func() { _ = candidate.Close() }()
 
 			for _, repository := range []graph.Repository{control, candidate} {
 				seedRepository(t, repository)
@@ -56,12 +56,12 @@ func TestRepositoryExplicitTargetKindMatchesSQLite(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer control.Close()
+			defer func() { _ = control.Close() }()
 			candidate, err := Open(ctx, engine, filepath.Join(t.TempDir(), "candidate"), Options{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer candidate.Close()
+			defer func() { _ = candidate.Close() }()
 
 			source := testNode("source", graph.KindFunction, "pkg.Source", "source.go")
 			target := testNode("target", graph.KindVariable, "pkg.Target", "target.go")
@@ -90,12 +90,12 @@ func TestRepositoryKindlessGodotResolutionMatchesSQLite(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer control.Close()
+			defer func() { _ = control.Close() }()
 			candidate, err := Open(ctx, engine, filepath.Join(t.TempDir(), "candidate"), Options{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer candidate.Close()
+			defer func() { _ = candidate.Close() }()
 
 			source := testNode("a", graph.KindFunction, "pkg.A", "source.go")
 			target := testNode("scene", graph.KindGodotScene, "scenes/main", "main.tscn")
@@ -124,12 +124,12 @@ func TestRepositorySearchAndMatchMirrorSQLiteTextSemantics(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer control.Close()
+			defer func() { _ = control.Close() }()
 			candidate, err := Open(ctx, engine, filepath.Join(t.TempDir(), "candidate"), Options{})
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer candidate.Close()
+			defer func() { _ = candidate.Close() }()
 
 			nodes := []graph.Node{
 				testNode("wildcard", graph.KindFunction, "pkg.aXb", "one.go"),
@@ -198,7 +198,7 @@ func TestRepositoryRestartResumesCommittedReconciliationBatches(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer repository.Close()
+			defer func() { _ = repository.Close() }()
 			if err := repository.Reconcile(ctx); err != nil {
 				t.Fatal(err)
 			}
@@ -221,7 +221,7 @@ func TestRepositoryReplacementIsAtomicOnCanceledContext(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer repository.Close()
+			defer func() { _ = repository.Close() }()
 			node := testNode("original", graph.KindFunction, "pkg.Original", "one.go")
 			if err := repository.ReplaceFile(ctx, testFile("one.go"), graph.ParseResult{Nodes: []graph.Node{node}}); err != nil {
 				t.Fatal(err)

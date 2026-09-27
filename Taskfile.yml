@@ -26,6 +26,11 @@ tasks:
     cmds:
       - go vet ./...
 
+  lint:
+    desc: Run golangci-lint (same configuration as CI)
+    cmds:
+      - golangci-lint run ./...
+
   generate:
     desc: Regenerate the type-safe SQLite repository with sqlc
     sources:

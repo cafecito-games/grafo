@@ -25,7 +25,7 @@ func TestServiceReadsBoundedSymbolSpan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	node := graph.Node{ID: "checkout", Kind: graph.KindFunction, Name: "Checkout",
 		QualifiedName: "sample.Checkout", OwnerFile: "checkout.go",
 		Location: graph.Location{Path: "checkout.go", Line: 5, Column: 1, EndLine: 7}}
@@ -57,7 +57,7 @@ func TestServiceRejectsSymlinkEscape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	node := graph.Node{ID: "linked", Kind: graph.KindFile, Name: "linked.go",
 		QualifiedName: "linked.go", OwnerFile: "linked.go", Location: graph.Location{Path: "linked.go", Line: 1}}
 	if err := repository.ReplaceOwner(ctx, "linked.go", graph.ParseResult{Nodes: []graph.Node{node}}); err != nil {
@@ -87,7 +87,7 @@ func TestReadRefusesAmbiguousSelector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	for _, owner := range []string{"a.go", "b.go"} {
 		node := graph.Node{ID: "charge-" + owner, Kind: graph.KindFunction, Name: "Charge",
 			QualifiedName: "sample." + owner + ".Charge", OwnerFile: owner,
@@ -126,7 +126,7 @@ func TestReadKindNarrowsResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	field := graph.Node{ID: "field-charge", Kind: graph.KindField, Name: "Charge",
 		QualifiedName: "sample.Request.Charge", OwnerFile: "sample.go",
 		Location: graph.Location{Path: "sample.go", Line: 4, Column: 2, EndLine: 4}}

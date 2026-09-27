@@ -40,7 +40,7 @@ func TestServiceLinksDocumentationSectionsToCode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	service := indexer.NewService(repository, parserapi.NewRegistry(markdownparser.New(), typescriptparser.New()))
 	report, err := service.Run(ctx, project, indexer.Options{})
 	if err != nil {
@@ -92,7 +92,7 @@ export function execute() { const service = new Service(); service.run(); }
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	typeScriptParser := typescriptparser.New()
 	service := indexer.NewService(repository, parserapi.NewRegistry(typeScriptParser, configparser.New()))
 	first, err := service.Run(ctx, project, indexer.Options{})
@@ -157,7 +157,7 @@ func TestServiceIndexesOnlyChangedFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	registry := parserapi.NewRegistry(gdscriptparser.New(), golangparser.New(), pythonparser.New(), typescriptparser.New(), sqlparser.New(postgresparser.New()), configparser.New())
 	service := indexer.NewService(repository, registry)
 
@@ -213,7 +213,7 @@ func TestServiceReindexesGoDependentsWhenTypeEvidenceChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	goParser := golangparser.New()
 	service := indexer.NewService(repository, parserapi.NewRegistry(goParser))
 	if report, err := service.Run(ctx, project, indexer.Options{}); err != nil || len(report.Updated) != 2 {
@@ -270,7 +270,7 @@ func TestServiceSurfacesTrackedSymlinksWithoutFollowingThem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	report, err := indexer.NewService(repository, parserapi.NewRegistry(golangparser.New())).Run(ctx, project, indexer.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -301,7 +301,7 @@ func TestServiceIndexesAndLinksGodotProjectSources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	service := indexer.NewService(repository, parserapi.NewRegistry(gdscriptparser.New(), godotparser.New()))
 	report, err := service.Run(ctx, project, indexer.Options{})
 	if err != nil {
@@ -348,7 +348,7 @@ func TestServiceReindexesSQLWhenDialectConfigurationChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	registry := parserapi.NewRegistry(sqlparser.New(postgresparser.New()), configparser.New())
 	service := indexer.NewService(repository, registry)
 
@@ -394,7 +394,7 @@ func TestServiceTracksGitDirtyPathsAcrossRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	service := indexer.NewService(repository, parserapi.NewRegistry(golangparser.New()))
 	if report, err := service.Run(ctx, project, indexer.Options{}); err != nil || len(report.Updated) != 1 || report.Checked != 1 {
 		t.Fatalf("initial index: report=%#v err=%v", report, err)
@@ -436,7 +436,7 @@ func TestServicePropagatesGitConfigurationChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	service := indexer.NewService(repository, parserapi.NewRegistry(sqlparser.New(postgresparser.New()), configparser.New()))
 	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
 		t.Fatal(err)
@@ -464,7 +464,7 @@ func TestServiceResumesSemanticRebuildWithoutReplacingCompletedFiles(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	service := indexer.NewService(repository, parserapi.NewRegistry(golangparser.New()))
 	if report, err := service.Run(ctx, project, indexer.Options{}); err != nil || len(report.Updated) != 1 {
 		t.Fatalf("initial index: report=%#v err=%v", report, err)
@@ -567,7 +567,7 @@ func TestServiceModelsGodotCompositionAcrossFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	service := indexer.NewService(repository, parserapi.NewRegistry(gdscriptparser.New(), godotparser.New()))
 	report, err := service.Run(ctx, project, indexer.Options{})
 	if err != nil {
@@ -667,7 +667,7 @@ func TestServiceModelsGodotCompositionAcrossFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rebuilt.Close()
+	defer func() { _ = rebuilt.Close() }()
 	if _, err := indexer.NewService(rebuilt, parserapi.NewRegistry(gdscriptparser.New(), godotparser.New())).
 		Run(ctx, rebuiltProject, indexer.Options{}); err != nil {
 		t.Fatal(err)
@@ -745,7 +745,7 @@ func TestServiceRebuildReplacesLegacyGodotRepresentations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	service := indexer.NewService(repository, parserapi.NewRegistry(gdscriptparser.New(), godotparser.New()))
 	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
 		t.Fatal(err)
@@ -826,7 +826,7 @@ func TestServiceScopesGodotProjectsNestedInOneRepository(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	if _, err := indexer.NewService(repository,
 		parserapi.NewRegistry(gdscriptparser.New(), godotparser.New())).Run(ctx, project, indexer.Options{}); err != nil {
 		t.Fatal(err)
@@ -918,7 +918,7 @@ func TestServiceKeepsContradictedGodotUIDsUnresolved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	service := indexer.NewService(repository, parserapi.NewRegistry(gdscriptparser.New(), godotparser.New()))
 	report, err := service.Run(ctx, project, indexer.Options{})
 	if err != nil {
@@ -1005,7 +1005,7 @@ func TestServiceReparsesScriptsWhenAutoloadEnablementChangesUnderGit(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	service := indexer.NewService(repository, parserapi.NewRegistry(gdscriptparser.New(), godotparser.New()))
 	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
 		t.Fatal(err)
@@ -1057,7 +1057,7 @@ func TestServiceReconcilesGodotInteractionsAfterProjectEdits(t *testing.T) {
 			"\tif Input.is_action_pressed(\"jump\"):\n\t\tget_tree().call_group(\"enemies\", \"die\")\n")
 
 	service, repository, project := openGodotIndex(t, ctx, root)
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
 		t.Fatal(err)
 	}
@@ -1136,7 +1136,7 @@ func assertCleanRebuildMatches(t *testing.T, ctx context.Context, root string, i
 		t.Fatal(err)
 	}
 	service, repository, project := openGodotIndex(t, ctx, clean)
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
 		t.Fatal(err)
 	}

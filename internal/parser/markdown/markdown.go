@@ -2,6 +2,7 @@
 package markdown
 
 import (
+	"bytes"
 	"context"
 	"net/url"
 	"path"
@@ -73,7 +74,7 @@ func collectHeadings(document mdast.Node, source []byte, lineStarts []int) []hea
 		if !ok {
 			return mdast.WalkContinue, nil
 		}
-		title := strings.TrimSpace(string(value.Text(source)))
+		title := strings.TrimSpace(string(nodeText(value, source)))
 		if title == "" {
 			title = "Untitled"
 		}
@@ -143,7 +144,7 @@ func addReferences(b *parserapi.Builder, input parserapi.Input, document mdast.N
 			}
 		case *mdast.CodeSpan:
 			keyword := structuralKeywordBefore(value, input.Content)
-			target := strings.TrimSpace(string(value.Text(input.Content)))
+			target := strings.TrimSpace(string(nodeText(value, input.Content)))
 			if keyword != "" && target != "" {
 				b.AddFact(fromID, graph.EdgeDocuments, "", target, structuralKind(keyword), loc,
 					map[string]string{"keyword": keyword, "syntax": "structural_keyword"})
@@ -157,7 +158,7 @@ func structuralKeywordBefore(node mdast.Node, source []byte) string {
 	var reversed []string
 	length := 0
 	for sibling := node.PreviousSibling(); sibling != nil && length < 128; sibling = sibling.PreviousSibling() {
-		value := string(sibling.Text(source))
+		value := string(nodeText(sibling, source))
 		reversed = append(reversed, value)
 		length += len(value)
 	}
@@ -279,5 +280,40 @@ func structuralKind(keyword string) graph.NodeKind {
 		return graph.KindEndpoint
 	default:
 		return graph.KindExternal
+	}
+}
+
+// nodeText returns the source text carried by a node's inline descendants.
+// goldmark deprecated ast.Node.Text in favour of per-node accessors, so this
+// walks the tree the way the removed helper did and reads each leaf through the
+// accessor its own type documents.
+func nodeText(node mdast.Node, source []byte) []byte {
+	var buffer bytes.Buffer
+	appendNodeText(&buffer, node, source)
+	return buffer.Bytes()
+}
+
+func appendNodeText(buffer *bytes.Buffer, node mdast.Node, source []byte) {
+	switch value := node.(type) {
+	case *mdast.Text:
+		buffer.Write(value.Value(source))
+		return
+	case *mdast.String:
+		buffer.Write(value.Value)
+		return
+	case *mdast.AutoLink:
+		buffer.Write(value.Label(source))
+		return
+	case *mdast.RawHTML:
+		buffer.Write(value.Segments.Value(source))
+		return
+	}
+	for child := node.FirstChild(); child != nil; child = child.NextSibling() {
+		appendNodeText(buffer, child, source)
+		// A soft line break ends the child's line in the source, and dropping it
+		// would glue the two lines' words together.
+		if breaker, ok := child.(interface{ SoftLineBreak() bool }); ok && breaker.SoftLineBreak() {
+			buffer.WriteByte('\n')
+		}
 	}
 }

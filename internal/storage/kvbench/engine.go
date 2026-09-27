@@ -51,7 +51,7 @@ func openStore(engine Engine, path string) (store, error) {
 			_, err := tx.CreateBucketIfNotExists([]byte("graph"))
 			return err
 		}); err != nil {
-			db.Close()
+			_ = db.Close()
 			return nil, err
 		}
 		return &boltStore{db: db}, nil
@@ -123,7 +123,7 @@ func (s *pebbleStore) view(ctx context.Context, fn func(transaction) error) erro
 		return err
 	}
 	snapshot := s.db.NewSnapshot()
-	defer snapshot.Close()
+	defer func() { _ = snapshot.Close() }()
 	return fn(pebbleReadable{reader: snapshot})
 }
 
@@ -132,7 +132,7 @@ func (s *pebbleStore) update(ctx context.Context, fn func(transaction) error) er
 		return err
 	}
 	batch := s.db.NewIndexedBatch()
-	defer batch.Close()
+	defer func() { _ = batch.Close() }()
 	if err := fn(pebbleReadable{reader: batch, writer: batch}); err != nil {
 		return err
 	}
@@ -165,7 +165,7 @@ func (t pebbleReadable) get(key []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer closer.Close()
+	defer func() { _ = closer.Close() }()
 	return bytes.Clone(value), nil
 }
 
@@ -189,7 +189,7 @@ func (t pebbleReadable) scan(prefix []byte, fn func([]byte, []byte) error) error
 	if err != nil {
 		return err
 	}
-	defer iterator.Close()
+	defer func() { _ = iterator.Close() }()
 	for iterator.First(); iterator.Valid(); iterator.Next() {
 		if err := fn(bytes.Clone(iterator.Key()), bytes.Clone(iterator.Value())); err != nil {
 			return err

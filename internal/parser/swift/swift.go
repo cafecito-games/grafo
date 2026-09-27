@@ -2,6 +2,7 @@ package swift
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -50,9 +51,9 @@ func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseRes
 	if err := p.SetLanguage(treesitter.NewLanguage(tsswift.Language())); err != nil {
 		return b.Finish(), fmt.Errorf("load Swift grammar: %w", err)
 	}
-	tree := p.ParseCtx(ctx, input.Content, nil)
+	tree := parserapi.ParseTreeSitter(ctx, p, input.Content)
 	if tree == nil {
-		return b.Finish(), fmt.Errorf("Swift parser returned no syntax tree")
+		return b.Finish(), errors.New("parse Swift source: parser returned no syntax tree")
 	}
 	defer tree.Close()
 	root := tree.RootNode()

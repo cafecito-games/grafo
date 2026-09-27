@@ -281,7 +281,7 @@ func extendsQualifiedName(child, parent string) bool {
 		return false
 	}
 	next, _ := utf8.DecodeRuneInString(child[len(parent):])
-	return !(next == '_' || unicode.IsLetter(next) || unicode.IsDigit(next))
+	return next != '_' && !unicode.IsLetter(next) && !unicode.IsDigit(next)
 }
 
 // Neighborhood walks edges from a resolved root. kind optionally restricts

@@ -75,11 +75,11 @@ func (a *App) serviceAdd(environment agentinstall.Environment, args parsedArgume
 	}
 	canonical, _, _ := service.CanonicalRoot(root)
 	if changed {
-		fmt.Fprintf(a.stdout, "registered %s\n", canonical)
+		a.printf("registered %s\n", canonical)
 	} else {
-		fmt.Fprintf(a.stdout, "already registered %s\n", canonical)
+		a.printf("already registered %s\n", canonical)
 	}
-	fmt.Fprintln(a.stdout, "run 'grafo service install' once to keep every registered root indexed in the background")
+	a.println("run 'grafo service install' once to keep every registered root indexed in the background")
 	return nil
 }
 
@@ -93,10 +93,10 @@ func (a *App) serviceRemove(environment agentinstall.Environment, rest []string)
 		return err
 	}
 	if changed {
-		fmt.Fprintf(a.stdout, "unregistered %s (indexes were left in place)\n", root)
+		a.printf("unregistered %s (indexes were left in place)\n", root)
 		return nil
 	}
-	fmt.Fprintf(a.stdout, "%s was not registered\n", root)
+	a.printf("%s was not registered\n", root)
 	return nil
 }
 
@@ -113,9 +113,9 @@ func (a *App) serviceList(environment agentinstall.Environment, args parsedArgum
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(a.stdout, "registry %s\n", path)
+	a.printf("registry %s\n", path)
 	if len(registry.Roots) == 0 {
-		fmt.Fprintln(a.stdout, "no repository roots are registered; add one with 'grafo service add <path>'")
+		a.println("no repository roots are registered; add one with 'grafo service add <path>'")
 		return nil
 	}
 	for _, entry := range registry.Roots {
@@ -123,7 +123,7 @@ func (a *App) serviceList(environment agentinstall.Environment, args parsedArgum
 		if entry.Paused {
 			state = "paused"
 		}
-		fmt.Fprintf(a.stdout, "%-8s %-10s %s\n", state, entry.Every(), entry.Root)
+		a.printf("%-8s %-10s %s\n", state, entry.Every(), entry.Root)
 	}
 	return nil
 }
@@ -195,14 +195,14 @@ func (a *App) serviceStatus(ctx context.Context, environment agentinstall.Enviro
 			installed += " (not owned by grafo)"
 		}
 	}
-	fmt.Fprintf(a.stdout, "platform  %s %s %s\n", state.Platform, installed, state.Definition)
+	a.printf("platform  %s %s %s\n", state.Platform, installed, state.Definition)
 	if state.Detail != "" {
-		fmt.Fprintf(a.stdout, "detail    %s\n", state.Detail)
+		a.printf("detail    %s\n", state.Detail)
 	}
 	if snapshot.UpdatedAt != "" {
-		fmt.Fprintf(a.stdout, "last pass %s (pid %d)\n", snapshot.UpdatedAt, snapshot.PID)
+		a.printf("last pass %s (pid %d)\n", snapshot.UpdatedAt, snapshot.PID)
 	} else {
-		fmt.Fprintln(a.stdout, "last pass none reported yet")
+		a.println("last pass none reported yet")
 	}
 	for _, entry := range registry.Roots {
 		status := "no pass yet"
@@ -221,9 +221,9 @@ func (a *App) serviceStatus(ctx context.Context, environment agentinstall.Enviro
 		if entry.Paused {
 			status = "paused"
 		}
-		fmt.Fprintf(a.stdout, "root      %s  %s\n", entry.Root, status)
+		a.printf("root      %s  %s\n", entry.Root, status)
 	}
-	fmt.Fprintf(a.stdout, "log       %s\n", service.LogPath(stateDir))
+	a.printf("log       %s\n", service.LogPath(stateDir))
 	return nil
 }
 
@@ -244,11 +244,11 @@ func (a *App) serviceLogs(environment agentinstall.Environment, args parsedArgum
 		return writeJSON(a.stdout, records)
 	}
 	if len(records) == 0 {
-		fmt.Fprintf(a.stdout, "no service log yet at %s\n", service.LogPath(stateDir))
+		a.printf("no service log yet at %s\n", service.LogPath(stateDir))
 		return nil
 	}
 	for _, record := range records {
-		fmt.Fprintln(a.stdout, record)
+		a.println(record)
 	}
 	return nil
 }
@@ -269,7 +269,7 @@ func (a *App) serviceRun(ctx context.Context, environment agentinstall.Environme
 	if err != nil {
 		return err
 	}
-	defer logger.Close()
+	defer func() { _ = logger.Close() }()
 	binary, _ := os.Executable()
 	supervisor := service.NewSupervisor(service.Options{
 		Env: environment, Store: service.NewStore(environment), StateDir: stateDir,
@@ -284,7 +284,7 @@ func (a *App) serviceRun(ctx context.Context, environment agentinstall.Environme
 			return runErr
 		}
 		for _, status := range snapshot.Roots {
-			fmt.Fprintf(a.stdout, "%-40s branch=%s updated=%d removed=%d %s\n",
+			a.printf("%-40s branch=%s updated=%d removed=%d %s\n",
 				status.Root, status.Branch, status.Updated, status.Removed, status.LastError)
 		}
 		return runErr
@@ -309,11 +309,11 @@ func (a *App) printServiceActions(actions []service.Action, asJSON bool) error {
 			}
 			change = "would " + verb
 		}
-		fmt.Fprintf(a.stdout, "%-14s %-10s %s", change, action.Kind, action.Target)
+		a.printf("%-14s %-10s %s", change, action.Kind, action.Target)
 		if action.Detail != "" {
-			fmt.Fprintf(a.stdout, " · %s", action.Detail)
+			a.printf(" · %s", action.Detail)
 		}
-		fmt.Fprintln(a.stdout)
+		a.println()
 	}
 	return nil
 }

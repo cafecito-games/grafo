@@ -185,7 +185,7 @@ func TestCanceledEdgeBatchRollsBackAndRestartResumesQueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	if err := repository.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func tableRows(t *testing.T, repository *Repository, table string) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	columnNames, err := rows.Columns()
 	if err != nil {
 		t.Fatal(err)
