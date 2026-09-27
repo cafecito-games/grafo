@@ -1,3 +1,5 @@
+github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk=
+github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
 github.com/alex-pinkus/tree-sitter-swift v0.0.0-20260601004120-31d17fe7e818 h1:oNZZFKvqDFHCSg+Ard8elsRqDKsstebWlzXNrgrApOM=
 github.com/alex-pinkus/tree-sitter-swift v0.0.0-20260601004120-31d17fe7e818/go.mod h1:nMZLtsEtko+0F2g09G5Tm16uRdDoczLZDE5O207ruYQ=
 github.com/cafecito-games/gdparser v0.0.0-20260926231848-07997740011c h1:36GqCQgM6Rx4MGDrNaxWJfa+7QIQXXSmqPaJYBJzWt0=
