@@ -128,6 +128,33 @@ never the only evidence. Optional source excerpts arrive through a narrow
 `SourceReader` port; `internal/source` adapts to it, which keeps the dependency
 pointing from source retrieval to query and not back.
 
+## Godot composition
+
+`internal/graph` owns the Godot composition vocabulary: `godot_scene`,
+`godot_resource`, `godot_scene_node`, and `godot_autoload` nodes joined by
+`instantiates`, `attaches_script`, and `autoloads` edges. Promoting these from
+generic modules and variables is a semantic schema change, so the graph schema
+and semantic index versions move together and an older index rebuilds instead of
+serving both vocabularies at once.
+
+`internal/parser/godot/godotid` is the single Godot resource identity resolver.
+Canonical identity is the repository-relative path without its extension, shared
+by the text-resource, UID sidecar, configuration, and GDScript producers, so one
+resource has one qualified name regardless of whether a `res://` path, a
+repository path, or a `uid://` alias named it. UIDs are aliases: the resource
+that owns a UID declares it, references carry it as evidence, and a UID that
+maps to more than one resource produces a diagnostic and stays unresolved. The
+same package owns the `[autoload]` vocabulary of the nearest `project.godot`,
+which is why a GDScript use of an autoload name resolves only against an exact,
+unshadowed, singly declared autoload.
+
+Scene inheritance is an `instantiates` edge from both the inheriting scene and
+its root node, never language `extends`, so scene composition is never confused
+with class inheritance. `internal/query` assembles inbound and outbound
+instances, script attachments, and autoload availability from those edges only;
+it introduces no vocabulary of its own and reports an unresolved target as an
+external node rather than omitting it.
+
 ## Source retrieval
 
 Source retrieval begins with normal deterministic node resolution; it never

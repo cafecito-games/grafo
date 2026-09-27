@@ -8,6 +8,7 @@ import (
 	shaderast "github.com/cafecito-games/gdparser/shader/ast"
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	"github.com/cafecito-games/grafo/internal/parser/godot/godotid"
 )
 
 type shaderExtractor struct {
@@ -138,7 +139,7 @@ func (e *shaderExtractor) extractShaderDirective(directive *shaderast.Preprocess
 	}
 	target := value
 	if strings.HasPrefix(target, "res://") || strings.HasPrefix(target, "user://") {
-		target = resourceModule(target)
+		target = godotid.Canonical(target)
 	} else {
 		target = parserapi.ModuleName(pathpkg.Clean(pathpkg.Join(pathpkg.Dir(e.input.Path), target)))
 	}

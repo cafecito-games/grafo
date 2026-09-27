@@ -89,6 +89,7 @@ func (s *Service) Server(version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{Name: "find_path", Title: "Find graph path", Description: "Find the deterministic shortest structural path between two symbols.", Annotations: annotations}, s.findPath)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_callers", Title: "Get callers", Description: "Walk incoming call and handler edges to find callers of a symbol.", Annotations: annotations}, s.getCallers)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_callees", Title: "Get callees", Description: "Walk outgoing call and handler edges to find callees of a symbol.", Annotations: annotations}, s.getCallees)
+	mcp.AddTool(server, &mcp.Tool{Name: "get_godot_composition", Title: "Get Godot composition", Description: "Return Godot runtime composition for a scene, scene node, resource, script, or autoload: which scenes it instantiates, which scenes instantiate it, attached scripts, and autoload availability, each with its original resource evidence.", Annotations: annotations}, s.getGodotComposition)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_blast_radius", Title: "Get change impact", Description: "Return a bounded bidirectional change-impact report: what depends on the symbol, what it depends on, impacted files, cross-repository hops, and config, data, and event relationships.", Annotations: annotations}, s.getBlastRadius)
 	if s.search != nil {
 		mcp.AddTool(server, &mcp.Tool{Name: "search_source", Title: "Search indexed source", Description: "Search literal text or RE2 patterns across files belonging to the refreshed indexes. Use graph tools first when the question is structural; use this for content questions the graph does not model.", Annotations: annotations}, s.searchSource)
@@ -385,6 +386,37 @@ func (input ImpactInput) options() query.ImpactOptions {
 		options.DownstreamLimit = input.Limit
 	}
 	return options
+}
+
+// GodotCompositionInput bounds one composition report or a batch of them.
+type GodotCompositionInput struct {
+	Selector  string   `json:"selector,omitempty" jsonschema:"qualified Godot scene, scene node, resource, script, or autoload name, or stable node ID"`
+	Selectors []string `json:"selectors,omitempty" jsonschema:"batch of Godot selectors reported in caller order"`
+	Depth     int      `json:"depth,omitempty" jsonschema:"maximum scene-tree depth explored for a scene; defaults to 8"`
+	Limit     int      `json:"limit,omitempty" jsonschema:"maximum relations per section; defaults to 1000"`
+}
+
+// GodotCompositionOutput embeds the single report so scalar callers read it at
+// the top level while batched callers read Results.
+type GodotCompositionOutput struct {
+	query.GodotComposition
+	Results []ResultEnvelope[query.GodotComposition] `json:"results,omitempty"`
+}
+
+func (s *Service) getGodotComposition(ctx context.Context, _ *mcp.CallToolRequest, input GodotCompositionInput) (*mcp.CallToolResult, GodotCompositionOutput, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, GodotCompositionOutput{}, err
+	}
+	selectors, batched, err := batchInputs("selector", input.Selector, input.Selectors)
+	if err != nil {
+		return nil, GodotCompositionOutput{}, err
+	}
+	options := query.GodotCompositionOptions{Depth: input.Depth, Limit: input.Limit}
+	results := runBatch(ctx, selectors, func(reportContext context.Context, selector string) (query.GodotComposition, error) {
+		return s.query.GodotComposition(reportContext, selector, options)
+	})
+	report, err := firstValue(results, batched)
+	return nil, GodotCompositionOutput{GodotComposition: report, Results: results}, err
 }
 
 func (s *Service) getBlastRadius(ctx context.Context, _ *mcp.CallToolRequest, input ImpactInput) (*mcp.CallToolResult, ImpactOutput, error) {

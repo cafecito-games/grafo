@@ -2,6 +2,8 @@ package gdscript_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -212,4 +214,98 @@ func assertHasFactWithProperty(t *testing.T, facts []graph.Fact, kind graph.Edge
 		}
 	}
 	t.Fatalf("missing %s fact to %q with %s=%q; got %#v", kind, target, key, value, facts)
+}
+
+func TestParserDeclaresScriptModuleForResourceIdentity(t *testing.T) {
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "scripts/player.gd", Content: []byte("class_name Player extends Node\n"),
+		Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := findQualifiedNode(t, result.Nodes, graph.KindModule, "scripts/player")
+	if module.Properties["form"] != "script" {
+		t.Fatalf("script module properties = %#v", module.Properties)
+	}
+	class := findQualifiedNode(t, result.Nodes, graph.KindClass, "Player")
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeDeclares && fact.FromID == module.ID && fact.TargetID == class.ID {
+			return
+		}
+	}
+	t.Fatalf("script module does not declare its class; got %#v", result.Facts)
+}
+
+func TestParserResolvesAutoloadUsesFromProjectDeclarations(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "project.godot", `config_version=5
+
+[autoload]
+Game="*res://scripts/game.gd"
+Menu="res://scenes/menu.tscn"
+Twice="*res://scripts/a.gd"
+Twice="*res://scripts/b.gd"
+`)
+	content := []byte(`extends Node
+
+func ready() -> void:
+	Game.start()
+	var scene = Menu
+	Twice.start()
+	Unknown.start()
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "scripts/hud.gd", Content: content, Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := findFactWithTarget(t, result.Facts, graph.EdgeReferences, "godot:autoload:Game")
+	if call.TargetKind != graph.KindGodotAutoload || call.Properties["form"] != "autoload_call" ||
+		call.Properties["member"] != "start" {
+		t.Fatalf("autoload call fact = %#v", call)
+	}
+	reference := findFactWithTarget(t, result.Facts, graph.EdgeReferences, "godot:autoload:Menu")
+	if reference.Properties["form"] != "autoload_reference" {
+		t.Fatalf("autoload reference fact = %#v", reference)
+	}
+	for _, fact := range result.Facts {
+		if strings.HasPrefix(fact.Target, "godot:autoload:Twice") || strings.HasPrefix(fact.Target, "godot:autoload:Unknown") {
+			t.Fatalf("ambiguous or undeclared autoload produced a fact: %#v", fact)
+		}
+	}
+}
+
+func writeFile(t *testing.T, root, name, content string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func findQualifiedNode(t *testing.T, nodes []graph.Node, kind graph.NodeKind, qualified string) graph.Node {
+	t.Helper()
+	for _, node := range nodes {
+		if node.Kind == kind && node.QualifiedName == qualified {
+			return node
+		}
+	}
+	t.Fatalf("missing %s node %q; got %#v", kind, qualified, nodes)
+	return graph.Node{}
+}
+
+func findFactWithTarget(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, target string) graph.Fact {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.Kind == kind && fact.Target == target {
+			return fact
+		}
+	}
+	t.Fatalf("missing %s fact to %q; got %#v", kind, target, facts)
+	return graph.Fact{}
 }

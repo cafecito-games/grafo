@@ -11,6 +11,8 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	gdscriptparser "github.com/cafecito-games/grafo/internal/parser/gdscript"
+	godotparser "github.com/cafecito-games/grafo/internal/parser/godot"
 	golangparser "github.com/cafecito-games/grafo/internal/parser/golang"
 	manifestparser "github.com/cafecito-games/grafo/internal/parser/manifest"
 	"github.com/cafecito-games/grafo/internal/query"
@@ -143,6 +145,84 @@ func index(t *testing.T, ctx context.Context, root string) {
 func write(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRepositoryResolvesGodotCompositionAcrossIndexes covers explicit
+// federation of the Godot composition vocabulary: a scene instance and a script
+// attachment whose target lives in another indexed repository resolve across
+// the boundary and stay marked as federated.
+func TestRepositoryResolvesGodotCompositionAcrossIndexes(t *testing.T) {
+	ctx := context.Background()
+	gameRoot := t.TempDir()
+	sharedRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(gameRoot, "scenes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(sharedRoot, "ui"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(gameRoot, "project.godot"), "config_version=5\n")
+	write(t, filepath.Join(gameRoot, "scenes", "main.tscn"),
+		"[gd_scene load_steps=3 format=3 uid=\"uid://main123\"]\n\n"+
+			"[ext_resource type=\"PackedScene\" path=\"res://ui/panel.tscn\" id=\"1_panel\"]\n"+
+			"[ext_resource type=\"Script\" path=\"res://ui/panel.gd\" id=\"2_script\"]\n\n"+
+			"[node name=\"Main\" type=\"Node\"]\nscript = ExtResource(\"2_script\")\n\n"+
+			"[node name=\"Panel\" parent=\".\" instance=ExtResource(\"1_panel\")]\n")
+	write(t, filepath.Join(sharedRoot, "ui", "panel.tscn"),
+		"[gd_scene format=3 uid=\"uid://panel123\"]\n\n[node name=\"Panel\" type=\"Control\"]\n")
+	write(t, filepath.Join(sharedRoot, "ui", "panel.gd"), "class_name Panel extends Control\n")
+	indexGodot(t, ctx, gameRoot)
+	indexGodot(t, ctx, sharedRoot)
+
+	repository, err := federation.Open(ctx, []string{gameRoot, sharedRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	service := query.NewService(repository)
+	report, err := service.GodotComposition(ctx, "scenes/main", query.GodotCompositionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFederatedRelation(t, report.OutboundInstances, "ui/panel", graph.KindGodotScene)
+	assertFederatedRelation(t, report.AttachedScripts, "ui/panel", graph.KindModule)
+}
+
+func assertFederatedRelation(t *testing.T, relations []query.GodotRelation, qualified string, kind graph.NodeKind) {
+	t.Helper()
+	for _, relation := range relations {
+		if relation.Node.QualifiedName != qualified || relation.Node.Kind != kind {
+			continue
+		}
+		if relation.Node.External {
+			t.Fatalf("%q [%s] stayed unresolved: %#v", qualified, kind, relation)
+		}
+		if !relation.Federated {
+			t.Fatalf("%q [%s] was not marked federated: %#v", qualified, kind, relation)
+		}
+		return
+	}
+	t.Fatalf("missing federated relation to %q [%s]: %#v", qualified, kind, relations)
+}
+
+func indexGodot(t *testing.T, ctx context.Context, root string) {
+	t.Helper()
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := indexer.NewService(repository, parserapi.NewRegistry(gdscriptparser.New(), godotparser.New()))
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		repository.Close()
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -144,9 +144,9 @@ the complete command surface.
 
 `grafo mcp` starts a standards-compatible MCP server over stdio with tools for
 symbol discovery, node lookup, traversal, shortest paths, callers, callees,
-change impact, graph-addressed source retrieval, bounded source search,
-reusable-code discovery, index status, and the data, configuration, and event
-catalogs.
+change impact, Godot composition, graph-addressed source retrieval, bounded
+source search, reusable-code discovery, index status, and the data,
+configuration, and event catalogs.
 
 Symbol, node, source, caller, callee, path, and impact tools accept a batch of
 inputs and return one result or error per input in the caller's order, so one
@@ -194,6 +194,29 @@ grafo impact "Charge" --source --max-lines 40 --json
 Upstream and downstream depth and node limits are bounded independently and
 each section reports its own truncation. Source excerpts are opt-in and read
 through the same bounded reader `grafo source` uses.
+
+### Godot composition
+
+`grafo godot-composition` (MCP `get_godot_composition`) answers Godot runtime
+composition questions directly from the graph: which scenes a scene
+instantiates, which scenes instantiate it, which scripts are attached to which
+scene nodes, scenes, and resources, and which autoload singletons expose a
+script or scene globally.
+
+```sh
+grafo godot-composition "scenes/main"
+grafo godot-composition "godot:autoload:GameSession" --json
+```
+
+Scenes, resources, scene nodes, and autoloads are first-class node kinds
+(`godot_scene`, `godot_resource`, `godot_scene_node`, `godot_autoload`) linked
+by `instantiates`, `attaches_script`, and `autoloads` edges. Every edge keeps
+its original evidence - resource path, UID alias, `ExtResource` id, scene node
+path, and instance-placeholder marker. Scene inheritance is an `instantiates`
+edge, never language `extends`. A reference whose UID and path disagree, whose
+`ExtResource` id is declared twice, or whose autoload name is declared more
+than once is reported as a diagnostic and stays unresolved instead of resolving
+to a guess.
 
 ### Bounded source search
 
@@ -291,9 +314,12 @@ are marked `federated` and retain their original evidence.
   signal declarations, emissions, and connections. `$Node/Path`, `%UniqueName`,
   and literal `get_node`-family lookups reference matching scene nodes when the
   name is unambiguous.
-- Godot text scenes and resources (`.tscn`, `.tres`, and `.escn`), including
-  scene nodes, subresources, properties, external resources, node paths, and
-  declarative signal connections; ConfigFile documents (`project.godot`,
+- Godot text scenes and resources (`.tscn`, `.tres`, and `.escn`) as first-class
+  scenes, resources, and scene nodes, including subresources, properties,
+  external resources, node paths, declarative signal connections, scene
+  instances and inheritance, and script attachments; `project.godot` autoload
+  singletons and their script or scene targets, resolved in GDScript uses of the
+  autoload name; ConfigFile documents (`project.godot`,
   `.cfg`, `.gdextension`, `.import`, and `.remap`) and `.uid` sidecars; and
   shader/include modules, uniforms, structs, functions, parameters, locals,
   calls, global references, and `#include` relationships.

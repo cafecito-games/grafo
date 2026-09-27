@@ -517,11 +517,20 @@ func candidateAllowed(relation graph.EdgeKind, kind graph.NodeKind) bool {
 	case graph.EdgeReads, graph.EdgeWrites:
 		return kind == graph.KindTable || kind == graph.KindView
 	case graph.EdgeReferences:
-		return kind == graph.KindConfigKey || kind == graph.KindTable || kind == graph.KindView
+		return kind == graph.KindConfigKey || kind == graph.KindTable || kind == graph.KindView ||
+			kind == graph.KindGodotAutoload || kind == graph.KindGodotScene ||
+			kind == graph.KindGodotResource || kind == graph.KindGodotSceneNode
 	case graph.EdgeExtends, graph.EdgeImplements, graph.EdgeEmbeds:
 		return kind == graph.KindType || kind == graph.KindClass || kind == graph.KindInterface
 	case graph.EdgeImports, graph.EdgeDependsOn:
-		return kind == graph.KindModule || kind == graph.KindPackage
+		return kind == graph.KindModule || kind == graph.KindPackage ||
+			kind == graph.KindGodotScene || kind == graph.KindGodotResource
+	case graph.EdgeInstantiates:
+		return kind == graph.KindGodotScene || kind == graph.KindGodotResource
+	case graph.EdgeAttachesScript:
+		return kind == graph.KindModule || kind == graph.KindClass
+	case graph.EdgeAutoloads:
+		return kind == graph.KindModule || kind == graph.KindClass || kind == graph.KindGodotScene
 	default:
 		return true
 	}

@@ -93,6 +93,8 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		runErr = a.neighbors(ctx, parsed, "callees")
 	case "impact", "blast-radius":
 		runErr = a.impact(ctx, parsed)
+	case "godot-composition", "composition":
+		runErr = a.godotComposition(ctx, parsed)
 	case "search":
 		runErr = a.search(ctx, parsed)
 	case "path":
@@ -811,6 +813,79 @@ func (a *App) impact(ctx context.Context, args parsedArguments) error {
 	return nil
 }
 
+func (a *App) godotComposition(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) != 1 {
+		return fmt.Errorf("usage: grafo %s <scene-resource-script-or-autoload> [--depth 8] [--limit 1000]", args.command)
+	}
+	depth, err := intOption(args, "depth", 8)
+	if err != nil {
+		return err
+	}
+	limit, err := intOption(args, "limit", 1000)
+	if err != nil {
+		return err
+	}
+	repository, _, closeRepository, err := openRead(ctx, args)
+	if err != nil {
+		return err
+	}
+	defer closeRepository()
+	report, err := query.NewService(repository).GodotComposition(ctx, args.positionals[0],
+		query.GodotCompositionOptions{Depth: depth, Limit: limit})
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, report)
+	}
+	a.printGodotComposition(report)
+	return nil
+}
+
+func (a *App) printGodotComposition(report query.GodotComposition) {
+	fmt.Fprintf(a.stdout, "%s [%s] %s\n", report.Root.QualifiedName, report.Root.Kind,
+		formatLocation(report.Root.Location))
+	if len(report.SceneNodes) > 0 {
+		fmt.Fprintf(a.stdout, "\nscene nodes (%d)\n", len(report.SceneNodes))
+	}
+	for _, group := range []struct {
+		label     string
+		relations []query.GodotRelation
+	}{
+		{label: "instantiates", relations: report.OutboundInstances},
+		{label: "instantiated by", relations: report.InboundInstances},
+		{label: "attached scripts", relations: report.AttachedScripts},
+		{label: "attached to", relations: report.ScriptAttachments},
+		{label: "autoload targets", relations: report.AutoloadTargets},
+		{label: "exposed as autoload", relations: report.AutoloadExposures},
+	} {
+		if len(group.relations) == 0 {
+			continue
+		}
+		fmt.Fprintf(a.stdout, "\n%s (%d)\n", group.label, len(group.relations))
+		for _, relation := range group.relations {
+			via := ""
+			if relation.Via != nil {
+				via = " via " + relation.Via.QualifiedName
+			}
+			marker := ""
+			if relation.Federated {
+				marker = " · federated"
+			}
+			if resource := relation.Edge.Properties["resource"]; resource != "" {
+				marker += " · " + resource
+			}
+			if relation.Node.External {
+				marker += " · unresolved"
+			}
+			fmt.Fprintf(a.stdout, "  %s [%s]%s%s\n", relation.Node.QualifiedName, relation.Node.Kind, via, marker)
+		}
+	}
+	if report.Truncated {
+		fmt.Fprintln(a.stdout, "\ntruncated")
+	}
+}
+
 func (a *App) printImpactReport(report query.ImpactReport) {
 	fmt.Fprintf(a.stdout, "%s [%s]\n", report.Root.QualifiedName, report.Root.Kind)
 	for _, section := range []query.ImpactSection{report.Upstream, report.Downstream} {
@@ -1481,6 +1556,7 @@ Usage:
   grafo impact <symbol-or-id> [--kind method] [--depth 4] [--upstream-depth n] [--downstream-depth n]
                               [--upstream-limit n] [--downstream-limit n]
                               [--source] [--context-lines 2] [--max-lines 200] [--source-limit 10]
+  grafo godot-composition <scene-resource-script-or-autoload> [--depth 8] [--limit 1000]
   grafo search <pattern>... [--regex] [--case-sensitive] [--path-prefix dir,...]
                             [--language go,...] [--repo-name name,...] [--context-lines 0]
                             [--max-matches 500] [--max-matches-per-file 50]
@@ -1526,6 +1602,11 @@ recreate a service definition Grafo installed; and restart a stale service.
 'grafo guidance' prints that canonical guidance plus the index status of the
 current repository and branch; '--hook' prints one advisory hint and always exits
 successfully, so a client hook can never block a tool call.
+
+'grafo godot-composition' reports Godot runtime composition for one scene,
+scene node, resource, script, or autoload: outbound and inbound scene
+instances, attached scripts, and autoload availability, each with the resource
+evidence that produced it.
 
 'grafo impact' reports both directions: what depends on the symbol and what it
 depends on, plus impacted files, cross-repository hops, and config, data, and

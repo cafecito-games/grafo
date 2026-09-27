@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"testing"
 
@@ -544,5 +545,214 @@ func assertNoOutgoingTarget(t *testing.T, ctx context.Context, repository graph.
 		if to.QualifiedName == target {
 			t.Fatalf("unexpected %s edge from %s to %s", kind, from, target)
 		}
+	}
+}
+
+// TestServiceModelsGodotCompositionAcrossFiles indexes a small Godot project and
+// asserts the composition vocabulary resolves across files, that re-indexing an
+// unchanged project is a no-op, and that editing an autoload target reconciles
+// to exactly the clean-rebuild result.
+func TestServiceModelsGodotCompositionAcrossFiles(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	writeGodotProject(t, root, "res://scripts/game.gd")
+
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	service := indexer.NewService(repository, parserapi.NewRegistry(gdscriptparser.New(), godotparser.New()))
+	report, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Diagnostics) != 0 {
+		t.Fatalf("unexpected diagnostics: %#v", report.Diagnostics)
+	}
+	queries := query.NewService(repository)
+
+	scene, err := queries.GodotComposition(ctx, "scenes/main", query.GodotCompositionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertComposition(t, scene.OutboundInstances, "scenes/enemy", graph.KindGodotScene)
+	assertComposition(t, scene.AttachedScripts, "scripts/player", graph.KindModule)
+
+	autoload, err := queries.GodotComposition(ctx, "godot:autoload:Game", query.GodotCompositionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertComposition(t, autoload.AutoloadTargets, "scripts/game", graph.KindModule)
+	use, err := queries.Neighborhood(ctx, "scripts/player.ready", 1, query.Outgoing, nil, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertReached(t, use, "godot:autoload:Game")
+
+	before, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repeat, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repeat.Updated) != 0 || len(repeat.Removed) != 0 {
+		t.Fatalf("re-indexing an unchanged Godot project changed the graph: %#v", repeat)
+	}
+	after, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("counts changed on an unchanged re-index:\n%#v\n%#v", before, after)
+	}
+
+	writeGodotProject(t, root, "res://scripts/other.gd")
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := queries.GodotComposition(ctx, "godot:autoload:Game", query.GodotCompositionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertComposition(t, moved.AutoloadTargets, "scripts/other", graph.KindModule)
+	if len(moved.AutoloadTargets) != 1 {
+		t.Fatalf("autoload target was not reconciled: %#v", moved.AutoloadTargets)
+	}
+	incremental, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rebuiltRoot := t.TempDir()
+	writeGodotProject(t, rebuiltRoot, "res://scripts/other.gd")
+	rebuiltProject, err := indexer.DiscoverProject(ctx, rebuiltRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebuilt, err := sqlite.Open(ctx, rebuiltProject.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rebuilt.Close()
+	if _, err := indexer.NewService(rebuilt, parserapi.NewRegistry(gdscriptparser.New(), godotparser.New())).
+		Run(ctx, rebuiltProject, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	clean, err := rebuilt.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(incremental.ByKind, clean.ByKind) || !reflect.DeepEqual(incremental.ByEdge, clean.ByEdge) {
+		t.Fatalf("incremental edit differs from a clean rebuild:\n%#v\n%#v", incremental, clean)
+	}
+}
+
+func writeGodotProject(t *testing.T, root, autoloadTarget string) {
+	t.Helper()
+	for _, directory := range []string{"scenes", "scripts"} {
+		if err := os.MkdirAll(filepath.Join(root, directory), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(t, filepath.Join(root, "project.godot"),
+		"config_version=5\n\n[autoload]\nGame=\"*"+autoloadTarget+"\"\n")
+	write(t, filepath.Join(root, "scripts", "game.gd"), "class_name Game extends Node\nfunc start() -> void:\n\tpass\n")
+	write(t, filepath.Join(root, "scripts", "other.gd"), "extends Node\nfunc start() -> void:\n\tpass\n")
+	write(t, filepath.Join(root, "scripts", "player.gd"), "extends Node\nfunc ready() -> void:\n\tGame.start()\n")
+	write(t, filepath.Join(root, "scenes", "enemy.tscn"),
+		"[gd_scene format=3 uid=\"uid://enemy123\"]\n\n[node name=\"Enemy\" type=\"Node2D\"]\n")
+	write(t, filepath.Join(root, "scenes", "main.tscn"),
+		"[gd_scene load_steps=3 format=3 uid=\"uid://main123\"]\n\n"+
+			"[ext_resource type=\"Script\" path=\"res://scripts/player.gd\" id=\"1_player\"]\n"+
+			"[ext_resource type=\"PackedScene\" uid=\"uid://enemy123\" path=\"res://scenes/enemy.tscn\" id=\"2_enemy\"]\n\n"+
+			"[node name=\"Main\" type=\"Node\"]\nscript = ExtResource(\"1_player\")\n\n"+
+			"[node name=\"Enemy\" parent=\".\" instance=ExtResource(\"2_enemy\")]\n")
+}
+
+func assertComposition(t *testing.T, relations []query.GodotRelation, qualified string, kind graph.NodeKind) {
+	t.Helper()
+	for _, relation := range relations {
+		if relation.Node.QualifiedName != qualified {
+			continue
+		}
+		if relation.Node.External {
+			t.Fatalf("%q resolved to an external node: %#v", qualified, relation.Node)
+		}
+		if relation.Node.Kind != kind {
+			t.Fatalf("%q resolved to kind %q, want %q", qualified, relation.Node.Kind, kind)
+		}
+		return
+	}
+	t.Fatalf("missing composition relation to %q: %#v", qualified, relations)
+}
+
+// TestServiceRebuildReplacesLegacyGodotRepresentations proves the semantic
+// rebuild leaves no duplicate generic representation of a migrated Godot
+// concept: a stale index row that still models a scene as a module and a scene
+// node as a variable is replaced, not joined, by the new vocabulary.
+func TestServiceRebuildReplacesLegacyGodotRepresentations(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	writeGodotProject(t, root, "res://scripts/game.gd")
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	service := indexer.NewService(repository, parserapi.NewRegistry(gdscriptparser.New(), godotparser.New()))
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+
+	legacy := graph.ParseResult{Nodes: []graph.Node{
+		{ID: graph.NodeID(graph.KindModule, "scenes/main", "legacy"), Kind: graph.KindModule,
+			Name: "main", QualifiedName: "scenes/main", OwnerFile: "scenes/main.tscn"},
+		{ID: graph.NodeID(graph.KindVariable, "scenes/main:Main", "legacy"), Kind: graph.KindVariable,
+			Name: "Main", QualifiedName: "scenes/main:Main", OwnerFile: "scenes/main.tscn"},
+	}}
+	if err := repository.ReplaceFile(ctx, graph.FileRecord{Path: "scenes/main.tscn",
+		Hash: "legacy", Language: "godot"}, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.SetMeta(ctx, "semantic_index_version", "legacy"); err != nil {
+		t.Fatal(err)
+	}
+	rebuild, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebuild.Rebuild == "" {
+		t.Fatalf("stale semantic version did not trigger a rebuild: %#v", rebuild)
+	}
+	assertNodeKinds(t, repository, "scenes/main", map[graph.NodeKind]int{graph.KindGodotScene: 1})
+	assertNodeKinds(t, repository, "scenes/main:Main", map[graph.NodeKind]int{graph.KindGodotSceneNode: 1})
+}
+
+func assertNodeKinds(t *testing.T, repository graph.ReadRepository, qualified string, want map[graph.NodeKind]int) {
+	t.Helper()
+	found, err := repository.SearchNodes(context.Background(), qualified, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[graph.NodeKind]int{}
+	for _, node := range found {
+		if node.QualifiedName != qualified || node.External {
+			continue
+		}
+		counts[node.Kind]++
+	}
+	if !reflect.DeepEqual(counts, want) {
+		t.Fatalf("node kinds for %q = %#v, want %#v", qualified, counts, want)
 	}
 }

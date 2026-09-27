@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 type NodeKind string
 
@@ -35,6 +35,17 @@ const (
 	KindEvent      NodeKind = "event"
 	KindDocSection NodeKind = "document_section"
 	KindExternal   NodeKind = "external"
+
+	// Godot runtime composition vocabulary. Scenes and resources are the
+	// engine's two text-resource forms, scene nodes are the tree a scene
+	// declares, and an autoload is a globally available singleton declared in
+	// project.godot. They are distinct kinds rather than generic modules and
+	// variables so composition questions are answerable by kind and edge
+	// instead of property inspection.
+	KindGodotScene     NodeKind = "godot_scene"
+	KindGodotResource  NodeKind = "godot_resource"
+	KindGodotSceneNode NodeKind = "godot_scene_node"
+	KindGodotAutoload  NodeKind = "godot_autoload"
 )
 
 // nodeKinds is the closed node vocabulary, in declaration order. It backs
@@ -98,6 +109,16 @@ const (
 	EdgeRequests    EdgeKind = "requests"
 	EdgeDependsOn   EdgeKind = "depends_on"
 	EdgeDocuments   EdgeKind = "documents"
+
+	// Godot composition relations. instantiates records a scene instance
+	// (nested or inherited) and is deliberately distinct from extends so
+	// scene composition is never mislabeled as language class inheritance.
+	// attaches_script records a script bound to a scene node, scene, or
+	// resource. autoloads records the target a project.godot autoload
+	// declaration exposes globally.
+	EdgeInstantiates   EdgeKind = "instantiates"
+	EdgeAttachesScript EdgeKind = "attaches_script"
+	EdgeAutoloads      EdgeKind = "autoloads"
 )
 
 type Location struct {

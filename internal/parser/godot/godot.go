@@ -14,6 +14,7 @@ import (
 	"github.com/cafecito-games/gdparser/uidfile"
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	"github.com/cafecito-games/grafo/internal/parser/godot/godotid"
 )
 
 // Parser handles Godot text scenes/resources, configuration, UID sidecars, and
@@ -77,7 +78,7 @@ func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseRes
 }
 
 func isConfigFile(path string) bool {
-	if strings.EqualFold(filepath.Base(path), "project.godot") {
+	if strings.EqualFold(filepath.Base(path), godotid.ProjectFileName) {
 		return true
 	}
 	switch strings.ToLower(filepath.Ext(path)) {
@@ -98,16 +99,6 @@ func isTextResource(path string) bool {
 }
 
 func moduleName(path string) string { return parserapi.ModuleName(path) }
-
-func resourceModule(path string) string {
-	path = strings.TrimSpace(strings.TrimPrefix(path, "*"))
-	if strings.HasPrefix(path, "uid://") {
-		return ""
-	}
-	path = strings.TrimPrefix(path, "res://")
-	path = strings.TrimPrefix(path, "user://")
-	return parserapi.ModuleName(filepath.ToSlash(path))
-}
 
 func moduleLocation(path string) graph.Location {
 	return graph.Location{Path: path, Line: 1, Column: 1, EndLine: 1}
