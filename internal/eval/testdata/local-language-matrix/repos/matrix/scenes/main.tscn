@@ -1,10 +1,13 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3 uid="uid://main123"]
 
 [ext_resource type="Script" path="res://scripts/player.gd" id="1_player"]
+[ext_resource type="PackedScene" uid="uid://enemy123" path="res://scenes/enemy.tscn" id="2_enemy"]
 
 [node name="Main" type="Node"]
 script = ExtResource("1_player")
 
 [node name="Button" type="Button" parent="."]
+
+[node name="Enemy" parent="." instance=ExtResource("2_enemy")]
 
 [connection signal="pressed" from="Button" to="." method="on_pressed"]

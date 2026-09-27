@@ -1,4 +1,7 @@
-[gd_resource type="Resource" format=3]
+[gd_resource type="Resource" load_steps=2 format=3 uid="uid://sample123"]
+
+[ext_resource type="Script" path="res://scripts/game.gd" id="1_game"]
 
 [resource]
+script = ExtResource("1_game")
 display_name = "Matrix"

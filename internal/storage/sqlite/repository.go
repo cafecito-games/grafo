@@ -555,10 +555,27 @@ func filterCandidates(fact graph.Fact, rows []resolutionCandidate) []resolutionC
 		allowed = func(kind graph.NodeKind) bool { return kind == graph.KindTable || kind == graph.KindView }
 	case graph.EdgeReferences:
 		allowed = func(kind graph.NodeKind) bool {
-			return kind == graph.KindConfigKey || kind == graph.KindTable || kind == graph.KindView
+			return kind == graph.KindConfigKey || kind == graph.KindTable || kind == graph.KindView ||
+				kind == graph.KindGodotAutoload || kind == graph.KindGodotScene ||
+				kind == graph.KindGodotResource || kind == graph.KindGodotSceneNode
 		}
 	case graph.EdgeImports, graph.EdgeDependsOn:
-		allowed = func(kind graph.NodeKind) bool { return kind == graph.KindModule || kind == graph.KindPackage }
+		allowed = func(kind graph.NodeKind) bool {
+			return kind == graph.KindModule || kind == graph.KindPackage ||
+				kind == graph.KindGodotScene || kind == graph.KindGodotResource
+		}
+	case graph.EdgeInstantiates:
+		allowed = func(kind graph.NodeKind) bool {
+			return kind == graph.KindGodotScene || kind == graph.KindGodotResource
+		}
+	case graph.EdgeAttachesScript:
+		allowed = func(kind graph.NodeKind) bool {
+			return kind == graph.KindModule || kind == graph.KindClass
+		}
+	case graph.EdgeAutoloads:
+		allowed = func(kind graph.NodeKind) bool {
+			return kind == graph.KindModule || kind == graph.KindClass || kind == graph.KindGodotScene
+		}
 	case graph.EdgeExtends, graph.EdgeImplements, graph.EdgeEmbeds:
 		allowed = func(kind graph.NodeKind) bool {
 			return kind == graph.KindType || kind == graph.KindClass || kind == graph.KindInterface

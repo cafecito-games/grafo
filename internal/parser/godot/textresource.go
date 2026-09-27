@@ -1,6 +1,7 @@
 package godot
 
 import (
+	"fmt"
 	pathpkg "path"
 	"strconv"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"github.com/cafecito-games/gdparser/textresource"
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	"github.com/cafecito-games/grafo/internal/parser/godot/godotid"
 )
 
 type resourceOwner struct {
@@ -16,31 +18,59 @@ type resourceOwner struct {
 	scenePath string
 }
 
+// extResource is one [ext_resource] declaration. Path evidence is canonical;
+// the UID is an alias kept as evidence. Ambiguous marks an id declared twice
+// with different paths, which resolves to nothing rather than to a guess.
+type extResource struct {
+	id           string
+	resource     string
+	canonical    string
+	uid          string
+	kind         graph.NodeKind
+	declaredType string
+}
+
 type textResourceExtractor struct {
 	b             *parserapi.Builder
 	input         parserapi.Input
+	scope         scope
 	module        string
 	moduleID      string
-	extResources  map[string]string
+	moduleKind    graph.NodeKind
+	extResources  map[string]extResource
 	subResources  map[string]string
 	nodes         map[string]resourceOwner
 	sectionOwners map[*textresource.Section]resourceOwner
 	events        map[string]string
-	root          string
+	ambiguousUIDs map[string]bool
+	// uidRejections records why each rejected UID is unusable, for diagnostics.
+	uidRejections map[string]string
+	// ambiguousIDs is sticky: once an ExtResource id is declared twice it can
+	// never become resolvable again, no matter what later declarations say.
+	ambiguousIDs map[string]bool
+	root         string
 }
 
-func extractTextResource(input parserapi.Input, document *textresource.Document) graph.ParseResult {
+func extractTextResource(input parserapi.Input, fileScope scope, document *textresource.Document) graph.ParseResult {
 	b := parserapi.NewBuilder(input, "godot-resource")
 	e := &textResourceExtractor{
-		b: b, input: input, module: moduleName(input.Path), extResources: map[string]string{},
+		b: b, input: input, scope: fileScope, module: godotid.Identity(input.Path),
+		extResources: map[string]extResource{},
 		subResources: map[string]string{}, nodes: map[string]resourceOwner{},
 		sectionOwners: map[*textresource.Section]resourceOwner{}, events: map[string]string{},
+		ambiguousUIDs: map[string]bool{}, uidRejections: map[string]string{},
+		ambiguousIDs: map[string]bool{},
 	}
 	properties, location := e.documentProperties(document)
+	e.moduleKind = graph.KindGodotResource
+	if properties["form"] == "scene" {
+		e.moduleKind = graph.KindGodotScene
+	}
 	e.moduleID = b.Declare(b.FileID(), graph.Node{
-		Kind: graph.KindModule, Name: graph.SimpleName(e.module), QualifiedName: e.module,
+		Kind: e.moduleKind, Name: graph.SimpleName(e.module), QualifiedName: e.module,
 		Location: location, Properties: properties,
 	})
+	e.declareUID(properties["uid"], location)
 	e.prepare(document)
 	e.extract(document)
 	return b.Finish()
@@ -48,6 +78,11 @@ func extractTextResource(input parserapi.Input, document *textresource.Document)
 
 func (e *textResourceExtractor) documentProperties(document *textresource.Document) (map[string]string, graph.Location) {
 	properties := map[string]string{"format": strings.TrimPrefix(strings.ToLower(pathExtension(e.input.Path)), ".")}
+	if godotid.Classify(e.input.Path) == godotid.ClassScene {
+		properties["form"] = "scene"
+	} else {
+		properties["form"] = "resource"
+	}
 	location := moduleLocation(e.input.Path)
 	for _, item := range document.Items {
 		section, ok := item.(*textresource.Section)
@@ -66,40 +101,23 @@ func (e *textResourceExtractor) documentProperties(document *textresource.Docume
 	return properties, location
 }
 
-func (e *textResourceExtractor) prepare(document *textresource.Document) {
-	for _, item := range document.Items {
-		section, ok := item.(*textresource.Section)
-		if !ok {
-			continue
-		}
-		if (section.Type == "gd_scene" || section.Type == "gd_resource") && sectionAttribute(section, "uid") != "" {
-			uid := sectionAttribute(section, "uid")
-			e.b.AddFact(e.moduleID, graph.EdgeReferences, "", uid, graph.KindConfigKey,
-				textLocation(e.input.Path, section), map[string]string{"uid": uid})
-		}
-		if section.Type != "ext_resource" {
-			continue
-		}
-		id := sectionAttribute(section, "id")
-		if id == "" {
-			continue
-		}
-		if uid := sectionAttribute(section, "uid"); uid != "" {
-			e.b.AddFact(e.moduleID, graph.EdgeReferences, "", uid, graph.KindConfigKey,
-				textLocation(e.input.Path, section), map[string]string{"uid": uid, "id": id})
-		}
-		target := resourceModule(sectionAttribute(section, "path"))
-		if target == "" {
-			continue
-		}
-		e.extResources[id] = target
-		properties := map[string]string{"resource": sectionAttribute(section, "path"), "id": id}
-		if resourceType := sectionAttribute(section, "type"); resourceType != "" {
-			properties["type"] = resourceType
-		}
-		e.b.AddFact(e.moduleID, graph.EdgeImports, "", target, graph.KindModule,
-			textLocation(e.input.Path, section), properties)
+// declareUID records the resource's own UID alias as a declaration owned by
+// this file, so a uid:// reference from anywhere in the project resolves to
+// exactly one alias when the UID is unique and stays unresolved when it is not.
+func (e *textResourceExtractor) declareUID(uid string, location graph.Location) {
+	if uid == "" {
+		return
 	}
+	e.b.Declare(e.b.FileID(), graph.Node{
+		Kind: graph.KindConfigKey, Name: uid, QualifiedName: uid, Location: location,
+		Properties: map[string]string{"format": "uid", "form": "resource_uid", "resource": e.input.Path},
+	})
+	e.b.AddFact(e.moduleID, graph.EdgeReferences, "", uid, graph.KindConfigKey, location,
+		map[string]string{"uid": uid})
+}
+
+func (e *textResourceExtractor) prepare(document *textresource.Document) {
+	e.prepareExtResources(document)
 	for _, item := range document.Items {
 		section, ok := item.(*textresource.Section)
 		if !ok {
@@ -116,18 +134,139 @@ func (e *textResourceExtractor) prepare(document *textresource.Document) {
 	}
 }
 
+// prepareExtResources classifies every [ext_resource] declaration before any
+// fact is emitted. Classification has to complete first because both kinds of
+// ambiguity are sticky: an id or a UID proved unusable by a later declaration
+// must resolve nothing, including for imports and uses that appear earlier in
+// the document. Nothing is special-cased to its first occurrence, so no second
+// reference can slip past a verdict the first one established.
+func (e *textResourceExtractor) prepareExtResources(document *textresource.Document) {
+	type declaration struct {
+		entry extResource
+		loc   graph.Location
+	}
+	var declarations []declaration
+	uidPaths := map[string]string{}
+	for _, item := range document.Items {
+		section, ok := item.(*textresource.Section)
+		if !ok || section.Type != "ext_resource" {
+			continue
+		}
+		loc := textLocation(e.input.Path, section)
+		id := sectionAttribute(section, "id")
+		resource := sectionAttribute(section, "path")
+		uid := godotid.UID(sectionAttribute(section, "uid"))
+		canonical := e.scope.resolve(resource)
+		if uid != "" {
+			if previous, seen := uidPaths[uid]; seen && previous != canonical {
+				e.rejectUID(uid, fmt.Sprintf("it maps to both %s and %s in this document", previous, canonical))
+			} else if !seen {
+				uidPaths[uid] = canonical
+			}
+		}
+		if canonical == "" {
+			switch {
+			case e.scope.escapes(resource):
+				e.b.Diagnostic(loc.Line, "warning", fmt.Sprintf(
+					"ext_resource %q path %s leaves its Godot project; keeping the reference unresolved",
+					id, resource))
+			case uid != "":
+				e.b.Diagnostic(loc.Line, "warning", fmt.Sprintf(
+					"ext_resource %q declares UID %s without a path", id, uid))
+			}
+			continue
+		}
+		// UID evidence outranks path evidence: the resource that declares a UID
+		// is the authority on what it names, so a path that contradicts it
+		// resolves to nothing rather than to a confident edge to the wrong
+		// resource. Evidence that nothing declares is not a contradiction - but
+		// evidence the alias table could not read is not approval either, which
+		// is why the verdict comes from Agrees rather than from absence.
+		if uid != "" && !e.scope.aliases.Agrees(uid, canonical) {
+			e.rejectUID(uid, e.scope.aliases.DisagreementReason(uid, canonical))
+		}
+		entry := extResource{
+			id: id, resource: resource, canonical: canonical, uid: uid,
+			kind: godotid.TargetKind(resource), declaredType: sectionAttribute(section, "type"),
+		}
+		if id != "" {
+			if _, seen := e.extResources[id]; seen {
+				e.ambiguousIDs[id] = true
+				e.b.Diagnostic(loc.Line, "warning", fmt.Sprintf(
+					"ext_resource id %q is declared more than once; keeping its uses unresolved", id))
+			}
+			e.extResources[id] = entry
+		}
+		declarations = append(declarations, declaration{entry: entry, loc: loc})
+	}
+	for _, item := range declarations {
+		entry := item.entry
+		if e.ambiguousIDs[entry.id] {
+			continue
+		}
+		// A rejected UID suppresses the import as well: the path that came with
+		// it is the very evidence the UID contradicts.
+		if entry.uid != "" && e.ambiguousUIDs[entry.uid] {
+			e.b.Diagnostic(item.loc.Line, "warning", fmt.Sprintf(
+				"ext_resource %q pairs UID %s with %s, but %s; keeping the reference unresolved",
+				entry.id, entry.uid, entry.resource, e.uidRejections[entry.uid]))
+			continue
+		}
+		properties := map[string]string{"resource": entry.resource, "id": entry.id}
+		if entry.declaredType != "" {
+			properties["type"] = entry.declaredType
+		}
+		if entry.uid != "" {
+			properties["uid"] = entry.uid
+		}
+		e.b.AddFact(e.moduleID, graph.EdgeImports, "", entry.canonical, entry.kind, item.loc, properties)
+	}
+	for _, item := range declarations {
+		if item.entry.uid == "" || e.ambiguousUIDs[item.entry.uid] {
+			continue
+		}
+		e.b.AddFact(e.moduleID, graph.EdgeReferences, "", item.entry.uid, graph.KindConfigKey, item.loc,
+			map[string]string{"uid": item.entry.uid, "id": item.entry.id})
+	}
+}
+
+// rejectUID marks a UID permanently unusable for resolution and remembers why.
+// The verdict is per document and per UID rather than per declaration, so every
+// reference carrying that UID - whatever its id, and whether it was read before
+// or after the verdict - resolves to nothing.
+func (e *textResourceExtractor) rejectUID(uid, reason string) {
+	e.ambiguousUIDs[uid] = true
+	if _, recorded := e.uidRejections[uid]; !recorded {
+		e.uidRejections[uid] = reason
+	}
+}
+
+// resolveExtResource returns the referenced declaration when it is exact. An
+// unknown or ambiguous id, or one whose UID was rejected, yields no target so no
+// edge is guessed.
+func (e *textResourceExtractor) resolveExtResource(id string) (extResource, bool) {
+	entry, ok := e.extResources[id]
+	if !ok || e.ambiguousIDs[id] || entry.canonical == "" {
+		return extResource{}, false
+	}
+	if entry.uid != "" && e.ambiguousUIDs[entry.uid] {
+		return extResource{}, false
+	}
+	return entry, true
+}
+
 func (e *textResourceExtractor) prepareSubResource(section *textresource.Section) {
 	id := sectionAttribute(section, "id")
 	if id == "" {
 		return
 	}
-	qualified := e.module + "#" + id
-	properties := map[string]string{"form": "sub_resource"}
+	qualified := godotid.SubResourceQualifiedName(e.module, id)
+	properties := map[string]string{"form": "sub_resource", "resource": e.module}
 	if resourceType := sectionAttribute(section, "type"); resourceType != "" {
 		properties["type"] = resourceType
 	}
 	nodeID := e.b.Declare(e.moduleID, graph.Node{
-		Kind: graph.KindVariable, Name: id, QualifiedName: qualified,
+		Kind: graph.KindGodotResource, Name: id, QualifiedName: qualified,
 		Location: textLocation(e.input.Path, section), Properties: properties,
 	})
 	e.subResources[id] = nodeID
@@ -141,17 +280,19 @@ func (e *textResourceExtractor) prepareSceneNode(section *textresource.Section) 
 	}
 	parent := sectionAttribute(section, "parent")
 	var scenePath string
+	inheritedRoot := false
 	switch {
 	case e.root == "":
 		e.root, scenePath = name, name
+		inheritedRoot = true
 	case parent == "" || parent == ".":
 		scenePath = e.root + "/" + name
 	default:
 		scenePath = pathpkg.Clean(e.root + "/" + parent + "/" + name)
 	}
-	qualified := e.module + ":" + scenePath
-	properties := map[string]string{"form": "scene_node", "node_path": scenePath}
-	for _, attribute := range []string{"type", "parent", "owner", "unique_name_in_owner"} {
+	qualified := godotid.SceneNodeQualifiedName(e.module, scenePath)
+	properties := map[string]string{"form": "scene_node", "node_path": scenePath, "scene": e.module}
+	for _, attribute := range []string{"type", "parent", "owner", "unique_name_in_owner", "index"} {
 		if value := sectionAttribute(section, attribute); value != "" {
 			properties[attribute] = value
 		}
@@ -163,16 +304,78 @@ func (e *textResourceExtractor) prepareSceneNode(section *textresource.Section) 
 		}
 	}
 	nodeID := e.b.Declare(parentID, graph.Node{
-		Kind: graph.KindVariable, Name: name, QualifiedName: qualified,
+		Kind: graph.KindGodotSceneNode, Name: name, QualifiedName: qualified,
 		Location: textLocation(e.input.Path, section), Properties: properties,
 	})
 	owner := resourceOwner{id: nodeID, qualified: qualified, scenePath: scenePath}
 	e.nodes[scenePath] = owner
 	e.sectionOwners[section] = owner
+	e.addInstance(section, owner, inheritedRoot)
+}
 
-	if instance := sectionAttributeValue(section, "instance"); instance != nil {
-		e.addValueReferences(nodeID, instance, owner)
+// addInstance records a scene instance. A root node that carries an instance
+// is Godot scene inheritance, which is reported as an instantiates edge from
+// the scene itself as well as from its root node: it is scene composition, not
+// language class inheritance, so it never becomes an extends edge.
+func (e *textResourceExtractor) addInstance(section *textresource.Section, owner resourceOwner, inheritedRoot bool) {
+	form := "nested"
+	if inheritedRoot {
+		form = "inherited"
 	}
+	loc := textLocation(e.input.Path, section)
+	if value := sectionAttributeValue(section, "instance"); value != nil {
+		call, ok := value.(*textresource.CallValue)
+		if !ok || call.Name != "ExtResource" {
+			e.b.Diagnostic(loc.Line, "warning", fmt.Sprintf(
+				"scene node %q has an unsupported instance value; keeping it unresolved", owner.scenePath))
+			return
+		}
+		id := firstTextString(call.Arguments)
+		entry, ok := e.resolveExtResource(id)
+		if !ok {
+			return
+		}
+		properties := map[string]string{"form": form, "resource_id": id, "resource": entry.resource,
+			"node_path": owner.scenePath}
+		if entry.uid != "" {
+			properties["uid"] = entry.uid
+		}
+		if entry.declaredType != "" {
+			properties["type"] = entry.declaredType
+		}
+		e.addInstanceFacts(owner, entry.canonical, entry.kind, properties, loc, inheritedRoot)
+		return
+	}
+	placeholder := sectionAttribute(section, "instance_placeholder")
+	if placeholder == "" {
+		return
+	}
+	canonical := e.scope.resolve(placeholder)
+	if canonical == "" {
+		reason := "without a path"
+		if e.scope.escapes(placeholder) {
+			reason = "outside its Godot project"
+		}
+		e.b.Diagnostic(loc.Line, "warning", fmt.Sprintf(
+			"scene node %q declares instance_placeholder %q %s; keeping it unresolved",
+			owner.scenePath, placeholder, reason))
+		return
+	}
+	e.addInstanceFacts(owner, canonical, godotid.TargetKind(placeholder), map[string]string{
+		"form": form, "resource": placeholder, "node_path": owner.scenePath, "instance_placeholder": "true",
+	}, loc, inheritedRoot)
+}
+
+func (e *textResourceExtractor) addInstanceFacts(owner resourceOwner, target string, kind graph.NodeKind, properties map[string]string, loc graph.Location, inheritedRoot bool) {
+	e.b.AddFact(owner.id, graph.EdgeInstantiates, "", target, kind, loc, properties)
+	if !inheritedRoot {
+		return
+	}
+	sceneProperties := make(map[string]string, len(properties))
+	for key, value := range properties {
+		sceneProperties[key] = value
+	}
+	e.b.AddFact(e.moduleID, graph.EdgeInstantiates, "", target, kind, loc, sceneProperties)
 }
 
 func (e *textResourceExtractor) extract(document *textresource.Document) {
@@ -204,9 +407,40 @@ func (e *textResourceExtractor) extract(document *textresource.Document) {
 				QualifiedName: qualify(owner.qualified, assignment.Property), Location: loc, Properties: properties,
 			})
 			e.b.AddFact(owner.id, graph.EdgeHasField, fieldID, "", graph.KindField, loc, nil)
+			if assignment.Property == "script" && e.addScriptAttachment(owner, assignment) {
+				continue
+			}
 			e.addValueReferences(fieldID, assignment.Value, owner)
 		}
 	}
+}
+
+// addScriptAttachment records a script bound to a scene node, scene, or
+// resource as an attaches_script edge from the owner. It reports whether the
+// attachment was recorded so the generic property reference is not duplicated.
+func (e *textResourceExtractor) addScriptAttachment(owner resourceOwner, assignment *textresource.Assignment) bool {
+	call, ok := assignment.Value.(*textresource.CallValue)
+	if !ok || call.Name != "ExtResource" {
+		return false
+	}
+	id := firstTextString(call.Arguments)
+	entry, ok := e.resolveExtResource(id)
+	if !ok {
+		return false
+	}
+	properties := map[string]string{"resource": entry.resource, "resource_id": id}
+	if entry.uid != "" {
+		properties["uid"] = entry.uid
+	}
+	if entry.declaredType != "" {
+		properties["type"] = entry.declaredType
+	}
+	if owner.scenePath != "" {
+		properties["node_path"] = owner.scenePath
+	}
+	e.b.AddFact(owner.id, graph.EdgeAttachesScript, "", entry.canonical, entry.kind,
+		textLocation(e.input.Path, assignment), properties)
+	return true
 }
 
 func (e *textResourceExtractor) addValueReferences(fromID string, value textresource.Value, owner resourceOwner) {
@@ -216,13 +450,17 @@ func (e *textResourceExtractor) addValueReferences(fromID string, value textreso
 			argument := firstTextString(current.Arguments)
 			switch current.Name {
 			case "ExtResource":
-				if target := e.extResources[argument]; target != "" {
-					e.b.AddFact(fromID, graph.EdgeReferences, "", target, graph.KindModule,
-						textLocation(e.input.Path, current), map[string]string{"resource_id": argument})
+				if entry, ok := e.resolveExtResource(argument); ok {
+					properties := map[string]string{"resource_id": argument, "resource": entry.resource}
+					if entry.uid != "" {
+						properties["uid"] = entry.uid
+					}
+					e.b.AddFact(fromID, graph.EdgeReferences, "", entry.canonical, entry.kind,
+						textLocation(e.input.Path, current), properties)
 				}
 			case "SubResource":
 				if targetID := e.subResources[argument]; targetID != "" {
-					e.b.AddFact(fromID, graph.EdgeReferences, targetID, "", graph.KindVariable,
+					e.b.AddFact(fromID, graph.EdgeReferences, targetID, "", graph.KindGodotResource,
 						textLocation(e.input.Path, current), map[string]string{"resource_id": argument})
 				}
 			}
@@ -244,8 +482,8 @@ func (e *textResourceExtractor) addNodePathReference(fromID, value string, owner
 	if target, ok := e.nodes[targetPath]; ok {
 		targetID = target.id
 	}
-	e.b.AddFact(fromID, graph.EdgeReferences, targetID, e.module+":"+targetPath, graph.KindVariable,
-		loc, map[string]string{"node_path": value})
+	e.b.AddFact(fromID, graph.EdgeReferences, targetID, godotid.SceneNodeQualifiedName(e.module, targetPath),
+		graph.KindGodotSceneNode, loc, map[string]string{"node_path": value})
 }
 
 func (e *textResourceExtractor) extractConnection(section *textresource.Section) {

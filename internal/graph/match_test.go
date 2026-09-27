@@ -51,6 +51,16 @@ func TestIsDeclarationMemberClassifiesTheWholeVocabulary(t *testing.T) {
 		graph.KindDocSection: false,
 		// An unresolved boundary node stands for a declaration elsewhere.
 		graph.KindExternal: false,
+		// A scene and a saved resource carry their own repository-relative
+		// identity; a sub-resource nests under its document but is still a
+		// resource in its own right.
+		graph.KindGodotScene:    false,
+		graph.KindGodotResource: false,
+		// A scene node nests under its scene, but GDScript resolves "%Unique"
+		// and get_node("Main/Button") against its bare name.
+		graph.KindGodotSceneNode: false,
+		// An autoload is a project-scoped global resolved by bare name.
+		graph.KindGodotAutoload: false,
 	}
 
 	for _, kind := range graph.NodeKinds() {

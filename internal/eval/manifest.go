@@ -372,7 +372,9 @@ var validNodeKinds = makeSet([]graph.NodeKind{
 	graph.KindRepository, graph.KindFile, graph.KindPackage, graph.KindModule, graph.KindFunction,
 	graph.KindMethod, graph.KindType, graph.KindClass, graph.KindInterface, graph.KindField,
 	graph.KindVariable, graph.KindParameter, graph.KindTable, graph.KindView, graph.KindColumn,
-	graph.KindIndex, graph.KindConfigKey, graph.KindEndpoint, graph.KindEvent, graph.KindExternal,
+	graph.KindIndex, graph.KindConfigKey, graph.KindEndpoint, graph.KindEvent, graph.KindDocSection,
+	graph.KindExternal, graph.KindGodotScene, graph.KindGodotResource, graph.KindGodotSceneNode,
+	graph.KindGodotAutoload,
 })
 
 var validEdgeKinds = makeSet([]graph.EdgeKind{
@@ -380,7 +382,8 @@ var validEdgeKinds = makeSet([]graph.EdgeKind{
 	graph.EdgeExtends, graph.EdgeImplements, graph.EdgeReadsConfig, graph.EdgeDefines, graph.EdgeExposes,
 	graph.EdgeHandledBy, graph.EdgePublishes, graph.EdgeSubscribes, graph.EdgeReferences, graph.EdgeReads,
 	graph.EdgeWrites, graph.EdgeHasField, graph.EdgeAssigns, graph.EdgeReturns, graph.EdgePasses,
-	graph.EdgeRequests, graph.EdgeDependsOn,
+	graph.EdgeRequests, graph.EdgeDependsOn, graph.EdgeDocuments, graph.EdgeInstantiates,
+	graph.EdgeAttachesScript, graph.EdgeAutoloads,
 })
 
 func makeSet[T comparable](values []T) map[T]bool {

@@ -57,15 +57,13 @@ type NodeMatchQuery struct {
 // resolution may drop them in favour of that parent.
 //
 // Membership is necessary but never sufficient. A kind is only a hint about the
-// usual role of a node, and at least one parser overloads a member kind for
-// something that is a declaration in its own right:
-// internal/parser/godot/textresource.go declares scene nodes and sub-resources as
-// KindVariable with hierarchical qualified names ("scenes/main:Player",
-// "scenes/main:Player/Button", "scenes/main#Style_button"), and GDScript
-// references those by name; it also declares properties as KindField nested under
-// those scene nodes. So the decision to suppress a candidate is structural, not
-// kind-based alone - see the invariant below and preferDeclarations in
-// internal/query.
+// usual role of a node, and a parser can nest a declaration that is a symbol in
+// its own right: internal/parser/godot/textresource.go gives scene nodes and
+// sub-resources hierarchical qualified names ("scenes/main:Player",
+// "scenes/main:Player/Button", "scenes/main#Style_button") under their own
+// non-member kinds, and declares properties as KindField nested under those scene
+// nodes. So the decision to suppress a candidate is structural, not kind-based
+// alone - see the invariant below and preferDeclarations in internal/query.
 //
 // THE SUPPRESSION INVARIANT, which no qualified-name convention may break: a
 // candidate is dropped only when all three hold.
@@ -96,7 +94,9 @@ type NodeMatchQuery struct {
 //     resolve "path#anchor" as a target and config references resolve a bare key,
 //     so both are declarations that merely happen to nest. KindEvent is another:
 //     a GDScript signal's qualified name extends its class's, but signals are
-//     connected and emitted by their bare name.
+//     connected and emitted by their bare name. KindGodotSceneNode is the same:
+//     its qualified name extends its scene's, but GDScript resolves "%Unique" and
+//     get_node("Main/Button") against the node's bare name.
 //
 // When in doubt, leave the kind out. A wrongly excluded kind costs an ambiguity
 // error, which a caller resolves with a qualified name or a kind filter; a wrongly

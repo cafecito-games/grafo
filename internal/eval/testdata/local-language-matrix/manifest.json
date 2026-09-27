@@ -12,6 +12,11 @@
       {
         "repo": "matrix",
         "kind": "class",
+        "qualified_name": "Game"
+      },
+      {
+        "repo": "matrix",
+        "kind": "class",
         "qualified_name": "Node",
         "external": true
       },
@@ -104,6 +109,16 @@
       {
         "repo": "matrix",
         "kind": "config_key",
+        "qualified_name": "config:project.godot:autoload/Disabled"
+      },
+      {
+        "repo": "matrix",
+        "kind": "config_key",
+        "qualified_name": "config:project.godot:autoload/Game"
+      },
+      {
+        "repo": "matrix",
+        "kind": "config_key",
         "qualified_name": "config:project.godot:config_version"
       },
       {
@@ -115,6 +130,26 @@
         "repo": "matrix",
         "kind": "config_key",
         "qualified_name": "config:settings.properties:service.mode"
+      },
+      {
+        "repo": "matrix",
+        "kind": "config_key",
+        "qualified_name": "uid://enemy123"
+      },
+      {
+        "repo": "matrix",
+        "kind": "config_key",
+        "qualified_name": "uid://hero123"
+      },
+      {
+        "repo": "matrix",
+        "kind": "config_key",
+        "qualified_name": "uid://main123"
+      },
+      {
+        "repo": "matrix",
+        "kind": "config_key",
+        "qualified_name": "uid://sample123"
       },
       {
         "repo": "matrix",
@@ -147,6 +182,12 @@
       {
         "repo": "matrix",
         "kind": "external",
+        "qualified_name": "Disabled.start",
+        "external": true
+      },
+      {
+        "repo": "matrix",
+        "kind": "external",
         "qualified_name": "SwiftWorker",
         "external": true
       },
@@ -166,6 +207,11 @@
         "repo": "matrix",
         "kind": "field",
         "qualified_name": "resources/sample.display_name"
+      },
+      {
+        "repo": "matrix",
+        "kind": "field",
+        "qualified_name": "resources/sample.script"
       },
       {
         "repo": "matrix",
@@ -240,7 +286,17 @@
       {
         "repo": "matrix",
         "kind": "file",
+        "qualified_name": "scenes/enemy.tscn"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
         "qualified_name": "scenes/exported.escn"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "scenes/hero.tscn"
       },
       {
         "repo": "matrix",
@@ -261,6 +317,11 @@
         "repo": "matrix",
         "kind": "file",
         "qualified_name": "schema.sql"
+      },
+      {
+        "repo": "matrix",
+        "kind": "file",
+        "qualified_name": "scripts/game.gd"
       },
       {
         "repo": "matrix",
@@ -359,6 +420,71 @@
       },
       {
         "repo": "matrix",
+        "kind": "godot_autoload",
+        "qualified_name": "godot:autoload:project.godot:Disabled"
+      },
+      {
+        "repo": "matrix",
+        "kind": "godot_autoload",
+        "qualified_name": "godot:autoload:project.godot:Game"
+      },
+      {
+        "repo": "matrix",
+        "kind": "godot_resource",
+        "qualified_name": "resources/sample"
+      },
+      {
+        "repo": "matrix",
+        "kind": "godot_scene",
+        "qualified_name": "scenes/enemy"
+      },
+      {
+        "repo": "matrix",
+        "kind": "godot_scene",
+        "qualified_name": "scenes/exported"
+      },
+      {
+        "repo": "matrix",
+        "kind": "godot_scene",
+        "qualified_name": "scenes/hero"
+      },
+      {
+        "repo": "matrix",
+        "kind": "godot_scene",
+        "qualified_name": "scenes/main"
+      },
+      {
+        "repo": "matrix",
+        "kind": "godot_scene_node",
+        "qualified_name": "scenes/enemy:Enemy"
+      },
+      {
+        "repo": "matrix",
+        "kind": "godot_scene_node",
+        "qualified_name": "scenes/exported:Exported"
+      },
+      {
+        "repo": "matrix",
+        "kind": "godot_scene_node",
+        "qualified_name": "scenes/hero:Main"
+      },
+      {
+        "repo": "matrix",
+        "kind": "godot_scene_node",
+        "qualified_name": "scenes/main:Main"
+      },
+      {
+        "repo": "matrix",
+        "kind": "godot_scene_node",
+        "qualified_name": "scenes/main:Main/Button"
+      },
+      {
+        "repo": "matrix",
+        "kind": "godot_scene_node",
+        "qualified_name": "scenes/main:Main/Enemy"
+      },
+      {
+        "repo": "matrix",
         "kind": "interface",
         "qualified_name": "example.worker.Job"
       },
@@ -371,6 +497,11 @@
         "repo": "matrix",
         "kind": "interface",
         "qualified_name": "web/worker.Runnable"
+      },
+      {
+        "repo": "matrix",
+        "kind": "method",
+        "qualified_name": "Game.start"
       },
       {
         "repo": "matrix",
@@ -461,23 +592,12 @@
       {
         "repo": "matrix",
         "kind": "module",
-        "qualified_name": "resources/sample"
+        "qualified_name": "scripts/game"
       },
       {
         "repo": "matrix",
         "kind": "module",
-        "qualified_name": "scenes/exported"
-      },
-      {
-        "repo": "matrix",
-        "kind": "module",
-        "qualified_name": "scenes/main"
-      },
-      {
-        "repo": "matrix",
-        "kind": "module",
-        "qualified_name": "scripts/player",
-        "external": true
+        "qualified_name": "scripts/player"
       },
       {
         "repo": "matrix",
@@ -563,21 +683,6 @@
       {
         "repo": "matrix",
         "kind": "variable",
-        "qualified_name": "scenes/exported:Exported"
-      },
-      {
-        "repo": "matrix",
-        "kind": "variable",
-        "qualified_name": "scenes/main:Main"
-      },
-      {
-        "repo": "matrix",
-        "kind": "variable",
-        "qualified_name": "scenes/main:Main/Button"
-      },
-      {
-        "repo": "matrix",
-        "kind": "variable",
         "qualified_name": "swift_worker.SwiftWorker.run.result@7"
       },
       {
@@ -597,6 +702,43 @@
       }
     ],
     "edges": [
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "class",
+          "qualified_name": "Game"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Game.start"
+        },
+        "source": {
+          "path": "scripts/game.gd",
+          "line": 3,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "class",
+          "qualified_name": "Game"
+        },
+        "relation": "extends",
+        "to": {
+          "repo": "matrix",
+          "kind": "class",
+          "qualified_name": "Node",
+          "external": true
+        },
+        "source": {
+          "path": "scripts/game.gd",
+          "line": 1,
+          "column": 1
+        }
+      },
       {
         "from": {
           "repo": "matrix",
@@ -629,7 +771,7 @@
         },
         "source": {
           "path": "scripts/player.gd",
-          "line": 11,
+          "line": 13,
           "column": 1
         }
       },
@@ -665,7 +807,7 @@
         },
         "source": {
           "path": "scripts/player.gd",
-          "line": 14,
+          "line": 16,
           "column": 1
         }
       },
@@ -793,7 +935,7 @@
         "relation": "references",
         "to": {
           "repo": "matrix",
-          "kind": "module",
+          "kind": "godot_scene",
           "qualified_name": "scenes/main"
         },
         "source": {
@@ -803,6 +945,84 @@
         },
         "properties": {
           "resource": "res://scenes/main.tscn"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:project.godot:autoload/Disabled"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_autoload",
+          "qualified_name": "godot:autoload:project.godot:Disabled"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 9,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:project.godot:autoload/Disabled"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/enemy"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 9,
+          "column": 10
+        },
+        "properties": {
+          "resource": "res://scenes/enemy.tscn"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:project.godot:autoload/Game"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_autoload",
+          "qualified_name": "godot:autoload:project.godot:Game"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 8,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:project.godot:autoload/Game"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "scripts/game"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 8,
+          "column": 6
+        },
+        "properties": {
+          "resource": "*res://scripts/game.gd"
         }
       },
       {
@@ -820,33 +1040,11 @@
         },
         "source": {
           "path": "scenes/main.tscn",
-          "line": 10,
+          "line": 13,
           "column": 1
         },
         "properties": {
           "receiver": "scenes/main:Main"
-        }
-      },
-      {
-        "from": {
-          "repo": "matrix",
-          "kind": "field",
-          "qualified_name": "scenes/main:Main.script"
-        },
-        "relation": "references",
-        "to": {
-          "repo": "matrix",
-          "kind": "module",
-          "qualified_name": "scripts/player",
-          "external": true
-        },
-        "source": {
-          "path": "scenes/main.tscn",
-          "line": 6,
-          "column": 10
-        },
-        "properties": {
-          "resource_id": "1_player"
         }
       },
       {
@@ -1190,11 +1388,65 @@
         "relation": "declares",
         "to": {
           "repo": "matrix",
-          "kind": "module",
+          "kind": "config_key",
+          "qualified_name": "uid://sample123"
+        },
+        "source": {
+          "path": "resources/sample.tres",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "resources/sample.tres"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_resource",
           "qualified_name": "resources/sample"
         },
         "source": {
           "path": "resources/sample.tres",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "scenes/enemy.tscn"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "uid://enemy123"
+        },
+        "source": {
+          "path": "scenes/enemy.tscn",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "scenes/enemy.tscn"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/enemy"
+        },
+        "source": {
+          "path": "scenes/enemy.tscn",
           "line": 1,
           "column": 1
         }
@@ -1208,11 +1460,47 @@
         "relation": "declares",
         "to": {
           "repo": "matrix",
-          "kind": "module",
+          "kind": "godot_scene",
           "qualified_name": "scenes/exported"
         },
         "source": {
           "path": "scenes/exported.escn",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "scenes/hero.tscn"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "uid://hero123"
+        },
+        "source": {
+          "path": "scenes/hero.tscn",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "scenes/hero.tscn"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/hero"
+        },
+        "source": {
+          "path": "scenes/hero.tscn",
           "line": 1,
           "column": 1
         }
@@ -1226,7 +1514,25 @@
         "relation": "declares",
         "to": {
           "repo": "matrix",
-          "kind": "module",
+          "kind": "config_key",
+          "qualified_name": "uid://main123"
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "scenes/main.tscn"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_scene",
           "qualified_name": "scenes/main"
         },
         "source": {
@@ -1311,13 +1617,31 @@
         "from": {
           "repo": "matrix",
           "kind": "file",
+          "qualified_name": "scripts/game.gd"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "scripts/game"
+        },
+        "source": {
+          "path": "scripts/game.gd",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
           "qualified_name": "scripts/player.gd"
         },
         "relation": "declares",
         "to": {
           "repo": "matrix",
-          "kind": "class",
-          "qualified_name": "Player"
+          "kind": "module",
+          "qualified_name": "scripts/player"
         },
         "source": {
           "path": "scripts/player.gd",
@@ -1809,6 +2133,601 @@
       {
         "from": {
           "repo": "matrix",
+          "kind": "godot_autoload",
+          "qualified_name": "godot:autoload:project.godot:Disabled"
+        },
+        "relation": "autoloads",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/enemy"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 9,
+          "column": 1
+        },
+        "properties": {
+          "autoload": "Disabled",
+          "enabled": "false",
+          "resource": "res://scenes/enemy.tscn"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_autoload",
+          "qualified_name": "godot:autoload:project.godot:Game"
+        },
+        "relation": "autoloads",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "scripts/game"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 8,
+          "column": 1
+        },
+        "properties": {
+          "autoload": "Game",
+          "enabled": "true",
+          "resource": "res://scripts/game.gd"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_resource",
+          "qualified_name": "resources/sample"
+        },
+        "relation": "attaches_script",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "scripts/game"
+        },
+        "source": {
+          "path": "resources/sample.tres",
+          "line": 6,
+          "column": 1
+        },
+        "properties": {
+          "resource": "res://scripts/game.gd",
+          "resource_id": "1_game",
+          "type": "Script"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_resource",
+          "qualified_name": "resources/sample"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "matrix",
+          "kind": "field",
+          "qualified_name": "resources/sample.display_name"
+        },
+        "source": {
+          "path": "resources/sample.tres",
+          "line": 7,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_resource",
+          "qualified_name": "resources/sample"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "matrix",
+          "kind": "field",
+          "qualified_name": "resources/sample.script"
+        },
+        "source": {
+          "path": "resources/sample.tres",
+          "line": 6,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_resource",
+          "qualified_name": "resources/sample"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "scripts/game"
+        },
+        "source": {
+          "path": "resources/sample.tres",
+          "line": 3,
+          "column": 1
+        },
+        "properties": {
+          "id": "1_game",
+          "resource": "res://scripts/game.gd",
+          "type": "Script"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_resource",
+          "qualified_name": "resources/sample"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "uid://sample123"
+        },
+        "source": {
+          "path": "resources/sample.tres",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "uid": "uid://sample123"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/enemy"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_scene_node",
+          "qualified_name": "scenes/enemy:Enemy"
+        },
+        "source": {
+          "path": "scenes/enemy.tscn",
+          "line": 3,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/enemy"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "uid://enemy123"
+        },
+        "source": {
+          "path": "scenes/enemy.tscn",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "uid": "uid://enemy123"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/exported"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_scene_node",
+          "qualified_name": "scenes/exported:Exported"
+        },
+        "source": {
+          "path": "scenes/exported.escn",
+          "line": 3,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/hero"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_scene_node",
+          "qualified_name": "scenes/hero:Main"
+        },
+        "source": {
+          "path": "scenes/hero.tscn",
+          "line": 5,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/hero"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/main"
+        },
+        "source": {
+          "path": "scenes/hero.tscn",
+          "line": 3,
+          "column": 1
+        },
+        "properties": {
+          "id": "1_main",
+          "resource": "res://scenes/main.tscn",
+          "type": "PackedScene",
+          "uid": "uid://main123"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/hero"
+        },
+        "relation": "instantiates",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/main"
+        },
+        "source": {
+          "path": "scenes/hero.tscn",
+          "line": 5,
+          "column": 1
+        },
+        "properties": {
+          "form": "inherited",
+          "node_path": "Main",
+          "resource": "res://scenes/main.tscn",
+          "resource_id": "1_main",
+          "type": "PackedScene",
+          "uid": "uid://main123"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/hero"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "uid://hero123"
+        },
+        "source": {
+          "path": "scenes/hero.tscn",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "uid": "uid://hero123"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/hero"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "uid://main123"
+        },
+        "source": {
+          "path": "scenes/hero.tscn",
+          "line": 3,
+          "column": 1
+        },
+        "properties": {
+          "id": "1_main",
+          "uid": "uid://main123"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/main"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_scene_node",
+          "qualified_name": "scenes/main:Main"
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 6,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/main"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/enemy"
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 4,
+          "column": 1
+        },
+        "properties": {
+          "id": "2_enemy",
+          "resource": "res://scenes/enemy.tscn",
+          "type": "PackedScene",
+          "uid": "uid://enemy123"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/main"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "scripts/player"
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 3,
+          "column": 1
+        },
+        "properties": {
+          "id": "1_player",
+          "resource": "res://scripts/player.gd",
+          "type": "Script"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/main"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "uid://enemy123"
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 4,
+          "column": 1
+        },
+        "properties": {
+          "id": "2_enemy",
+          "uid": "uid://enemy123"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/main"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "uid://main123"
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "uid": "uid://main123"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene_node",
+          "qualified_name": "scenes/hero:Main"
+        },
+        "relation": "instantiates",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/main"
+        },
+        "source": {
+          "path": "scenes/hero.tscn",
+          "line": 5,
+          "column": 1
+        },
+        "properties": {
+          "form": "inherited",
+          "node_path": "Main",
+          "resource": "res://scenes/main.tscn",
+          "resource_id": "1_main",
+          "type": "PackedScene",
+          "uid": "uid://main123"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene_node",
+          "qualified_name": "scenes/main:Main/Button"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "event",
+          "qualified_name": "scenes/main:Main/Button.pressed"
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 13,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene_node",
+          "qualified_name": "scenes/main:Main/Enemy"
+        },
+        "relation": "instantiates",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/enemy"
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 11,
+          "column": 1
+        },
+        "properties": {
+          "form": "nested",
+          "node_path": "Main/Enemy",
+          "resource": "res://scenes/enemy.tscn",
+          "resource_id": "2_enemy",
+          "type": "PackedScene",
+          "uid": "uid://enemy123"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene_node",
+          "qualified_name": "scenes/main:Main"
+        },
+        "relation": "attaches_script",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "scripts/player"
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 7,
+          "column": 1
+        },
+        "properties": {
+          "node_path": "Main",
+          "resource": "res://scripts/player.gd",
+          "resource_id": "1_player",
+          "type": "Script"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene_node",
+          "qualified_name": "scenes/main:Main"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_scene_node",
+          "qualified_name": "scenes/main:Main/Button"
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 9,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene_node",
+          "qualified_name": "scenes/main:Main"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_scene_node",
+          "qualified_name": "scenes/main:Main/Enemy"
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 11,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene_node",
+          "qualified_name": "scenes/main:Main"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "matrix",
+          "kind": "field",
+          "qualified_name": "scenes/main:Main.script"
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 7,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene_node",
+          "qualified_name": "scenes/main:Main"
+        },
+        "relation": "subscribes",
+        "to": {
+          "repo": "matrix",
+          "kind": "event",
+          "qualified_name": "scenes/main:Main/Button.pressed"
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 13,
+          "column": 1
+        },
+        "properties": {
+          "method": "on_pressed",
+          "signal": "pressed"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
           "kind": "interface",
           "qualified_name": "example.worker.Job"
         },
@@ -1840,6 +2759,43 @@
           "path": "swift_worker.swift",
           "line": 2,
           "column": 5
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "matrix",
+          "kind": "external",
+          "qualified_name": "Disabled.start",
+          "external": true
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 10,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Game.start"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 9,
+          "column": 2
         }
       },
       {
@@ -1895,11 +2851,35 @@
         },
         "source": {
           "path": "scripts/player.gd",
-          "line": 9,
+          "line": 11,
           "column": 9
         },
         "properties": {
           "source": "project.godot"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_autoload",
+          "qualified_name": "godot:autoload:project.godot:Game"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 9,
+          "column": 2
+        },
+        "properties": {
+          "autoload": "Game",
+          "form": "autoload_call",
+          "member": "start",
+          "resource": "res://scripts/game.gd"
         }
       },
       {
@@ -1937,7 +2917,7 @@
         },
         "source": {
           "path": "scripts/player.gd",
-          "line": 14,
+          "line": 16,
           "column": 1
         }
       },
@@ -2160,6 +3140,42 @@
           "kind": "module",
           "qualified_name": "project"
         },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_autoload",
+          "qualified_name": "godot:autoload:project.godot:Disabled"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 9,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "project"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_autoload",
+          "qualified_name": "godot:autoload:project.godot:Game"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 8,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "project"
+        },
         "relation": "defines",
         "to": {
           "repo": "matrix",
@@ -2200,6 +3216,42 @@
         "to": {
           "repo": "matrix",
           "kind": "config_key",
+          "qualified_name": "config:project.godot:autoload/Disabled"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 9,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "project"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:project.godot:autoload/Game"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 8,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "project"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
           "qualified_name": "config:project.godot:config_version"
         },
         "source": {
@@ -2222,7 +3274,7 @@
         },
         "source": {
           "path": "project.godot",
-          "line": 8,
+          "line": 12,
           "column": 1
         }
       },
@@ -2230,35 +3282,17 @@
         "from": {
           "repo": "matrix",
           "kind": "module",
-          "qualified_name": "resources/sample"
-        },
-        "relation": "has_field",
-        "to": {
-          "repo": "matrix",
-          "kind": "field",
-          "qualified_name": "resources/sample.display_name"
-        },
-        "source": {
-          "path": "resources/sample.tres",
-          "line": 4,
-          "column": 1
-        }
-      },
-      {
-        "from": {
-          "repo": "matrix",
-          "kind": "module",
-          "qualified_name": "scenes/exported"
+          "qualified_name": "scripts/game"
         },
         "relation": "declares",
         "to": {
           "repo": "matrix",
-          "kind": "variable",
-          "qualified_name": "scenes/exported:Exported"
+          "kind": "class",
+          "qualified_name": "Game"
         },
         "source": {
-          "path": "scenes/exported.escn",
-          "line": 3,
+          "path": "scripts/game.gd",
+          "line": 1,
           "column": 1
         }
       },
@@ -2266,42 +3300,18 @@
         "from": {
           "repo": "matrix",
           "kind": "module",
-          "qualified_name": "scenes/main"
+          "qualified_name": "scripts/player"
         },
         "relation": "declares",
         "to": {
           "repo": "matrix",
-          "kind": "variable",
-          "qualified_name": "scenes/main:Main"
+          "kind": "class",
+          "qualified_name": "Player"
         },
         "source": {
-          "path": "scenes/main.tscn",
-          "line": 5,
+          "path": "scripts/player.gd",
+          "line": 1,
           "column": 1
-        }
-      },
-      {
-        "from": {
-          "repo": "matrix",
-          "kind": "module",
-          "qualified_name": "scenes/main"
-        },
-        "relation": "imports",
-        "to": {
-          "repo": "matrix",
-          "kind": "module",
-          "qualified_name": "scripts/player",
-          "external": true
-        },
-        "source": {
-          "path": "scenes/main.tscn",
-          "line": 3,
-          "column": 1
-        },
-        "properties": {
-          "id": "1_player",
-          "resource": "res://scripts/player.gd",
-          "type": "Script"
         }
       },
       {
@@ -2628,10 +3638,46 @@
         "to": {
           "repo": "matrix",
           "kind": "file",
+          "qualified_name": "scenes/enemy.tscn"
+        },
+        "source": {
+          "path": "scenes/enemy.tscn",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
           "qualified_name": "scenes/exported.escn"
         },
         "source": {
           "path": "scenes/exported.escn",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "scenes/hero.tscn"
+        },
+        "source": {
+          "path": "scenes/hero.tscn",
           "line": 1,
           "column": 1
         }
@@ -2704,6 +3750,24 @@
         },
         "source": {
           "path": "schema.sql",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "repository",
+          "qualified_name": "matrix"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "scripts/game.gd"
+        },
+        "source": {
+          "path": "scripts/game.gd",
           "line": 1,
           "column": 1
         }
@@ -3012,82 +4076,6 @@
         "from": {
           "repo": "matrix",
           "kind": "variable",
-          "qualified_name": "scenes/main:Main/Button"
-        },
-        "relation": "declares",
-        "to": {
-          "repo": "matrix",
-          "kind": "event",
-          "qualified_name": "scenes/main:Main/Button.pressed"
-        },
-        "source": {
-          "path": "scenes/main.tscn",
-          "line": 10,
-          "column": 1
-        }
-      },
-      {
-        "from": {
-          "repo": "matrix",
-          "kind": "variable",
-          "qualified_name": "scenes/main:Main"
-        },
-        "relation": "declares",
-        "to": {
-          "repo": "matrix",
-          "kind": "variable",
-          "qualified_name": "scenes/main:Main/Button"
-        },
-        "source": {
-          "path": "scenes/main.tscn",
-          "line": 8,
-          "column": 1
-        }
-      },
-      {
-        "from": {
-          "repo": "matrix",
-          "kind": "variable",
-          "qualified_name": "scenes/main:Main"
-        },
-        "relation": "has_field",
-        "to": {
-          "repo": "matrix",
-          "kind": "field",
-          "qualified_name": "scenes/main:Main.script"
-        },
-        "source": {
-          "path": "scenes/main.tscn",
-          "line": 6,
-          "column": 1
-        }
-      },
-      {
-        "from": {
-          "repo": "matrix",
-          "kind": "variable",
-          "qualified_name": "scenes/main:Main"
-        },
-        "relation": "subscribes",
-        "to": {
-          "repo": "matrix",
-          "kind": "event",
-          "qualified_name": "scenes/main:Main/Button.pressed"
-        },
-        "source": {
-          "path": "scenes/main.tscn",
-          "line": 10,
-          "column": 1
-        },
-        "properties": {
-          "method": "on_pressed",
-          "signal": "pressed"
-        }
-      },
-      {
-        "from": {
-          "repo": "matrix",
-          "kind": "variable",
           "qualified_name": "swift_worker.SwiftWorker.run.result@7"
         },
         "relation": "returns",
@@ -3231,11 +4219,341 @@
             },
             "source": {
               "path": "scripts/player.gd",
-              "line": 9,
+              "line": 11,
               "column": 9
             },
             "properties": {
               "source": "project.godot"
+            }
+          }
+        ]
+      },
+      {
+        "id": "godot-scene-instance",
+        "from": "scenes/main:Main/Enemy",
+        "to": "scenes/enemy",
+        "direction": "outgoing",
+        "relations": [
+          "instantiates"
+        ],
+        "nodes": [
+          {
+            "repo": "matrix",
+            "kind": "godot_scene_node",
+            "qualified_name": "scenes/main:Main/Enemy"
+          },
+          {
+            "repo": "matrix",
+            "kind": "godot_scene",
+            "qualified_name": "scenes/enemy"
+          }
+        ],
+        "edges": [
+          {
+            "from": {
+              "repo": "matrix",
+              "kind": "godot_scene_node",
+              "qualified_name": "scenes/main:Main/Enemy"
+            },
+            "relation": "instantiates",
+            "to": {
+              "repo": "matrix",
+              "kind": "godot_scene",
+              "qualified_name": "scenes/enemy"
+            },
+            "source": {
+              "path": "scenes/main.tscn",
+              "line": 11,
+              "column": 1
+            },
+            "properties": {
+              "form": "nested",
+              "node_path": "Main/Enemy",
+              "resource": "res://scenes/enemy.tscn",
+              "resource_id": "2_enemy",
+              "type": "PackedScene",
+              "uid": "uid://enemy123"
+            }
+          }
+        ]
+      },
+      {
+        "id": "godot-scene-inheritance",
+        "from": "scenes/hero",
+        "to": "scenes/main",
+        "direction": "outgoing",
+        "relations": [
+          "instantiates"
+        ],
+        "nodes": [
+          {
+            "repo": "matrix",
+            "kind": "godot_scene",
+            "qualified_name": "scenes/hero"
+          },
+          {
+            "repo": "matrix",
+            "kind": "godot_scene",
+            "qualified_name": "scenes/main"
+          }
+        ],
+        "edges": [
+          {
+            "from": {
+              "repo": "matrix",
+              "kind": "godot_scene",
+              "qualified_name": "scenes/hero"
+            },
+            "relation": "instantiates",
+            "to": {
+              "repo": "matrix",
+              "kind": "godot_scene",
+              "qualified_name": "scenes/main"
+            },
+            "source": {
+              "path": "scenes/hero.tscn",
+              "line": 5,
+              "column": 1
+            },
+            "properties": {
+              "form": "inherited",
+              "node_path": "Main",
+              "resource": "res://scenes/main.tscn",
+              "resource_id": "1_main",
+              "type": "PackedScene",
+              "uid": "uid://main123"
+            }
+          }
+        ]
+      },
+      {
+        "id": "godot-script-attachment",
+        "from": "scenes/main:Main",
+        "to": "scripts/player",
+        "direction": "outgoing",
+        "relations": [
+          "attaches_script"
+        ],
+        "nodes": [
+          {
+            "repo": "matrix",
+            "kind": "godot_scene_node",
+            "qualified_name": "scenes/main:Main"
+          },
+          {
+            "repo": "matrix",
+            "kind": "module",
+            "qualified_name": "scripts/player"
+          }
+        ],
+        "edges": [
+          {
+            "from": {
+              "repo": "matrix",
+              "kind": "godot_scene_node",
+              "qualified_name": "scenes/main:Main"
+            },
+            "relation": "attaches_script",
+            "to": {
+              "repo": "matrix",
+              "kind": "module",
+              "qualified_name": "scripts/player"
+            },
+            "source": {
+              "path": "scenes/main.tscn",
+              "line": 7,
+              "column": 1
+            },
+            "properties": {
+              "node_path": "Main",
+              "resource": "res://scripts/player.gd",
+              "resource_id": "1_player",
+              "type": "Script"
+            }
+          }
+        ]
+      },
+      {
+        "id": "godot-resource-script",
+        "from": "resources/sample",
+        "to": "scripts/game",
+        "direction": "outgoing",
+        "relations": [
+          "attaches_script"
+        ],
+        "nodes": [
+          {
+            "repo": "matrix",
+            "kind": "godot_resource",
+            "qualified_name": "resources/sample"
+          },
+          {
+            "repo": "matrix",
+            "kind": "module",
+            "qualified_name": "scripts/game"
+          }
+        ],
+        "edges": [
+          {
+            "from": {
+              "repo": "matrix",
+              "kind": "godot_resource",
+              "qualified_name": "resources/sample"
+            },
+            "relation": "attaches_script",
+            "to": {
+              "repo": "matrix",
+              "kind": "module",
+              "qualified_name": "scripts/game"
+            },
+            "source": {
+              "path": "resources/sample.tres",
+              "line": 6,
+              "column": 1
+            },
+            "properties": {
+              "resource": "res://scripts/game.gd",
+              "resource_id": "1_game",
+              "type": "Script"
+            }
+          }
+        ]
+      },
+      {
+        "id": "godot-autoload-target",
+        "from": "godot:autoload:project.godot:Game",
+        "to": "scripts/game",
+        "direction": "outgoing",
+        "relations": [
+          "autoloads"
+        ],
+        "nodes": [
+          {
+            "repo": "matrix",
+            "kind": "godot_autoload",
+            "qualified_name": "godot:autoload:project.godot:Game"
+          },
+          {
+            "repo": "matrix",
+            "kind": "module",
+            "qualified_name": "scripts/game"
+          }
+        ],
+        "edges": [
+          {
+            "from": {
+              "repo": "matrix",
+              "kind": "godot_autoload",
+              "qualified_name": "godot:autoload:project.godot:Game"
+            },
+            "relation": "autoloads",
+            "to": {
+              "repo": "matrix",
+              "kind": "module",
+              "qualified_name": "scripts/game"
+            },
+            "source": {
+              "path": "project.godot",
+              "line": 8,
+              "column": 1
+            },
+            "properties": {
+              "autoload": "Game",
+              "enabled": "true",
+              "resource": "res://scripts/game.gd"
+            }
+          }
+        ]
+      },
+      {
+        "id": "godot-autoload-scene-target",
+        "from": "godot:autoload:project.godot:Disabled",
+        "to": "scenes/enemy",
+        "direction": "outgoing",
+        "relations": [
+          "autoloads"
+        ],
+        "nodes": [
+          {
+            "repo": "matrix",
+            "kind": "godot_autoload",
+            "qualified_name": "godot:autoload:project.godot:Disabled"
+          },
+          {
+            "repo": "matrix",
+            "kind": "godot_scene",
+            "qualified_name": "scenes/enemy"
+          }
+        ],
+        "edges": [
+          {
+            "from": {
+              "repo": "matrix",
+              "kind": "godot_autoload",
+              "qualified_name": "godot:autoload:project.godot:Disabled"
+            },
+            "relation": "autoloads",
+            "to": {
+              "repo": "matrix",
+              "kind": "godot_scene",
+              "qualified_name": "scenes/enemy"
+            },
+            "source": {
+              "path": "project.godot",
+              "line": 9,
+              "column": 1
+            },
+            "properties": {
+              "autoload": "Disabled",
+              "enabled": "false",
+              "resource": "res://scenes/enemy.tscn"
+            }
+          }
+        ]
+      },
+      {
+        "id": "godot-autoload-use",
+        "from": "Player.load_scene",
+        "to": "godot:autoload:project.godot:Game",
+        "direction": "outgoing",
+        "relations": [
+          "references"
+        ],
+        "nodes": [
+          {
+            "repo": "matrix",
+            "kind": "method",
+            "qualified_name": "Player.load_scene"
+          },
+          {
+            "repo": "matrix",
+            "kind": "godot_autoload",
+            "qualified_name": "godot:autoload:project.godot:Game"
+          }
+        ],
+        "edges": [
+          {
+            "from": {
+              "repo": "matrix",
+              "kind": "method",
+              "qualified_name": "Player.load_scene"
+            },
+            "relation": "references",
+            "to": {
+              "repo": "matrix",
+              "kind": "godot_autoload",
+              "qualified_name": "godot:autoload:project.godot:Game"
+            },
+            "source": {
+              "path": "scripts/player.gd",
+              "line": 9,
+              "column": 2
+            },
+            "properties": {
+              "autoload": "Game",
+              "form": "autoload_call",
+              "member": "start",
+              "resource": "res://scripts/game.gd"
             }
           }
         ]
@@ -3270,6 +4588,32 @@
           "repo": "matrix",
           "kind": "function",
           "qualified_name": "example.com/matrix.DynamicTarget"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/hero"
+        },
+        "relation": "extends",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_scene",
+          "qualified_name": "scenes/main"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_autoload",
+          "qualified_name": "godot:autoload:project.godot:Disabled"
         }
       }
     ],

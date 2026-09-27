@@ -2,6 +2,8 @@ package gdscript_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -212,4 +214,132 @@ func assertHasFactWithProperty(t *testing.T, facts []graph.Fact, kind graph.Edge
 		}
 	}
 	t.Fatalf("missing %s fact to %q with %s=%q; got %#v", kind, target, key, value, facts)
+}
+
+func TestParserDeclaresScriptModuleForResourceIdentity(t *testing.T) {
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "scripts/player.gd", Content: []byte("class_name Player extends Node\n"),
+		Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := findQualifiedNode(t, result.Nodes, graph.KindModule, "scripts/player")
+	if module.Properties["form"] != "script" {
+		t.Fatalf("script module properties = %#v", module.Properties)
+	}
+	class := findQualifiedNode(t, result.Nodes, graph.KindClass, "Player")
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeDeclares && fact.FromID == module.ID && fact.TargetID == class.ID {
+			return
+		}
+	}
+	t.Fatalf("script module does not declare its class; got %#v", result.Facts)
+}
+
+func TestParserResolvesAutoloadUsesFromProjectDeclarations(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "client/project.godot", `config_version=5
+
+[autoload]
+Game="*res://scripts/game.gd"
+Menu="*res://scenes/menu.tscn"
+Disabled="res://scripts/disabled.gd"
+Twice="*res://scripts/a.gd"
+Twice="*res://scripts/b.gd"
+`)
+	content := []byte(`extends Node
+
+func ready() -> void:
+	Game.start()
+	var scene = Menu
+	Disabled.start()
+	Twice.start()
+	Unknown.start()
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "client/scripts/hud.gd", Content: content, Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := findFactWithTarget(t, result.Facts, graph.EdgeReferences, "godot:autoload:client/project.godot:Game")
+	if call.TargetKind != graph.KindGodotAutoload || call.Properties["form"] != "autoload_call" ||
+		call.Properties["member"] != "start" {
+		t.Fatalf("autoload call fact = %#v", call)
+	}
+	reference := findFactWithTarget(t, result.Facts, graph.EdgeReferences, "godot:autoload:client/project.godot:Menu")
+	if reference.Properties["form"] != "autoload_reference" {
+		t.Fatalf("autoload reference fact = %#v", reference)
+	}
+	// A conflicting declaration, an undeclared name, and an autoload Godot does
+	// not expose as a global singleton must all resolve nothing.
+	for _, name := range []string{"Twice", "Unknown", "Disabled"} {
+		for _, fact := range result.Facts {
+			if strings.HasSuffix(fact.Target, ":"+name) && strings.HasPrefix(fact.Target, "godot:autoload:") {
+				t.Fatalf("autoload %q must not resolve: %#v", name, fact)
+			}
+		}
+	}
+}
+
+func writeFile(t *testing.T, root, name, content string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func findQualifiedNode(t *testing.T, nodes []graph.Node, kind graph.NodeKind, qualified string) graph.Node {
+	t.Helper()
+	for _, node := range nodes {
+		if node.Kind == kind && node.QualifiedName == qualified {
+			return node
+		}
+	}
+	t.Fatalf("missing %s node %q; got %#v", kind, qualified, nodes)
+	return graph.Node{}
+}
+
+func findFactWithTarget(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, target string) graph.Fact {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.Kind == kind && fact.Target == target {
+			return fact
+		}
+	}
+	t.Fatalf("missing %s fact to %q; got %#v", kind, target, facts)
+	return graph.Fact{}
+}
+
+// TestParserKeepsProjectEscapingPreloadsUnresolved covers the project boundary on
+// the script side: a preload that traverses out of its own project must not
+// resolve into a sibling project.
+func TestParserKeepsProjectEscapingPreloadsUnresolved(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "client/project.godot", "config_version=5\n")
+	writeFile(t, root, "tools/probe/project.godot", "config_version=5\n")
+
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "client/scripts/hud.gd", Repository: "sample", RepoID: "repo:sample",
+		Content: []byte("extends Node\n" +
+			"const Inside = preload('res://scripts/inside.gd')\n" +
+			"const Outside = preload('res://../tools/probe/scripts/probe.gd')\n"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasFact(t, result.Facts, graph.EdgeImports, "client/scripts/inside")
+	for _, fact := range result.Facts {
+		if strings.HasPrefix(fact.Target, "tools/probe") {
+			t.Fatalf("a preload escaped its project: %#v", fact)
+		}
+		if fact.Kind == graph.EdgeImports && fact.Target == "" {
+			t.Fatalf("an unresolvable preload emitted an empty target: %#v", fact)
+		}
+	}
 }

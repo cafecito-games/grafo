@@ -21,6 +21,7 @@ storage can evolve independently.
        ├─ defaults/*       production registry shared by CLI and evaluation
        ├─ gdscript/*       gdparser GDScript AST adapter
        ├─ godot/*          gdparser scene, resource, config, UID, and shader adapters
+       │   └─ godotid/*    Godot resource identity, project scope, and UID aliases
        ├─ java/*           Tree-sitter Java AST adapter
        ├─ swift/*          Tree-sitter Swift AST adapter
        └─ sql/*            dialect adapters such as PostgreSQL
@@ -127,6 +128,59 @@ retain every node and edge that caused inclusion, so a diagram or summary is
 never the only evidence. Optional source excerpts arrive through a narrow
 `SourceReader` port; `internal/source` adapts to it, which keeps the dependency
 pointing from source retrieval to query and not back.
+
+## Godot composition
+
+`internal/graph` owns the Godot composition vocabulary: `godot_scene`,
+`godot_resource`, `godot_scene_node`, and `godot_autoload` nodes joined by
+`instantiates`, `attaches_script`, and `autoloads` edges. Promoting these from
+generic modules and variables is a semantic schema change, so the graph schema
+and semantic index versions move together and an older index rebuilds instead of
+serving both vocabularies at once.
+
+`internal/parser/godot/godotid` is the single Godot resource identity resolver,
+shared by the text-resource, UID sidecar, configuration, shader, and GDScript
+producers so one resource has one qualified name whatever evidence named it.
+Canonical identity is the repository-relative path without its extension, but a
+`res://` reference is *project*-relative: it resolves against the directory of
+the nearest ancestor `project.godot`, so a Godot project in a monorepo
+subdirectory targets identities under that subdirectory instead of identities no
+file owns. Identity and reference resolution are therefore separate entry points
+(`Identity` and `Resolve`); nothing canonicalizes a reference without knowing
+which project owns it. The project directory is also a boundary, not just an
+origin: a reference that traverses out of its own project resolves to nothing and
+is diagnosed, because `res://` names a location inside one project by definition
+and in a monorepo whatever it lands on usually belongs to a different project.
+
+UIDs are aliases, never identity: the resource that owns a UID declares it and
+references carry it as evidence. Because a path that contradicts its UID would
+otherwise produce a confident edge to the wrong resource, the package also owns a
+repository-wide alias table of UID declarations, built from text-resource
+headers, `.uid` sidecars, and `.import` sidecars with bounded header reads. A
+reference whose UID is declared by a different resource, or by several, produces
+a diagnostic and no resolved edge; a UID that is not declared anywhere cannot
+contradict anything, so the path stands and an absent target remains an explicit
+external node. The check runs in that direction only, because canonical identity
+drops the extension: a scene and its script share one identity while declaring
+two UIDs of their own, so "this path declares some other UID" is not evidence of
+disagreement. That table plus the set of `project.godot` locations is the Godot
+parser's workspace semantic key, so a UID or project move reparses the files
+whose resolution it changes even when their own content is untouched.
+
+Autoload identity is scoped to the declaring `project.godot`
+(`godot:autoload:<project.godot path>:<Name>`), which keeps two projects in one
+repository that both declare `Game` independently addressable. A GDScript use of
+an autoload name resolves only against an exact, unshadowed, singly declared
+autoload that Godot actually exposes as a global singleton: a declaration
+without the leading `*` marker keeps its node and its `autoloads` edge, because
+the declaration is real, but satisfies no global identifier reference.
+
+Scene inheritance is an `instantiates` edge from both the inheriting scene and
+its root node, never language `extends`, so scene composition is never confused
+with class inheritance. `internal/query` assembles inbound and outbound
+instances, script attachments, and autoload availability from those edges only;
+it introduces no vocabulary of its own and reports an unresolved target as an
+external node rather than omitting it.
 
 ## Source retrieval
 
