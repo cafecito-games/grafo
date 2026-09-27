@@ -9,12 +9,13 @@ import (
 	"strings"
 )
 
-const SchemaVersion = 6
+const SchemaVersion = 7
 
 type NodeKind string
 
 const (
 	KindRepository NodeKind = "repository"
+	KindComponent  NodeKind = "component"
 	KindFile       NodeKind = "file"
 	KindPackage    NodeKind = "package"
 	KindModule     NodeKind = "module"
@@ -62,7 +63,7 @@ const (
 // ParseNodeKind so a caller-supplied kind filter is validated against the
 // vocabulary instead of silently matching nothing.
 var nodeKinds = []NodeKind{
-	KindRepository, KindFile, KindPackage, KindModule, KindFunction, KindMethod,
+	KindRepository, KindComponent, KindFile, KindPackage, KindModule, KindFunction, KindMethod,
 	KindType, KindClass, KindInterface, KindField, KindVariable, KindParameter,
 	KindTable, KindView, KindColumn, KindIndex, KindConfigKey, KindEndpoint,
 	KindEvent, KindDocSection, KindExternal,

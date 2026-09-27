@@ -26,6 +26,7 @@ storage can evolve independently.
        ├─ protobuf/*       protocompile Protobuf AST adapter
        ├─ swift/*          Tree-sitter Swift AST adapter
        └─ sql/*            dialect adapters such as PostgreSQL
+  internal/projectconfig   shared grafo.yaml loader and owned-section validation
   internal/storage/sqlite  Goose + sqlc adapter
 ```
 
@@ -37,6 +38,10 @@ storage can evolve independently.
    A semantic-index version forces a one-time rebuild when parser behavior or
    graph meaning changes, so an upgraded binary never serves an old schema as
    if it were current.
+   Before the first durable write, the shared project-configuration loader
+   validates Grafo-owned `grafo.yaml` sections and discovery identifies the
+   eligible file set. Invalid component ownership therefore preserves the last
+   valid index.
 3. A parser emits declaration nodes and relationship facts without talking to
    the database. Most adapters use syntax evidence; the Go adapter augments it
    with compact `go/packages`/`go/types` object evidence when available.
@@ -92,6 +97,16 @@ once before leaving that set. Parser-level semantic dependencies propagate
 configuration changes (for example `grafo.yaml`) to otherwise unchanged source
 files. Any Git detection failure safely falls back to hashing every supported
 file; non-Git directories always use that fallback.
+
+Workspace evidence is replaced independently on every run. It contains the
+repository node plus explicit component nodes and `contains` facts from the
+repository to each component and from each component to its eligible file
+nodes. Component IDs derive from repository identity and exact component name;
+fact IDs derive from their endpoints, so YAML declaration order cannot change
+identity. Node locations point to component names, and membership facts point
+to the matching root declaration. Removing or renaming configuration therefore
+removes stale ownership without making unchanged source files enter a parser.
+Unmatched files retain their existing repository `contains` evidence.
 
 The Go semantic loader runs with module downloads and toolchain switching
 disabled. One bounded workspace load converts `types.Info` calls, selections,
@@ -516,7 +531,9 @@ not declaration order, so neither router registration nor YAML map order changes
 the result.
 
 `grafo.yaml` is repository-level application configuration, separate from the
-generic YAML source parser. The SQL router's semantic cache key includes the
-configuration file, so changing a path mapping or default reparses unchanged
-SQL sources that may now select another dialect. Parser-contract changes also
-bump the semantic-index version.
+generic YAML source parser. One shared loader validates Grafo-owned top-level
+sections while ignoring sections owned elsewhere. The SQL router consumes its
+validated `sql` section, and its semantic cache key includes only that section:
+changing a path mapping or default reparses unchanged SQL sources that may now
+select another dialect, while a component-only edit does not. Parser-contract
+changes also bump the semantic-index version.

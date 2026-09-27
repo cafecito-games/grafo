@@ -1,0 +1,395 @@
+// Package projectconfig loads and validates Grafo's repository-level
+// configuration without claiming sections owned by other consumers.
+package projectconfig
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
+const FileName = "grafo.yaml"
+
+var (
+	componentNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	windowsAbsolutePath  = regexp.MustCompile(`^[A-Za-z]:/`)
+)
+
+// Config contains Grafo-owned top-level configuration. Unknown top-level
+// sections are deliberately ignored so their owning consumers remain free to
+// interpret them.
+type Config struct {
+	Components      []Component
+	SQL             SQL
+	UnknownSections map[string][]yaml.Node
+}
+
+// Component declares one explicitly named deployable boundary.
+type Component struct {
+	Name   string
+	Roots  []ComponentRoot
+	Line   int
+	Column int
+}
+
+// ComponentRoot is a normalized repository-relative ownership root together
+// with the source location that proves the declaration.
+type ComponentRoot struct {
+	Path   string
+	Line   int
+	Column int
+}
+
+// SQL is the shared, validated SQL-router configuration.
+type SQL struct {
+	DefaultDialect string
+	Paths          []SQLPath
+}
+
+// SQLPath maps one path pattern to a dialect.
+type SQLPath struct {
+	Pattern string
+	Dialect string
+	Line    int
+}
+
+// SemanticKey returns a deterministic digest of only the SQL-owned subtree.
+// Changes to components or unknown top-level sections therefore do not force
+// unchanged SQL source files to be reparsed.
+func (s SQL) SemanticKey() string {
+	canonical := struct {
+		DefaultDialect string      `json:"default_dialect"`
+		Paths          [][2]string `json:"paths"`
+	}{DefaultDialect: s.DefaultDialect, Paths: make([][2]string, 0, len(s.Paths))}
+	for _, mapping := range s.Paths {
+		canonical.Paths = append(canonical.Paths, [2]string{mapping.Pattern, mapping.Dialect})
+	}
+	sort.Slice(canonical.Paths, func(i, j int) bool {
+		if canonical.Paths[i][0] != canonical.Paths[j][0] {
+			return canonical.Paths[i][0] < canonical.Paths[j][0]
+		}
+		return canonical.Paths[i][1] < canonical.Paths[j][1]
+	})
+	encoded, _ := json.Marshal(canonical)
+	digest := sha256.Sum256(encoded)
+	return "sql-config-v1:" + hex.EncodeToString(digest[:])
+}
+
+// Load reads grafo.yaml from root. A missing file is an empty configuration.
+func Load(root string) (Config, error) {
+	if root == "" {
+		return Config{}, nil
+	}
+	content, err := os.ReadFile(filepath.Join(root, FileName))
+	if errors.Is(err, os.ErrNotExist) {
+		return Config{}, nil
+	}
+	if err != nil {
+		return Config{}, fmt.Errorf("read %s: %w", FileName, err)
+	}
+	config, err := Parse(content)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse %s: %w", FileName, err)
+	}
+	return config, nil
+}
+
+// Parse validates Grafo-owned configuration while preserving YAML line and
+// column evidence for component declarations.
+func Parse(content []byte) (Config, error) {
+	decoder := yaml.NewDecoder(strings.NewReader(string(content)))
+	var document yaml.Node
+	if err := decoder.Decode(&document); err != nil {
+		if errors.Is(err, io.EOF) {
+			return Config{}, nil
+		}
+		return Config{}, fmt.Errorf("decode YAML: %w", err)
+	}
+	var extra yaml.Node
+	if err := decoder.Decode(&extra); err == nil {
+		return Config{}, fmt.Errorf("line %d: multiple YAML documents are not supported", extra.Line)
+	} else if !errors.Is(err, io.EOF) {
+		return Config{}, fmt.Errorf("decode YAML: %w", err)
+	}
+	if len(document.Content) == 0 {
+		return Config{}, nil
+	}
+	root := document.Content[0]
+	if root.Kind != yaml.MappingNode {
+		return Config{}, fmt.Errorf("line %d: top-level configuration must be a mapping", root.Line)
+	}
+	result := Config{UnknownSections: map[string][]yaml.Node{}}
+	seenOwned := map[string]bool{}
+	for index := 0; index < len(root.Content); index += 2 {
+		keyNode, valueNode := root.Content[index], root.Content[index+1]
+		key, err := stringScalar(keyNode)
+		if err != nil {
+			continue // Unknown non-string keys belong to no Grafo-owned section.
+		}
+		switch key {
+		case "components":
+			if seenOwned[key] {
+				return Config{}, fmt.Errorf("line %d: duplicate top-level section %q", keyNode.Line, key)
+			}
+			seenOwned[key] = true
+			result.Components, err = parseComponents(valueNode)
+			if err != nil {
+				return Config{}, err
+			}
+		case "sql":
+			if seenOwned[key] {
+				return Config{}, fmt.Errorf("line %d: duplicate top-level section %q", keyNode.Line, key)
+			}
+			seenOwned[key] = true
+			result.SQL, err = parseSQL(valueNode)
+			if err != nil {
+				return Config{}, err
+			}
+		default:
+			value := *valueNode
+			result.UnknownSections[key] = append(result.UnknownSections[key], value)
+		}
+	}
+	return result, nil
+}
+
+func parseComponents(node *yaml.Node) ([]Component, error) {
+	if node.Kind != yaml.SequenceNode {
+		return nil, fmt.Errorf("line %d: components must be a sequence", node.Line)
+	}
+	components := make([]Component, 0, len(node.Content))
+	seenNames := map[string]int{}
+	type declaredRoot struct {
+		path      string
+		component string
+		line      int
+	}
+	var declared []declaredRoot
+	for _, item := range node.Content {
+		if item.Kind != yaml.MappingNode {
+			return nil, fmt.Errorf("line %d: component must be a mapping", item.Line)
+		}
+		component := Component{Line: item.Line, Column: item.Column}
+		seenFields := map[string]bool{}
+		for index := 0; index < len(item.Content); index += 2 {
+			keyNode, valueNode := item.Content[index], item.Content[index+1]
+			key, err := stringScalar(keyNode)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: component field name must be a string", keyNode.Line)
+			}
+			if seenFields[key] {
+				return nil, fmt.Errorf("line %d: duplicate component field %q", keyNode.Line, key)
+			}
+			seenFields[key] = true
+			switch key {
+			case "name":
+				name, err := stringScalar(valueNode)
+				if err != nil {
+					return nil, fmt.Errorf("line %d: component name must be a non-empty scalar", valueNode.Line)
+				}
+				component.Name = strings.TrimSpace(name)
+				component.Line, component.Column = valueNode.Line, valueNode.Column
+			case "roots":
+				roots, err := parseRoots(valueNode)
+				if err != nil {
+					return nil, err
+				}
+				component.Roots = roots
+			default:
+				return nil, fmt.Errorf("line %d: unknown component field %q", keyNode.Line, key)
+			}
+		}
+		if component.Name == "" {
+			return nil, fmt.Errorf("line %d: component name is required", component.Line)
+		}
+		if !componentNamePattern.MatchString(component.Name) {
+			return nil, fmt.Errorf("line %d: invalid component name %q; expected [A-Za-z0-9][A-Za-z0-9._-]*", component.Line, component.Name)
+		}
+		if previous, exists := seenNames[component.Name]; exists {
+			return nil, fmt.Errorf("line %d: duplicate component name %q (first declared on line %d)", component.Line, component.Name, previous)
+		}
+		seenNames[component.Name] = component.Line
+		if len(component.Roots) == 0 {
+			return nil, fmt.Errorf("line %d: component %q roots must contain at least one root", item.Line, component.Name)
+		}
+		for _, root := range component.Roots {
+			for _, previous := range declared {
+				if rootsOverlap(root.Path, previous.path) {
+					if root.Path == previous.path {
+						return nil, fmt.Errorf("line %d: duplicate component root %q (first declared for %q on line %d)", root.Line, root.Path, previous.component, previous.line)
+					}
+					return nil, fmt.Errorf("line %d: component root %q for %q overlaps root %q for %q on line %d", root.Line, root.Path, component.Name, previous.path, previous.component, previous.line)
+				}
+			}
+			declared = append(declared, declaredRoot{path: root.Path, component: component.Name, line: root.Line})
+		}
+		components = append(components, component)
+	}
+	return components, nil
+}
+
+func parseRoots(node *yaml.Node) ([]ComponentRoot, error) {
+	if node.Kind != yaml.SequenceNode || len(node.Content) == 0 {
+		return nil, fmt.Errorf("line %d: component roots must contain at least one root", node.Line)
+	}
+	result := make([]ComponentRoot, 0, len(node.Content))
+	for _, valueNode := range node.Content {
+		value, err := stringScalar(valueNode)
+		if err != nil {
+			return nil, fmt.Errorf("line %d: component root must be a non-empty scalar", valueNode.Line)
+		}
+		normalized, err := normalizeRoot(value)
+		if err != nil {
+			return nil, fmt.Errorf("line %d: component root %q %w", valueNode.Line, value, err)
+		}
+		result = append(result, ComponentRoot{Path: normalized, Line: valueNode.Line, Column: valueNode.Column})
+	}
+	return result, nil
+}
+
+func normalizeRoot(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("must be non-empty")
+	}
+	if strings.Contains(value, `\`) {
+		return "", fmt.Errorf("must use slash separators")
+	}
+	if path.IsAbs(value) || windowsAbsolutePath.MatchString(value) {
+		return "", fmt.Errorf("must be repository-relative")
+	}
+	if strings.ContainsAny(value, "*?[]{}") {
+		return "", fmt.Errorf("must not contain glob syntax")
+	}
+	normalized := path.Clean(value)
+	if normalized == ".." || strings.HasPrefix(normalized, "../") {
+		return "", fmt.Errorf("escapes the repository")
+	}
+	if normalized == "/" || strings.HasPrefix(normalized, "/") {
+		return "", fmt.Errorf("must be repository-relative")
+	}
+	return normalized, nil
+}
+
+func rootsOverlap(left, right string) bool {
+	return left == "." || right == "." || left == right || strings.HasPrefix(left, right+"/") || strings.HasPrefix(right, left+"/")
+}
+
+func parseSQL(node *yaml.Node) (SQL, error) {
+	if isEmptyYAMLValue(node) {
+		return SQL{}, nil
+	}
+	if node.Kind != yaml.MappingNode {
+		return SQL{}, fmt.Errorf("line %d: sql must be a mapping", node.Line)
+	}
+	var result SQL
+	seenFields := map[string]bool{}
+	for index := 0; index < len(node.Content); index += 2 {
+		keyNode, valueNode := node.Content[index], node.Content[index+1]
+		key, err := stringScalar(keyNode)
+		if err != nil {
+			return SQL{}, fmt.Errorf("line %d: sql field name must be a string", keyNode.Line)
+		}
+		if seenFields[key] {
+			return SQL{}, fmt.Errorf("line %d: duplicate sql setting %q", keyNode.Line, key)
+		}
+		seenFields[key] = true
+		switch key {
+		case "default_dialect":
+			value, err := sqlScalar(valueNode)
+			if err != nil || strings.TrimSpace(value) == "" {
+				return SQL{}, fmt.Errorf("line %d: default_dialect must be a non-empty scalar", valueNode.Line)
+			}
+			result.DefaultDialect = strings.ToLower(strings.TrimSpace(value))
+		case "paths":
+			if isEmptyYAMLValue(valueNode) {
+				continue
+			}
+			paths, err := parseSQLPaths(valueNode)
+			if err != nil {
+				return SQL{}, err
+			}
+			result.Paths = paths
+		default:
+			return SQL{}, fmt.Errorf("line %d: unknown sql setting %q", keyNode.Line, key)
+		}
+	}
+	return result, nil
+}
+
+func parseSQLPaths(node *yaml.Node) ([]SQLPath, error) {
+	if node.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("line %d: paths must be a mapping", node.Line)
+	}
+	result := []SQLPath{}
+	seen := map[string]string{}
+	for index := 0; index < len(node.Content); index += 2 {
+		patternNode, dialectNode := node.Content[index], node.Content[index+1]
+		pattern, err := sqlScalar(patternNode)
+		if err != nil {
+			return nil, fmt.Errorf("line %d: path pattern must be a non-empty scalar", patternNode.Line)
+		}
+		pattern = strings.TrimPrefix(pattern, "./")
+		if err := validateSQLPattern(pattern); err != nil {
+			return nil, fmt.Errorf("line %d: invalid path pattern %q: %w", patternNode.Line, pattern, err)
+		}
+		dialect, err := sqlScalar(dialectNode)
+		if err != nil || strings.TrimSpace(dialect) == "" {
+			return nil, fmt.Errorf("line %d: path dialect must be a non-empty scalar", dialectNode.Line)
+		}
+		dialect = strings.ToLower(strings.TrimSpace(dialect))
+		if previous, exists := seen[pattern]; exists {
+			if previous != dialect {
+				return nil, fmt.Errorf("line %d: path pattern %q maps to both %q and %q", patternNode.Line, pattern, previous, dialect)
+			}
+			continue
+		}
+		seen[pattern] = dialect
+		result = append(result, SQLPath{Pattern: pattern, Dialect: dialect, Line: patternNode.Line})
+	}
+	return result, nil
+}
+
+func validateSQLPattern(pattern string) error {
+	if pattern == "" {
+		return fmt.Errorf("pattern is empty")
+	}
+	for _, part := range strings.Split(pattern, "/") {
+		if part == "**" {
+			continue
+		}
+		if _, err := path.Match(part, ""); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func stringScalar(node *yaml.Node) (string, error) {
+	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" {
+		return "", fmt.Errorf("expected string scalar")
+	}
+	return node.Value, nil
+}
+
+func sqlScalar(node *yaml.Node) (string, error) {
+	if node.Kind != yaml.ScalarNode {
+		return "", fmt.Errorf("expected scalar")
+	}
+	return node.Value, nil
+}
+
+func isEmptyYAMLValue(node *yaml.Node) bool {
+	return node.Kind == yaml.ScalarNode && node.Tag == "!!null" && node.Value == ""
+}

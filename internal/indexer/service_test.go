@@ -441,6 +441,15 @@ func TestServiceReindexesSQLWhenDialectConfigurationChanges(t *testing.T) {
 	if len(third.Updated) != 0 || third.Unchanged != 2 {
 		t.Fatalf("expected incremental no-op: %#v", third)
 	}
+
+	write(t, filepath.Join(root, "grafo.yaml"), "components:\n  - name: api\n    roots: [app]\nsql:\n  default_dialect: postgres\n")
+	componentOnly, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(componentOnly.Updated) != 1 || componentOnly.Updated[0] != "grafo.yaml" || componentOnly.Unchanged != 1 {
+		t.Fatalf("component-only config edit reparsed unchanged SQL: %#v", componentOnly)
+	}
 }
 
 func TestServiceTracksGitDirtyPathsAcrossRestore(t *testing.T) {
@@ -544,6 +553,211 @@ func TestServiceResumesSemanticRebuildWithoutReplacingCompletedFiles(t *testing.
 	}
 	if resumed.Rebuild == "" || len(resumed.Updated) != 0 || resumed.Unchanged != 1 || resumed.Checked != 1 {
 		t.Fatalf("semantic rebuild did not resume from per-file hashes: %#v", resumed)
+	}
+}
+
+func TestServiceIndexesExplicitComponentsWithExactEligibleMembership(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	for _, directory := range []string{"client", "client-old", "web/ui", "apps/server", "node_modules/client"} {
+		if err := os.MkdirAll(filepath.Join(root, directory), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(t, filepath.Join(root, "grafo.yaml"), `components:
+  - name: client
+    roots: [client, web/ui]
+  - name: server
+    roots: [apps/server]
+  - name: empty
+    roots: [unused]
+`)
+	write(t, filepath.Join(root, "client", "main.py"), "def client():\n    return True\n")
+	write(t, filepath.Join(root, "web", "ui", "view.py"), "def view():\n    return True\n")
+	write(t, filepath.Join(root, "apps", "server", "main.py"), "def server():\n    return True\n")
+	write(t, filepath.Join(root, "client-old", "other.py"), "def other():\n    return True\n")
+	write(t, filepath.Join(root, "node_modules", "client", "ignored.py"), "def ignored():\n    return True\n")
+	write(t, filepath.Join(root, "client", "oversized.py"), strings.Repeat("#", 256))
+	write(t, filepath.Join(root, "client", "unsupported.txt"), "not indexed")
+
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(pythonparser.New()))
+	report, err := service.Run(ctx, project, indexer.Options{MaxFileSize: 128})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Counts.ByKind[string(graph.KindComponent)] != 3 || report.Counts.Files != 4 {
+		t.Fatalf("unexpected component/file counts: %#v", report.Counts)
+	}
+	if len(report.Skipped) != 1 || report.Skipped[0] != "client/oversized.py" {
+		t.Fatalf("oversized membership candidate was not skipped: %#v", report)
+	}
+	if len(report.Diagnostics) != 1 || report.Diagnostics[0].Level != "warning" || !strings.Contains(report.Diagnostics[0].Message, `component "empty" matches no indexed files`) {
+		t.Fatalf("empty component warning = %#v", report.Diagnostics)
+	}
+
+	client := componentNode(t, ctx, repository, project.Name+"/client")
+	if client.ID != graph.NodeID(graph.KindComponent, project.ID+":client") || client.Location.Path != "grafo.yaml" || client.Location.Line != 2 {
+		t.Fatalf("client identity/provenance = %#v", client)
+	}
+	assertOutgoingQualifiedSet(t, ctx, repository, client.ID, graph.EdgeContains, []string{"client/main.py", "web/ui/view.py"})
+	server := componentNode(t, ctx, repository, project.Name+"/server")
+	assertOutgoingQualifiedSet(t, ctx, repository, server.ID, graph.EdgeContains, []string{"apps/server/main.py"})
+	empty := componentNode(t, ctx, repository, project.Name+"/empty")
+	assertOutgoingQualifiedSet(t, ctx, repository, empty.ID, graph.EdgeContains, nil)
+
+	repositoryNode, err := repository.Node(ctx, project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repositoryNode.Kind != graph.KindRepository {
+		t.Fatalf("repository node = %#v", repositoryNode)
+	}
+	assertOutgoingQualifiedSet(t, ctx, repository, project.ID, graph.EdgeContains, []string{
+		"apps/server/main.py", "client-old/other.py", "client/main.py", project.Name + "/client", project.Name + "/empty", project.Name + "/server", "web/ui/view.py",
+	})
+}
+
+func TestServiceReconcilesComponentConfigurationWithoutReparsingSources(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "app", "main.py"), "def main():\n    return True\n")
+	write(t, filepath.Join(root, "grafo.yaml"), "components:\n  - name: api\n    roots: [app]\n")
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(pythonparser.New()))
+	first, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil || len(first.Updated) != 1 {
+		t.Fatalf("initial index: report=%#v err=%v", first, err)
+	}
+	firstComponent := componentNode(t, ctx, repository, project.Name+"/api")
+
+	write(t, filepath.Join(root, "grafo.yaml"), "components:\n  - name: worker\n    roots: [app]\n")
+	renamed, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(renamed.Updated) != 0 || renamed.Unchanged != 1 {
+		t.Fatalf("component-only edit reparsed source: %#v", renamed)
+	}
+	if _, err := repository.Node(ctx, firstComponent.ID); err == nil {
+		t.Fatal("renamed component survived workspace replacement")
+	}
+	worker := componentNode(t, ctx, repository, project.Name+"/worker")
+	assertOutgoingQualifiedSet(t, ctx, repository, worker.ID, graph.EdgeContains, []string{"app/main.py"})
+
+	if err := os.Remove(filepath.Join(root, "grafo.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed.Updated) != 0 || removed.Unchanged != 1 || removed.Counts.ByKind[string(graph.KindComponent)] != 0 {
+		t.Fatalf("config deletion did not reconcile without reparsing: %#v", removed)
+	}
+	if _, err := repository.Node(ctx, worker.ID); err == nil {
+		t.Fatal("removed component survived workspace replacement")
+	}
+}
+
+func TestServiceRejectsInvalidComponentEditBeforeMutation(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "app", "main.py"), "def main():\n    return True\n")
+	write(t, filepath.Join(root, "grafo.yaml"), "components:\n  - name: api\n    roots: [app]\n")
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(pythonparser.New()))
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	api := componentNode(t, ctx, repository, project.Name+"/api")
+	before, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "grafo.yaml"), "components:\n  - name: broken\n    roots: [app, app/nested]\n")
+	if _, err := service.Run(ctx, project, indexer.Options{}); err == nil || !strings.Contains(err.Error(), "overlaps") {
+		t.Fatalf("invalid edit error = %v", err)
+	}
+	after, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("invalid edit mutated index:\nbefore=%#v\nafter=%#v", before, after)
+	}
+	persisted, err := repository.Node(ctx, api.ID)
+	if err != nil || persisted.QualifiedName != project.Name+"/api" {
+		t.Fatalf("last valid component was not preserved: node=%#v err=%v", persisted, err)
+	}
+}
+
+func componentNode(t *testing.T, ctx context.Context, repository *sqlite.Repository, qualified string) graph.Node {
+	t.Helper()
+	nodes, err := repository.ListNodesByKind(ctx, graph.NodeListQuery{Kinds: []graph.NodeKind{graph.KindComponent}, Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, scoped := range nodes {
+		if scoped.Node.QualifiedName == qualified {
+			return scoped.Node
+		}
+	}
+	t.Fatalf("component %q not found in %#v", qualified, nodes)
+	return graph.Node{}
+}
+
+func assertOutgoingQualifiedSet(t *testing.T, ctx context.Context, repository graph.Repository, fromID string, kind graph.EdgeKind, want []string) {
+	t.Helper()
+	edges, err := repository.EdgesFrom(ctx, fromID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := []string{}
+	for _, edge := range edges {
+		if edge.Kind != kind {
+			continue
+		}
+		target, err := repository.Node(ctx, edge.ToID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, target.QualifiedName)
+	}
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("outgoing %s from %s = %v, want %v", kind, fromID, got, want)
 	}
 }
 
