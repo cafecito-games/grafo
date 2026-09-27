@@ -111,7 +111,6 @@ var (
 	exportedDeclarationPattern = regexp.MustCompile(`(?m)\bexport\s+(type\s+)?(?:declare\s+)?(?:abstract\s+)?(class|interface|function|const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
 	defaultDeclarationPattern  = regexp.MustCompile(`(?m)\bexport\s+default\s+(?:async\s+)?(?:abstract\s+)?(?:class|function)\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
 	defaultIdentifierPattern   = regexp.MustCompile(`(?m)\bexport\s+default\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*;?\s*$`)
-	defaultAnonymousPattern    = regexp.MustCompile(`(?m)\bexport\s+default\s+(?:async\s+)?(?:abstract\s+)?(?:class(?:\s+extends\s+[^\{]+)?\s*\{|function\s*\()`)
 	exportListPattern          = regexp.MustCompile(`(?ms)\bexport\s+(type\s+)?\{([^}]*)\}\s*(?:from\s*["']([^"']+)["'])?`)
 	exportStarPattern          = regexp.MustCompile(`(?m)\bexport\s+(type\s+)?\*\s*(?:as\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*)?from\s*["']([^"']+)["']`)
 )
@@ -282,11 +281,12 @@ func scanModule(path string, content []byte) (*moduleInfo, error) {
 	}
 	defer tree.Close()
 	collectModuleDeclarations(tree.RootNode(), content, info, "")
-	collectModuleExports(info, string(content), 0)
+	collectModuleExports(info, string(content))
+	collectAnonymousDefaultExports(tree.RootNode(), content, info)
 	return info, nil
 }
 
-func collectModuleExports(info *moduleInfo, text string, lineOffset int) {
+func collectModuleExports(info *moduleInfo, text string) {
 	for _, match := range exportedDeclarationPattern.FindAllStringSubmatch(text, -1) {
 		name := match[3]
 		info.exports[name] = append(info.exports[name], exportRef{local: name, typeOnly: strings.TrimSpace(match[1]) != ""})
@@ -301,16 +301,6 @@ func collectModuleExports(info *moduleInfo, text string, lineOffset int) {
 		if match[1] != "class" && match[1] != "function" {
 			info.exports["default"] = append(info.exports["default"], exportRef{local: match[1]})
 		}
-	}
-	for _, index := range defaultAnonymousPattern.FindAllStringIndex(text, -1) {
-		matched := text[index[0]:index[1]]
-		declarationOffset := strings.LastIndex(matched, "class")
-		if functionOffset := strings.LastIndex(matched, "function"); functionOffset > declarationOffset {
-			declarationOffset = functionOffset
-		}
-		line := lineOffset + 1 + strings.Count(text[:index[0]+declarationOffset], "\n")
-		name := fmt.Sprintf("anonymous@%d", line)
-		info.exports["default"] = append(info.exports["default"], exportRef{local: name})
 	}
 	for _, match := range exportListPattern.FindAllStringSubmatch(text, -1) {
 		listTypeOnly := strings.TrimSpace(match[1]) != ""
@@ -347,6 +337,37 @@ func collectModuleExports(info *moduleInfo, text string, lineOffset int) {
 	}
 }
 
+func collectAnonymousDefaultExports(node *treesitter.Node, source []byte, info *moduleInfo) {
+	if node == nil {
+		return
+	}
+	if node.Kind() == "export_statement" {
+		if local := anonymousDefaultLocal(node, source); local != "" {
+			info.exports["default"] = append(info.exports["default"], exportRef{local: local})
+		}
+		return
+	}
+	for i := uint(0); i < node.NamedChildCount(); i++ {
+		collectAnonymousDefaultExports(node.NamedChild(i), source, info)
+	}
+}
+
+func anonymousDefaultLocal(export *treesitter.Node, source []byte) string {
+	if export == nil || export.Kind() != "export_statement" || !strings.Contains(nodeText(export, source), "default") {
+		return ""
+	}
+	for i := uint(0); i < export.NamedChildCount(); i++ {
+		declaration := export.NamedChild(i)
+		switch declaration.Kind() {
+		case "class", "class_declaration", "abstract_class_declaration", "function_declaration", "function_expression", "generator_function", "generator_function_declaration":
+			if nodeText(declaration.ChildByFieldName("name"), source) == "" {
+				return fmt.Sprintf("anonymous@%d", declaration.StartPosition().Row+1)
+			}
+		}
+	}
+	return ""
+}
+
 func collectModuleDeclarations(node *treesitter.Node, source []byte, info *moduleInfo, container string) {
 	if node == nil {
 		return
@@ -380,7 +401,7 @@ func collectModuleDeclarations(node *treesitter.Node, source []byte, info *modul
 		}
 		return
 	}
-	if container == "" && (kind == "function_declaration" || kind == "generator_function_declaration" || kind == "function_expression") {
+	if container == "" && (kind == "function_declaration" || kind == "generator_function_declaration" || kind == "function_expression" || kind == "generator_function") {
 		name := nodeText(node.ChildByFieldName("name"), source)
 		if name == "" {
 			name = fmt.Sprintf("anonymous@%d", node.StartPosition().Row+1)

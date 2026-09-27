@@ -406,7 +406,10 @@ func (e *extractor) parseExport(node *treesitter.Node) {
 	}
 	statement := &moduleInfo{path: e.info.path, name: e.info.name, locals: e.info.locals,
 		methods: e.info.methods, exports: map[string][]exportRef{}}
-	collectModuleExports(statement, text, int(node.StartPosition().Row))
+	collectModuleExports(statement, text)
+	if local := anonymousDefaultLocal(node, e.source); local != "" {
+		statement.exports["default"] = append(statement.exports["default"], exportRef{local: local})
+	}
 	exportedNames := make([]string, 0, len(statement.exports))
 	for exported := range statement.exports {
 		exportedNames = append(exportedNames, exported)

@@ -24,3 +24,18 @@ func TestStripJSONCommentsPreservesCommaDelimitersInsideStrings(t *testing.T) {
 		t.Fatalf("unexpected decoded JSONC: %#v", decoded)
 	}
 }
+
+func TestScanModuleUsesOuterAnonymousDefaultDeclaration(t *testing.T) {
+	content := []byte("export default class extends mixin(\n  class {}\n) { run() {} }")
+	info, err := scanModule("nested.ts", content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs := info.exports["default"]
+	if len(refs) != 1 || refs[0].local != "anonymous@1" {
+		t.Fatalf("unexpected default export refs: %#v", refs)
+	}
+	if _, ok := info.locals[refs[0].local]; !ok {
+		t.Fatalf("default export does not resolve to an outer local: %#v", info.locals)
+	}
+}
