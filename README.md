@@ -126,6 +126,9 @@ are marked `federated` and retain their original evidence.
   shader/include modules, uniforms, structs, functions, parameters, locals,
   calls, global references, and `#include` relationships.
 - `.env`, YAML, JSON, and Java `.properties` keys and value references.
+- Markdown documents (`.md` and `.markdown`) as structural graphs: headings are
+  bounded `document_section` nodes, relative links connect sections to files or
+  other document sections, and explicit code keywords connect prose to symbols.
 - Outbound Go `net/http`, Python Requests/HTTPX, and TypeScript `fetch`/Axios
   calls, linked to matching endpoint declarations locally or across repository
   boundaries.
@@ -135,6 +138,28 @@ are marked `federated` and retain their original evidence.
 Grafo currently performs syntactic and name-based linking. It does not yet do
 type-checker-grade dispatch or full SSA data flow. Structural retrieval remains
 graph-based; vector similarity is confined to optional candidate discovery.
+
+## Documentation graph
+
+Markdown headings become addressable nodes such as
+`docs/architecture.md#request-flow`. Their `contains` edges preserve the heading
+hierarchy, and their source spans cover the section through the next heading at
+the same or higher level. Relative inline and reference-style links produce
+directional `documents` edges to indexed files or Markdown anchors. External
+URLs and image links are ignored.
+
+Documentation can point directly to code with a structural keyword followed by
+an inline-code name:
+
+```md
+The function `HandleCheckout` uses class `ChargeService`.
+Requests enter through endpoint `POST /checkout` and method `Run`.
+```
+
+Supported keywords are `function`, `method`, `class`, `interface`, `type`, and
+`endpoint`. Resolution uses exact qualified names or an unambiguous simple name.
+If several declarations match, Grafo retains an explicit unresolved node rather
+than guessing an edge.
 
 ## SQL dialects
 

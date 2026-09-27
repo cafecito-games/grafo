@@ -33,6 +33,7 @@ const (
 	KindConfigKey  NodeKind = "config_key"
 	KindEndpoint   NodeKind = "endpoint"
 	KindEvent      NodeKind = "event"
+	KindDocSection NodeKind = "document_section"
 	KindExternal   NodeKind = "external"
 )
 
@@ -61,6 +62,7 @@ const (
 	EdgePasses      EdgeKind = "passes"
 	EdgeRequests    EdgeKind = "requests"
 	EdgeDependsOn   EdgeKind = "depends_on"
+	EdgeDocuments   EdgeKind = "documents"
 )
 
 type Location struct {
