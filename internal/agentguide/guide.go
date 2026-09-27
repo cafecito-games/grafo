@@ -56,14 +56,27 @@ func Text() string {
 
 // Skill renders the isolated Grafo-owned skill file: the whole file belongs to
 // Grafo, so it carries frontmatter and nothing of the user's.
+//
+// The description contains ": ", which is not a legal YAML plain scalar, so it is
+// emitted as a double-quoted scalar. An unquoted value makes the frontmatter
+// unparseable and the skill undiscoverable.
 func Skill() string {
 	var builder strings.Builder
 	builder.WriteString("---\n")
 	builder.WriteString("name: " + Name + "\n")
-	builder.WriteString("description: " + Description + "\n")
+	builder.WriteString("description: " + quoteYAML(Description) + "\n")
 	builder.WriteString("---\n\n")
 	builder.WriteString(Text())
 	return builder.String()
+}
+
+// quoteYAML renders a value as a YAML double-quoted scalar, which accepts any
+// printable content once backslashes and quotes are escaped.
+func quoteYAML(value string) string {
+	escaped := strings.ReplaceAll(value, `\`, `\\`)
+	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
+	escaped = strings.ReplaceAll(escaped, "\n", `\n`)
+	return `"` + escaped + `"`
 }
 
 // Block renders the managed block that may be embedded in a user-authored

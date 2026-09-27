@@ -3,6 +3,8 @@ package agentguide
 import (
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestTextCoversRequiredRouting(t *testing.T) {
@@ -152,5 +154,33 @@ func TestDigestIsStableAndPrefixed(t *testing.T) {
 	}
 	if first == Digest("grafo ") {
 		t.Fatal("Digest ignores content")
+	}
+}
+
+// TestSkillFrontmatterIsValidYAML parses the generated frontmatter instead of
+// asserting on raw text: the description contains ": ", which is not a legal
+// YAML plain scalar, so it must be quoted for a client to load the skill.
+func TestSkillFrontmatterIsValidYAML(t *testing.T) {
+	skill := Skill()
+	rest, ok := strings.CutPrefix(skill, "---\n")
+	if !ok {
+		t.Fatal("skill has no frontmatter")
+	}
+	frontmatter, _, ok := strings.Cut(rest, "\n---\n")
+	if !ok {
+		t.Fatal("skill frontmatter is not terminated")
+	}
+	var fields struct {
+		Name        string `yaml:"name"`
+		Description string `yaml:"description"`
+	}
+	if err := yaml.Unmarshal([]byte(frontmatter+"\n"), &fields); err != nil {
+		t.Fatalf("frontmatter is not valid YAML: %v\n%s", err, frontmatter)
+	}
+	if fields.Name != Name {
+		t.Errorf("name = %q, want %q", fields.Name, Name)
+	}
+	if fields.Description != Description {
+		t.Errorf("description = %q, want %q", fields.Description, Description)
 	}
 }
