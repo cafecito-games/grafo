@@ -233,10 +233,14 @@ Four rules keep that boundary honest:
 - A definition may only name a **durable executable**. `InstallableBinary` refuses
   a path inside the temporary directory (`$TMPDIR`/`$GOTMPDIR`), inside the Go
   build cache (`$GOCACHE` or the per-user cache directory's `go-build` subtree),
-  or inside a `go-build…` build directory, because a unit that outlives the
+  or inside a `go-build<digits>` build directory, because a unit that outlives the
   command must not point into a directory the toolchain deletes. The first two are
-  decided by containment in directories the environment reports; the third is a
-  deliberately narrow name rule for a relocated cache.
+  decided by containment in directories the environment reports. The third is the
+  only name rule, applies when those signals are absent, and matches just the
+  shape the toolchain creates: refusing a durable prefix such as
+  `/opt/go-builder/bin` would be as much a defect as accepting an ephemeral path,
+  so `go-builder`, `go-build-tools` and a plain `go-build` directory outside every
+  cache root all remain installable.
 
 Whether an installed definition still starts the running binary is decided by
 parsing the platform's documented command field and comparing whole resolved

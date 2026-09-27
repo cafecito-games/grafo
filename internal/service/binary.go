@@ -20,10 +20,12 @@ import (
 //     which also covers `go test` binaries;
 //  2. the Go build cache ($GOCACHE, or the per-user cache directory's go-build
 //     subtree), where `go run` and `go build` without -o place their output;
-//  3. a path with a "go-build..." element, which is the directory name the Go
-//     toolchain creates for a one-shot build. This last rule is a name heuristic
-//     and is deliberately the narrowest of the three: it catches a build cache
-//     relocated somewhere the first two rules cannot see.
+//  3. a path with a "go-build<digits>" element, which is the exact directory name
+//     the Go toolchain creates for a one-shot build. This last rule is the only
+//     name heuristic, it applies when the environment signals above are absent,
+//     and it is deliberately the narrowest of the three: refusing a durable
+//     location such as /opt/go-builder/bin/grafo would be as much a defect as
+//     accepting an ephemeral one, so the shape is matched rather than a prefix.
 //
 // Refusing is the fail-closed choice: a diagnostic naming the cause and the
 // remedy is strictly better than writing a unit that is guaranteed to break.
@@ -44,12 +46,28 @@ func InstallableBinary(reader agentinstall.Reader, executable string) (string, e
 			resolved, candidate.reason, remedy)
 	}
 	for element := range strings.SplitSeq(resolved, pathSeparatorFor(reader.GOOS())) {
-		if strings.HasPrefix(element, "go-build") {
+		if goBuildDirectory(element) {
 			return "", fmt.Errorf("refusing to point a service definition at %s: it is inside a Go build directory, which is deleted when the build finishes; %s",
 				resolved, remedy)
 		}
 	}
 	return resolved, nil
+}
+
+// goBuildDirectory reports whether one path element is a Go one-shot build
+// directory, which the toolchain names "go-build" followed by digits. Any other
+// name that merely starts with those characters belongs to the user.
+func goBuildDirectory(element string) bool {
+	digits, found := strings.CutPrefix(element, "go-build")
+	if !found || digits == "" {
+		return false
+	}
+	for _, character := range digits {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // ephemeralLocation is one directory whose contents do not outlive the toolchain.

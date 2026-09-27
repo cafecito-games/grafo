@@ -9,8 +9,10 @@ import (
 // Finding 4: a service definition outlives the command that wrote it, so the
 // binary it names must live somewhere durable. The temporary directory and the
 // Go build cache are decided by containment in a directory the environment
-// reports, not by matching a name.
-func TestInstallableBinaryRefusesEphemeralLocations(t *testing.T) {
+// reports, not by matching a name. The one name rule matches only the shape the
+// toolchain creates, because refusing a valid installed location is as much a
+// defect as accepting an ephemeral one: both directions are asserted here.
+func TestInstallableBinaryAcceptsDurablePathsAndRefusesEphemeralOnes(t *testing.T) {
 	temporary := t.TempDir()
 	goTemp := t.TempDir()
 	goCache := t.TempDir()
@@ -57,6 +59,29 @@ func TestInstallableBinaryRefusesEphemeralLocations(t *testing.T) {
 			name: "a relocated build directory outside every known root", goos: "linux",
 			path:      filepath.Join(durable, "go-build987654", "b001", "exe", "grafo"),
 			wantError: "Go build directory",
+		},
+		{
+			name: "a relocated build directory named with many digits", goos: "linux",
+			path:      filepath.Join(durable, "go-build1234567890", "b001", "exe", "grafo"),
+			wantError: "Go build directory",
+		},
+		// The fallback matches the shape the toolchain creates, so a durable prefix
+		// that merely begins with those characters must still install.
+		{
+			name: "a durable directory named go-builder", goos: "linux",
+			path: filepath.Join(durable, "opt", "go-builder", "bin", "grafo"),
+		},
+		{
+			name: "a durable directory named go-build-tools", goos: "linux",
+			path: filepath.Join(durable, "go-build-tools", "bin", "grafo"),
+		},
+		{
+			name: "a durable directory named exactly go-build", goos: "linux",
+			path: filepath.Join(durable, "srv", "go-build", "bin", "grafo"),
+		},
+		{
+			name: "a durable directory named go-build2x", goos: "linux",
+			path: filepath.Join(durable, "go-build2x", "bin", "grafo"),
 		},
 		{
 			name: "an installed binary", goos: "linux",
