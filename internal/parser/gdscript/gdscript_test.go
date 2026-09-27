@@ -767,3 +767,57 @@ func _on_sign_in() -> void:
 		t.Fatalf("a lambda proves no method; got %#v", lambda)
 	}
 }
+
+// TestParserRefusesActionQueriesOnKnownNonInputReceivers pins the receiver rule
+// and, just as importantly, its boundary. A receiver the type table knows to be
+// something other than an input class is not a Godot input query, so nothing is
+// emitted. A receiver whose type is unknown keeps emitting, because untyped
+// parameters are pervasive in GDScript and refusing them would destroy most real
+// recall - a deliberate decision this test exists to keep from being quietly
+// tightened later.
+func TestParserRefusesActionQueriesOnKnownNonInputReceivers(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "client/project.godot", "config_version=5\n")
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "client/scripts/pad.gd", Repository: "sample", RepoID: "repo:sample",
+		Content: []byte(`class_name Pad extends Node
+
+class LocalEvent extends InputEventKey:
+	var tag: int
+
+var _gamepad: Gamepad
+var _local: LocalEvent
+
+func poll(typed: InputEvent, untyped) -> void:
+	if _gamepad.is_action("refused_known"):
+		pass
+	if _gamepad.is_action_pressed("refused_family"):
+		pass
+	var refused_strength = _gamepad.get_action_strength("refused_strength")
+	if typed.is_action("kept_typed"):
+		pass
+	if untyped.is_action("kept_untyped"):
+		pass
+	if _local.is_action("kept_local_subclass"):
+		pass
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"refused_known", "refused_family", "refused_strength"} {
+		for _, fact := range result.Facts {
+			if fact.Kind == graph.EdgeUsesInputAction && fact.Properties["action"] == action {
+				t.Fatalf("a known non-input receiver must not produce an action edge: %#v", fact)
+			}
+			if fact.Kind == graph.EdgeReadsConfig && fact.Target == "input/"+action {
+				t.Fatalf("a known non-input receiver must not read an input action: %#v", fact)
+			}
+		}
+	}
+	for _, action := range []string{"kept_typed", "kept_untyped", "kept_local_subclass"} {
+		findFactWithTarget(t, result.Facts, graph.EdgeUsesInputAction,
+			"godot:input_action:client/project.godot:"+action)
+		assertHasFact(t, result.Facts, graph.EdgeReadsConfig, "input/"+action)
+	}
+}

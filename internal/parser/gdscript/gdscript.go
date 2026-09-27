@@ -104,6 +104,11 @@ type extractor struct {
 	// projectKnown is false when the owning Godot project could not be read, in
 	// which case no res:// reference in this script resolves.
 	projectKnown bool
+	// bases maps every class this file declares to the type it extends, which is
+	// the only inheritance evidence a single-file parser holds. It is what lets a
+	// receiver typed as a locally declared subclass of an input class still be
+	// recognized as one.
+	bases map[string]string
 }
 
 func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseResult, error) {
@@ -119,7 +124,8 @@ func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseRes
 		return b.Finish(), err
 	}
 	e := &extractor{b: b, input: input, module: parserapi.ModuleName(input.Path),
-		methods: map[string]string{}, autoloads: map[gdast.Node]bool{}, projectKnown: true}
+		methods: map[string]string{}, autoloads: map[gdast.Node]bool{},
+		projectKnown: true, bases: map[string]string{}}
 	project, projectErr := godotid.LoadProject(input.Root, input.Path)
 	if projectErr != nil {
 		// The owning project is unknown rather than absent, so res:// references
@@ -168,6 +174,24 @@ func (e *extractor) extract(file *gdast.File) {
 	root := scope{currentID: classID, parentID: classID, container: qualified, receiver: qualified,
 		classID: classID, classBody: true, symbols: map[string]string{}, types: map[string]string{}, signals: map[string]signalRef{}}
 	root.types[className] = qualified
+	// The base class is recorded before anything is walked, because a method body
+	// earlier in the file may already call through a receiver typed by it.
+	for _, statement := range file.Statements {
+		directive, ok := statement.(*gdast.Directive)
+		if !ok {
+			continue
+		}
+		base := ""
+		switch {
+		case directive.Name == "extends":
+			base = expressionName(directive.Value)
+		case directive.Name == "class_name" && directive.Extends != nil:
+			base = expressionName(directive.Extends)
+		}
+		if base != "" {
+			e.bases[qualified] = base
+		}
+	}
 	e.prepareClass(file.Statements, root)
 	e.walkStatements(file.Statements, root)
 }
@@ -190,7 +214,11 @@ func (e *extractor) prepareClass(statements []gdast.Statement, current scope) {
 			qualified := qualify(current.container, node.Name)
 			e.methods[qualify(current.receiver, node.Name)] = qualified
 		case *gdast.ClassDeclaration:
-			current.types[node.Name] = qualify(current.container, node.Name)
+			qualified := qualify(current.container, node.Name)
+			current.types[node.Name] = qualified
+			if node.Extends != "" {
+				e.bases[qualified] = node.Extends
+			}
 		case *gdast.EnumDeclaration:
 			if node.Name != "" {
 				current.types[node.Name] = qualify(current.container, node.Name)
@@ -537,10 +565,11 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 		// receiver expression as evidence, and an expression that names nothing
 		// knowable records no receiver rather than an empty one.
 		receiver := "self"
-		if member, ok := node.Callee.(*gdast.MemberExpression); ok {
+		member, _ := node.Callee.(*gdast.MemberExpression)
+		if member != nil {
 			receiver = e.resolveExpression(member.Object, current)
 		}
-		e.addInputActionUses(node, fromID, method, receiver)
+		e.addInputActionUses(node, member, fromID, method, receiver, current)
 		e.addGroupOperations(node, fromID, method, receiver)
 	}
 	if isNodeLookup(method) && len(node.Arguments) > 0 {
@@ -1155,12 +1184,15 @@ var groupAPIs = map[string]groupAPI{
 // determined, because "input/<action>" is a repository-wide configuration key
 // rather than a project-scoped identity. The typed action edge is not, so it is
 // withheld until the owning project is known.
-func (e *extractor) addInputActionUses(node *gdast.CallExpression, fromID, method, receiver string) {
+func (e *extractor) addInputActionUses(node *gdast.CallExpression, member *gdast.MemberExpression, fromID, method, receiver string, current scope) {
 	api, ok := inputActionAPIs[method]
 	if !ok {
 		return
 	}
 	if api.requireInputReceiver && receiver != "Input" && receiver != "InputMap" {
+		return
+	}
+	if member != nil && e.receiverRefusesInput(member.Object, current) {
 		return
 	}
 	for _, index := range api.arguments {
@@ -1186,6 +1218,84 @@ func (e *extractor) addInputActionUses(node *gdast.CallExpression, fromID, metho
 		e.b.AddFact(fromID, graph.EdgeUsesInputAction, "", target, graph.KindGodotInputAction, loc,
 			properties)
 	}
+}
+
+// receiverRefusesInput reports whether a call's receiver is typed as something
+// that provably is not an input class, in which case the call is not a Godot
+// input query at all and neither the typed action edge nor the compatibility
+// configuration read may be emitted. A project is free to declare its own
+// is_action or is_action_pressed on a class of its own, and reading that call's
+// argument as an action name fabricates an edge.
+//
+// The boundary is deliberate and asymmetric. Refusal requires the receiver's type
+// to be KNOWN; a receiver whose type is unknown keeps emitting. Untyped
+// parameters are pervasive in GDScript - func _input(event): is the common idiom -
+// so requiring a known type would silently destroy most real recall, which is the
+// opposite failure and a worse one. Unknown is therefore not refusal here; it is
+// the pre-existing behaviour of every unrestricted entry in the table.
+func (e *extractor) receiverRefusesInput(object gdast.Expression, current scope) bool {
+	typeName, known := e.receiverType(object, current)
+	if !known {
+		return false
+	}
+	return !e.isInputReceiverType(typeName)
+}
+
+// receiverType returns the declared type of a call's receiver and whether this
+// parser knows it. "self" is this script's own class, and a typed local symbol
+// resolves through the scope's type table. Anything else - an untyped parameter, a
+// chained expression, a call result - is unknown.
+func (e *extractor) receiverType(object gdast.Expression, current scope) (string, bool) {
+	switch node := object.(type) {
+	case *gdast.Identifier:
+		if node.Name == "self" {
+			return current.receiver, current.receiver != ""
+		}
+		resolved := current.types[node.Name]
+		return resolved, resolved != ""
+	case *gdast.TypeExpression:
+		if resolved := current.types[node.Name]; resolved != "" {
+			return resolved, true
+		}
+		return node.Name, node.Name != ""
+	default:
+		return "", false
+	}
+}
+
+// isInputReceiverType reports whether a type name is one of Godot's input
+// classes, following the extends chain this file declares so a locally declared
+// subclass of an input class is recognized too.
+func (e *extractor) isInputReceiverType(typeName string) bool {
+	// A malformed or cyclic extends chain must terminate rather than spin.
+	for depth := 0; typeName != "" && depth < 32; depth++ {
+		if isInputClassName(typeName) {
+			return true
+		}
+		next, ok := e.bases[typeName]
+		if !ok {
+			// The name is known but its hierarchy is not, which happens for any
+			// class another file declares. Nothing further can be established.
+			return false
+		}
+		typeName = next
+	}
+	return false
+}
+
+// isInputClassName reports whether a name is one of Godot's own input classes.
+// Every engine class in the InputEvent hierarchy - InputEventKey,
+// InputEventMouseButton, InputEventJoypadMotion and the rest - is named with that
+// prefix, so matching it covers the hierarchy without restating it. Matching by
+// name can only ever widen compatibility and never cause a refusal, so a project
+// class that happens to share the prefix costs nothing beyond the behaviour an
+// unrestricted entry already has.
+func isInputClassName(name string) bool {
+	switch name {
+	case "Input", "InputMap":
+		return true
+	}
+	return strings.HasPrefix(name, "InputEvent")
 }
 
 // addGroupOperations links a literal group name to the project-scoped group it
