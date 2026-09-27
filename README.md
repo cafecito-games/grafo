@@ -197,15 +197,15 @@ through the same bounded reader `grafo source` uses.
 
 ### Godot composition
 
-`grafo godot-composition` (MCP `get_godot_composition`) answers Godot runtime
+`grafo godot composition` (MCP `get_godot_composition`) answers Godot runtime
 composition questions directly from the graph: which scenes a scene
 instantiates, which scenes instantiate it, which scripts are attached to which
 scene nodes, scenes, and resources, and which autoload singletons expose a
 script or scene globally.
 
 ```sh
-grafo godot-composition "scenes/main"
-grafo godot-composition "godot:autoload:client/project.godot:GameSession" --json
+grafo godot composition "scenes/main"
+grafo godot composition "godot:autoload:client/project.godot:GameSession" --json
 ```
 
 Scenes, resources, scene nodes, and autoloads are first-class node kinds
@@ -232,16 +232,16 @@ proof.
 
 ### Godot gameplay interactions
 
-`grafo godot-interactions` (MCP `get_godot_interactions`) answers how a Godot
+`grafo godot interactions` (MCP `get_godot_interactions`) answers how a Godot
 project is wired at runtime: which input actions a script reads, which node
 groups a scene node or script joins, leaves, inspects, and dispatches to, and
 which signal routes a symbol takes part in - whether a scene declared the route
 or a script established it.
 
 ```sh
-grafo godot-interactions "scenes/arena"
-grafo godot-interactions "godot:node_group:client/project.godot:enemies" --direction incoming
-grafo godot-interactions "scripts/player.poll" --filter action,group --json
+grafo godot interactions "scenes/arena"
+grafo godot interactions "godot:node_group:client/project.godot:enemies" --direction incoming
+grafo godot interactions "scripts/player.poll" --filter action,group --json
 ```
 
 Input actions and node groups are first-class node kinds

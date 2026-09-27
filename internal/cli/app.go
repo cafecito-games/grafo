@@ -93,10 +93,6 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		runErr = a.neighbors(ctx, parsed, "callees")
 	case "impact", "blast-radius":
 		runErr = a.impact(ctx, parsed)
-	case "godot-composition", "composition":
-		runErr = a.godotComposition(ctx, parsed)
-	case "godot-interactions", "interactions":
-		runErr = a.godotInteractions(ctx, parsed)
 	case "search":
 		runErr = a.search(ctx, parsed)
 	case "path":
@@ -112,7 +108,11 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 	case "orphaned-events":
 		runErr = a.orphanedEvents(ctx, parsed)
 	default:
-		runErr = fmt.Errorf("unknown command %q (run 'grafo help')", parsed.command)
+		if namespace, known := toolchainNamespaces[parsed.command]; known {
+			runErr = a.toolchainCommand(ctx, namespace, parsed)
+		} else {
+			runErr = fmt.Errorf("unknown command %q (run 'grafo help')", parsed.command)
+		}
 	}
 	if runErr != nil {
 		a.fail(runErr)
@@ -1688,9 +1688,9 @@ Usage:
   grafo impact <symbol-or-id> [--kind method] [--depth 4] [--upstream-depth n] [--downstream-depth n]
                               [--upstream-limit n] [--downstream-limit n]
                               [--source] [--context-lines 2] [--max-lines 200] [--source-limit 10]
-  grafo godot-composition <scene-resource-script-or-autoload> [--kind godot_scene]
+  grafo godot composition <scene-resource-script-or-autoload> [--kind godot_scene]
                           [--depth 8] [--limit 1000]
-  grafo godot-interactions <scene-node-script-action-group-or-signal>
+  grafo godot interactions <scene-node-script-action-group-or-signal>
                           [--filter action,group,signal] [--direction both]
                           [--kind godot_scene] [--depth 8] [--limit 1000]
   grafo search <pattern>... [--regex] [--case-sensitive] [--path-prefix dir,...]
@@ -1739,12 +1739,16 @@ recreate a service definition Grafo installed; and restart a stale service.
 current repository and branch; '--hook' prints one advisory hint and always exits
 successfully, so a client hook can never block a tool call.
 
-'grafo godot-composition' reports Godot runtime composition for one scene,
+Commands that answer questions about one engine or language live under a parent
+command named after it, so 'grafo godot composition' names both the engine and
+the question, and another toolchain's commands group the same way.
+
+'grafo godot composition' reports Godot runtime composition for one scene,
 scene node, resource, script, or autoload: outbound and inbound scene
 instances, attached scripts, and autoload availability, each with the resource
 evidence that produced it.
 
-'grafo godot-interactions' reports Godot gameplay wiring for one scene, scene
+'grafo godot interactions' reports Godot gameplay wiring for one scene, scene
 node, script symbol, input action, node group, or signal: the input actions it
 uses, the node groups it joins, inspects, and dispatches to, and the signal
 routes it takes part in, whether a scene declared them or a script established
