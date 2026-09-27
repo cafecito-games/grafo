@@ -49,3 +49,8 @@ tasks:
     desc: Run the opt-in production indexing corpus benchmark
     cmds:
       - go run ./cmd/grafo-benchmark
+
+  bench:storage:
+    desc: Compare SQLite, bbolt, and Pebble with repeated generated and corpus samples
+    cmds:
+      - go run ./cmd/grafo-storage-benchmark

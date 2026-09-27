@@ -272,6 +272,33 @@ func TestRunExercisesIncrementalScenariosWithoutChangingSource(t *testing.T) {
 	}
 }
 
+func TestRunExercisesCandidateStorageEngines(t *testing.T) {
+	for _, engine := range []string{"bbolt", "pebble"} {
+		t.Run(engine, func(t *testing.T) {
+			repository := fixtureRepository(t)
+			report, err := Run(context.Background(), Options{
+				Repository: repository,
+				Output:     filepath.Join(t.TempDir(), "benchmark"),
+				Engine:     engine,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if report.Status != StatusPassed || report.Storage.Engine != engine {
+				t.Fatalf("candidate report = %#v", report)
+			}
+			if report.Storage.LibraryVersion == "" || report.Storage.Durability == "" {
+				t.Fatalf("candidate provenance missing: %#v", report.Storage)
+			}
+			for _, scenario := range report.Scenarios {
+				if !scenario.Resources.DatabaseBytes.Supported || scenario.Resources.DatabaseBytes.Value == nil {
+					t.Fatalf("%s database size missing: %#v", scenario.Name, scenario.Resources)
+				}
+			}
+		})
+	}
+}
+
 func fixtureRepository(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()

@@ -22,6 +22,7 @@ func run() int {
 	flags.StringVar(&options.Repository, "repo", os.Getenv("GRAFO_BENCH_REPO"), "Git corpus worktree (or GRAFO_BENCH_REPO)")
 	flags.StringVar(&options.Output, "output", os.Getenv("GRAFO_BENCH_OUTPUT"), "artifact directory (or GRAFO_BENCH_OUTPUT)")
 	flags.StringVar(&options.Baseline, "baseline", os.Getenv("GRAFO_BENCH_BASELINE"), "compatible report to validate (or GRAFO_BENCH_BASELINE)")
+	flags.StringVar(&options.Engine, "engine", os.Getenv("GRAFO_BENCH_ENGINE"), "storage engine: sqlite, bbolt, or pebble (or GRAFO_BENCH_ENGINE)")
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		return 2
 	}

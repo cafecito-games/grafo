@@ -23,6 +23,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/indexer"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	parserdefaults "github.com/cafecito-games/grafo/internal/parser/defaults"
+	"github.com/cafecito-games/grafo/internal/storage/kvbench"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 	"github.com/cafecito-games/grafo/internal/version"
 )
@@ -37,11 +38,13 @@ const (
 var errRequestedInterruption = errors.New("benchmark requested durable interruption")
 
 type Options struct {
-	Repository  string
-	Output      string
-	Baseline    string
-	MaxWALBytes int64
-	MaxRSSBytes int64
+	Repository      string
+	Output          string
+	Baseline        string
+	Engine          string
+	CleanupDatabase bool
+	MaxWALBytes     int64
+	MaxRSSBytes     int64
 }
 
 type Report struct {
@@ -51,6 +54,7 @@ type Report struct {
 	GrafoVersion         string           `json:"grafo_version"`
 	GrafoCommit          string           `json:"grafo_commit"`
 	GrafoDirty           bool             `json:"grafo_dirty"`
+	Storage              Storage          `json:"storage"`
 	GeneratedAt          string           `json:"generated_at"`
 	Status               string           `json:"status"`
 	Error                string           `json:"error,omitempty"`
@@ -59,6 +63,13 @@ type Report struct {
 	Scenarios            []ScenarioReport `json:"scenarios"`
 	Artifacts            Artifacts        `json:"artifacts"`
 	Baseline             *Baseline        `json:"baseline,omitempty"`
+}
+
+type Storage struct {
+	Engine         string `json:"engine"`
+	Library        string `json:"library"`
+	LibraryVersion string `json:"library_version"`
+	Durability     string `json:"durability"`
 }
 
 type Corpus struct {
@@ -118,6 +129,7 @@ type ResourceMetrics struct {
 	PeakWALBytes  OptionalBytes `json:"peak_wal"`
 	FinalWALBytes OptionalBytes `json:"final_wal"`
 	PeakRSSBytes  OptionalBytes `json:"peak_rss"`
+	DatabaseBytes OptionalBytes `json:"database_size"`
 }
 
 type Artifacts struct {
@@ -140,7 +152,67 @@ type sourceSnapshot struct {
 	status string
 }
 
+func resolveStorage(requested string) (string, Storage, error) {
+	engine := strings.ToLower(strings.TrimSpace(requested))
+	if engine == "" {
+		engine = "sqlite"
+	}
+	switch engine {
+	case "sqlite":
+		return engine, Storage{Engine: engine, Library: "modernc.org/sqlite", LibraryVersion: dependencyVersion("modernc.org/sqlite", "v1.57.0"),
+			Durability: "WAL with synchronous=NORMAL; atomic file and reconciliation transactions"}, nil
+	case string(kvbench.EngineBolt):
+		return engine, Storage{Engine: engine, Library: "go.etcd.io/bbolt", LibraryVersion: dependencyVersion("go.etcd.io/bbolt", "v1.5.0"),
+			Durability: "single-writer ACID transactions with two-phase fsync commit"}, nil
+	case string(kvbench.EnginePebble):
+		return engine, Storage{Engine: engine, Library: "github.com/cockroachdb/pebble/v2", LibraryVersion: dependencyVersion("github.com/cockroachdb/pebble/v2", "v2.1.7"),
+			Durability: "atomic indexed batches committed with WAL sync"}, nil
+	default:
+		return "", Storage{}, fmt.Errorf("unsupported benchmark engine %q (want sqlite, bbolt, or pebble)", requested)
+	}
+}
+
+func dependencyVersion(path, fallback string) string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return fallback
+	}
+	for _, dependency := range info.Deps {
+		if dependency.Path == path {
+			if dependency.Replace != nil && dependency.Replace.Version != "" {
+				return dependency.Replace.Version
+			}
+			if dependency.Version != "" {
+				return dependency.Version
+			}
+		}
+	}
+	return fallback
+}
+
+func storageSuffix(engine string) string {
+	if engine == "sqlite" || engine == string(kvbench.EngineBolt) {
+		return ".db"
+	}
+	return ".pebble"
+}
+
+func openRepository(ctx context.Context, engine, path string) (graph.Repository, error) {
+	switch engine {
+	case "sqlite":
+		return sqlite.Open(ctx, path)
+	case string(kvbench.EngineBolt), string(kvbench.EnginePebble):
+		return kvbench.Open(ctx, kvbench.Engine(engine), path, kvbench.Options{})
+	default:
+		return nil, fmt.Errorf("unsupported benchmark engine %q", engine)
+	}
+}
+
 func Run(ctx context.Context, options Options) (report Report, resultErr error) {
+	engine, storage, err := resolveStorage(options.Engine)
+	if err != nil {
+		return Report{}, err
+	}
 	source, snapshot, err := inspectSource(ctx, options.Repository)
 	if err != nil {
 		return Report{}, err
@@ -157,12 +229,12 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	report = Report{
 		SchemaVersion: ReportSchemaVersion, SemanticIndexVersion: indexer.SemanticIndexVersion,
 		GraphSchemaVersion: graph.SchemaVersion, GrafoVersion: version.Value, GrafoCommit: grafoCommit, GrafoDirty: grafoDirty,
-		GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano), Status: StatusFailed,
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano), Status: StatusFailed, Storage: storage,
 		Corpus:    Corpus{Path: source, Commit: snapshot.commit, Branch: snapshot.branch},
 		Scenarios: []ScenarioReport{},
 		Artifacts: Artifacts{OutputDirectory: output, Report: filepath.Join(output, ReportFileName),
-			ColdDatabase:   filepath.Join(artifactDirectory, "cold.sqlite"),
-			ResumeDatabase: filepath.Join(artifactDirectory, "resume.sqlite")},
+			ColdDatabase:   filepath.Join(artifactDirectory, "cold"+storageSuffix(engine)),
+			ResumeDatabase: filepath.Join(artifactDirectory, "resume"+storageSuffix(engine))},
 	}
 	defer func() {
 		if resultErr != nil {
@@ -239,7 +311,7 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 		return report, fmt.Errorf("read scenario target %s: %w", target, err)
 	}
 
-	cold, err := executeScenario(ctx, "cold", isolation, report.Artifacts.ColdDatabase, nil)
+	cold, err := executeScenario(ctx, engine, "cold", isolation, report.Artifacts.ColdDatabase, nil)
 	if err == nil && cold.Index.Updated+cold.Index.Skipped != coverage.Routed.Files {
 		err = fmt.Errorf("cold scenario accounted for %d inputs, want %d", cold.Index.Updated+cold.Index.Skipped, coverage.Routed.Files)
 		cold = withScenarioError(cold, err)
@@ -248,7 +320,7 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	if err != nil {
 		return report, err
 	}
-	unchanged, err := executeScenario(ctx, "unchanged", isolation, report.Artifacts.ColdDatabase, nil)
+	unchanged, err := executeScenario(ctx, engine, "unchanged", isolation, report.Artifacts.ColdDatabase, nil)
 	if err == nil {
 		err = requireUnchanged(unchanged, cold.Index.Counts)
 	}
@@ -256,12 +328,12 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	if err != nil {
 		return report, err
 	}
-	if err := removeSQLiteDatabase(report.Artifacts.ColdDatabase); err != nil {
+	if err := removeDatabase(engine, report.Artifacts.ColdDatabase); err != nil {
 		return report, fmt.Errorf("remove completed control database: %w", err)
 	}
 	report.Artifacts.ColdDatabase = ""
 
-	interrupted, interruptErr := executeScenario(ctx, "interrupted", isolation, report.Artifacts.ResumeDatabase,
+	interrupted, interruptErr := executeScenario(ctx, engine, "interrupted", isolation, report.Artifacts.ResumeDatabase,
 		func(boundary indexer.Boundary) error {
 			if boundary.Kind == indexer.BoundaryFilePersisted && boundary.Completed == 1 {
 				return errRequestedInterruption
@@ -277,7 +349,7 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	}
 	interrupted.Status, interrupted.Error = StatusPassed, ""
 	report.Scenarios = append(report.Scenarios, interrupted)
-	resumed, err := executeScenario(ctx, "resumed", isolation, report.Artifacts.ResumeDatabase, nil)
+	resumed, err := executeScenario(ctx, engine, "resumed", isolation, report.Artifacts.ResumeDatabase, nil)
 	if err == nil && !reflect.DeepEqual(cold.Index.Counts, resumed.Index.Counts) {
 		err = fmt.Errorf("resumed graph counts differ from uninterrupted cold index")
 	}
@@ -285,7 +357,7 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	if err != nil {
 		return report, err
 	}
-	resumeUnchanged, err := executeScenario(ctx, "resume_unchanged", isolation, report.Artifacts.ResumeDatabase, nil)
+	resumeUnchanged, err := executeScenario(ctx, engine, "resume_unchanged", isolation, report.Artifacts.ResumeDatabase, nil)
 	if err == nil {
 		err = requireUnchanged(resumeUnchanged, cold.Index.Counts)
 	}
@@ -300,13 +372,13 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	if err := os.WriteFile(targetPath, append(append([]byte{}, original...), '\n'), 0o644); err != nil {
 		return report, err
 	}
-	if err := runMutationPair(ctx, &report, "edit", "edit_unchanged", isolation, report.Artifacts.ResumeDatabase, expectedMutationPaths, 0, cold.Index.Counts, false); err != nil {
+	if err := runMutationPair(ctx, engine, &report, "edit", "edit_unchanged", isolation, report.Artifacts.ResumeDatabase, expectedMutationPaths, 0, cold.Index.Counts, false); err != nil {
 		return report, err
 	}
 	if err := os.Remove(targetPath); err != nil {
 		return report, err
 	}
-	deleted, err := executeScenario(ctx, "delete", isolation, report.Artifacts.ResumeDatabase, nil)
+	deleted, err := executeScenario(ctx, engine, "delete", isolation, report.Artifacts.ResumeDatabase, nil)
 	if err == nil && (deleted.Index.Removed != 1 || len(deleted.Index.RemovedPaths) != 1 || deleted.Index.RemovedPaths[0] != target ||
 		!reflect.DeepEqual(deleted.Index.UpdatedPaths, expectedDeletionPaths)) {
 		err = fmt.Errorf("delete scenario updated=%v removed=%v, want updated=%v removed=[%s]",
@@ -319,7 +391,7 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	if err := restoreTrackedFile(targetPath, original, targetInfo.Mode()); err != nil {
 		return report, err
 	}
-	if err := runMutationPair(ctx, &report, "restore", "restore_unchanged", isolation, report.Artifacts.ResumeDatabase, expectedMutationPaths, 0, cold.Index.Counts, true); err != nil {
+	if err := runMutationPair(ctx, engine, &report, "restore", "restore_unchanged", isolation, report.Artifacts.ResumeDatabase, expectedMutationPaths, 0, cold.Index.Counts, true); err != nil {
 		return report, err
 	}
 	if err := runGit(ctx, isolation, "diff", "--quiet", "--", target); err != nil {
@@ -338,7 +410,7 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	if err := runGit(ctx, isolation, "commit", "-m", "benchmark branch mutation"); err != nil {
 		return report, err
 	}
-	branchSwitch, err := executeScenario(ctx, "branch_switch", isolation, report.Artifacts.ResumeDatabase, nil)
+	branchSwitch, err := executeScenario(ctx, engine, "branch_switch", isolation, report.Artifacts.ResumeDatabase, nil)
 	if err == nil {
 		err = requireUpdatedPaths(branchSwitch, expectedMutationPaths)
 	}
@@ -349,7 +421,7 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	if err := runGit(ctx, isolation, "switch", "grafo-benchmark-base"); err != nil {
 		return report, err
 	}
-	branchRestore, err := executeScenario(ctx, "branch_restore", isolation, report.Artifacts.ResumeDatabase, nil)
+	branchRestore, err := executeScenario(ctx, engine, "branch_restore", isolation, report.Artifacts.ResumeDatabase, nil)
 	if err == nil {
 		err = requireUpdatedPaths(branchRestore, expectedMutationPaths)
 	}
@@ -357,7 +429,7 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	if err != nil {
 		return report, err
 	}
-	branchUnchanged, err := executeScenario(ctx, "branch_unchanged", isolation, report.Artifacts.ResumeDatabase, nil)
+	branchUnchanged, err := executeScenario(ctx, engine, "branch_unchanged", isolation, report.Artifacts.ResumeDatabase, nil)
 	if err == nil {
 		err = requireUnchanged(branchUnchanged, cold.Index.Counts)
 	}
@@ -376,13 +448,19 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	if snapshot != after {
 		return report, fmt.Errorf("source checkout changed during benchmark")
 	}
+	if options.CleanupDatabase {
+		if err := removeDatabase(engine, report.Artifacts.ResumeDatabase); err != nil {
+			return report, fmt.Errorf("remove completed benchmark database: %w", err)
+		}
+		report.Artifacts.ResumeDatabase = ""
+	}
 	report.Status = StatusPassed
 	report.Error = ""
 	cleanupIsolation = true
 	return report, nil
 }
 
-func executeScenario(ctx context.Context, name, root, database string, hook indexer.BoundaryHook) (scenario ScenarioReport, resultErr error) {
+func executeScenario(ctx context.Context, engine, name, root, database string, hook indexer.BoundaryHook) (scenario ScenarioReport, resultErr error) {
 	scenario = ScenarioReport{Name: name, Status: StatusFailed}
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -390,19 +468,19 @@ func executeScenario(ctx context.Context, name, root, database string, hook inde
 			scenario = withScenarioError(scenario, resultErr)
 		}
 	}()
-	return executeScenarioRun(ctx, scenario, root, database, hook)
+	return executeScenarioRun(ctx, engine, scenario, root, database, hook)
 }
 
-func executeScenarioRun(ctx context.Context, scenario ScenarioReport, root, database string, hook indexer.BoundaryHook) (ScenarioReport, error) {
+func executeScenarioRun(ctx context.Context, engine string, scenario ScenarioReport, root, database string, hook indexer.BoundaryHook) (ScenarioReport, error) {
 	project, err := indexer.DiscoverProject(ctx, root)
 	if err != nil {
 		return withScenarioError(scenario, err), err
 	}
 	project.IndexPath = database
-	sampler := newResourceSampler(ctx, database)
+	sampler := newResourceSampler(ctx, engine, database)
 	sampler.start()
 	defer func() { sampler.stop() }()
-	repository, err := sqlite.Open(ctx, database)
+	repository, err := openRepository(ctx, engine, database)
 	if err != nil {
 		return withScenarioError(scenario, err), err
 	}
@@ -456,8 +534,8 @@ func restoreTrackedFile(path string, content []byte, mode os.FileMode) error {
 	return nil
 }
 
-func runMutationPair(ctx context.Context, report *Report, changedName, stableName, root, database string, expectedUpdated []string, removed int, expectedCounts graph.Counts, zeroReadStable bool) error {
-	changed, err := executeScenario(ctx, changedName, root, database, nil)
+func runMutationPair(ctx context.Context, engine string, report *Report, changedName, stableName, root, database string, expectedUpdated []string, removed int, expectedCounts graph.Counts, zeroReadStable bool) error {
+	changed, err := executeScenario(ctx, engine, changedName, root, database, nil)
 	if err == nil && (changed.Index.Updated != len(expectedUpdated) || changed.Index.Removed != removed) {
 		err = fmt.Errorf("%s changed updated=%d removed=%d, want %d/%d", changedName, changed.Index.Updated, changed.Index.Removed, len(expectedUpdated), removed)
 	}
@@ -468,7 +546,7 @@ func runMutationPair(ctx context.Context, report *Report, changedName, stableNam
 	if err != nil {
 		return err
 	}
-	stable, err := executeScenario(ctx, stableName, root, database, nil)
+	stable, err := executeScenario(ctx, engine, stableName, root, database, nil)
 	if err == nil && (stable.Index.Updated != 0 || stable.Index.Removed != 0) {
 		err = fmt.Errorf("%s did not converge", stableName)
 	}
@@ -866,6 +944,7 @@ func gitOutputBytes(ctx context.Context, root string, arguments ...string) ([]by
 
 type resourceSampler struct {
 	ctx      context.Context
+	engine   string
 	database string
 	stopOnce sync.Once
 	stopCh   chan struct{}
@@ -873,12 +952,14 @@ type resourceSampler struct {
 	mu       sync.Mutex
 	peakWAL  int64
 	finalWAL int64
+	finalDB  int64
+	walOK    bool
 	peakRSS  int64
 	rssOK    bool
 }
 
-func newResourceSampler(ctx context.Context, database string) *resourceSampler {
-	return &resourceSampler{ctx: ctx, database: database, stopCh: make(chan struct{}), doneCh: make(chan struct{})}
+func newResourceSampler(ctx context.Context, engine, database string) *resourceSampler {
+	return &resourceSampler{ctx: ctx, engine: engine, database: database, stopCh: make(chan struct{}), doneCh: make(chan struct{})}
 }
 
 func (s *resourceSampler) start() {
@@ -906,7 +987,7 @@ func (s *resourceSampler) stop() {
 		<-s.doneCh
 		s.sample()
 		s.mu.Lock()
-		s.finalWAL = fileSize(s.database + "-wal")
+		s.finalDB, s.finalWAL, s.walOK = storageSizes(s.engine, s.database)
 		s.mu.Unlock()
 	})
 }
@@ -931,8 +1012,9 @@ func (s *resourceSampler) sample() {
 }
 
 func (s *resourceSampler) sampleWAL() {
-	bytes := fileSize(s.database + "-wal")
+	_, bytes, supported := storageSizes(s.engine, s.database)
 	s.mu.Lock()
+	s.walOK = supported
 	if bytes > s.peakWAL {
 		s.peakWAL = bytes
 	}
@@ -947,6 +1029,11 @@ func (s *resourceSampler) metrics() ResourceMetrics {
 		PeakWALBytes:  OptionalBytes{Supported: true, Value: &peakWAL},
 		FinalWALBytes: OptionalBytes{Supported: true, Value: &finalWAL},
 		PeakRSSBytes:  OptionalBytes{Supported: false, Reason: "ps RSS sampling unavailable"},
+		DatabaseBytes: OptionalBytes{Supported: true, Value: pointer(s.finalDB)},
+	}
+	if !s.walOK {
+		metrics.PeakWALBytes = OptionalBytes{Supported: false, Reason: "engine has no separate journal or WAL"}
+		metrics.FinalWALBytes = OptionalBytes{Supported: false, Reason: "engine has no separate journal or WAL"}
 	}
 	if s.rssOK {
 		peakRSS := s.peakRSS
@@ -954,6 +1041,8 @@ func (s *resourceSampler) metrics() ResourceMetrics {
 	}
 	return metrics
 }
+
+func pointer(value int64) *int64 { return &value }
 
 func fileSize(path string) int64 {
 	info, err := os.Stat(path)
@@ -963,7 +1052,38 @@ func fileSize(path string) int64 {
 	return info.Size()
 }
 
-func removeSQLiteDatabase(path string) error {
+func storageSizes(engine, path string) (database, journal int64, journalSupported bool) {
+	switch engine {
+	case "sqlite":
+		return fileSize(path), fileSize(path + "-wal"), true
+	case string(kvbench.EngineBolt):
+		return fileSize(path), 0, false
+	case string(kvbench.EnginePebble):
+		_ = filepath.WalkDir(path, func(candidate string, entry os.DirEntry, err error) error {
+			if err != nil || entry.IsDir() {
+				return nil
+			}
+			info, statErr := entry.Info()
+			if statErr != nil {
+				return nil
+			}
+			if strings.HasSuffix(entry.Name(), ".log") {
+				journal += info.Size()
+			} else {
+				database += info.Size()
+			}
+			return nil
+		})
+		return database, journal, true
+	default:
+		return 0, 0, false
+	}
+}
+
+func removeDatabase(engine, path string) error {
+	if engine == string(kvbench.EnginePebble) {
+		return os.RemoveAll(path)
+	}
 	for _, candidate := range []string{path, path + "-wal", path + "-shm"} {
 		if err := os.Remove(candidate); err != nil && !os.IsNotExist(err) {
 			return err
