@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const SchemaVersion = 7
+const SchemaVersion = 8
 
 type NodeKind string
 
@@ -122,6 +122,10 @@ const (
 	EdgeRequests    EdgeKind = "requests"
 	EdgeDependsOn   EdgeKind = "depends_on"
 	EdgeDocuments   EdgeKind = "documents"
+	// generated_from connects a language binding projection to the canonical
+	// declaration that defines its wire/schema identity. Generated source is
+	// evidence for a projection, never a second schema authority.
+	EdgeGeneratedFrom EdgeKind = "generated_from"
 
 	// Failure-flow relations are language-neutral even though Go is currently
 	// their only producer. returns_error describes a callable's typed result

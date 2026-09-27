@@ -14,6 +14,8 @@ func TestParserExtractsProtobufSchema(t *testing.T) {
 	source := `syntax = "proto3";
 package acme.user.v1;
 
+option go_package = "example.com/acme/user/v1;userv1";
+
 import public "common/options.proto";
 
 message Profile {}
@@ -50,7 +52,7 @@ service Users {
 	result := parse(t, "api/user.proto", source)
 
 	file := findNode(t, result.Nodes, graph.KindFile, "api/user.proto")
-	if file.Language != "protobuf" || file.Properties["syntax"] != "proto3" || file.Properties["package"] != "acme.user.v1" {
+	if file.Language != "protobuf" || file.Properties["syntax"] != "proto3" || file.Properties["package"] != "acme.user.v1" || file.Properties["go_package"] != "example.com/acme/user/v1;userv1" {
 		t.Fatalf("unexpected file metadata: %#v", file)
 	}
 	assertNode(t, result.Nodes, graph.KindType, "acme.user.v1.Profile", map[string]string{"declaration": "message"})

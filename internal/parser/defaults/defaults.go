@@ -12,6 +12,7 @@ import (
 	manifestparser "github.com/cafecito-games/grafo/internal/parser/manifest"
 	markdownparser "github.com/cafecito-games/grafo/internal/parser/markdown"
 	protobufparser "github.com/cafecito-games/grafo/internal/parser/protobuf"
+	"github.com/cafecito-games/grafo/internal/parser/protobufbinding"
 	pythonparser "github.com/cafecito-games/grafo/internal/parser/python"
 	sqlparser "github.com/cafecito-games/grafo/internal/parser/sql"
 	postgresparser "github.com/cafecito-games/grafo/internal/parser/sql/postgres"
@@ -21,8 +22,9 @@ import (
 )
 
 func NewRegistry() *parserapi.Registry {
+	bindings := protobufbinding.NewLoader()
 	return parserapi.NewRegistry(
-		gdscriptparser.New(), godotparser.New(), golangparser.New(), javaparser.New(), pythonparser.New(), protobufparser.New(), swiftparser.New(), typescriptparser.New(),
+		protobufbinding.New(bindings), gdscriptparser.NewWithBindingLoader(bindings), godotparser.New(), golangparser.NewWithBindingLoader(bindings), javaparser.New(), pythonparser.New(), protobufparser.New(), swiftparser.New(), typescriptparser.New(),
 		manifestparser.New(), markdownparser.New(), sqlparser.New(postgresparser.New(), sqliteparser.New()), configparser.New(),
 	)
 }
