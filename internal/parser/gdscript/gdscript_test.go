@@ -653,6 +653,41 @@ func _on_inherited() -> void:
 		"Socket._on_inherited")
 }
 
+func TestParserQualifiesLegacyObjectSignalHandlersWithoutGuessing(t *testing.T) {
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "scripts/kit.gd", Repository: "sample", RepoID: "repo:sample",
+		Content: []byte(`class_name Kit extends Node
+
+var _backend: Backend
+var _unknown
+
+func wire() -> void:
+	_backend.connect("ready", _on_ready)
+	_unknown.connect("ready", _on_ready)
+
+func _on_ready() -> void:
+	pass
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := 0
+	for _, fact := range result.Facts {
+		if fact.Kind != graph.EdgeHandledBy {
+			continue
+		}
+		want++
+		if fact.Source != "Backend.ready" || fact.SourceKind != graph.KindEvent ||
+			fact.Target != "Kit._on_ready" {
+			t.Fatalf("legacy Object.connect handled_by fact = %#v", fact)
+		}
+	}
+	if want != 1 {
+		t.Fatalf("legacy Object.connect handled_by facts = %d, want 1; got %#v", want, result.Facts)
+	}
+}
+
 // TestParserKeepsLocallyDeclaredActionMethodsOutOfTheVocabulary covers both
 // spellings of a call on this object. A script is free to declare its own
 // is_action_pressed, and neither the bare nor the self-qualified call to it
