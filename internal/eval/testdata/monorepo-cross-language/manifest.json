@@ -36,6 +36,11 @@
       },
       {
         "repo": "monorepo",
+        "kind": "module",
+        "qualified_name": "services/client"
+      },
+      {
+        "repo": "monorepo",
         "kind": "parameter",
         "qualified_name": "services.server.create_order.order_id"
       },
@@ -88,6 +93,24 @@
           "path": "services/client.ts",
           "line": 1,
           "column": 8
+        }
+      },
+      {
+        "from": {
+          "repo": "monorepo",
+          "kind": "file",
+          "qualified_name": "services/client.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "monorepo",
+          "kind": "module",
+          "qualified_name": "services/client"
+        },
+        "source": {
+          "path": "services/client.ts",
+          "line": 1,
+          "column": 1
         }
       },
       {
