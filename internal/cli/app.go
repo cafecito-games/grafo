@@ -815,7 +815,7 @@ func (a *App) impact(ctx context.Context, args parsedArguments) error {
 
 func (a *App) godotComposition(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 1 {
-		return fmt.Errorf("usage: grafo %s <scene-resource-script-or-autoload> [--depth 8] [--limit 1000]", args.command)
+		return fmt.Errorf("usage: grafo %s <scene-resource-script-or-autoload> [--kind godot_scene] [--depth 8] [--limit 1000]", args.command)
 	}
 	depth, err := intOption(args, "depth", 8)
 	if err != nil {
@@ -825,13 +825,17 @@ func (a *App) godotComposition(ctx context.Context, args parsedArguments) error 
 	if err != nil {
 		return err
 	}
+	kind, err := nodeKindOption(args)
+	if err != nil {
+		return err
+	}
 	repository, _, closeRepository, err := openRead(ctx, args)
 	if err != nil {
 		return err
 	}
 	defer closeRepository()
 	report, err := query.NewService(repository).GodotComposition(ctx, args.positionals[0],
-		query.GodotCompositionOptions{Depth: depth, Limit: limit})
+		query.GodotCompositionOptions{Depth: depth, Limit: limit, Kind: kind})
 	if err != nil {
 		return err
 	}
@@ -1556,7 +1560,8 @@ Usage:
   grafo impact <symbol-or-id> [--kind method] [--depth 4] [--upstream-depth n] [--downstream-depth n]
                               [--upstream-limit n] [--downstream-limit n]
                               [--source] [--context-lines 2] [--max-lines 200] [--source-limit 10]
-  grafo godot-composition <scene-resource-script-or-autoload> [--depth 8] [--limit 1000]
+  grafo godot-composition <scene-resource-script-or-autoload> [--kind godot_scene]
+                          [--depth 8] [--limit 1000]
   grafo search <pattern>... [--regex] [--case-sensitive] [--path-prefix dir,...]
                             [--language go,...] [--repo-name name,...] [--context-lines 0]
                             [--max-matches 500] [--max-matches-per-file 50]

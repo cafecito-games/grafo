@@ -56,6 +56,7 @@ var nodeKinds = []NodeKind{
 	KindType, KindClass, KindInterface, KindField, KindVariable, KindParameter,
 	KindTable, KindView, KindColumn, KindIndex, KindConfigKey, KindEndpoint,
 	KindEvent, KindDocSection, KindExternal,
+	KindGodotScene, KindGodotResource, KindGodotSceneNode, KindGodotAutoload,
 }
 
 // NodeKinds returns the node vocabulary. Callers must not mutate the result.

@@ -392,6 +392,7 @@ func (input ImpactInput) options() query.ImpactOptions {
 type GodotCompositionInput struct {
 	Selector  string   `json:"selector,omitempty" jsonschema:"qualified Godot scene, scene node, resource, script, or autoload name, or stable node ID"`
 	Selectors []string `json:"selectors,omitempty" jsonschema:"batch of Godot selectors reported in caller order"`
+	Kind      string   `json:"kind,omitempty" jsonschema:"optional node kind the selector must resolve to, such as godot_scene, godot_scene_node, godot_resource, godot_autoload, or module"`
 	Depth     int      `json:"depth,omitempty" jsonschema:"maximum scene-tree depth explored for a scene; defaults to 8"`
 	Limit     int      `json:"limit,omitempty" jsonschema:"maximum relations per section; defaults to 1000"`
 }
@@ -411,7 +412,11 @@ func (s *Service) getGodotComposition(ctx context.Context, _ *mcp.CallToolReques
 	if err != nil {
 		return nil, GodotCompositionOutput{}, err
 	}
-	options := query.GodotCompositionOptions{Depth: input.Depth, Limit: input.Limit}
+	kind, err := graph.ParseNodeKind(input.Kind)
+	if err != nil {
+		return nil, GodotCompositionOutput{}, err
+	}
+	options := query.GodotCompositionOptions{Depth: input.Depth, Limit: input.Limit, Kind: kind}
 	results := runBatch(ctx, selectors, func(reportContext context.Context, selector string) (query.GodotComposition, error) {
 		return s.query.GodotComposition(reportContext, selector, options)
 	})

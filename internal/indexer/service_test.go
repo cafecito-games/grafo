@@ -590,7 +590,7 @@ func TestServiceModelsGodotCompositionAcrossFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertComposition(t, autoload.AutoloadTargets, "scripts/game", graph.KindModule)
-	use, err := queries.Neighborhood(ctx, "scripts/player.ready", 1, query.Outgoing, nil, 20)
+	use, err := queries.Neighborhood(ctx, "scripts/player.ready", "", 1, query.Outgoing, nil, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -825,7 +825,7 @@ func TestServiceScopesGodotProjectsNestedInOneRepository(t *testing.T) {
 			t.Fatal(err)
 		}
 		assertComposition(t, autoload.AutoloadTargets, directory+"/scripts/game", graph.KindModule)
-		use, err := queries.Neighborhood(ctx, directory+"/scripts/hud.ready", 1, query.Outgoing, nil, 20)
+		use, err := queries.Neighborhood(ctx, directory+"/scripts/hud.ready", "", 1, query.Outgoing, nil, 20)
 		if err != nil {
 			t.Fatal(err)
 		}

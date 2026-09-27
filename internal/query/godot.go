@@ -43,10 +43,14 @@ type GodotComposition struct {
 }
 
 // GodotCompositionOptions bounds a composition report. Zero fields fall back to
-// depth 8 for scene-tree traversal and 1000 relations per section.
+// depth 8 for scene-tree traversal and 1000 relations per section. Kind
+// restricts selector resolution to one node kind, which is how a caller names
+// the scene rather than the script when a scene and its script share a canonical
+// identity - they differ only by an extension the identity drops.
 type GodotCompositionOptions struct {
 	Depth int
 	Limit int
+	Kind  graph.NodeKind
 }
 
 func (o GodotCompositionOptions) withDefaults() GodotCompositionOptions {
@@ -63,7 +67,7 @@ func (o GodotCompositionOptions) withDefaults() GodotCompositionOptions {
 // composition report. Resolution errors (ErrNotFound, *AmbiguousError)
 // propagate unchanged and never yield a partial report.
 func (s *Service) GodotComposition(ctx context.Context, selector string, options GodotCompositionOptions) (GodotComposition, error) {
-	root, err := s.Resolve(ctx, selector)
+	root, err := s.ResolveKind(ctx, selector, options.Kind)
 	if err != nil {
 		return GodotComposition{}, err
 	}
@@ -80,7 +84,7 @@ func (s *Service) GodotComposition(ctx context.Context, selector string, options
 	// through declares, which is the relation the scene parser emits.
 	members := []graph.Node{root}
 	if root.Kind == graph.KindGodotScene || root.Kind == graph.KindGodotSceneNode {
-		traversal, err := s.Neighborhood(ctx, root.ID, options.Depth, Outgoing,
+		traversal, err := s.Neighborhood(ctx, root.ID, "", options.Depth, Outgoing,
 			[]graph.EdgeKind{graph.EdgeDeclares}, options.Limit)
 		if err != nil {
 			return GodotComposition{}, err
