@@ -546,11 +546,12 @@ GRAFO_GODOT_CORPUS=/path/to/project go test ./internal/parser/godot -run TestCor
 ### End-to-end corpus benchmark
 
 The opt-in benchmark exercises the production parser registry, indexer, and
-SQLite repository across cold, interrupted/resumed, unchanged, edit,
-delete/restore, and branch-switch scenarios:
+storage repository across cold, interrupted/resumed, unchanged, edit,
+delete/restore, and branch-switch scenarios. SQLite remains the default:
 
 ```sh
 GRAFO_BENCH_REPO=~/CafecitoGames/uzir task bench:corpus
+GRAFO_BENCH_REPO=~/CafecitoGames/uzir GRAFO_BENCH_ENGINE=pebble task bench:corpus
 ```
 
 Set `GRAFO_BENCH_OUTPUT=/path/outside/the/corpus` to retain artifacts at a
@@ -573,6 +574,23 @@ Unsupported tracked paths and platform metrics are explicit in the versioned
 JSON report. A failed run keeps its isolated checkout and current database for
 diagnosis; a successful run removes the checkout and duplicate control database
 while retaining the converged database and atomic `report.json`.
+
+The storage-spike harness runs SQLite, bbolt, and Pebble sequentially against
+the same generated fixture and corpus revision, verifies candidate counts and
+query semantics against SQLite, and emits raw samples, medians, relative
+results, database/log size, RSS, and write statistics:
+
+```sh
+GRAFO_BENCH_REPO=~/CafecitoGames/uzir \
+GRAFO_STORAGE_BENCH_OUTPUT=/tmp/grafo-storage \
+GRAFO_STORAGE_BENCH_SAMPLES=3 \
+task bench:storage
+```
+
+The bbolt and Pebble adapters are intentionally benchmark-only and are not
+available to the production CLI. See the
+[embedded storage spike](docs/storage-engine-spike.md) for the selection,
+operational analysis, decision threshold, and recommendation.
 
 After changing a migration or query, run `task generate` and commit the updated
 sqlc output.

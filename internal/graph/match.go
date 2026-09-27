@@ -3,6 +3,7 @@ package graph
 import (
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // NodeMatchLevel names one class of evidence that a selector matched a node.
@@ -121,6 +122,40 @@ var memberKinds = map[NodeKind]bool{
 // memberKinds.
 func IsDeclarationMember(kind NodeKind) bool { return memberKinds[kind] }
 
+// AllowsResolutionKind reports whether a kind-less fact may resolve to kind.
+// Parsers that provide TargetKind have stronger evidence and bypass this
+// fallback filter. Keeping the policy in graph prevents storage adapters from
+// silently producing different edges as the node and edge vocabularies grow.
+func AllowsResolutionKind(edge EdgeKind, kind NodeKind) bool {
+	switch edge {
+	case EdgeCalls, EdgePasses, EdgeHandledBy:
+		return kind == KindFunction || kind == KindMethod
+	case EdgeReads, EdgeWrites:
+		return kind == KindTable || kind == KindView
+	case EdgeReferences:
+		return kind == KindConfigKey || kind == KindTable || kind == KindView ||
+			kind == KindGodotAutoload || kind == KindGodotScene ||
+			kind == KindGodotResource || kind == KindGodotSceneNode
+	case EdgeImports, EdgeDependsOn:
+		return kind == KindModule || kind == KindPackage ||
+			kind == KindGodotScene || kind == KindGodotResource
+	case EdgeInstantiates:
+		return kind == KindGodotScene || kind == KindGodotResource
+	case EdgeAttachesScript:
+		return kind == KindModule || kind == KindClass
+	case EdgeAutoloads:
+		return kind == KindModule || kind == KindClass || kind == KindGodotScene
+	case EdgeUsesInputAction:
+		return kind == KindGodotInputAction
+	case EdgeInGroup, EdgeUsesGroup:
+		return kind == KindGodotNodeGroup
+	case EdgeExtends, EdgeImplements, EdgeEmbeds:
+		return kind == KindType || kind == KindClass || kind == KindInterface
+	default:
+		return true
+	}
+}
+
 // NodeMatchGroup is the complete evidence for a selector at one level.
 //
 // Adapters must honor three rules, because selector resolution is only sound
@@ -196,18 +231,58 @@ func StrictMatch(level NodeMatchLevel, selector string, node Node) bool {
 // case. It mirrors the SQL predicates behind MatchNodes so in-memory adapters
 // and fakes can implement the same contract.
 func LooseMatch(level NodeMatchLevel, selector string, node Node) bool {
-	folded := strings.ToLower(selector)
+	folded := foldASCII(selector)
 	switch level {
 	case MatchQualifiedName:
-		return strings.ToLower(node.QualifiedName) == folded
+		return foldASCII(node.QualifiedName) == folded
 	case MatchName:
-		return strings.ToLower(node.Name) == folded
+		return foldASCII(node.Name) == folded
 	case MatchSubstring:
-		return strings.Contains(strings.ToLower(node.QualifiedName), folded) ||
-			strings.Contains(strings.ToLower(node.Name), folded)
+		pattern := "%" + folded + "%"
+		return sqliteLike(pattern, foldASCII(node.QualifiedName)) || sqliteLike(pattern, foldASCII(node.Name))
 	default:
 		return false
 	}
+}
+
+func foldASCII(value string) string {
+	var result strings.Builder
+	result.Grow(len(value))
+	for _, r := range value {
+		if r >= 'A' && r <= 'Z' {
+			r += 'a' - 'A'
+		}
+		result.WriteRune(r)
+	}
+	return result.String()
+}
+
+func sqliteLike(pattern, value string) bool {
+	patternRunes, valueRunes := []rune(pattern), []rune(value)
+	type position struct{ pattern, value int }
+	seen := map[position]bool{}
+	matches := map[position]bool{}
+	var match func(int, int) bool
+	match = func(patternIndex, valueIndex int) bool {
+		current := position{pattern: patternIndex, value: valueIndex}
+		if seen[current] {
+			return matches[current]
+		}
+		seen[current] = true
+		result := false
+		switch {
+		case patternIndex == len(patternRunes):
+			result = valueIndex == len(valueRunes)
+		case patternRunes[patternIndex] == '%':
+			result = match(patternIndex+1, valueIndex) ||
+				valueIndex < len(valueRunes) && match(patternIndex, valueIndex+1)
+		case valueIndex < len(valueRunes) && (patternRunes[patternIndex] == '_' || patternRunes[patternIndex] == valueRunes[valueIndex]):
+			result = match(patternIndex+1, valueIndex+1)
+		}
+		matches[current] = result
+		return result
+	}
+	return match(0, 0)
 }
 
 // SortNodeMatches applies the ordering NodeMatchGroup documents: strict matches
@@ -226,8 +301,9 @@ func SortNodeMatches(level NodeMatchLevel, selector string, nodes []Node) {
 		if a.External != b.External {
 			return !a.External
 		}
-		if len(a.QualifiedName) != len(b.QualifiedName) {
-			return len(a.QualifiedName) < len(b.QualifiedName)
+		leftLength, rightLength := utf8.RuneCountInString(a.QualifiedName), utf8.RuneCountInString(b.QualifiedName)
+		if leftLength != rightLength {
+			return leftLength < rightLength
 		}
 		if a.QualifiedName != b.QualifiedName {
 			return a.QualifiedName < b.QualifiedName
