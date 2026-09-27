@@ -21,6 +21,7 @@ storage can evolve independently.
        ├─ defaults/*       production registry shared by CLI and evaluation
        ├─ gdscript/*       gdparser GDScript AST adapter
        ├─ godot/*          gdparser scene, resource, config, UID, and shader adapters
+       ├─ swift/*          Tree-sitter Swift AST adapter
        └─ sql/*            dialect adapters such as PostgreSQL
   internal/storage/sqlite  Goose + sqlc adapter
 ```

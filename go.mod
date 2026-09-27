@@ -10,6 +10,7 @@ require (
 	github.com/sqlc-dev/meyer v0.1.2
 	github.com/tree-sitter/go-tree-sitter v0.25.0
 	github.com/tree-sitter/tree-sitter-python v0.25.0
+	github.com/tree-sitter/tree-sitter-swift v0.0.0-20260601004120-31d17fe7e818
 	github.com/tree-sitter/tree-sitter-typescript v0.23.2
 	github.com/yuin/goldmark v1.8.6
 	golang.org/x/mod v0.39.0
@@ -40,3 +41,6 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
+
+// The maintained fork publishes generated parser sources from release branches.
+replace github.com/tree-sitter/tree-sitter-swift => github.com/alex-pinkus/tree-sitter-swift v0.0.0-20260601004120-31d17fe7e818
