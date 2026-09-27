@@ -218,6 +218,11 @@ func (c *Catalog) DataResources(ctx context.Context, kinds []graph.NodeKind, opt
 // DataResourceUsage reports the readers and writers of one data resource. An
 // ambiguous name returns candidates instead of guessing one of them.
 func (c *Catalog) DataResourceUsage(ctx context.Context, selector string, options CatalogOptions) (DataResourceUsage, error) {
+	// The selector already names the resource. Accepting a name filter here and
+	// ignoring it would let a caller believe it narrowed a result it did not.
+	if strings.TrimSpace(options.Name) != "" {
+		return DataResourceUsage{}, fmt.Errorf("a name filter does not apply to one data resource; pass the name as the selector")
+	}
 	limit, err := c.bounds(ctx, options)
 	if err != nil {
 		return DataResourceUsage{}, err

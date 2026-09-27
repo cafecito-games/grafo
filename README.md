@@ -200,7 +200,8 @@ the evidence sites of each relation.
 writers, and references, each with the source site that proves it. An ambiguous
 name returns its candidates and asks for a qualified name or node ID rather than
 choosing one. An unsupported kind is rejected instead of answered with an empty
-catalog that would imply absence.
+catalog that would imply absence, and a name filter is rejected here rather than
+accepted and ignored, because the selector already names the resource.
 
 `config-keys` reports where a key is defined and read. Stored values are never
 returned: only properties classified as non-secret configuration metadata appear,

@@ -127,6 +127,15 @@ func TestDataResourceUsageRequiresAnUnambiguousName(t *testing.T) {
 	}
 }
 
+func TestDataResourceUsageRejectsAnInertNameFilter(t *testing.T) {
+	catalog := query.NewCatalog(newCatalogFixture())
+	_, err := catalog.DataResourceUsage(context.Background(), "orders",
+		query.CatalogOptions{Name: "nomatch"})
+	if err == nil {
+		t.Fatal("a name filter that cannot narrow one resource must be rejected, not ignored")
+	}
+}
+
 func TestDataResourceUsageRejectsNonResourceSelectors(t *testing.T) {
 	catalog := query.NewCatalog(newCatalogFixture())
 	if _, err := catalog.DataResourceUsage(context.Background(), "shop.ListOrders", query.CatalogOptions{}); err == nil {

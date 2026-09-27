@@ -149,6 +149,9 @@ func TestCatalogCommandsRejectUnsupportedFilters(t *testing.T) {
 	if code, _, stderr := execute(t, "data-usage", "missing_table", "--repo", root); code == 0 {
 		t.Fatalf("an unknown resource must fail: %s", stderr)
 	}
+	if code, _, stderr := execute(t, "data-usage", "orders", "--repo", root, "--name", "nomatch"); code == 0 {
+		t.Fatalf("a name filter on one resource must fail rather than be ignored: %s", stderr)
+	}
 	if code, _, stderr := execute(t, "data-resources", "--repo", root, "--kind", ","); code == 0 {
 		t.Fatalf("a kind list naming no kind must fail: %s", stderr)
 	}

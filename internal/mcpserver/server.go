@@ -249,16 +249,20 @@ func (s *Service) listDataResources(ctx context.Context, _ *mcp.CallToolRequest,
 	return nil, result, err
 }
 
+// DataResourceUsageInput deliberately omits the catalog name filter: the
+// selector already names the resource.
 type DataResourceUsageInput struct {
-	CatalogInput
-	Selector string `json:"selector" jsonschema:"table or view name, qualified name, or stable node ID"`
+	Selector   string `json:"selector" jsonschema:"table or view name, qualified name, or stable node ID"`
+	Repository string `json:"repository,omitempty" jsonschema:"restrict resolution to one indexed repository by name"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"maximum evidence sites per relation; defaults to 100 and may not exceed 1000"`
 }
 
 func (s *Service) getDataResourceUsage(ctx context.Context, _ *mcp.CallToolRequest, input DataResourceUsageInput) (*mcp.CallToolResult, query.DataResourceUsage, error) {
 	if err := s.ready(ctx); err != nil {
 		return nil, query.DataResourceUsage{}, err
 	}
-	result, err := s.catalog.DataResourceUsage(ctx, input.Selector, input.options())
+	options := query.CatalogOptions{Repository: input.Repository, Limit: input.Limit}
+	result, err := s.catalog.DataResourceUsage(ctx, input.Selector, options)
 	return nil, result, withCandidates(err)
 }
 
