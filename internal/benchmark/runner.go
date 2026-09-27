@@ -526,9 +526,22 @@ func snapshotSource(ctx context.Context, root string) (sourceSnapshot, error) {
 
 func prepareOutput(source, requested string) (string, error) {
 	if requested == "" {
+		temporaryRoot, err := canonicalDestination(os.TempDir())
+		if err != nil {
+			return "", fmt.Errorf("resolve default benchmark output: %w", err)
+		}
+		if err := validateOutputDestination(source, temporaryRoot); err != nil {
+			return "", err
+		}
 		path, err := os.MkdirTemp("", "grafo-benchmark-")
 		if err != nil {
 			return "", fmt.Errorf("create benchmark output: %w", err)
+		}
+		if err := validateOutputDestination(source, path); err != nil {
+			if removeErr := os.RemoveAll(path); removeErr != nil {
+				return "", errors.Join(err, fmt.Errorf("remove unsafe benchmark output: %w", removeErr))
+			}
+			return "", err
 		}
 		return path, nil
 	}
@@ -540,19 +553,26 @@ func prepareOutput(source, requested string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve benchmark output: %w", err)
 	}
-	relative, err := filepath.Rel(source, absolute)
-	if err == nil && (relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)))) {
-		return "", fmt.Errorf("benchmark output must be outside the source checkout")
-	}
-	if sourceInfo, sourceErr := os.Stat(source); sourceErr == nil {
-		if outputInfo, outputErr := os.Stat(absolute); outputErr == nil && os.SameFile(sourceInfo, outputInfo) {
-			return "", fmt.Errorf("benchmark output must be outside the source checkout")
-		}
+	if err := validateOutputDestination(source, absolute); err != nil {
+		return "", err
 	}
 	if err := os.MkdirAll(absolute, 0o755); err != nil {
 		return "", fmt.Errorf("create benchmark output: %w", err)
 	}
 	return absolute, nil
+}
+
+func validateOutputDestination(source, output string) error {
+	relative, err := filepath.Rel(source, output)
+	if err == nil && (relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)))) {
+		return fmt.Errorf("benchmark output must be outside the source checkout")
+	}
+	if sourceInfo, sourceErr := os.Stat(source); sourceErr == nil {
+		if outputInfo, outputErr := os.Stat(output); outputErr == nil && os.SameFile(sourceInfo, outputInfo) {
+			return fmt.Errorf("benchmark output must be outside the source checkout")
+		}
+	}
+	return nil
 }
 
 func canonicalDestination(path string) (string, error) {

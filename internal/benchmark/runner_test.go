@@ -63,6 +63,30 @@ func TestRunRejectsOutputInsideSourceBeforeCreatingArtifacts(t *testing.T) {
 	}
 }
 
+func TestRunRejectsDefaultTemporaryOutputInsideSource(t *testing.T) {
+	repository := fixtureRepository(t)
+	temporaryRoot := filepath.Join(repository, "ignored-temp")
+	if err := os.WriteFile(filepath.Join(repository, ".git", "info", "exclude"), []byte("ignored-temp/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(temporaryRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", temporaryRoot)
+
+	_, err := Run(context.Background(), Options{Repository: repository})
+	if err == nil {
+		t.Fatal("expected unsafe default output error")
+	}
+	entries, readErr := os.ReadDir(temporaryRoot)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("default output artifacts created inside source: %v", entries)
+	}
+}
+
 func TestLoadBaselineRejectsIncompatibleVersions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "baseline.json")
 	if err := os.WriteFile(path, []byte(`{"schema_version":999,"semantic_index_version":"old","graph_schema_version":1}`), 0o644); err != nil {
