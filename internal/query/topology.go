@@ -9,6 +9,7 @@ import (
 	"unicode"
 
 	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/httpmodel"
 )
 
 // BoundaryStatus describes how confidently graph evidence crosses a service
@@ -167,8 +168,22 @@ func NewTopology(repository graph.CatalogRepository) *Topology {
 
 func (t *Topology) normalize(ctx context.Context, options TopologyOptions) (TopologyOptions, int, error) {
 	options.Repository = strings.TrimSpace(options.Repository)
-	options.Method = strings.ToUpper(strings.TrimSpace(options.Method))
-	options.Route = strings.TrimSpace(options.Route)
+	options.Method = strings.Trim(options.Method, " ")
+	if options.Method != "" {
+		method, err := httpmodel.NormalizeMethod(options.Method)
+		if err != nil {
+			return options, 0, err
+		}
+		options.Method = method
+	}
+	options.Route = strings.Trim(options.Route, " ")
+	if options.Route != "" {
+		route, err := httpmodel.ParseRoute(options.Route)
+		if err != nil {
+			return options, 0, err
+		}
+		options.Route = route.Canonical
+	}
 	options.Event = strings.TrimSpace(options.Event)
 	options.Direction = Direction(strings.ToLower(strings.TrimSpace(string(options.Direction))))
 	if options.Direction == "" {
@@ -233,6 +248,12 @@ func endpointMethodRoute(node graph.Node) (string, string) {
 			}
 		}
 	}
+	if normalized, err := httpmodel.NormalizeMethod(method); err == nil {
+		method = normalized
+	}
+	if parsed, err := httpmodel.ParseRoute(route); err == nil {
+		route = parsed.Canonical
+	}
 	return method, route
 }
 
@@ -241,7 +262,12 @@ func endpointMatches(node graph.Node, options TopologyOptions) bool {
 	if options.Method != "" && method != options.Method {
 		return false
 	}
-	return options.Route == "" || strings.Contains(strings.ToLower(route), strings.ToLower(options.Route))
+	if options.Route == "" {
+		return true
+	}
+	declaration, declarationErr := httpmodel.ParseRoute(route)
+	filter, filterErr := httpmodel.ParseRoute(options.Route)
+	return declarationErr == nil && filterErr == nil && httpmodel.Compatibility(declaration, filter) != httpmodel.RankNone
 }
 
 func (t *Topology) endpointReferencedByRepository(ctx context.Context, endpointID, repository string,
@@ -500,6 +526,51 @@ type requestGroup struct {
 	edges []graph.Edge
 }
 
+type routeCandidate struct {
+	scoped graph.ScopedNode
+	method string
+	route  httpmodel.Route
+}
+
+func endpointRouteCandidate(scoped graph.ScopedNode) (routeCandidate, bool) {
+	method, route := endpointMethodRoute(scoped.Node)
+	normalizedMethod, methodErr := httpmodel.NormalizeMethod(method)
+	parsedRoute, routeErr := httpmodel.ParseRoute(route)
+	if methodErr != nil || routeErr != nil || scoped.Node.Properties["http_invalid"] == "true" {
+		return routeCandidate{}, false
+	}
+	return routeCandidate{scoped: scoped, method: normalizedMethod, route: parsedRoute}, true
+}
+
+func requestMethodRoute(edge graph.Edge, target graph.Node) (string, httpmodel.Route, bool) {
+	method := strings.TrimSpace(edge.Properties["http_method"])
+	route := strings.TrimSpace(edge.Properties["http_route"])
+	if method == "" || route == "" {
+		fallbackMethod, fallbackRoute := endpointMethodRoute(target)
+		if method == "" {
+			method = fallbackMethod
+		}
+		if route == "" {
+			route = fallbackRoute
+		}
+	}
+	normalizedMethod, methodErr := httpmodel.NormalizeMethod(method)
+	parsedRoute, routeErr := httpmodel.ParseRoute(route)
+	valid := methodErr == nil && routeErr == nil && edge.Properties["http_invalid"] != "true"
+	return normalizedMethod, parsedRoute, valid
+}
+
+func routeMatchesOptions(method string, route httpmodel.Route, valid bool, options TopologyOptions) bool {
+	if options.Method != "" && method != options.Method {
+		return false
+	}
+	if options.Route == "" {
+		return true
+	}
+	filter, err := httpmodel.ParseRoute(options.Route)
+	return valid && err == nil && httpmodel.Compatibility(filter, route) != httpmodel.RankNone
+}
+
 func preferredEdge(edges []graph.Edge, targetID string, nodes map[string]graph.Node) graph.Edge {
 	ordered := append([]graph.Edge(nil), edges...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
@@ -536,15 +607,16 @@ func (t *Topology) collectOutboundRequests(ctx context.Context, options Topology
 	}
 	nodes := make(map[string]graph.Node, len(scoped))
 	scopes := make(map[string]graph.ScopedNode, len(scoped))
-	declarations := map[string][]graph.ScopedNode{}
+	declarations := []routeCandidate{}
 	groups := map[string]*requestGroup{}
 	seenEdges := map[string]bool{}
 	for _, candidate := range scoped {
 		nodes[candidate.Node.ID] = candidate.Node
 		scopes[candidate.Node.ID] = candidate
-		method, route := endpointMethodRoute(candidate.Node)
 		if !candidate.Node.External {
-			declarations[method+"\x00"+route] = append(declarations[method+"\x00"+route], candidate)
+			if declaration, ok := endpointRouteCandidate(candidate); ok {
+				declarations = append(declarations, declaration)
+			}
 		}
 		edges, err := t.repository.EdgesTo(ctx, candidate.Node.ID)
 		if err != nil {
@@ -572,8 +644,14 @@ func (t *Topology) collectOutboundRequests(ctx context.Context, options Topology
 		}
 		base := preferredEdge(group.edges, "", nodes)
 		target := nodes[base.ToID]
-		method, route := endpointMethodRoute(target)
-		if !endpointMatches(target, options) {
+		method, routeModel, validRoute := requestMethodRoute(base, target)
+		route := strings.TrimSpace(base.Properties["http_route"])
+		if validRoute {
+			route = routeModel.Canonical
+		} else if route == "" {
+			_, route = endpointMethodRoute(target)
+		}
+		if !routeMatchesOptions(method, routeModel, validRoute, options) {
 			continue
 		}
 		source, err := t.repository.Node(ctx, base.FromID)
@@ -592,7 +670,25 @@ func (t *Topology) collectOutboundRequests(ctx context.Context, options Topology
 			return nil, err
 		}
 		request.Truncated = requestTruncated
-		candidates := declarations[method+"\x00"+route]
+		request.Target.Method, request.Target.Route = method, route
+		candidates := []graph.ScopedNode{}
+		bestRank := httpmodel.RankNone
+		if validRoute && base.Properties["http_authority"] == "" {
+			for _, declaration := range declarations {
+				if declaration.method != method {
+					continue
+				}
+				rank := httpmodel.Compatibility(declaration.route, routeModel)
+				if rank == httpmodel.RankNone || bestRank != httpmodel.RankNone && rank > bestRank {
+					continue
+				}
+				if bestRank == httpmodel.RankNone || rank < bestRank {
+					bestRank = rank
+					candidates = candidates[:0]
+				}
+				candidates = append(candidates, declaration.scoped)
+			}
+		}
 		sortScopedNodes(candidates)
 		switch len(candidates) {
 		case 0:
@@ -603,6 +699,7 @@ func (t *Topology) collectOutboundRequests(ctx context.Context, options Topology
 				return nil, err
 			}
 			request.Truncated = request.Truncated || requestTruncated
+			request.Destination.Method, request.Destination.Route = method, route
 			base = preferredEdge(group.edges, "", nodes)
 		case 1:
 			request.Status = BoundaryResolved
@@ -629,6 +726,16 @@ func (t *Topology) collectOutboundRequests(ctx context.Context, options Topology
 			base = preferredEdge(group.edges, "", nodes)
 		}
 		request.Evidence = linkEvidence(base)
+		if request.Status == BoundaryResolved && request.Source.Repository != "" && request.Destination.Repository != "" &&
+			request.Source.Repository != request.Destination.Repository {
+			request.Evidence.Federated = true
+		}
+		if request.Status == BoundaryAmbiguous && request.Source.Repository != "" {
+			for _, candidate := range request.Candidates {
+				request.Evidence.Federated = request.Evidence.Federated ||
+					candidate.Repository != "" && candidate.Repository != request.Source.Repository
+			}
+		}
 		result = append(result, request)
 	}
 	sort.Slice(result, func(i, j int) bool {

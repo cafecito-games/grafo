@@ -27,8 +27,8 @@ func TestTopologyKeepsFederatedHTTPAmbiguityAndEventLinksExplicit(t *testing.T) 
 import "net/http"
 type Bus interface { Publish(string) }
 func Call(bus Bus) {
-	_, _ = http.Post("/charge", "text/plain", nil)
-	_, _ = http.Get("/orders")
+	_, _ = http.Post("/charge/42", "text/plain", nil)
+	_, _ = http.Get("/orders/42?view=full")
 	bus.Publish("order.placed")
 }
 `)
@@ -36,14 +36,14 @@ func Call(bus Bus) {
 func ChargeA() {}
 func Orders() {}
 func Routes() {
-	router.Post("/charge", ChargeA)
-	router.Get("/charge", ChargeA)
-	router.Get("/orders", Orders)
+	router.Post("/charge/{chargeID}", ChargeA)
+	router.Get("/charge/{chargeID}", ChargeA)
+	router.Get("/orders/{orderID}/", Orders)
 }
 `)
 	write(t, filepath.Join(roots["payments-b"], "server.go"), `package paymentsb
 func ChargeB() {}
-func Routes() { router.Post("/charge", ChargeB) }
+func Routes() { router.Post("/charge/{id}", ChargeB) }
 `)
 	write(t, filepath.Join(roots["consumer"], "consumer.go"), `package consumer
 type Bus interface { Subscribe(string) }
@@ -70,7 +70,7 @@ func Watch(bus Bus) { bus.Subscribe("order.placed") }
 	for _, request := range requests.Requests {
 		byName[request.Method+" "+request.Route] = request
 	}
-	charge := byName["POST /charge"]
+	charge := byName["POST /charge/42"]
 	if charge.Status != query.BoundaryAmbiguous || len(charge.Candidates) != 2 {
 		t.Fatalf("duplicate federated endpoints were not reported as ambiguous: %#v; all requests: %#v", charge, requests.Requests)
 	}
@@ -79,7 +79,7 @@ func Watch(bus Bus) { bus.Subscribe("order.placed") }
 			t.Fatalf("method-incompatible endpoint became a candidate: %#v", charge.Candidates)
 		}
 	}
-	orders := byName["GET /orders"]
+	orders := byName["GET /orders/42"]
 	if orders.Status != query.BoundaryResolved || orders.Destination.Repository != "payments-a" ||
 		!orders.Evidence.Federated {
 		t.Fatalf("unique federated endpoint did not resolve: %#v", orders)
@@ -92,12 +92,12 @@ func Watch(bus Bus) { bus.Subscribe("order.placed") }
 	var eventFound, resolvedOrders bool
 	for _, link := range topology.Links {
 		switch {
-		case link.Kind == query.LinkHTTP && link.Name == "GET /orders":
+		case link.Kind == query.LinkHTTP && link.Name == "GET /orders/42":
 			resolvedOrders = link.Status == query.BoundaryResolved && link.Federated
 		case link.Kind == query.LinkEvent && link.Name == "order.placed":
 			eventFound = link.FromServiceID == "service:client" &&
 				link.ToServiceID == "service:consumer" && link.Federated && len(link.EventIDs) > 0
-		case link.Kind == query.LinkHTTP && link.Name == "POST /charge" && link.Status == query.BoundaryResolved:
+		case link.Kind == query.LinkHTTP && link.Name == "POST /charge/42" && link.Status == query.BoundaryResolved:
 			t.Fatalf("ambiguous HTTP request created a confirmed service link: %#v", link)
 		}
 	}

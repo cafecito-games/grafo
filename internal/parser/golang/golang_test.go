@@ -40,6 +40,7 @@ func (s *Server) Start(input string) string {
   publish("user.created")
   return copy
 }
+
 func (s *Server) deliver(string) {}
 func health(http.ResponseWriter, *http.Request) {}
 `)
@@ -61,6 +62,79 @@ func health(http.ResponseWriter, *http.Request) {}
 	assertHasFact(t, result.Facts, graph.EdgePasses, "example.com/sample/api.Server.deliver")
 	assertHasFact(t, result.Facts, graph.EdgeCalls, "example.com/sample/api.Server.deliver")
 	assertHasFact(t, result.Facts, graph.EdgeCalls, "example.com/client.Client.Send")
+}
+
+func TestHTTPExtractionUsesCanonicalIdentityAndKeepsRawEvidence(t *testing.T) {
+	content := []byte(`package api
+import "net/http"
+func Handler(http.ResponseWriter, *http.Request) {}
+func Routes() {
+	router.Get("/users/{characterID}/?view=full#details", Handler)
+	_, _ = http.Get("https://api.example.test/users/{id}/?expand=true#top")
+	router.Get("/bad/%zz", Handler)
+}
+`)
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "api/routes.go", Content: content, Repository: "sample", RepoID: "repo", GoModule: "example.com/sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var endpoint graph.Node
+	for _, node := range result.Nodes {
+		if node.Kind == graph.KindEndpoint && node.Properties["route"] == "/users/{_}" {
+			endpoint = node
+		}
+	}
+	if endpoint.ID == "" || endpoint.Properties["raw_route"] != "/users/{characterID}/?view=full#details" ||
+		endpoint.Properties["query"] != "view=full" || endpoint.Properties["fragment"] != "details" {
+		t.Fatalf("canonical endpoint or raw evidence missing: %#v", endpoint)
+	}
+	var request graph.Fact
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeRequests {
+			request = fact
+		}
+	}
+	if request.Target != "GET https://api.example.test/users/{id}/?expand=true#top" ||
+		request.Properties["http_route"] != "/users/{_}" || request.Properties["http_authority"] != "api.example.test" ||
+		request.Properties["http_query"] != "expand=true" || request.Properties["http_fragment"] != "top" {
+		t.Fatalf("canonical request or raw evidence missing: %#v", request)
+	}
+	foundDiagnostic := false
+	for _, diagnostic := range result.Diagnostics {
+		foundDiagnostic = foundDiagnostic || strings.Contains(diagnostic.Message, "invalid HTTP endpoint")
+	}
+	if !foundDiagnostic {
+		t.Fatalf("malformed HTTP route was not diagnosed: %#v", result.Diagnostics)
+	}
+	for _, node := range result.Nodes {
+		if node.Kind == graph.KindEndpoint && node.Properties["raw_route"] == "/bad/%zz" && node.Properties["http_invalid"] != "true" {
+			t.Fatalf("malformed endpoint was not kept fail-closed: %#v", node)
+		}
+	}
+}
+
+func TestCanonicalEndpointsAtSameLineRemainDistinct(t *testing.T) {
+	content := []byte(`package api
+func Handler() {}
+func Routes() { router.Get("/users/{id}", Handler); router.Get("/users/{name}", Handler) }
+`)
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "routes.go", Content: content, Repository: "sample", RepoID: "repo", GoModule: "example.com/sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	for _, node := range result.Nodes {
+		if node.Kind == graph.KindEndpoint && node.Name == "GET /users/{_}" {
+			ids[node.ID] = true
+		}
+	}
+	if len(ids) != 2 {
+		t.Fatalf("canonical duplicate declarations collapsed: %#v", result.Nodes)
+	}
 }
 
 func TestParserPrefersInjectedSemanticCallAndImplementationEvidence(t *testing.T) {

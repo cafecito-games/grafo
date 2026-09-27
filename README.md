@@ -507,19 +507,24 @@ grafo service-topology --mermaid
 
 The MCP equivalents are `list_endpoints`, `list_outbound_requests`,
 `find_handler`, and `get_service_topology`. Every query supports explicit
-bounds and repository/service filtering; HTTP queries additionally filter by
-exact method and literal route fragment, while handler and topology queries can
-filter by event. Service topology also supports incoming, outgoing, or both
-directions relative to a selected service.
+bounds and repository/service filtering. HTTP methods are normalized and
+matched exactly; route filters use the same canonical template compatibility
+as indexed evidence. Handler and topology queries can also filter by event.
+Service topology supports incoming, outgoing, or both directions relative to a
+selected service.
 
 Each indexed repository is one stable service identity. Endpoint and event
 nodes, source components, edge IDs, fact IDs, locations, and federation markers
-remain in the structured response beneath those service boundaries. A request
-resolves only when exactly one endpoint has the same method and route. No match
-stays an external destination, while several exact declarations are returned as
-ambiguous candidates and create no confirmed service link. Handler results use
-only `handled_by` evidence and likewise distinguish resolved, unresolved,
-ambiguous, and missing handlers.
+remain in the structured response beneath those service boundaries. HTTP route
+identity excludes queries, fragments, and one trailing slash, and template
+parameter names are canonicalized while regex constraints and catchalls remain
+distinct. Resolution ranks exact literals ahead of compatible single-segment
+templates, then compatible catchalls. Several declarations at the best rank
+remain ambiguous and create no confirmed service link. Unknown values do not
+prove regex matches, and absolute URLs with an authority stay external rather
+than resolving from their path alone. Handler results use only `handled_by`
+evidence and likewise distinguish resolved, unresolved, ambiguous, and missing
+handlers.
 
 `service-topology --mermaid` is an escaped, deterministic rendering of the
 structured result; it never replaces the node and edge evidence. Explicit
