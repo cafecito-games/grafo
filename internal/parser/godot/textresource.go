@@ -310,7 +310,67 @@ func (e *textResourceExtractor) prepareSceneNode(section *textresource.Section) 
 	owner := resourceOwner{id: nodeID, qualified: qualified, scenePath: scenePath}
 	e.nodes[scenePath] = owner
 	e.sectionOwners[section] = owner
+	e.addGroupMembership(section, owner)
 	e.addInstance(section, owner, inheritedRoot)
+}
+
+// addGroupMembership records the node groups a scene node declares. The scene
+// file is the declaration site of the membership, so each group becomes one
+// project-scoped in_group edge carrying the node path that proves it.
+//
+// The group identity is scoped to the Godot project that owns this scene, which
+// is how a scene membership and a script add_to_group("enemies") converge on one
+// node. A group item that is not a name is diagnosed rather than interpreted, and
+// a scene whose owning project could not be read produces no membership at all:
+// an unscoped group identity would merge the groups of every project in a
+// monorepo.
+func (e *textResourceExtractor) addGroupMembership(section *textresource.Section, owner resourceOwner) {
+	value := sectionAttributeValue(section, "groups")
+	if value == nil {
+		return
+	}
+	array, ok := groupArray(value)
+	if !ok {
+		e.b.Diagnostic(textLocation(e.input.Path, section).Line, "warning", fmt.Sprintf(
+			"scene node %q declares groups that are not a list; keeping them unresolved", owner.scenePath))
+		return
+	}
+	for _, item := range array.Items {
+		loc := textLocation(e.input.Path, item)
+		name, ok := item.(*textresource.StringValue)
+		if !ok {
+			if _, comment := item.(*textresource.Comment); comment {
+				continue
+			}
+			e.b.Diagnostic(loc.Line, "warning", fmt.Sprintf(
+				"scene node %q declares a group that is not a name; keeping it unresolved",
+				owner.scenePath))
+			continue
+		}
+		target := e.scope.nodeGroup(name.Value)
+		if target == "" {
+			continue
+		}
+		e.b.AddFact(owner.id, graph.EdgeInGroup, "", target, graph.KindGodotNodeGroup, loc,
+			map[string]string{"form": "declared", "group": name.Value,
+				"node_path": owner.scenePath, "scene": e.module})
+	}
+}
+
+// groupArray accepts both array spellings a scene can carry for a groups
+// attribute, the plain ["a"] form and the typed Array[String](["a"]) form.
+func groupArray(value textresource.Value) (*textresource.ArrayValue, bool) {
+	switch current := value.(type) {
+	case *textresource.ArrayValue:
+		return current, true
+	case *textresource.TypedArrayValue:
+		if current.Array == nil {
+			return nil, false
+		}
+		return current.Array, true
+	default:
+		return nil, false
+	}
 }
 
 // addInstance records a scene instance. A root node that carries an instance
@@ -502,11 +562,15 @@ func (e *textResourceExtractor) extractConnection(section *textresource.Section)
 		})
 		e.events[qualified] = eventID
 	}
-	properties := map[string]string{"signal": signal}
+	// The form vocabulary is shared with the script side so one interactions
+	// report can read a scene-declared route and a script-established one the
+	// same way; declared marks which of the two produced this route.
+	properties := map[string]string{"signal": signal, "form": "connect", "declared": "true"}
 	if method := sectionAttribute(section, "method"); method != "" {
 		properties["method"] = method
 		e.b.AddFact(eventID, graph.EdgeHandledBy, "", method, graph.KindMethod,
-			textLocation(e.input.Path, section), map[string]string{"receiver": to.qualified})
+			textLocation(e.input.Path, section), map[string]string{
+				"form": "connect", "declared": "true", "signal": qualified, "receiver": to.qualified})
 	}
 	e.b.AddFact(to.id, graph.EdgeSubscribes, eventID, "", graph.KindEvent,
 		textLocation(e.input.Path, section), properties)

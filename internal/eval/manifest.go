@@ -368,14 +368,9 @@ func validateNodeRef(node NodeRef, repositories map[string]bool) error {
 	return nil
 }
 
-var validNodeKinds = makeSet([]graph.NodeKind{
-	graph.KindRepository, graph.KindFile, graph.KindPackage, graph.KindModule, graph.KindFunction,
-	graph.KindMethod, graph.KindType, graph.KindClass, graph.KindInterface, graph.KindField,
-	graph.KindVariable, graph.KindParameter, graph.KindTable, graph.KindView, graph.KindColumn,
-	graph.KindIndex, graph.KindConfigKey, graph.KindEndpoint, graph.KindEvent, graph.KindDocSection,
-	graph.KindExternal, graph.KindGodotScene, graph.KindGodotResource, graph.KindGodotSceneNode,
-	graph.KindGodotAutoload,
-})
+// validNodeKinds is derived from the graph vocabulary rather than restated, so a
+// kind added to internal/graph can never be rejected here by omission.
+var validNodeKinds = makeSet(graph.NodeKinds())
 
 var validEdgeKinds = makeSet([]graph.EdgeKind{
 	graph.EdgeContains, graph.EdgeDeclares, graph.EdgeImports, graph.EdgeExports, graph.EdgeCalls, graph.EdgeEmbeds,
@@ -383,7 +378,8 @@ var validEdgeKinds = makeSet([]graph.EdgeKind{
 	graph.EdgeHandledBy, graph.EdgePublishes, graph.EdgeSubscribes, graph.EdgeReferences, graph.EdgeReads,
 	graph.EdgeWrites, graph.EdgeHasField, graph.EdgeAssigns, graph.EdgeReturns, graph.EdgePasses,
 	graph.EdgeRequests, graph.EdgeDependsOn, graph.EdgeDocuments, graph.EdgeInstantiates,
-	graph.EdgeAttachesScript, graph.EdgeAutoloads,
+	graph.EdgeAttachesScript, graph.EdgeAutoloads, graph.EdgeUsesInputAction, graph.EdgeInGroup,
+	graph.EdgeUsesGroup,
 })
 
 func makeSet[T comparable](values []T) map[T]bool {

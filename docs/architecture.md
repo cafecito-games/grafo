@@ -182,6 +182,62 @@ instances, script attachments, and autoload availability from those edges only;
 it introduces no vocabulary of its own and reports an unresolved target as an
 external node rather than omitting it.
 
+## Godot gameplay interactions
+
+Composition answers what a scene is built from; interactions answer how it is
+wired at runtime. `internal/graph` owns that vocabulary too: `godot_input_action`
+and `godot_node_group` nodes joined by `uses_input_action`, `in_group`, and
+`uses_group` edges, alongside the `event` `publishes`, `subscribes`, and
+`handled_by` edges signals already used. Signals stay events on purpose - a
+Godot-only signal kind would split every generic event query in two.
+
+The operation behind an edge is a `form` property rather than another edge kind,
+because direction and meaning are shared inside each relation: `add` and `remove`
+both name a membership between a node and a group, and `lookup`, `call`, and
+`notify` all read a group's members. One consequence is deliberate:
+`is_in_group` is a `uses_group` lookup with form `membership_test` and never an
+`in_group` edge, because asking whether a node is in a group is not evidence
+that it is.
+
+Actions and groups are project-scoped exactly as autoloads are
+(`godot:input_action:<project.godot path>:<name>`,
+`godot:node_group:<project.godot path>:<name>`), and `godotid` owns those names
+so the scene, script, and configuration producers converge on one node. Godot's
+declaration sites are narrow and Grafo does not widen them: an action is declared
+by an `[input]` entry and a group by a `[global_group]` entry, so a group that a
+scene or a script merely uses stays an external node until the project declares
+it. That is what keeps missing wiring visible instead of letting the first use
+define the vocabulary. Only non-secret declaration metadata is stored - an
+action's deadzone as written and how many events it lists - because device
+bindings are out of scope.
+
+Script-side resolution is literal-only. A recognized action or group API with a
+literal name argument produces one edge; a computed name produces none, because
+the name is not knowable and matching it by partial text would attach the use to
+whichever declaration shared a substring. The API tables are exact method names,
+not patterns, so a project's own `is_action_bar_visible()` is not read as an
+action query, and a bare call that resolves to a method the script declares is
+that method rather than an engine entry point sharing its name. A group dispatch
+keeps its method name as evidence and never resolves a handler: which object's
+method runs is decided by the group's runtime membership. `Input` and `InputMap`
+action reads keep their generic `reads_config` fact to `input/<action>` as well,
+so configuration catalogs see the same evidence they saw before actions became
+their own kind - explicit compatibility rather than a name-prefix heuristic.
+
+Signal routing is unified across producers. A scene `[connection]` and a script
+`connect` both subscribe with form `connect`, and the scene-declared one is
+marked `declared`. Only `connect` subscribes: `disconnect` and `is_connected`
+are `references` carrying form `signal_disconnect` and `signal_connection_test`,
+because treating either as a subscription would make a signal look consumed by a
+script that removes or inspects its own wiring. A handler is named only when a
+literal `connect` passes a bare identifier that resolves to a method the script
+declares.
+
+`internal/query.GodotInteractions` is a sibling of the composition report rather
+than an extension of it, reads only those edges, filters by category and
+direction, and counts the interactions whose far side is unresolved so a caller
+can tell a wired report from one that merely looks wired.
+
 ## Source retrieval
 
 Source retrieval begins with normal deterministic node resolution; it never

@@ -343,3 +343,306 @@ func TestParserKeepsProjectEscapingPreloadsUnresolved(t *testing.T) {
 		}
 	}
 }
+
+// TestParserLinksLiteralInputActionUses covers the typed action vocabulary: a
+// literal action name on a recognized action API resolves to the project-scoped
+// action, a computed name resolves nothing, and a literal argument that is not an
+// action name on an Input call is no longer mistaken for one.
+func TestParserLinksLiteralInputActionUses(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "client/project.godot", "config_version=5\n\n[input]\njump={\"deadzone\": 0.5, \"events\": []}\n")
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "client/scripts/hud.gd", Repository: "sample", RepoID: "repo:sample",
+		Content: []byte(`extends Node
+
+const ACTION = "crouch"
+
+func poll(event: InputEvent) -> void:
+	if Input.is_action_just_pressed("jump"):
+		pass
+	var strength = Input.get_action_strength("attack")
+	var lean = Input.get_axis("lean_left", "lean_right")
+	if event.is_action_pressed("cancel"):
+		pass
+	if InputMap.has_action(ACTION):
+		pass
+	Input.set_custom_mouse_cursor("res://art/cursor.png")
+	if is_action_bar_visible():
+		pass
+
+func is_action_bar_visible() -> bool:
+	return true
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, testCase := range []struct{ action, form string }{
+		{action: "jump", form: "query"},
+		{action: "attack", form: "query"},
+		{action: "lean_left", form: "query"},
+		{action: "lean_right", form: "query"},
+		{action: "cancel", form: "query"},
+	} {
+		target := "godot:input_action:client/project.godot:" + testCase.action
+		fact := findFactWithTarget(t, result.Facts, graph.EdgeUsesInputAction, target)
+		if fact.TargetKind != graph.KindGodotInputAction || fact.Properties["form"] != testCase.form ||
+			fact.Properties["action"] != testCase.action {
+			t.Fatalf("input action fact = %#v", fact)
+		}
+		// The generic configuration reader stays, so config catalogs keep the
+		// same evidence they had before actions became their own kind.
+		assertHasFact(t, result.Facts, graph.EdgeReadsConfig, "input/"+testCase.action)
+	}
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeUsesInputAction && fact.Target == "" {
+			t.Fatalf("an action use emitted an empty target: %#v", fact)
+		}
+		if fact.Kind != graph.EdgeUsesInputAction {
+			continue
+		}
+		switch fact.Properties["action"] {
+		case "crouch":
+			t.Fatalf("a computed action name must resolve nothing: %#v", fact)
+		case "res://art/cursor.png":
+			t.Fatalf("a non-action argument must not become an action: %#v", fact)
+		}
+	}
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeReadsConfig && strings.HasPrefix(fact.Target, "input/res://") {
+			t.Fatalf("a cursor path must not be read as an input action: %#v", fact)
+		}
+	}
+}
+
+// TestParserLinksLiteralGroupOperations covers the node-group vocabulary:
+// membership, membership tests, lookups, and dispatches each keep their operation
+// form, a dispatch records its method as evidence without inventing a handler, and
+// a computed group name resolves nothing.
+func TestParserLinksLiteralGroupOperations(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "client/project.godot", "config_version=5\n\n[global_group]\nenemies=\"Hostile\"\n")
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "client/scripts/spawner.gd", Repository: "sample", RepoID: "repo:sample",
+		Content: []byte(`extends Node
+
+const OPT_OUT = "opted_out"
+
+func wire(other: Node) -> void:
+	add_to_group("enemies")
+	other.add_to_group("damageable")
+	other.remove_from_group("damageable")
+	if other.is_in_group("enemies"):
+		pass
+	var all = get_tree().get_nodes_in_group("enemies")
+	get_tree().call_group("enemies", "die")
+	get_tree().notify_group("enemies", 1)
+	other.add_to_group(OPT_OUT)
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	enemies := "godot:node_group:client/project.godot:enemies"
+	damageable := "godot:node_group:client/project.godot:damageable"
+	for _, testCase := range []struct {
+		kind   graph.EdgeKind
+		target string
+		form   string
+	}{
+		{kind: graph.EdgeInGroup, target: enemies, form: "add"},
+		{kind: graph.EdgeInGroup, target: damageable, form: "add"},
+		{kind: graph.EdgeInGroup, target: damageable, form: "remove"},
+		{kind: graph.EdgeUsesGroup, target: enemies, form: "membership_test"},
+		{kind: graph.EdgeUsesGroup, target: enemies, form: "lookup"},
+		{kind: graph.EdgeUsesGroup, target: enemies, form: "call"},
+		{kind: graph.EdgeUsesGroup, target: enemies, form: "notify"},
+	} {
+		assertHasFactWithProperty(t, result.Facts, testCase.kind, testCase.target, "form", testCase.form)
+	}
+	// A membership test is never membership evidence.
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeInGroup && fact.Properties["form"] == "membership_test" {
+			t.Fatalf("is_in_group must not assert membership: %#v", fact)
+		}
+		if fact.Kind == graph.EdgeUsesGroup || fact.Kind == graph.EdgeInGroup {
+			if fact.Target == "" {
+				t.Fatalf("a group operation emitted an empty target: %#v", fact)
+			}
+			if fact.TargetKind != graph.KindGodotNodeGroup {
+				t.Fatalf("a group operation must target a node group: %#v", fact)
+			}
+			if fact.Properties["group"] == "" {
+				t.Fatalf("a group operation is missing its name evidence: %#v", fact)
+			}
+		}
+		if strings.HasSuffix(fact.Target, ":opted_out") {
+			t.Fatalf("a computed group name must resolve nothing: %#v", fact)
+		}
+	}
+	// A group dispatch keeps its literal method as evidence and never becomes a
+	// call edge to a guessed receiver.
+	assertHasFactWithProperty(t, result.Facts, graph.EdgeUsesGroup, enemies, "method", "die")
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeCalls && fact.Target == "die" {
+			t.Fatalf("a group dispatch must not guess a handler: %#v", fact)
+		}
+	}
+}
+
+// TestParserRoutesLiteralSignalConnections covers signal routing from scripts:
+// connect subscribes and names its handler, emit publishes, and disconnect and
+// is_connected are routing evidence that never become subscriptions.
+func TestParserRoutesLiteralSignalConnections(t *testing.T) {
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "scripts/hud.gd", Repository: "sample", RepoID: "repo:sample",
+		Content: []byte(`class_name Hud extends Node
+
+signal ready_changed(value: bool)
+
+func wire() -> void:
+	ready_changed.connect(on_ready_changed)
+	ready_changed.emit(true)
+	if ready_changed.is_connected(on_ready_changed):
+		ready_changed.disconnect(on_ready_changed)
+	emit_signal("ready_changed", false)
+
+func on_ready_changed(_value: bool) -> void:
+	pass
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := findQualifiedNode(t, result.Nodes, graph.KindEvent, "Hud.ready_changed")
+	handled := false
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeHandledBy && fact.FromID == event.ID &&
+			fact.Target == "Hud.on_ready_changed" && fact.Properties["form"] == "connect" {
+			handled = true
+		}
+		if fact.Kind == graph.EdgeSubscribes && fact.Properties["form"] != "connect" {
+			t.Fatalf("only a connect may subscribe: %#v", fact)
+		}
+	}
+	if !handled {
+		t.Fatalf("a literal connect must name its handler; got %#v", result.Facts)
+	}
+	// The route's destination is recorded on the routing fact as well, which is
+	// the only place it can live when the signal's owner is another file.
+	subscribed := false
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeSubscribes && fact.Properties["handler"] == "Hud.on_ready_changed" {
+			subscribed = true
+		}
+	}
+	if !subscribed {
+		t.Fatalf("a connect must record its handler as evidence; got %#v", result.Facts)
+	}
+	for _, form := range []string{"signal_disconnect", "signal_connection_test"} {
+		found := false
+		for _, fact := range result.Facts {
+			if fact.Kind == graph.EdgeReferences && fact.TargetID == event.ID &&
+				fact.Properties["form"] == form {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("missing %s evidence; got %#v", form, result.Facts)
+		}
+	}
+	publishes := 0
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgePublishes && fact.TargetID == event.ID {
+			publishes++
+			if fact.Properties["form"] != "emit" {
+				t.Fatalf("a publish must record its form: %#v", fact)
+			}
+		}
+	}
+	if publishes != 2 {
+		t.Fatalf("expected both emit forms to publish, got %d", publishes)
+	}
+}
+
+// TestParserRecordsHandlerWhenSignalOwnerIsAnotherFile is the case the smoke run
+// exposed: nearly every real connect names a signal another file declares, so no
+// handled_by edge can be hung on a declaration this parser cannot see. The route
+// must still record where it goes, and it must not invent an owner for the signal.
+func TestParserRecordsHandlerWhenSignalOwnerIsAnotherFile(t *testing.T) {
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "scripts/kit.gd", Repository: "sample", RepoID: "repo:sample",
+		Content: []byte(`class_name Kit extends Node
+
+var _backend: Backend
+
+func wire() -> void:
+	_backend.sign_in_success.connect(_on_sign_in)
+	_backend.sign_in_failed.connect(func(): pass)
+
+func _on_sign_in() -> void:
+	pass
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	routed := findFactWithTarget(t, result.Facts, graph.EdgeSubscribes, "Backend.sign_in_success")
+	if routed.Properties["form"] != "connect" || routed.Properties["handler"] != "Kit._on_sign_in" {
+		t.Fatalf("cross-file connect fact = %#v", routed)
+	}
+	lambda := findFactWithTarget(t, result.Facts, graph.EdgeSubscribes, "Backend.sign_in_failed")
+	if _, ok := lambda.Properties["handler"]; ok {
+		t.Fatalf("a lambda proves no method; got %#v", lambda)
+	}
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeHandledBy {
+			t.Fatalf("a signal this script does not declare must not gain a handler edge: %#v", fact)
+		}
+	}
+}
+
+// TestParserDoesNotReadANonSignalLiteralAsASignalName covers the ambiguity a
+// project can create for itself: a connect(url) of its own must not name an event
+// after its argument, and a disconnect on an object whose type is unknown must not
+// invent a signal either.
+func TestParserDoesNotReadANonSignalLiteralAsASignalName(t *testing.T) {
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "scripts/socket.gd", Repository: "sample", RepoID: "repo:sample",
+		Content: []byte(`class_name Socket extends Node
+
+var _client: WebSocketPeer
+
+func open() -> void:
+	_client.connect("wss://example.invalid/stream")
+	inherited_signal.emit(42)
+	inherited_signal.connect(_on_inherited)
+
+func _on_inherited() -> void:
+	pass
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fact := range result.Facts {
+		if fact.TargetKind == graph.KindEvent && strings.Contains(fact.Target, "://") {
+			t.Fatalf("a URL must never become a signal: %#v", fact)
+		}
+	}
+	// Nor does the receiver become one: a literal that can be neither a Callable
+	// nor a signal name is proof this is not a signal connection, so the call
+	// stays an ordinary call.
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeSubscribes && fact.Target != "inherited_signal" {
+			t.Fatalf("a connect(url) must not subscribe to anything: %#v", fact)
+		}
+	}
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "WebSocketPeer.connect")
+	// A signal a base class declares is emitted and connected by its bare name.
+	// It cannot be proved here, so it stays an unresolved event that the graph
+	// resolves by name only when exactly one declaration owns it.
+	assertHasFactWithProperty(t, result.Facts, graph.EdgePublishes, "inherited_signal", "form", "emit")
+	assertHasFactWithProperty(t, result.Facts, graph.EdgeSubscribes, "inherited_signal", "handler",
+		"Socket._on_inherited")
+}

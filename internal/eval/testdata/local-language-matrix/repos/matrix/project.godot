@@ -10,3 +10,6 @@ Disabled="res://scenes/enemy.tscn"
 
 [input]
 jump={"deadzone": 0.5, "events": []}
+
+[global_group]
+enemies="Hostile actors"

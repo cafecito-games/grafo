@@ -530,13 +530,18 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 			return
 		}
 	}
-	if strings.HasPrefix(callee, "Input.") || strings.HasPrefix(callee, "InputMap.") {
-		for _, argument := range node.Arguments {
-			if action, ok := literalString(argument); ok && action != "" {
-				e.b.AddFact(fromID, graph.EdgeReadsConfig, "", "input/"+action, graph.KindConfigKey, loc,
-					map[string]string{"source": "project.godot"})
-			}
+	// A bare call that resolved to a method this script declares is that method,
+	// never an engine API that happens to share its name.
+	if !e.localCall(node.Callee, current) {
+		// A bare call is a call on this object; a member call records the
+		// receiver expression as evidence, and an expression that names nothing
+		// knowable records no receiver rather than an empty one.
+		receiver := "self"
+		if member, ok := node.Callee.(*gdast.MemberExpression); ok {
+			receiver = e.resolveExpression(member.Object, current)
 		}
+		e.addInputActionUses(node, fromID, method, receiver)
+		e.addGroupOperations(node, fromID, method, receiver)
 	}
 	if isNodeLookup(method) && len(node.Arguments) > 0 {
 		if nodePath, ok := literalString(node.Arguments[0]); ok {
@@ -549,19 +554,13 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 	}
 	if method == "emit_signal" && len(node.Arguments) > 0 {
 		if name, ok := literalString(node.Arguments[0]); ok {
-			e.addSignalFact(fromID, graph.EdgePublishes, name, current, loc)
+			e.addSignalFact(fromID, graph.EdgePublishes, "emit", name, current, loc, nil)
 			return
 		}
 	}
-	if member, ok := node.Callee.(*gdast.MemberExpression); ok {
-		signalName := e.resolveExpression(member.Object, current)
-		switch method {
-		case "emit":
-			if e.addSignalFact(fromID, graph.EdgePublishes, signalName, current, loc) {
-				return
-			}
-		case "connect":
-			if e.addSignalFact(fromID, graph.EdgeSubscribes, signalName, current, loc) {
+	if _, ok := signalOperations[method]; ok {
+		if member, ok := node.Callee.(*gdast.MemberExpression); ok {
+			if e.addSignalOperation(node, member, fromID, method, current, loc) {
 				return
 			}
 		}
@@ -652,21 +651,158 @@ func nodeReferenceTarget(nodePath string) string {
 	return nodePath
 }
 
-func (e *extractor) addSignalFact(fromID string, kind graph.EdgeKind, name string, current scope, loc graph.Location) bool {
+// signalOperation is how one signal-routing call form is recorded. Only connect
+// establishes a route, so it is the only form that subscribes; a disconnect tears
+// a route down and is_connected merely asks about one, and treating either as a
+// subscription would make a signal look consumed by a script that removes or
+// inspects its own wiring. Both stay references carrying their form, which is
+// what the interactions report reads them back by.
+type signalOperation struct {
+	kind graph.EdgeKind
+	form string
+	// handler is the index of the Callable argument in the Godot 4 form, or -1
+	// when the form routes nothing.
+	handler int
+	// callable marks a form whose first argument is a Callable in Godot 4, or a
+	// signal name in the older Object form. emit is the exception: its first
+	// argument is the signal's own payload, which can be any literal.
+	callable bool
+}
+
+var signalOperations = map[string]signalOperation{
+	"emit":         {kind: graph.EdgePublishes, form: "emit", handler: -1},
+	"connect":      {kind: graph.EdgeSubscribes, form: "connect", handler: 0, callable: true},
+	"disconnect":   {kind: graph.EdgeReferences, form: "signal_disconnect", handler: -1, callable: true},
+	"is_connected": {kind: graph.EdgeReferences, form: "signal_connection_test", handler: -1, callable: true},
+}
+
+// addSignalOperation records one signal-routing call. Godot 4 spells these on the
+// signal itself (pressed.connect(handler)), so the member's object names the
+// signal; the older Object form passes the signal name as a literal first
+// argument, which is the only reading available when that argument is a string,
+// and shifts the Callable one place to the right. Anything else - a computed name,
+// a Callable built from another object, a lambda - resolves nothing rather than a
+// guess, so the call falls through to the ordinary call edge.
+func (e *extractor) addSignalOperation(node *gdast.CallExpression, member *gdast.MemberExpression, fromID, method string, current scope, loc graph.Location) bool {
+	operation := signalOperations[method]
+	name, handler := "", operation.handler
+	if operation.callable && len(node.Arguments) > 0 {
+		// Godot 4 passes a Callable here and the older Object form passes the
+		// signal's name, so a literal argument decides between the Object form
+		// and "this is not a signal connection at all". A project is free to
+		// declare a connect(url) of its own, and reading its argument as a
+		// signal name would name an event after a URL.
+		if literal, ok := node.Arguments[0].(*gdast.Literal); ok {
+			text, isString := literalString(literal)
+			if !isString || !isIdentifier(text) {
+				return false
+			}
+			name, handler = text, operation.handler+1
+		}
+	}
 	if name == "" {
+		// A bare identifier that names no signal this script declares may still
+		// be one the script's base class declares, which is resolved by name
+		// against the whole graph rather than guessed here.
+		name = e.resolveExpression(member.Object, current)
+	}
+	// The handler is recorded on the routing fact itself as well as on the
+	// signal declaration. Most connects name a signal another file declares, so
+	// the parser cannot reach that declaration to hang a handled_by edge on it;
+	// the property keeps the route's destination visible in exactly those cases
+	// without anyone guessing which declaration the name belongs to.
+	extra := map[string]string{}
+	if operation.form == "connect" && handler >= 0 {
+		if method := e.handlerMethod(node.Arguments, handler, current); method != "" {
+			extra["handler"] = method
+		}
+	}
+	ref, emitted := e.addSignalFact(fromID, operation.kind, operation.form, name, current, loc, extra)
+	if !emitted {
 		return false
+	}
+	if operation.form == "connect" && handler >= 0 {
+		e.addSignalHandler(ref, node.Arguments, handler, current, loc)
+	}
+	return true
+}
+
+// isIdentifier reports whether a literal could be a GDScript signal name.
+func isIdentifier(value string) bool {
+	if value == "" {
+		return false
+	}
+	for index, character := range value {
+		switch {
+		case character == '_':
+		case unicode.IsLetter(character):
+		case unicode.IsDigit(character) && index > 0:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// handlerMethod returns the qualified name of the method a connect routes to,
+// or "" when the argument proves nothing. Only a bare identifier that resolves
+// to a method this script declares qualifies: a Callable bound to another
+// object, a lambda, or a computed name names no method that is knowable here.
+func (e *extractor) handlerMethod(arguments []gdast.Expression, index int, current scope) string {
+	if index >= len(arguments) {
+		return ""
+	}
+	identifier, ok := arguments[index].(*gdast.Identifier)
+	if !ok {
+		return ""
+	}
+	return e.methods[qualify(current.receiver, identifier.Name)]
+}
+
+// addSignalHandler names the method a literal connect routes a signal to. Only a
+// bare identifier that resolves to a method this script declares is accepted: a
+// Callable bound to another object, a lambda, or a computed name proves nothing
+// about which method the engine will run, so nothing is recorded. An unresolved
+// signal records no handler either, because there is no declaration to hang the
+// route on and inventing one would attach the handler to a name rather than to a
+// signal.
+func (e *extractor) addSignalHandler(ref signalRef, arguments []gdast.Expression, index int, current scope, loc graph.Location) {
+	if ref.id == "" {
+		return
+	}
+	method := e.handlerMethod(arguments, index, current)
+	if method == "" {
+		return
+	}
+	e.b.AddFact(ref.id, graph.EdgeHandledBy, "", method, graph.KindMethod, loc,
+		map[string]string{"form": "connect", "signal": ref.qualified, "receiver": current.receiver})
+}
+
+// addSignalFact records one signal fact and reports the declaration it resolved
+// to. A returned ref with an empty id means the name matched no declaration in
+// this script and the fact names it as an unresolved event, which is what keeps a
+// signal whose owner is unknown visible without guessing an owner.
+func (e *extractor) addSignalFact(fromID string, kind graph.EdgeKind, form, name string, current scope, loc graph.Location, extra map[string]string) (signalRef, bool) {
+	if name == "" {
+		return signalRef{}, false
 	}
 	name = strings.TrimPrefix(name, current.receiver+".")
 	ref, ok := current.signals[name]
 	if !ok {
 		ref, ok = current.signals[qualify(current.receiver, name)]
 	}
-	if !ok {
-		e.b.AddFact(fromID, kind, "", name, graph.KindEvent, loc, map[string]string{"signal": name})
-		return true
+	properties := map[string]string{"form": form}
+	for key, value := range extra {
+		properties[key] = value
 	}
-	e.b.AddFact(fromID, kind, ref.id, "", graph.KindEvent, loc, map[string]string{"signal": ref.qualified})
-	return true
+	if !ok {
+		properties["signal"] = name
+		e.b.AddFact(fromID, kind, "", name, graph.KindEvent, loc, properties)
+		return signalRef{}, true
+	}
+	properties["signal"] = ref.qualified
+	e.b.AddFact(fromID, kind, ref.id, "", graph.KindEvent, loc, properties)
+	return ref, true
 }
 
 func (e *extractor) referencedVariables(expression gdast.Expression, current scope) []string {
@@ -896,4 +1032,199 @@ func isBuiltinType(value string) bool {
 	default:
 		return false
 	}
+}
+
+// inputActionAPI is one Input, InputMap, or InputEvent entry point that names an
+// input action in its arguments.
+//
+// The table is exact method names rather than a name pattern, because a project
+// is free to declare is_action_bar_visible() on a control of its own and a
+// pattern would read its argument as an action name. Arguments lists every
+// position that holds an action name, which is how Input.get_axis and
+// Input.get_vector contribute more than one.
+type inputActionAPI struct {
+	form      string
+	arguments []int
+	// requireInputReceiver restricts the entry point to a call on Input or
+	// InputMap itself. It is set for the names a project could plausibly
+	// declare on a type of its own (get_axis, has_action, add_action); the
+	// engine-specific names are allowed on any receiver because they also
+	// appear on InputEvent instances, where the receiver's type is not knowable
+	// here.
+	requireInputReceiver bool
+}
+
+var inputActionAPIs = map[string]inputActionAPI{
+	"is_action_pressed":        {form: "query", arguments: []int{0}},
+	"is_action_just_pressed":   {form: "query", arguments: []int{0}},
+	"is_action_released":       {form: "query", arguments: []int{0}},
+	"is_action_just_released":  {form: "query", arguments: []int{0}},
+	"get_action_strength":      {form: "query", arguments: []int{0}},
+	"get_action_raw_strength":  {form: "query", arguments: []int{0}},
+	"action_press":             {form: "press", arguments: []int{0}},
+	"action_release":           {form: "release", arguments: []int{0}},
+	"action_get_deadzone":      {form: "configure", arguments: []int{0}},
+	"action_set_deadzone":      {form: "configure", arguments: []int{0}},
+	"action_get_events":        {form: "configure", arguments: []int{0}},
+	"action_add_event":         {form: "configure", arguments: []int{0}},
+	"action_erase_event":       {form: "configure", arguments: []int{0}},
+	"action_erase_events":      {form: "configure", arguments: []int{0}},
+	"action_has_event":         {form: "configure", arguments: []int{0}},
+	"event_is_action":          {form: "query", arguments: []int{1}},
+	"event_is_action_pressed":  {form: "query", arguments: []int{1}},
+	"event_is_action_released": {form: "query", arguments: []int{1}},
+	"is_action":                {form: "query", arguments: []int{0}, requireInputReceiver: true},
+	"has_action":               {form: "query", arguments: []int{0}, requireInputReceiver: true},
+	"add_action":               {form: "declare", arguments: []int{0}, requireInputReceiver: true},
+	"erase_action":             {form: "remove", arguments: []int{0}, requireInputReceiver: true},
+	"get_axis":                 {form: "query", arguments: []int{0, 1}, requireInputReceiver: true},
+	"get_vector":               {form: "query", arguments: []int{0, 1, 2, 3}, requireInputReceiver: true},
+}
+
+// groupAPI is one Node or SceneTree entry point that names a node group.
+//
+// Membership and use are separate relations because they answer different
+// questions and point in different directions of meaning: add_to_group and
+// remove_from_group both name a membership between a node and a group, while a
+// lookup or a dispatch reads the group's members without asserting that the
+// caller is one of them. is_in_group is deliberately a use: asking whether a
+// node is in a group is not evidence that it is.
+type groupAPI struct {
+	kind graph.EdgeKind
+	form string
+	// group is the index of the group-name argument.
+	group int
+	// method is the index of the dispatched method name, or -1 when the form
+	// dispatches nothing. The method is recorded as evidence only: which
+	// object's method runs is decided by the group's membership at runtime, so
+	// no handler is ever resolved from it.
+	method int
+}
+
+var groupAPIs = map[string]groupAPI{
+	"add_to_group":            {kind: graph.EdgeInGroup, form: "add", group: 0, method: -1},
+	"remove_from_group":       {kind: graph.EdgeInGroup, form: "remove", group: 0, method: -1},
+	"is_in_group":             {kind: graph.EdgeUsesGroup, form: "membership_test", group: 0, method: -1},
+	"has_group":               {kind: graph.EdgeUsesGroup, form: "lookup", group: 0, method: -1},
+	"get_nodes_in_group":      {kind: graph.EdgeUsesGroup, form: "lookup", group: 0, method: -1},
+	"get_first_node_in_group": {kind: graph.EdgeUsesGroup, form: "lookup", group: 0, method: -1},
+	"get_node_count_in_group": {kind: graph.EdgeUsesGroup, form: "lookup", group: 0, method: -1},
+	"call_group":              {kind: graph.EdgeUsesGroup, form: "call", group: 0, method: 1},
+	"call_group_flags":        {kind: graph.EdgeUsesGroup, form: "call", group: 1, method: 2},
+	"notify_group":            {kind: graph.EdgeUsesGroup, form: "notify", group: 0, method: -1},
+	"notify_group_flags":      {kind: graph.EdgeUsesGroup, form: "notify", group: 1, method: -1},
+}
+
+// addInputActionUses links a literal action name to the project-scoped action it
+// names, and keeps the generic configuration read the config catalogs already
+// had. A computed action name produces neither: the name is not knowable here,
+// and matching it by partial text would attach the use to whichever declaration
+// happened to share a substring.
+//
+// The configuration read is emitted even when the owning project could not be
+// determined, because "input/<action>" is a repository-wide configuration key
+// rather than a project-scoped identity. The typed action edge is not, so it is
+// withheld until the owning project is known.
+func (e *extractor) addInputActionUses(node *gdast.CallExpression, fromID, method, receiver string) {
+	api, ok := inputActionAPIs[method]
+	if !ok {
+		return
+	}
+	if api.requireInputReceiver && receiver != "Input" && receiver != "InputMap" {
+		return
+	}
+	for _, index := range api.arguments {
+		if index >= len(node.Arguments) {
+			continue
+		}
+		argument := node.Arguments[index]
+		action, ok := literalString(argument)
+		if !ok || action == "" {
+			continue
+		}
+		loc := e.location(argument)
+		e.b.AddFact(fromID, graph.EdgeReadsConfig, "", godotid.InputSection+"/"+action,
+			graph.KindConfigKey, loc, map[string]string{"source": godotid.ProjectFileName, "action": action})
+		target := e.inputAction(action)
+		if target == "" {
+			continue
+		}
+		properties := map[string]string{"form": api.form, "action": action, "call": method}
+		if receiver != "" {
+			properties["receiver"] = receiver
+		}
+		e.b.AddFact(fromID, graph.EdgeUsesInputAction, "", target, graph.KindGodotInputAction, loc,
+			properties)
+	}
+}
+
+// addGroupOperations links a literal group name to the project-scoped group it
+// names. A computed group name produces nothing, and a dispatch keeps its method
+// as evidence without ever resolving a handler: which object's method runs is
+// decided by the group's runtime membership, so naming one would be a guess even
+// when the method name is a literal.
+func (e *extractor) addGroupOperations(node *gdast.CallExpression, fromID, method, receiver string) {
+	api, ok := groupAPIs[method]
+	if !ok || api.group >= len(node.Arguments) {
+		return
+	}
+	argument := node.Arguments[api.group]
+	group, ok := literalString(argument)
+	if !ok || group == "" {
+		return
+	}
+	target := e.nodeGroup(group)
+	if target == "" {
+		return
+	}
+	properties := map[string]string{"form": api.form, "group": group, "call": method}
+	if receiver != "" {
+		properties["receiver"] = receiver
+	}
+	if api.method >= 0 {
+		if api.method < len(node.Arguments) {
+			if dispatched, ok := literalString(node.Arguments[api.method]); ok && dispatched != "" {
+				properties["method"] = dispatched
+			} else {
+				properties["method_dynamic"] = "true"
+			}
+		} else {
+			properties["method_dynamic"] = "true"
+		}
+	}
+	e.b.AddFact(fromID, api.kind, "", target, graph.KindGodotNodeGroup, e.location(argument), properties)
+}
+
+// localCall reports whether a bare call resolved to a method this script
+// declares. Such a call is that method and never an engine entry point that
+// happens to share its name, which is what keeps a project's own
+// add_to_group() or is_action_pressed() out of the Godot interaction vocabulary.
+func (e *extractor) localCall(callee gdast.Expression, current scope) bool {
+	identifier, ok := callee.(*gdast.Identifier)
+	if !ok {
+		return false
+	}
+	return e.methods[qualify(current.receiver, identifier.Name)] != ""
+}
+
+// inputAction returns the identity an action name has inside the Godot project
+// that owns this script, or "" when that project could not be read. Action names
+// are a per-project namespace, so an unscoped identity would merge the actions of
+// every project in a monorepo; an unknown project therefore resolves nothing
+// rather than resolving against an assumed root.
+func (e *extractor) inputAction(name string) string {
+	if !e.projectKnown || strings.TrimSpace(name) == "" {
+		return ""
+	}
+	return e.project.InputActionQualifiedName(name)
+}
+
+// nodeGroup returns the identity a group name has inside the Godot project that
+// owns this script, refusing an unknown project for the same reason inputAction
+// does.
+func (e *extractor) nodeGroup(name string) string {
+	if !e.projectKnown || strings.TrimSpace(name) == "" {
+		return ""
+	}
+	return e.project.NodeGroupQualifiedName(name)
 }

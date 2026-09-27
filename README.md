@@ -230,6 +230,47 @@ can prove it is declared exactly once, so while any candidate file is unreadable
 the reference stays unresolved and the diagnostic names the file that blocked the
 proof.
 
+### Godot gameplay interactions
+
+`grafo godot-interactions` (MCP `get_godot_interactions`) answers how a Godot
+project is wired at runtime: which input actions a script reads, which node
+groups a scene node or script joins, leaves, inspects, and dispatches to, and
+which signal routes a symbol takes part in - whether a scene declared the route
+or a script established it.
+
+```sh
+grafo godot-interactions "scenes/arena"
+grafo godot-interactions "godot:node_group:client/project.godot:enemies" --direction incoming
+grafo godot-interactions "scripts/player.poll" --filter action,group --json
+```
+
+Input actions and node groups are first-class node kinds
+(`godot_input_action`, `godot_node_group`) linked by `uses_input_action`,
+`in_group`, and `uses_group` edges; signals stay `event` nodes with the
+`publishes`, `subscribes`, and `handled_by` edges every other producer uses, so
+generic event and configuration queries keep working. The operation behind an
+edge is a `form` property (`declared`, `add`, `remove`, `membership_test`,
+`lookup`, `call`, `notify`, `query`, `press`, `release`, `configure`, `emit`,
+`connect`) rather than another edge kind. `is_in_group` is a lookup and never
+membership: asking whether a node is in a group is not evidence that it is.
+
+Identity is scoped to the declaring project
+(`godot:input_action:<project.godot path>:<name>`,
+`godot:node_group:<project.godot path>:<name>`), so a scene's
+`groups=["enemies"]`, a script's `add_to_group("enemies")`, and the project's
+`[global_group]` declaration converge on one node. Godot's declaration sites are
+narrow and Grafo does not widen them: an action comes from an `[input]` entry and
+a group from a `[global_group]` entry, so a group nothing declares stays an
+unresolved node and the report counts it - missing wiring is visible rather than
+absent. Only non-secret declaration metadata is stored; device bindings are not
+modelled.
+
+Script resolution is literal-only. A computed action or group name produces no
+edge at all, a group dispatch keeps its method name as evidence without ever
+resolving a handler, and a signal name that several declarations could own stays
+unresolved rather than fanning out to all of them. `disconnect` and
+`is_connected` are recorded as routing evidence, not as subscriptions.
+
 ### Bounded source search
 
 `grafo search` (MCP `search_source`) answers content questions the graph does

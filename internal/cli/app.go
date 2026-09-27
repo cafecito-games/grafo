@@ -95,6 +95,8 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		runErr = a.impact(ctx, parsed)
 	case "godot-composition", "composition":
 		runErr = a.godotComposition(ctx, parsed)
+	case "godot-interactions", "interactions":
+		runErr = a.godotInteractions(ctx, parsed)
 	case "search":
 		runErr = a.search(ctx, parsed)
 	case "path":
@@ -890,6 +892,131 @@ func (a *App) printGodotComposition(report query.GodotComposition) {
 	}
 }
 
+func (a *App) godotInteractions(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) != 1 {
+		return fmt.Errorf("usage: grafo %s <scene-node-script-action-group-or-signal> "+
+			"[--filter action,group,signal] [--direction both] [--kind godot_scene] "+
+			"[--depth 8] [--limit 1000]", args.command)
+	}
+	depth, err := intOption(args, "depth", 8)
+	if err != nil {
+		return err
+	}
+	limit, err := intOption(args, "limit", 1000)
+	if err != nil {
+		return err
+	}
+	kind, err := nodeKindOption(args)
+	if err != nil {
+		return err
+	}
+	direction, err := directionOption(args)
+	if err != nil {
+		return err
+	}
+	categories, err := interactionCategories(args)
+	if err != nil {
+		return err
+	}
+	repository, _, closeRepository, err := openRead(ctx, args)
+	if err != nil {
+		return err
+	}
+	defer closeRepository()
+	report, err := query.NewService(repository).GodotInteractions(ctx, args.positionals[0],
+		query.GodotInteractionsOptions{Depth: depth, Limit: limit, Kind: kind,
+			Direction: direction, Categories: categories})
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, report)
+	}
+	a.printGodotInteractions(report)
+	return nil
+}
+
+func (a *App) printGodotInteractions(report query.GodotInteractions) {
+	fmt.Fprintf(a.stdout, "%s [%s] %s\n", report.Root.QualifiedName, report.Root.Kind,
+		formatLocation(report.Root.Location))
+	if len(report.SceneNodes) > 0 {
+		fmt.Fprintf(a.stdout, "\nscene nodes (%d)\n", len(report.SceneNodes))
+	}
+	for _, group := range []struct {
+		label        string
+		interactions []query.GodotInteraction
+	}{
+		{label: "outbound", interactions: report.Outbound},
+		{label: "inbound", interactions: report.Inbound},
+	} {
+		if len(group.interactions) == 0 {
+			continue
+		}
+		fmt.Fprintf(a.stdout, "\n%s (%d)\n", group.label, len(group.interactions))
+		for _, interaction := range group.interactions {
+			via := ""
+			if interaction.Via != nil {
+				via = " via " + interaction.Via.QualifiedName
+			}
+			marker := ""
+			if interaction.Form != "" {
+				marker += " · " + interaction.Form
+			}
+			if method := interaction.Edge.Properties["method"]; method != "" {
+				marker += " · method " + method
+			}
+			if interaction.Edge.Properties["method_dynamic"] == "true" {
+				marker += " · dynamic method"
+			}
+			if interaction.Federated {
+				marker += " · federated"
+			}
+			if interaction.Node.External {
+				marker += " · unresolved"
+			}
+			fmt.Fprintf(a.stdout, "  %s %s [%s]%s%s\n", interaction.Category,
+				interaction.Node.QualifiedName, interaction.Node.Kind, via, marker)
+		}
+	}
+	if report.Unresolved > 0 {
+		fmt.Fprintf(a.stdout, "\nunresolved interactions: %d\n", report.Unresolved)
+	}
+	if report.Truncated {
+		fmt.Fprintln(a.stdout, "\ntruncated")
+	}
+}
+
+// directionOption reads --direction strictly. A misspelled direction is an error
+// rather than a silent fall back to "both", which would answer a question the
+// caller did not ask.
+func directionOption(args parsedArguments) (query.Direction, error) {
+	switch value := strings.TrimSpace(args.values["direction"]); value {
+	case "":
+		return query.Both, nil
+	case string(query.Outgoing), string(query.Incoming), string(query.Both):
+		return query.Direction(value), nil
+	default:
+		return "", fmt.Errorf("--direction must be one of %s, %s, %s",
+			query.Outgoing, query.Incoming, query.Both)
+	}
+}
+
+// interactionCategories reads the --filter list. An unknown category is an error
+// rather than a filter that can never match.
+func interactionCategories(args parsedArguments) ([]query.GodotInteractionCategory, error) {
+	var categories []query.GodotInteractionCategory
+	for _, value := range splitList(args.values["filter"]) {
+		category, err := query.ParseGodotInteractionCategory(value)
+		if err != nil {
+			return nil, err
+		}
+		if category != "" {
+			categories = append(categories, category)
+		}
+	}
+	return categories, nil
+}
+
 func (a *App) printImpactReport(report query.ImpactReport) {
 	fmt.Fprintf(a.stdout, "%s [%s]\n", report.Root.QualifiedName, report.Root.Kind)
 	for _, section := range []query.ImpactSection{report.Upstream, report.Downstream} {
@@ -1418,6 +1545,7 @@ var valueOptions = map[string]bool{
 	"repo-name": true, "max-matches": true, "max-matches-per-file": true,
 	"max-matches-per-pattern": true, "client": true, "hook": true,
 	"kind": true, "name": true, "state-dir": true, "lines": true, "concurrency": true,
+	"filter": true,
 }
 
 func parseArguments(arguments []string) (parsedArguments, error) {
@@ -1562,6 +1690,9 @@ Usage:
                               [--source] [--context-lines 2] [--max-lines 200] [--source-limit 10]
   grafo godot-composition <scene-resource-script-or-autoload> [--kind godot_scene]
                           [--depth 8] [--limit 1000]
+  grafo godot-interactions <scene-node-script-action-group-or-signal>
+                          [--filter action,group,signal] [--direction both]
+                          [--kind godot_scene] [--depth 8] [--limit 1000]
   grafo search <pattern>... [--regex] [--case-sensitive] [--path-prefix dir,...]
                             [--language go,...] [--repo-name name,...] [--context-lines 0]
                             [--max-matches 500] [--max-matches-per-file 50]
@@ -1612,6 +1743,14 @@ successfully, so a client hook can never block a tool call.
 scene node, resource, script, or autoload: outbound and inbound scene
 instances, attached scripts, and autoload availability, each with the resource
 evidence that produced it.
+
+'grafo godot-interactions' reports Godot gameplay wiring for one scene, scene
+node, script symbol, input action, node group, or signal: the input actions it
+uses, the node groups it joins, inspects, and dispatches to, and the signal
+routes it takes part in, whether a scene declared them or a script established
+them. --filter narrows to action, group, or signal and --direction to one side;
+an unresolved action, group, or signal stays in the report and is counted, so
+missing wiring is visible rather than absent.
 
 'grafo impact' reports both directions: what depends on the symbol and what it
 depends on, plus impacted files, cross-repository hops, and config, data, and

@@ -124,6 +124,11 @@
       {
         "repo": "matrix",
         "kind": "config_key",
+        "qualified_name": "config:project.godot:global_group/enemies"
+      },
+      {
+        "repo": "matrix",
+        "kind": "config_key",
         "qualified_name": "config:project.godot:input/jump"
       },
       {
@@ -188,7 +193,37 @@
       {
         "repo": "matrix",
         "kind": "external",
+        "qualified_name": "Input.is_action_just_pressed",
+        "external": true
+      },
+      {
+        "repo": "matrix",
+        "kind": "external",
         "qualified_name": "SwiftWorker",
+        "external": true
+      },
+      {
+        "repo": "matrix",
+        "kind": "external",
+        "qualified_name": "add_to_group",
+        "external": true
+      },
+      {
+        "repo": "matrix",
+        "kind": "external",
+        "qualified_name": "call_group",
+        "external": true
+      },
+      {
+        "repo": "matrix",
+        "kind": "external",
+        "qualified_name": "get_nodes_in_group",
+        "external": true
+      },
+      {
+        "repo": "matrix",
+        "kind": "external",
+        "qualified_name": "get_tree",
         "external": true
       },
       {
@@ -427,6 +462,22 @@
         "repo": "matrix",
         "kind": "godot_autoload",
         "qualified_name": "godot:autoload:project.godot:Game"
+      },
+      {
+        "repo": "matrix",
+        "kind": "godot_input_action",
+        "qualified_name": "godot:input_action:project.godot:jump"
+      },
+      {
+        "repo": "matrix",
+        "kind": "godot_node_group",
+        "qualified_name": "godot:node_group:project.godot:enemies"
+      },
+      {
+        "repo": "matrix",
+        "kind": "godot_node_group",
+        "qualified_name": "godot:node_group:project.godot:undeclared_group",
+        "external": true
       },
       {
         "repo": "matrix",
@@ -771,7 +822,7 @@
         },
         "source": {
           "path": "scripts/player.gd",
-          "line": 13,
+          "line": 19,
           "column": 1
         }
       },
@@ -807,7 +858,7 @@
         },
         "source": {
           "path": "scripts/player.gd",
-          "line": 16,
+          "line": 22,
           "column": 1
         }
       },
@@ -1028,6 +1079,65 @@
       {
         "from": {
           "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:project.godot:global_group/enemies"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_node_group",
+          "qualified_name": "godot:node_group:project.godot:enemies"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 15,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:project.godot:input/jump"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_input_action",
+          "qualified_name": "godot:input_action:project.godot:jump"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 12,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "event",
+          "qualified_name": "Player.finished"
+        },
+        "relation": "handled_by",
+        "to": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.on_finished"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 7,
+          "column": 2
+        },
+        "properties": {
+          "form": "connect",
+          "receiver": "Player",
+          "signal": "Player.finished"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
           "kind": "event",
           "qualified_name": "scenes/main:Main/Button.pressed"
         },
@@ -1044,7 +1154,10 @@
           "column": 1
         },
         "properties": {
-          "receiver": "scenes/main:Main"
+          "declared": "true",
+          "form": "connect",
+          "receiver": "scenes/main:Main",
+          "signal": "scenes/main:Main/Button.pressed"
         }
       },
       {
@@ -2603,6 +2716,55 @@
         "from": {
           "repo": "matrix",
           "kind": "godot_scene_node",
+          "qualified_name": "scenes/main:Main/Button"
+        },
+        "relation": "in_group",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_node_group",
+          "qualified_name": "godot:node_group:project.godot:enemies"
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 9,
+          "column": 54
+        },
+        "properties": {
+          "form": "declared",
+          "group": "enemies",
+          "node_path": "Main/Button",
+          "scene": "scenes/main"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene_node",
+          "qualified_name": "scenes/main:Main/Button"
+        },
+        "relation": "in_group",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_node_group",
+          "qualified_name": "godot:node_group:project.godot:undeclared_group",
+          "external": true
+        },
+        "source": {
+          "path": "scenes/main.tscn",
+          "line": 9,
+          "column": 65
+        },
+        "properties": {
+          "form": "declared",
+          "group": "undeclared_group",
+          "node_path": "Main/Button",
+          "scene": "scenes/main"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "godot_scene_node",
           "qualified_name": "scenes/main:Main/Enemy"
         },
         "relation": "instantiates",
@@ -2721,6 +2883,8 @@
           "column": 1
         },
         "properties": {
+          "declared": "true",
+          "form": "connect",
           "method": "on_pressed",
           "signal": "pressed"
         }
@@ -2776,7 +2940,121 @@
         },
         "source": {
           "path": "scripts/player.gd",
+          "line": 16,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "matrix",
+          "kind": "external",
+          "qualified_name": "Input.is_action_just_pressed",
+          "external": true
+        },
+        "source": {
+          "path": "scripts/player.gd",
           "line": 10,
+          "column": 5
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "matrix",
+          "kind": "external",
+          "qualified_name": "add_to_group",
+          "external": true
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 11,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "matrix",
+          "kind": "external",
+          "qualified_name": "call_group",
+          "external": true
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 12,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "matrix",
+          "kind": "external",
+          "qualified_name": "get_nodes_in_group",
+          "external": true
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 13,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "matrix",
+          "kind": "external",
+          "qualified_name": "get_tree",
+          "external": true
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 12,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "matrix",
+          "kind": "external",
+          "qualified_name": "get_tree",
+          "external": true
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 13,
           "column": 2
         }
       },
@@ -2794,7 +3072,7 @@
         },
         "source": {
           "path": "scripts/player.gd",
-          "line": 9,
+          "line": 15,
           "column": 2
         }
       },
@@ -2812,8 +3090,32 @@
         },
         "source": {
           "path": "scripts/player.gd",
-          "line": 8,
+          "line": 14,
           "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "in_group",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_node_group",
+          "qualified_name": "godot:node_group:project.godot:enemies"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 11,
+          "column": 16
+        },
+        "properties": {
+          "call": "add_to_group",
+          "form": "add",
+          "group": "enemies",
+          "receiver": "self"
         }
       },
       {
@@ -2834,6 +3136,7 @@
           "column": 2
         },
         "properties": {
+          "form": "emit",
           "signal": "Player.finished"
         }
       },
@@ -2851,11 +3154,77 @@
         },
         "source": {
           "path": "scripts/player.gd",
-          "line": 11,
+          "line": 17,
           "column": 9
         },
         "properties": {
           "source": "project.godot"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "reads_config",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:project.godot:input/jump"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 10,
+          "column": 34
+        },
+        "properties": {
+          "action": "jump",
+          "source": "project.godot"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "matrix",
+          "kind": "event",
+          "qualified_name": "Player.finished"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 8,
+          "column": 5
+        },
+        "properties": {
+          "form": "signal_connection_test",
+          "signal": "Player.finished"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "matrix",
+          "kind": "event",
+          "qualified_name": "Player.finished"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 9,
+          "column": 3
+        },
+        "properties": {
+          "form": "signal_disconnect",
+          "signal": "Player.finished"
         }
       },
       {
@@ -2872,7 +3241,7 @@
         },
         "source": {
           "path": "scripts/player.gd",
-          "line": 9,
+          "line": 15,
           "column": 2
         },
         "properties": {
@@ -2900,7 +3269,81 @@
           "column": 2
         },
         "properties": {
+          "form": "connect",
+          "handler": "Player.on_finished",
           "signal": "Player.finished"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "uses_group",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_node_group",
+          "qualified_name": "godot:node_group:project.godot:enemies"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 12,
+          "column": 24
+        },
+        "properties": {
+          "call": "call_group",
+          "form": "call",
+          "group": "enemies",
+          "method": "done"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "uses_group",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_node_group",
+          "qualified_name": "godot:node_group:project.godot:undeclared_group",
+          "external": true
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 13,
+          "column": 32
+        },
+        "properties": {
+          "call": "get_nodes_in_group",
+          "form": "lookup",
+          "group": "undeclared_group"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "uses_input_action",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_input_action",
+          "qualified_name": "godot:input_action:project.godot:jump"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 10,
+          "column": 34
+        },
+        "properties": {
+          "action": "jump",
+          "call": "is_action_just_pressed",
+          "form": "query",
+          "receiver": "Input"
         }
       },
       {
@@ -2917,7 +3360,7 @@
         },
         "source": {
           "path": "scripts/player.gd",
-          "line": 16,
+          "line": 22,
           "column": 1
         }
       },
@@ -3176,6 +3619,42 @@
           "kind": "module",
           "qualified_name": "project"
         },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_input_action",
+          "qualified_name": "godot:input_action:project.godot:jump"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 12,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "project"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "godot_node_group",
+          "qualified_name": "godot:node_group:project.godot:enemies"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 15,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "project"
+        },
         "relation": "defines",
         "to": {
           "repo": "matrix",
@@ -3257,6 +3736,24 @@
         "source": {
           "path": "project.godot",
           "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "project"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "matrix",
+          "kind": "config_key",
+          "qualified_name": "config:project.godot:global_group/enemies"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 15,
           "column": 1
         }
       },
@@ -4219,7 +4716,7 @@
             },
             "source": {
               "path": "scripts/player.gd",
-              "line": 11,
+              "line": 17,
               "column": 9
             },
             "properties": {
@@ -4546,7 +5043,7 @@
             },
             "source": {
               "path": "scripts/player.gd",
-              "line": 9,
+              "line": 15,
               "column": 2
             },
             "properties": {
