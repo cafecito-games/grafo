@@ -216,6 +216,16 @@ func TestParserToleratesSemanticInputRaces(t *testing.T) {
 	}
 	assertHasFact(t, result.Facts, graph.EdgeCalls, "service.newName")
 	assertDiagnosticContains(t, result.Diagnostics, "resolution inputs changed during parsing")
+	newKey, err := parser.WorkspaceSemanticKey(context.Background(), parserapi.Input{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = parser.Parse(context.Background(), parserapi.Input{Root: root, Path: "caller.ts", Content: content,
+		Repository: "sample", RepoID: "repo:sample", SemanticKey: newKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertLacksDiagnostic(t, result.Diagnostics, "resolution inputs changed during parsing")
 }
 
 func TestParserSkipsTrackedResolutionInputsThatDisappear(t *testing.T) {
@@ -279,7 +289,7 @@ func TestParserExportsValuesAndAnonymousDefaultClass(t *testing.T) {
 	assertHasFact(t, result.Facts, graph.EdgeExports, "values.config@2")
 
 	writeFile(t, root, "base.ts", `export class Base {}`)
-	anonymous := []byte("import { Base } from \"./base\";\nexport default class extends Base { run() {} }")
+	anonymous := []byte("import { Base } from \"./base\";\nexport default\nclass extends Base { run() {} }")
 	writeFile(t, root, "anonymous.ts", string(anonymous))
 	result, err = typescriptparser.New().Parse(context.Background(), parserapi.Input{
 		Root: root, Path: "anonymous.ts", Content: anonymous, Repository: "sample", RepoID: "repo:sample",
@@ -287,8 +297,8 @@ func TestParserExportsValuesAndAnonymousDefaultClass(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertHasNode(t, result.Nodes, graph.KindClass, "anonymous@2")
-	assertHasFact(t, result.Facts, graph.EdgeExports, "anonymous.anonymous@2")
+	assertHasNode(t, result.Nodes, graph.KindClass, "anonymous@3")
+	assertHasFact(t, result.Facts, graph.EdgeExports, "anonymous.anonymous@3")
 	assertHasFact(t, result.Facts, graph.EdgeExtends, "base.Base")
 }
 
@@ -422,6 +432,15 @@ func assertDiagnosticContains(t *testing.T, diagnostics []graph.Diagnostic, subs
 		}
 	}
 	t.Fatalf("missing diagnostic containing %q; got %#v", substring, diagnostics)
+}
+
+func assertLacksDiagnostic(t *testing.T, diagnostics []graph.Diagnostic, substring string) {
+	t.Helper()
+	for _, diagnostic := range diagnostics {
+		if strings.Contains(diagnostic.Message, substring) {
+			t.Fatalf("unexpected diagnostic containing %q: %#v", substring, diagnostic)
+		}
+	}
 }
 
 func writeFile(t *testing.T, root, path, content string) {

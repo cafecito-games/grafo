@@ -179,11 +179,13 @@ func (p *Parser) catalogFor(ctx context.Context, input parserapi.Input) (*module
 	if err != nil {
 		return nil, err
 	}
-	if input.SemanticKey != "" && input.SemanticKey != catalog.digest {
-		catalog.diagnostics = append(catalog.diagnostics, "TypeScript resolution inputs changed during parsing; rebuilt the module catalog")
-	}
+	semanticKeyChanged := input.SemanticKey != "" && input.SemanticKey != catalog.digest
 	p.storeCatalog(input.Root, catalog)
-	return catalog.clone(), nil
+	result := catalog.clone()
+	if semanticKeyChanged {
+		result.diagnostics = append(result.diagnostics, "TypeScript resolution inputs changed during parsing; rebuilt the module catalog")
+	}
+	return result, nil
 }
 
 func (p *Parser) storeCatalog(root string, catalog *moduleCatalog) {

@@ -292,6 +292,9 @@ func collectModuleExports(info *moduleInfo, text string, lineOffset int) {
 		info.exports[name] = append(info.exports[name], exportRef{local: name, typeOnly: strings.TrimSpace(match[1]) != ""})
 	}
 	for _, match := range defaultDeclarationPattern.FindAllStringSubmatch(text, -1) {
+		if match[1] == "extends" || match[1] == "implements" {
+			continue
+		}
 		info.exports["default"] = append(info.exports["default"], exportRef{local: match[1]})
 	}
 	for _, match := range defaultIdentifierPattern.FindAllStringSubmatch(text, -1) {
@@ -300,7 +303,12 @@ func collectModuleExports(info *moduleInfo, text string, lineOffset int) {
 		}
 	}
 	for _, index := range defaultAnonymousPattern.FindAllStringIndex(text, -1) {
-		line := lineOffset + 1 + strings.Count(text[:index[0]], "\n")
+		matched := text[index[0]:index[1]]
+		declarationOffset := strings.LastIndex(matched, "class")
+		if functionOffset := strings.LastIndex(matched, "function"); functionOffset > declarationOffset {
+			declarationOffset = functionOffset
+		}
+		line := lineOffset + 1 + strings.Count(text[:index[0]+declarationOffset], "\n")
 		name := fmt.Sprintf("anonymous@%d", line)
 		info.exports["default"] = append(info.exports["default"], exportRef{local: name})
 	}
