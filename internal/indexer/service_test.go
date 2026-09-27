@@ -1169,6 +1169,7 @@ func wire() -> void:
 	_backend.sign_in_success.connect(_on_sign_in)
 	_backend.connect("sign_in_success", _on_legacy)
 	_unknown.connect("ready", _on_unknown)
+	_unknown.ready.connect(_on_unknown_member)
 
 func _on_sign_in() -> void:
 	pass
@@ -1177,6 +1178,9 @@ func _on_legacy() -> void:
 	pass
 
 func _on_unknown() -> void:
+	pass
+
+func _on_unknown_member() -> void:
 	pass
 `)
 	service, repository, project := openGodotIndex(t, ctx, root)
@@ -1187,6 +1191,7 @@ func _on_unknown() -> void:
 	assertCrossFileHandler(t, ctx, repository, "Kit._on_sign_in", "Backend.sign_in_success", false)
 	assertCrossFileHandler(t, ctx, repository, "Kit._on_legacy", "Backend.sign_in_success", false)
 	assertNoHandledBy(t, ctx, repository, "Kit._on_unknown")
+	assertNoHandledBy(t, ctx, repository, "Kit._on_unknown_member")
 	assertCleanRebuildMatches(t, ctx, root, repository)
 
 	write(t, filepath.Join(root, "duplicate.gd"), "class_name Backend extends Node\nsignal sign_in_success\n")
@@ -1196,6 +1201,7 @@ func _on_unknown() -> void:
 	assertCrossFileHandler(t, ctx, repository, "Kit._on_sign_in", "Backend.sign_in_success", true)
 	assertCrossFileHandler(t, ctx, repository, "Kit._on_legacy", "Backend.sign_in_success", true)
 	assertNoHandledBy(t, ctx, repository, "Kit._on_unknown")
+	assertNoHandledBy(t, ctx, repository, "Kit._on_unknown_member")
 	assertCleanRebuildMatches(t, ctx, root, repository)
 
 	if err := os.Remove(filepath.Join(root, "duplicate.gd")); err != nil {
@@ -1207,6 +1213,7 @@ func _on_unknown() -> void:
 	assertCrossFileHandler(t, ctx, repository, "Kit._on_sign_in", "Backend.sign_in_success", false)
 	assertCrossFileHandler(t, ctx, repository, "Kit._on_legacy", "Backend.sign_in_success", false)
 	assertNoHandledBy(t, ctx, repository, "Kit._on_unknown")
+	assertNoHandledBy(t, ctx, repository, "Kit._on_unknown_member")
 
 	write(t, filepath.Join(root, "backend.gd"), "class_name Backend extends Node\nsignal signed_in\n")
 	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
@@ -1215,6 +1222,7 @@ func _on_unknown() -> void:
 	assertCrossFileHandler(t, ctx, repository, "Kit._on_sign_in", "Backend.sign_in_success", true)
 	assertCrossFileHandler(t, ctx, repository, "Kit._on_legacy", "Backend.sign_in_success", true)
 	assertNoHandledBy(t, ctx, repository, "Kit._on_unknown")
+	assertNoHandledBy(t, ctx, repository, "Kit._on_unknown_member")
 	assertCleanRebuildMatches(t, ctx, root, repository)
 }
 

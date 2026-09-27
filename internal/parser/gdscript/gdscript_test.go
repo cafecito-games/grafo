@@ -688,6 +688,47 @@ func _on_ready() -> void:
 	}
 }
 
+func TestParserRequiresStructuralOwnerForMemberSignalHandlers(t *testing.T) {
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "scripts/kit.gd", Repository: "sample", RepoID: "repo:sample",
+		Content: []byte(`class_name Kit extends Node
+
+var _backend: Backend
+var _unknown
+
+func wire() -> void:
+	_backend.ready.connect(_on_typed)
+	_unknown.ready.connect(_on_unknown)
+
+func _on_typed() -> void:
+	pass
+
+func _on_unknown() -> void:
+	pass
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	typed := false
+	for _, fact := range result.Facts {
+		if fact.Kind != graph.EdgeHandledBy {
+			continue
+		}
+		if fact.Target == "Kit._on_unknown" {
+			t.Fatalf("untyped member receiver produced handled_by fact %#v", fact)
+		}
+		if fact.Target != "Kit._on_typed" || fact.Source != "Backend.ready" ||
+			fact.SourceKind != graph.KindEvent {
+			t.Fatalf("member signal handled_by fact = %#v", fact)
+		}
+		typed = true
+	}
+	if !typed {
+		t.Fatalf("typed member signal produced no handled_by fact: %#v", result.Facts)
+	}
+}
+
 // TestParserKeepsLocallyDeclaredActionMethodsOutOfTheVocabulary covers both
 // spellings of a call on this object. A script is free to declare its own
 // is_action_pressed, and neither the bare nor the self-qualified call to it

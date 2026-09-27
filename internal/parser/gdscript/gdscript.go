@@ -739,7 +739,7 @@ func (e *extractor) addSignalOperation(node *gdast.CallExpression, member *gdast
 		// be one the script's base class declares, which is resolved by name
 		// against the whole graph rather than guessed here.
 		name = e.resolveExpression(member.Object, current)
-		handlerSource = name
+		handlerSource = e.signalSource(member.Object, current)
 	}
 	// The handler is recorded on the routing fact itself as well as on the
 	// handled_by fact. Most connects name a signal another file declares, so the
@@ -791,6 +791,26 @@ func (e *extractor) signalOwner(expression gdast.Expression, current scope) stri
 		return e.resolveType(node.Name, current)
 	case *gdast.CallExpression:
 		return e.inferExpressionType(node, current)
+	default:
+		return ""
+	}
+}
+
+// signalSource keeps the bare form for a signal identifier on this object, but
+// accepts a member receiver only when its owner has structural type evidence.
+// The routing fact may still preserve an unknown expression as unresolved
+// evidence; handled_by is stricter because resolving its source would assert
+// which declaration invokes the handler.
+func (e *extractor) signalSource(expression gdast.Expression, current scope) string {
+	switch node := expression.(type) {
+	case *gdast.Identifier:
+		return node.Name
+	case *gdast.MemberExpression:
+		owner := e.signalOwner(node.Object, current)
+		if owner == "" {
+			return ""
+		}
+		return qualify(owner, node.Property)
 	default:
 		return ""
 	}
