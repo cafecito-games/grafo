@@ -487,6 +487,16 @@
       },
       {
         "repo": "matrix",
+        "kind": "module",
+        "qualified_name": "web/view"
+      },
+      {
+        "repo": "matrix",
+        "kind": "module",
+        "qualified_name": "web/worker"
+      },
+      {
+        "repo": "matrix",
         "kind": "parameter",
         "qualified_name": "Player.on_finished._value"
       },
@@ -730,6 +740,9 @@
           "path": "web/worker.ts",
           "line": 3,
           "column": 16
+        },
+        "properties": {
+          "source_name": "BaseWorker"
         }
       },
       {
@@ -748,6 +761,9 @@
           "path": "web/worker.ts",
           "line": 3,
           "column": 35
+        },
+        "properties": {
+          "source_name": "Runnable"
         }
       },
       {
@@ -1475,6 +1491,24 @@
         "from": {
           "repo": "matrix",
           "kind": "file",
+          "qualified_name": "web/view.tsx"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "web/view"
+        },
+        "source": {
+          "path": "web/view.tsx",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
           "qualified_name": "web/worker.ts"
         },
         "relation": "declares",
@@ -1518,6 +1552,24 @@
           "repo": "matrix",
           "kind": "interface",
           "qualified_name": "web/worker.Runnable"
+        },
+        "source": {
+          "path": "web/worker.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "file",
+          "qualified_name": "web/worker.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "web/worker"
         },
         "source": {
           "path": "web/worker.ts",
@@ -2250,6 +2302,28 @@
           "id": "1_player",
           "resource": "res://scripts/player.gd",
           "type": "Script"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "module",
+          "qualified_name": "web/view"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "matrix",
+          "kind": "function",
+          "qualified_name": "web/view.View"
+        },
+        "source": {
+          "path": "web/view.tsx",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "exported": "View",
+          "local": "View"
         }
       },
       {

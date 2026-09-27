@@ -43,6 +43,7 @@ const (
 	EdgeContains    EdgeKind = "contains"
 	EdgeDeclares    EdgeKind = "declares"
 	EdgeImports     EdgeKind = "imports"
+	EdgeExports     EdgeKind = "exports"
 	EdgeCalls       EdgeKind = "calls"
 	EdgeEmbeds      EdgeKind = "embeds"
 	EdgeExtends     EdgeKind = "extends"

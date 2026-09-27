@@ -397,15 +397,13 @@ func selectChangedPaths(paths []string, known map[string]graph.FileRecord, chang
 		if !ok {
 			continue
 		}
-		provider, ok := languageParser.(parserapi.SemanticDependencyProvider)
-		if !ok {
-			continue
-		}
-		for _, dependency := range provider.SemanticDependencies() {
-			dependency = filepath.ToSlash(strings.TrimPrefix(dependency, "./"))
-			if selected[dependency] {
-				selected[path] = true
-				break
+		if provider, ok := languageParser.(parserapi.SemanticDependencyProvider); ok {
+			for _, dependency := range provider.SemanticDependencies() {
+				dependency = filepath.ToSlash(strings.TrimPrefix(dependency, "./"))
+				if selected[dependency] {
+					selected[path] = true
+					break
+				}
 			}
 		}
 	}

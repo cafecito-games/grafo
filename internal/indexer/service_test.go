@@ -63,6 +63,74 @@ func TestServiceLinksDocumentationSectionsToCode(t *testing.T) {
 	t.Fatalf("documentation did not resolve to endpoint: %#v", flow.Nodes)
 }
 
+func TestServiceReconcilesTypeScriptBindingsAfterBarrelAndConfigEdits(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	runGit(t, root, "init", "-b", "main")
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "tsconfig.json"), `{"compilerOptions":{"baseUrl":".","paths":{"@app/*":["src/*"]}}}`)
+	write(t, filepath.Join(root, "src", "service.ts"), `export class Service { run() {} }`)
+	write(t, filepath.Join(root, "src", "other.ts"), `export class Other { run() {} }`)
+	write(t, filepath.Join(root, "src", "barrel.ts"), `export { Service } from "./service";`)
+	write(t, filepath.Join(root, "src", "app.ts"), `
+import { Service } from "@app/barrel";
+export function execute() { const service = new Service(); service.run(); }
+`)
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	service := indexer.NewService(repository, parserapi.NewRegistry(typescriptparser.New(), configparser.New()))
+	first, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Updated) != 5 {
+		t.Fatalf("unexpected first TypeScript report: %#v", first)
+	}
+	assertOutgoingTarget(t, ctx, repository, "src/app.execute", graph.EdgeCalls, "src/service.Service.run")
+
+	write(t, filepath.Join(root, "src", "barrel.ts"), `export { Other as Service } from "./other";`)
+	second, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Updated) != 4 { // all TypeScript modules, but not unchanged tsconfig JSON
+		t.Fatalf("barrel change did not invalidate the TypeScript catalog: %#v", second)
+	}
+	assertOutgoingTarget(t, ctx, repository, "src/app.execute", graph.EdgeCalls, "src/other.Other.run")
+	assertNoOutgoingTarget(t, ctx, repository, "src/app.execute", graph.EdgeCalls, "src/service.Service.run")
+
+	write(t, filepath.Join(root, "tsconfig.json"), `{"compilerOptions":{"baseUrl":".","paths":{"@app/*":["missing/*"]}}}`)
+	third, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(third.Updated) != 5 {
+		t.Fatalf("config change did not invalidate TypeScript modules: %#v", third)
+	}
+	assertNoOutgoingTarget(t, ctx, repository, "src/app.execute", graph.EdgeCalls, "src/other.Other.run")
+
+	clean, err := service.Run(ctx, project, indexer.Options{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(clean.Updated) != 5 {
+		t.Fatalf("forced clean rebuild did not converge: %#v", clean)
+	}
+	assertNoOutgoingTarget(t, ctx, repository, "src/app.execute", graph.EdgeCalls, "src/other.Other.run")
+}
+
 func TestServiceIndexesOnlyChangedFiles(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -422,4 +490,55 @@ func assertReached(t *testing.T, traversal query.Traversal, qualified string) {
 		}
 	}
 	t.Fatalf("did not reach %q: %#v", qualified, traversal)
+}
+
+func assertOutgoingTarget(t *testing.T, ctx context.Context, repository graph.Repository, from string, kind graph.EdgeKind, target string) {
+	t.Helper()
+	service := query.NewService(repository)
+	node, err := service.Resolve(ctx, from)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edges, err := repository.EdgesFrom(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, edge := range edges {
+		if edge.Kind != kind {
+			continue
+		}
+		to, err := repository.Node(ctx, edge.ToID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if to.QualifiedName == target {
+			return
+		}
+	}
+	t.Fatalf("missing %s edge from %s to %s; got %#v", kind, from, target, edges)
+}
+
+func assertNoOutgoingTarget(t *testing.T, ctx context.Context, repository graph.Repository, from string, kind graph.EdgeKind, target string) {
+	t.Helper()
+	service := query.NewService(repository)
+	node, err := service.Resolve(ctx, from)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edges, err := repository.EdgesFrom(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, edge := range edges {
+		if edge.Kind != kind {
+			continue
+		}
+		to, err := repository.Node(ctx, edge.ToID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if to.QualifiedName == target {
+			t.Fatalf("unexpected %s edge from %s to %s", kind, from, target)
+		}
+	}
 }

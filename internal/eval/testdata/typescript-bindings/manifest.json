@@ -1,0 +1,1451 @@
+{
+  "schema_version": 1,
+  "case_id": "typescript-bindings",
+  "repositories": [
+    {
+      "id": "typescript",
+      "path": "repos/typescript"
+    }
+  ],
+  "expect": {
+    "nodes": [
+      {
+        "repo": "typescript",
+        "kind": "class",
+        "qualified_name": "src/lib/other.Other"
+      },
+      {
+        "repo": "typescript",
+        "kind": "class",
+        "qualified_name": "src/lib/service.Service"
+      },
+      {
+        "repo": "typescript",
+        "kind": "config_key",
+        "qualified_name": "config:tsconfig.base.json:compilerOptions.baseUrl"
+      },
+      {
+        "repo": "typescript",
+        "kind": "config_key",
+        "qualified_name": "config:tsconfig.base.json:compilerOptions.paths.@app/*"
+      },
+      {
+        "repo": "typescript",
+        "kind": "config_key",
+        "qualified_name": "config:tsconfig.json:compilerOptions.rootDirs"
+      },
+      {
+        "repo": "typescript",
+        "kind": "config_key",
+        "qualified_name": "config:tsconfig.json:extends"
+      },
+      {
+        "repo": "typescript",
+        "kind": "external",
+        "qualified_name": "API.direct",
+        "external": true
+      },
+      {
+        "repo": "typescript",
+        "kind": "external",
+        "qualified_name": "Service | Contract.execute",
+        "external": true
+      },
+      {
+        "repo": "typescript",
+        "kind": "external",
+        "qualified_name": "any.execute",
+        "external": true
+      },
+      {
+        "repo": "typescript",
+        "kind": "file",
+        "qualified_name": "package.json"
+      },
+      {
+        "repo": "typescript",
+        "kind": "file",
+        "qualified_name": "packages/tools/package.json"
+      },
+      {
+        "repo": "typescript",
+        "kind": "file",
+        "qualified_name": "packages/tools/src/index.ts"
+      },
+      {
+        "repo": "typescript",
+        "kind": "file",
+        "qualified_name": "src/app.ts"
+      },
+      {
+        "repo": "typescript",
+        "kind": "file",
+        "qualified_name": "src/lib/barrel.ts"
+      },
+      {
+        "repo": "typescript",
+        "kind": "file",
+        "qualified_name": "src/lib/other.ts"
+      },
+      {
+        "repo": "typescript",
+        "kind": "file",
+        "qualified_name": "src/lib/service.ts"
+      },
+      {
+        "repo": "typescript",
+        "kind": "file",
+        "qualified_name": "tsconfig.base.json"
+      },
+      {
+        "repo": "typescript",
+        "kind": "file",
+        "qualified_name": "tsconfig.json"
+      },
+      {
+        "repo": "typescript",
+        "kind": "function",
+        "qualified_name": "packages/tools/src.packaged"
+      },
+      {
+        "repo": "typescript",
+        "kind": "function",
+        "qualified_name": "src/app.run"
+      },
+      {
+        "repo": "typescript",
+        "kind": "function",
+        "qualified_name": "src/lib/service.direct"
+      },
+      {
+        "repo": "typescript",
+        "kind": "interface",
+        "qualified_name": "src/lib/service.Contract"
+      },
+      {
+        "repo": "typescript",
+        "kind": "method",
+        "qualified_name": "src/lib/other.Other.execute"
+      },
+      {
+        "repo": "typescript",
+        "kind": "method",
+        "qualified_name": "src/lib/service.Contract.execute"
+      },
+      {
+        "repo": "typescript",
+        "kind": "method",
+        "qualified_name": "src/lib/service.Service.create"
+      },
+      {
+        "repo": "typescript",
+        "kind": "method",
+        "qualified_name": "src/lib/service.Service.execute"
+      },
+      {
+        "repo": "typescript",
+        "kind": "module",
+        "qualified_name": "@fixture/tools"
+      },
+      {
+        "repo": "typescript",
+        "kind": "module",
+        "qualified_name": "missing-package",
+        "external": true
+      },
+      {
+        "repo": "typescript",
+        "kind": "module",
+        "qualified_name": "packages/tools/src"
+      },
+      {
+        "repo": "typescript",
+        "kind": "module",
+        "qualified_name": "src/app"
+      },
+      {
+        "repo": "typescript",
+        "kind": "module",
+        "qualified_name": "src/lib/barrel"
+      },
+      {
+        "repo": "typescript",
+        "kind": "module",
+        "qualified_name": "src/lib/other"
+      },
+      {
+        "repo": "typescript",
+        "kind": "module",
+        "qualified_name": "src/lib/service"
+      },
+      {
+        "repo": "typescript",
+        "kind": "module",
+        "qualified_name": "typescript-fixture"
+      },
+      {
+        "repo": "typescript",
+        "kind": "parameter",
+        "qualified_name": "src/app.run.contract"
+      },
+      {
+        "repo": "typescript",
+        "kind": "parameter",
+        "qualified_name": "src/app.run.dynamic"
+      },
+      {
+        "repo": "typescript",
+        "kind": "parameter",
+        "qualified_name": "src/app.run.union"
+      },
+      {
+        "repo": "typescript",
+        "kind": "repository",
+        "qualified_name": "typescript"
+      },
+      {
+        "repo": "typescript",
+        "kind": "variable",
+        "qualified_name": "src/app.run.service@11"
+      }
+    ],
+    "edges": [
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "class",
+          "qualified_name": "src/lib/other.Other"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "method",
+          "qualified_name": "src/lib/other.Other.execute"
+        },
+        "source": {
+          "path": "src/lib/other.ts",
+          "line": 2,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "class",
+          "qualified_name": "src/lib/service.Service"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "method",
+          "qualified_name": "src/lib/service.Service.create"
+        },
+        "source": {
+          "path": "src/lib/service.ts",
+          "line": 6,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "class",
+          "qualified_name": "src/lib/service.Service"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "method",
+          "qualified_name": "src/lib/service.Service.execute"
+        },
+        "source": {
+          "path": "src/lib/service.ts",
+          "line": 7,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "package.json"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "typescript-fixture"
+        },
+        "source": {
+          "path": "package.json",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "packages/tools/package.json"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "@fixture/tools"
+        },
+        "source": {
+          "path": "packages/tools/package.json",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "packages/tools/src/index.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "packages/tools/src.packaged"
+        },
+        "source": {
+          "path": "packages/tools/src/index.ts",
+          "line": 1,
+          "column": 8
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "packages/tools/src/index.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "packages/tools/src"
+        },
+        "source": {
+          "path": "packages/tools/src/index.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/app.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/app.run"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 6,
+          "column": 8
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/app.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/app"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/app.ts"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "missing-package",
+          "external": true
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 4,
+          "column": 1
+        },
+        "properties": {
+          "binding_kind": "side_effect",
+          "specifier": "missing-package"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/app.ts"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "packages/tools/src"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 3,
+          "column": 1
+        },
+        "properties": {
+          "binding_kind": "named",
+          "imported": "packaged",
+          "local": "packaged",
+          "specifier": "@fixture/tools"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/app.ts"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/barrel"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "binding_kind": "named",
+          "imported": "Contract",
+          "local": "Contract",
+          "specifier": "@app/lib/barrel",
+          "type_only": "true"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/app.ts"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/barrel"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "binding_kind": "named",
+          "imported": "RenamedService",
+          "local": "Service",
+          "specifier": "@app/lib/barrel"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/app.ts"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/barrel"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "binding_kind": "named",
+          "imported": "direct",
+          "local": "direct",
+          "specifier": "@app/lib/barrel"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/app.ts"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/barrel"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 2,
+          "column": 1
+        },
+        "properties": {
+          "binding_kind": "side_effect",
+          "specifier": "./lib/barrel"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/lib/barrel.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/barrel"
+        },
+        "source": {
+          "path": "src/lib/barrel.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/lib/other.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "class",
+          "qualified_name": "src/lib/other.Other"
+        },
+        "source": {
+          "path": "src/lib/other.ts",
+          "line": 1,
+          "column": 8
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/lib/other.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/other"
+        },
+        "source": {
+          "path": "src/lib/other.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/lib/service.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "class",
+          "qualified_name": "src/lib/service.Service"
+        },
+        "source": {
+          "path": "src/lib/service.ts",
+          "line": 5,
+          "column": 8
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/lib/service.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/lib/service.direct"
+        },
+        "source": {
+          "path": "src/lib/service.ts",
+          "line": 10,
+          "column": 16
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/lib/service.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "interface",
+          "qualified_name": "src/lib/service.Contract"
+        },
+        "source": {
+          "path": "src/lib/service.ts",
+          "line": 1,
+          "column": 8
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/lib/service.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/service"
+        },
+        "source": {
+          "path": "src/lib/service.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "tsconfig.base.json"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "typescript",
+          "kind": "config_key",
+          "qualified_name": "config:tsconfig.base.json:compilerOptions.baseUrl"
+        },
+        "source": {
+          "path": "tsconfig.base.json",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "tsconfig.base.json"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "typescript",
+          "kind": "config_key",
+          "qualified_name": "config:tsconfig.base.json:compilerOptions.paths.@app/*"
+        },
+        "source": {
+          "path": "tsconfig.base.json",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "tsconfig.json"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "typescript",
+          "kind": "config_key",
+          "qualified_name": "config:tsconfig.json:compilerOptions.rootDirs"
+        },
+        "source": {
+          "path": "tsconfig.json",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "tsconfig.json"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "typescript",
+          "kind": "config_key",
+          "qualified_name": "config:tsconfig.json:extends"
+        },
+        "source": {
+          "path": "tsconfig.json",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/app.run"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "typescript",
+          "kind": "class",
+          "qualified_name": "src/lib/service.Service"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 11,
+          "column": 19
+        },
+        "properties": {
+          "constructor": "true"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/app.run"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "typescript",
+          "kind": "external",
+          "qualified_name": "API.direct",
+          "external": true
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 8,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/app.run"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "typescript",
+          "kind": "external",
+          "qualified_name": "Service | Contract.execute",
+          "external": true
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 15,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/app.run"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "typescript",
+          "kind": "external",
+          "qualified_name": "any.execute",
+          "external": true
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 14,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/app.run"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "packages/tools/src.packaged"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 9,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/app.run"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/lib/service.direct"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 7,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/app.run"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "typescript",
+          "kind": "method",
+          "qualified_name": "src/lib/service.Contract.execute"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 13,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/app.run"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "typescript",
+          "kind": "method",
+          "qualified_name": "src/lib/service.Service.create"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 10,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/app.run"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "typescript",
+          "kind": "method",
+          "qualified_name": "src/lib/service.Service.execute"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 12,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/app.run"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "parameter",
+          "qualified_name": "src/app.run.contract"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 6,
+          "column": 21
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/app.run"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "parameter",
+          "qualified_name": "src/app.run.dynamic"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 6,
+          "column": 41
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/app.run"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "parameter",
+          "qualified_name": "src/app.run.union"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 6,
+          "column": 55
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/app.run"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "variable",
+          "qualified_name": "src/app.run.service@11"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 11,
+          "column": 9
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "interface",
+          "qualified_name": "src/lib/service.Contract"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "method",
+          "qualified_name": "src/lib/service.Contract.execute"
+        },
+        "source": {
+          "path": "src/lib/service.ts",
+          "line": 2,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "method",
+          "qualified_name": "src/lib/service.Service.create"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "typescript",
+          "kind": "class",
+          "qualified_name": "src/lib/service.Service"
+        },
+        "source": {
+          "path": "src/lib/service.ts",
+          "line": 6,
+          "column": 37
+        },
+        "properties": {
+          "constructor": "true"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "packages/tools/src"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "packages/tools/src.packaged"
+        },
+        "source": {
+          "path": "packages/tools/src/index.ts",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "exported": "packaged",
+          "local": "packaged"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/app"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/app.run"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 6,
+          "column": 1
+        },
+        "properties": {
+          "exported": "run",
+          "local": "run"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/barrel"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "typescript",
+          "kind": "class",
+          "qualified_name": "src/lib/service.Service"
+        },
+        "source": {
+          "path": "src/lib/barrel.ts",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "exported": "RenamedService",
+          "imported": "Service",
+          "reexport": "true",
+          "specifier": "./service"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/barrel"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "typescript",
+          "kind": "class",
+          "qualified_name": "src/lib/service.Service"
+        },
+        "source": {
+          "path": "src/lib/barrel.ts",
+          "line": 2,
+          "column": 1
+        },
+        "properties": {
+          "exported": "RenamedService",
+          "imported": "Service",
+          "reexport": "true",
+          "specifier": "./service"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/barrel"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/lib/service.direct"
+        },
+        "source": {
+          "path": "src/lib/barrel.ts",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "exported": "direct",
+          "imported": "default",
+          "reexport": "true",
+          "specifier": "./service"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/barrel"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/lib/service.direct"
+        },
+        "source": {
+          "path": "src/lib/barrel.ts",
+          "line": 2,
+          "column": 1
+        },
+        "properties": {
+          "exported": "direct",
+          "imported": "default",
+          "reexport": "true",
+          "specifier": "./service"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/barrel"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "typescript",
+          "kind": "interface",
+          "qualified_name": "src/lib/service.Contract"
+        },
+        "source": {
+          "path": "src/lib/barrel.ts",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "exported": "Contract",
+          "imported": "Contract",
+          "reexport": "true",
+          "specifier": "./service",
+          "type_only": "true"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/barrel"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "typescript",
+          "kind": "interface",
+          "qualified_name": "src/lib/service.Contract"
+        },
+        "source": {
+          "path": "src/lib/barrel.ts",
+          "line": 2,
+          "column": 1
+        },
+        "properties": {
+          "exported": "Contract",
+          "imported": "Contract",
+          "reexport": "true",
+          "specifier": "./service",
+          "type_only": "true"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/other"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "typescript",
+          "kind": "class",
+          "qualified_name": "src/lib/other.Other"
+        },
+        "source": {
+          "path": "src/lib/other.ts",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "exported": "Other",
+          "local": "Other"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/service"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "typescript",
+          "kind": "class",
+          "qualified_name": "src/lib/service.Service"
+        },
+        "source": {
+          "path": "src/lib/service.ts",
+          "line": 5,
+          "column": 1
+        },
+        "properties": {
+          "exported": "Service",
+          "local": "Service"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/service"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/lib/service.direct"
+        },
+        "source": {
+          "path": "src/lib/service.ts",
+          "line": 10,
+          "column": 1
+        },
+        "properties": {
+          "exported": "default",
+          "local": "direct"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/service"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "typescript",
+          "kind": "interface",
+          "qualified_name": "src/lib/service.Contract"
+        },
+        "source": {
+          "path": "src/lib/service.ts",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "exported": "Contract",
+          "local": "Contract"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "repository",
+          "qualified_name": "typescript"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "package.json"
+        },
+        "source": {
+          "path": "package.json",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "repository",
+          "qualified_name": "typescript"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "packages/tools/package.json"
+        },
+        "source": {
+          "path": "packages/tools/package.json",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "repository",
+          "qualified_name": "typescript"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "packages/tools/src/index.ts"
+        },
+        "source": {
+          "path": "packages/tools/src/index.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "repository",
+          "qualified_name": "typescript"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/app.ts"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "repository",
+          "qualified_name": "typescript"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/lib/barrel.ts"
+        },
+        "source": {
+          "path": "src/lib/barrel.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "repository",
+          "qualified_name": "typescript"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/lib/other.ts"
+        },
+        "source": {
+          "path": "src/lib/other.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "repository",
+          "qualified_name": "typescript"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/lib/service.ts"
+        },
+        "source": {
+          "path": "src/lib/service.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "repository",
+          "qualified_name": "typescript"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "tsconfig.base.json"
+        },
+        "source": {
+          "path": "tsconfig.base.json",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "repository",
+          "qualified_name": "typescript"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "tsconfig.json"
+        },
+        "source": {
+          "path": "tsconfig.json",
+          "line": 1,
+          "column": 1
+        }
+      }
+    ],
+    "forbidden_edges": [
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/app.run"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "typescript",
+          "kind": "method",
+          "qualified_name": "src/lib/other.Other.execute"
+        }
+      }
+    ]
+  }
+}
