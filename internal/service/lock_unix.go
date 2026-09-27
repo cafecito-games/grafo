@@ -23,7 +23,7 @@ func tryLock(path string) (Unlock, bool, error) {
 		return nil, false, fmt.Errorf("lock %s: %w", path, err)
 	}
 	return func() error {
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 		return syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
 	}, true, nil
 }

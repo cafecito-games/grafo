@@ -143,7 +143,7 @@ func runWorkspace(ctx context.Context, caseDir string, manifest Manifest) (Snaps
 	if err != nil {
 		return Snapshot{}, Snapshot{}, err
 	}
-	defer os.RemoveAll(workspace)
+	defer func() { _ = os.RemoveAll(workspace) }()
 
 	projects := make([]indexer.Project, 0, len(manifest.Repositories))
 	roots := make([]string, 0, len(manifest.Repositories))
@@ -249,7 +249,7 @@ func collectOrigins(ctx context.Context, project indexer.Project, repoID string,
 	if err != nil {
 		return err
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	nodes, err := repository.SearchNodes(ctx, "", 1_000_000)
 	if err != nil {
 		return err
@@ -268,7 +268,7 @@ func evaluateWorkspace(ctx context.Context, projects []indexer.Project, roots []
 	if err != nil {
 		return Snapshot{}, err
 	}
-	defer closeRepository()
+	defer func() { _ = closeRepository() }()
 	snapshot, _, err := captureSnapshot(ctx, repository, origins)
 	if err != nil {
 		return Snapshot{}, err
@@ -594,7 +594,7 @@ func copyTree(source, destination string) error {
 		}
 		output, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 		if err != nil {
-			input.Close()
+			_ = input.Close()
 			return err
 		}
 		_, copyErr := io.Copy(output, input)
@@ -613,17 +613,17 @@ func writeManifestAtomic(path string, manifest Manifest) error {
 		return err
 	}
 	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
+	defer func() { _ = os.Remove(temporaryPath) }()
 	if err := temporary.Chmod(0o644); err != nil {
-		temporary.Close()
+		_ = temporary.Close()
 		return err
 	}
 	if _, err := temporary.Write(content); err != nil {
-		temporary.Close()
+		_ = temporary.Close()
 		return err
 	}
 	if err := temporary.Sync(); err != nil {
-		temporary.Close()
+		_ = temporary.Close()
 		return err
 	}
 	if err := temporary.Close(); err != nil {

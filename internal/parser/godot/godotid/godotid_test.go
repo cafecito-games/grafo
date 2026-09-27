@@ -453,8 +453,9 @@ func TestProjectDigestCoversInputAndGroupDeclarationFields(t *testing.T) {
 			}
 		})
 	}
-	if godotid.ParseProject("project.godot", []byte(base)).Digest !=
-		godotid.ParseProject("project.godot", []byte(base)).Digest {
+	first := godotid.ParseProject("project.godot", []byte(base))
+	second := godotid.ParseProject("project.godot", []byte(base))
+	if first.Digest != second.Digest {
 		t.Fatal("digest is not stable for identical input")
 	}
 }

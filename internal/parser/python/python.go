@@ -2,6 +2,7 @@ package python
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -53,9 +54,9 @@ func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseRes
 	if err := p.SetLanguage(treesitter.NewLanguage(tspython.Language())); err != nil {
 		return b.Finish(), fmt.Errorf("load Python grammar: %w", err)
 	}
-	tree := p.ParseCtx(ctx, input.Content, nil)
+	tree := parserapi.ParseTreeSitter(ctx, p, input.Content)
 	if tree == nil {
-		return b.Finish(), fmt.Errorf("Python parser returned no syntax tree")
+		return b.Finish(), errors.New("parse Python source: parser returned no syntax tree")
 	}
 	defer tree.Close()
 	root := tree.RootNode()
@@ -758,10 +759,10 @@ func isIdentifier(value string) bool {
 		return false
 	}
 	for i, r := range value {
-		if i == 0 && !(r == '_' || unicode.IsLetter(r)) {
+		if i == 0 && r != '_' && !unicode.IsLetter(r) {
 			return false
 		}
-		if i > 0 && !(r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)) {
+		if i > 0 && r != '_' && !unicode.IsLetter(r) && !unicode.IsDigit(r) {
 			return false
 		}
 	}

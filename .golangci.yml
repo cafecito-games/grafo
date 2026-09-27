@@ -1,0 +1,28 @@
+version: "2"
+
+linters:
+  # The standard set (errcheck, govet, ineffassign, staticcheck, unused) plus a
+  # few checks that catch bugs the standard set does not. The tree is clean
+  # against all of them, so any finding on a PR is new.
+  default: standard
+  enable:
+    - bodyclose
+    - copyloopvar
+    - durationcheck
+    - misspell
+    - unconvert
+    - usestdlibvars
+    - wastedassign
+  exclusions:
+    rules:
+      # Windows UNC paths in fixtures (\\server\other\...) look like misspellings.
+      - path: internal/agentinstall/guidance_test\.go
+        linters: [misspell]
+    paths:
+      - internal/storage/sqlite/sqlcgen
+
+issues:
+  # Report every finding: the defaults hide repeats, which makes a PR look
+  # cleaner than it is.
+  max-issues-per-linter: 0
+  max-same-issues: 0

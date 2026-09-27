@@ -21,7 +21,7 @@ func TestServerListsAndCallsGraphTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	node := graph.Node{ID: graph.NodeID(graph.KindFunction, "sample.Checkout"), Kind: graph.KindFunction,
 		Name: "Checkout", QualifiedName: "sample.Checkout", OwnerFile: "checkout.go"}
 	if err := repository.ReplaceOwner(ctx, "checkout.go", graph.ParseResult{Nodes: []graph.Node{node}}); err != nil {
@@ -45,13 +45,13 @@ func TestServerListsAndCallsGraphTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer serverSession.Close()
+	defer func() { _ = serverSession.Close() }()
 	client := mcp.NewClient(&mcp.Implementation{Name: "grafo-test", Version: "test"}, nil)
 	clientSession, err := client.Connect(ctx, clientTransport, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clientSession.Close()
+	defer func() { _ = clientSession.Close() }()
 
 	listed, err := clientSession.ListTools(ctx, nil)
 	if err != nil {

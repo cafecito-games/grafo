@@ -47,7 +47,7 @@ func TestReconciliationQueueSurvivesRepositoryRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	if err := repository.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestCompletedReconciliationClearsCleanupMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	node := graph.Node{ID: "node", Kind: graph.KindFunction, Name: "Node",
 		QualifiedName: "sample.Node", OwnerFile: "node.go"}
 	if err := repository.ReplaceOwner(ctx, "node.go", graph.ParseResult{Nodes: []graph.Node{node}, Facts: []graph.Fact{{

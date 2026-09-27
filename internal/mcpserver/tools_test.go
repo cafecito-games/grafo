@@ -33,7 +33,7 @@ func batchFixture(t *testing.T) (*sqlite.Repository, indexer.Project) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { repository.Close() })
+	t.Cleanup(func() { _ = repository.Close() })
 
 	handler := graph.Node{ID: graph.NodeID(graph.KindFunction, "sample.Handler"), Kind: graph.KindFunction,
 		Name: "Handler", QualifiedName: "sample.Handler", OwnerFile: "checkout.go",
@@ -71,13 +71,13 @@ func connect(t *testing.T, service *mcpserver.Service) *mcp.ClientSession {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { serverSession.Close() })
+	t.Cleanup(func() { _ = serverSession.Close() })
 	clientSession, err := mcp.NewClient(&mcp.Implementation{Name: "grafo-test", Version: "test"}, nil).
 		Connect(ctx, clientTransport, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { clientSession.Close() })
+	t.Cleanup(func() { _ = clientSession.Close() })
 	return clientSession
 }
 

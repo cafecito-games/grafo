@@ -13,7 +13,7 @@ func TestLoggerRedactsControlCharactersAndRecordsOnlyMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer logger.Close()
+	defer func() { _ = logger.Close() }()
 	logger.Record("info", "indexed root", map[string]string{
 		"root": "/repos/app", "updated": "3", "ms": "42",
 		"error": "parse failed\nsecret-token=abc\n",
@@ -49,7 +49,7 @@ func TestLoggerRotatesWithinItsBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer logger.Close()
+	defer func() { _ = logger.Close() }()
 	filler := strings.Repeat("p", 4096)
 	for index := 0; index < 600; index++ {
 		logger.Record("info", "indexed root", map[string]string{"root": filler})

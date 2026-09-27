@@ -310,7 +310,7 @@ func scanLines(path string, decide func(line string) (string, bool)) (string, sc
 	if err != nil {
 		return "", verdictUnknown
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	reader := bufio.NewReaderSize(io.LimitReader(file, int64(scanBudget)+1), 64<<10)
 	consumed := 0
 	for {

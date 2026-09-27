@@ -39,7 +39,7 @@ func TestServiceIncrementallySyncsAndReturnsGraphContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 
 	charge := graph.Node{ID: "charge", Kind: graph.KindFunction, Name: "ChargeCard",
 		QualifiedName: "payments.ChargeCard", OwnerFile: "payments.go", Properties: map[string]string{"signature": "func(amount int) error"}}

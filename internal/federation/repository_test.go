@@ -41,7 +41,7 @@ func Routes() { router.Get("/charge", Handler) }
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	result, err := query.NewService(repository).Neighborhood(ctx, "example.com/client.Call", "", 1,
 		query.Outgoing, []graph.EdgeKind{graph.EdgeRequests}, 20)
 	if err != nil {
@@ -134,7 +134,7 @@ func index(t *testing.T, ctx context.Context, root string) {
 	}
 	service := indexer.NewService(repository, parserapi.NewRegistry(golangparser.New(), manifestparser.New()))
 	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
-		repository.Close()
+		_ = repository.Close()
 		t.Fatal(err)
 	}
 	if err := repository.Close(); err != nil {
@@ -180,7 +180,7 @@ func TestRepositoryResolvesGodotCompositionAcrossIndexes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	service := query.NewService(repository)
 	report, err := service.GodotComposition(ctx, "scenes/main", query.GodotCompositionOptions{})
 	if err != nil {
@@ -219,7 +219,7 @@ func indexGodot(t *testing.T, ctx context.Context, root string) {
 	}
 	service := indexer.NewService(repository, parserapi.NewRegistry(gdscriptparser.New(), godotparser.New()))
 	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
-		repository.Close()
+		_ = repository.Close()
 		t.Fatal(err)
 	}
 	if err := repository.Close(); err != nil {

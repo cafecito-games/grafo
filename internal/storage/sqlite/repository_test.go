@@ -17,7 +17,7 @@ func TestRepositoryMigratesAndReconcilesFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 
 	a := graph.Node{ID: graph.NodeID(graph.KindFunction, "sample.A"), Kind: graph.KindFunction,
 		Name: "A", QualifiedName: "sample.A", OwnerFile: "a.go"}
@@ -75,7 +75,7 @@ func TestRepositoryReconcilesMoreThanOneBatchAndTruncatesWAL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 
 	caller := graph.Node{ID: "caller", Kind: graph.KindFunction, Name: "Caller",
 		QualifiedName: "sample.Caller", OwnerFile: "large.go"}
@@ -122,7 +122,7 @@ func TestRepositoryRestrictsSQLAccessToDataResources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 
 	reader := graph.Node{ID: "reader", Kind: graph.KindFunction, Name: "Load",
 		QualifiedName: "queries.Load", OwnerFile: "queries.sql"}
@@ -160,7 +160,7 @@ func TestRepositoryKeepsAmbiguousSymbolicTargetsUnresolved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 
 	caller := graph.Node{ID: "caller", Kind: graph.KindFunction, Name: "Caller",
 		QualifiedName: "sample.Caller", OwnerFile: "caller.go"}
@@ -209,7 +209,7 @@ func TestMatchNodesReportsCompleteTotals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 
 	var nodes []graph.Node
 	for index := 0; index < 12; index++ {
@@ -287,7 +287,7 @@ func TestMatchNodesScopesExternalNodesAsFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 
 	// A containing local symbol plus an exact external target. Nothing local is
 	// named Client, so the external node is the strongest evidence there is.

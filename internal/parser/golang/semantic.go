@@ -224,7 +224,7 @@ func cloneSemanticView(view SemanticView) SemanticView {
 func safeLoadWorkspace(ctx context.Context, root, buildContext string) (views map[string]SemanticView, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			err = fmt.Errorf("Go semantic loader panic: %v", recovered)
+			err = fmt.Errorf("recovered from Go semantic loader panic: %v", recovered)
 		}
 	}()
 	return loadWorkspace(ctx, root, buildContext)
@@ -621,7 +621,7 @@ func semanticWorkspaceKey(root string) (string, string, error) {
 			return nil
 		}
 		name := entry.Name()
-		if filepath.Ext(name) != ".go" && name != "go.mod" && name != "go.sum" && name != "go.work" && name != "go.work.sum" && !(name == "modules.txt" && filepath.Base(filepath.Dir(path)) == "vendor") {
+		if filepath.Ext(name) != ".go" && name != "go.mod" && name != "go.sum" && name != "go.work" && name != "go.work.sum" && (name != "modules.txt" || filepath.Base(filepath.Dir(path)) != "vendor") {
 			return nil
 		}
 		content, err := os.ReadFile(path)

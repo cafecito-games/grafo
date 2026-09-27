@@ -338,7 +338,7 @@ func (c *collector) searchFile(ctx context.Context, source Source, record graph.
 		c.skip(skipUnreadable, source.Project.Name, record.Path)
 		return nil
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	reader := bufio.NewReaderSize(io.LimitReader(file, c.bounds.fileBytes+1), binarySniffBytes)
 	head, err := reader.Peek(binarySniffBytes)

@@ -2,6 +2,7 @@ package typescript
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -134,9 +135,9 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 	if err := treeParser.SetLanguage(treesitter.NewLanguage(language)); err != nil {
 		return b.Finish(), fmt.Errorf("load TypeScript grammar: %w", err)
 	}
-	tree := treeParser.ParseCtx(ctx, input.Content, nil)
+	tree := parserapi.ParseTreeSitter(ctx, treeParser, input.Content)
 	if tree == nil {
-		return b.Finish(), fmt.Errorf("TypeScript parser returned no syntax tree")
+		return b.Finish(), errors.New("parse TypeScript source: parser returned no syntax tree")
 	}
 	defer tree.Close()
 	root := tree.RootNode()
@@ -952,10 +953,10 @@ func isIdentifier(value string) bool {
 		return false
 	}
 	for i, r := range value {
-		if i == 0 && !(r == '_' || r == '$' || unicode.IsLetter(r)) {
+		if i == 0 && r != '_' && r != '$' && !unicode.IsLetter(r) {
 			return false
 		}
-		if i > 0 && !(r == '_' || r == '$' || unicode.IsLetter(r) || unicode.IsDigit(r)) {
+		if i > 0 && r != '_' && r != '$' && !unicode.IsLetter(r) && !unicode.IsDigit(r) {
 			return false
 		}
 	}

@@ -41,7 +41,7 @@ func Open(ctx context.Context, paths []string) (*Repository, error) {
 	for _, path := range paths {
 		project, err := indexer.DiscoverProject(ctx, strings.TrimSpace(path))
 		if err != nil {
-			result.Close()
+			_ = result.Close()
 			return nil, err
 		}
 		if seen[project.IndexPath] {
@@ -49,21 +49,21 @@ func Open(ctx context.Context, paths []string) (*Repository, error) {
 		}
 		seen[project.IndexPath] = true
 		if _, err := os.Stat(project.IndexPath); errors.Is(err, os.ErrNotExist) {
-			result.Close()
+			_ = result.Close()
 			return nil, fmt.Errorf("repository %s branch %q has no index; run 'grafo index %s'", project.Name, project.Branch, project.Root)
 		} else if err != nil {
-			result.Close()
+			_ = result.Close()
 			return nil, err
 		}
 		repository, err := sqlite.Open(ctx, project.IndexPath)
 		if err != nil {
-			result.Close()
+			_ = result.Close()
 			return nil, err
 		}
 		result.members = append(result.members, member{project: project, repository: repository})
 	}
 	if len(result.members) < 2 {
-		result.Close()
+		_ = result.Close()
 		return nil, fmt.Errorf("federation requires at least two distinct indexes")
 	}
 	sort.Slice(result.members, func(i, j int) bool { return result.members[i].project.Root < result.members[j].project.Root })

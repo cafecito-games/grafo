@@ -21,7 +21,7 @@ func TestServerExposesCatalogTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	if err := repository.SetMeta(ctx, "root", "/tmp/example/shop"); err != nil {
 		t.Fatal(err)
 	}
@@ -53,13 +53,13 @@ func TestServerExposesCatalogTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer serverSession.Close()
+	defer func() { _ = serverSession.Close() }()
 	client := mcp.NewClient(&mcp.Implementation{Name: "grafo-test", Version: "test"}, nil)
 	clientSession, err := client.Connect(ctx, clientTransport, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clientSession.Close()
+	defer func() { _ = clientSession.Close() }()
 
 	listed, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name: "list_data_resources", Arguments: map[string]any{"repository": "shop", "limit": 10},
@@ -175,7 +175,7 @@ func TestSourceToolNamesAmbiguousCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 
 	candidates := []graph.Node{
 		{ID: "n:archive-stock", Kind: graph.KindTable, Name: "stock", QualifiedName: "archive.stock"},
@@ -190,13 +190,13 @@ func TestSourceToolNamesAmbiguousCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer serverSession.Close()
+	defer func() { _ = serverSession.Close() }()
 	client := mcp.NewClient(&mcp.Implementation{Name: "grafo-test", Version: "test"}, nil)
 	clientSession, err := client.Connect(ctx, clientTransport, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clientSession.Close()
+	defer func() { _ = clientSession.Close() }()
 
 	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name: "get_source", Arguments: map[string]any{"selector": "stock"},
@@ -221,7 +221,7 @@ func TestBatchedAmbiguityNamesCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer repository.Close()
+	defer func() { _ = repository.Close() }()
 	archive := graph.Node{ID: graph.NodeID(graph.KindTable, "archive.stock"), Kind: graph.KindTable,
 		Name: "stock", QualifiedName: "archive.stock", OwnerFile: "schema.sql"}
 	live := graph.Node{ID: graph.NodeID(graph.KindTable, "live.stock"), Kind: graph.KindTable,
@@ -241,13 +241,13 @@ func TestBatchedAmbiguityNamesCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer serverSession.Close()
+	defer func() { _ = serverSession.Close() }()
 	client := mcp.NewClient(&mcp.Implementation{Name: "grafo-test", Version: "test"}, nil)
 	clientSession, err := client.Connect(ctx, clientTransport, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clientSession.Close()
+	defer func() { _ = clientSession.Close() }()
 
 	// A batched call reports per-input errors in an envelope, which keeps only
 	// the error's text. The candidates must survive that flattening.

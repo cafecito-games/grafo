@@ -57,7 +57,7 @@ func Open(ctx context.Context, engine Engine, path string, options Options) (*Re
 	}
 	repository := &Repository{store: storage, engine: engine, path: path, batchSize: batchSize}
 	if err := repository.SetMeta(ctx, "schema_version", fmt.Sprint(graph.SchemaVersion)); err != nil {
-		storage.close()
+		_ = storage.close()
 		return nil, err
 	}
 	return repository, nil

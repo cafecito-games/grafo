@@ -60,10 +60,10 @@ func (c *Client) Embed(ctx context.Context, input []string) ([][]float32, error)
 	if err != nil {
 		return nil, fmt.Errorf("call Ollama at %s: %w", c.baseURL, err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		message, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		return nil, fmt.Errorf("Ollama returned %s: %s", response.Status, strings.TrimSpace(string(message)))
+		return nil, fmt.Errorf("call Ollama at %s: unexpected status %s: %s", c.baseURL, response.Status, strings.TrimSpace(string(message)))
 	}
 	var result struct {
 		Embeddings [][]float32 `json:"embeddings"`

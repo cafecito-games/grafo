@@ -45,7 +45,7 @@ func run() int {
 		}
 		return 1
 	}
-	fmt.Fprintln(os.Stdout, report.Artifacts.Report)
+	_, _ = fmt.Fprintln(os.Stdout, report.Artifacts.Report)
 	return 0
 }
 
