@@ -214,3 +214,68 @@ func TestSourceToolNamesAmbiguousCandidates(t *testing.T) {
 		}
 	}
 }
+
+func TestBatchedAmbiguityNamesCandidates(t *testing.T) {
+	ctx := context.Background()
+	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	archive := graph.Node{ID: graph.NodeID(graph.KindTable, "archive.stock"), Kind: graph.KindTable,
+		Name: "stock", QualifiedName: "archive.stock", OwnerFile: "schema.sql"}
+	live := graph.Node{ID: graph.NodeID(graph.KindTable, "live.stock"), Kind: graph.KindTable,
+		Name: "stock", QualifiedName: "live.stock", OwnerFile: "schema.sql"}
+	if err := repository.ReplaceOwner(ctx, "schema.sql", graph.ParseResult{
+		Nodes: []graph.Node{archive, live},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := mcpserver.New(repository, indexer.Project{Name: "shop", Branch: "main"}).
+		Server("test").Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverSession.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "grafo-test", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientSession.Close()
+
+	// A batched call reports per-input errors in an envelope, which keeps only
+	// the error's text. The candidates must survive that flattening.
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "get_node", Arguments: map[string]any{"selectors": []string{"stock"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	structured, ok := result.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("missing structured result: %#v", result.StructuredContent)
+	}
+	results, ok := structured["results"].([]any)
+	if !ok || len(results) != 1 {
+		t.Fatalf("unexpected batched results: %#v", structured)
+	}
+	envelope, ok := results[0].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected envelope: %#v", results[0])
+	}
+	message, ok := envelope["error"].(string)
+	if !ok || message == "" {
+		t.Fatalf("batched ambiguity did not report an error: %#v", envelope)
+	}
+	for _, want := range []string{"archive.stock", "live.stock"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("batched ambiguity error does not name candidate %q: %s", want, message)
+		}
+	}
+}

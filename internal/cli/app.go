@@ -969,7 +969,7 @@ func openCatalog(ctx context.Context, args parsedArguments) (*query.Catalog, fun
 
 func (a *App) dataResources(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo data-resources [--kind table,view] [--name text] [--limit 100]")
+		return fmt.Errorf("usage: grafo data-resources [--kind table,view] [--name text] [--repo-name name] [--limit 100] [--json]")
 	}
 	options, err := a.catalogOptions(args)
 	if err != nil {
@@ -1003,7 +1003,7 @@ func (a *App) dataResources(ctx context.Context, args parsedArguments) error {
 
 func (a *App) dataResourceUsage(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 1 {
-		return fmt.Errorf("usage: grafo data-usage <table-view-or-id> [--limit 100]")
+		return fmt.Errorf("usage: grafo data-usage <table-view-or-id> [--repo-name name] [--limit 100] [--json]")
 	}
 	options, err := a.catalogOptions(args)
 	if err != nil {
@@ -1033,7 +1033,7 @@ func (a *App) dataResourceUsage(ctx context.Context, args parsedArguments) error
 
 func (a *App) configKeys(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo config-keys [--name text] [--limit 100]")
+		return fmt.Errorf("usage: grafo config-keys [--name text] [--repo-name name] [--limit 100] [--json]")
 	}
 	options, err := a.catalogOptions(args)
 	if err != nil {
@@ -1063,7 +1063,7 @@ func (a *App) configKeys(ctx context.Context, args parsedArguments) error {
 
 func (a *App) events(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo events [--name text] [--limit 100]")
+		return fmt.Errorf("usage: grafo events [--name text] [--repo-name name] [--limit 100] [--json]")
 	}
 	options, err := a.catalogOptions(args)
 	if err != nil {
@@ -1094,7 +1094,7 @@ func (a *App) events(ctx context.Context, args parsedArguments) error {
 
 func (a *App) orphanedEvents(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo orphaned-events [--name text] [--limit 100]")
+		return fmt.Errorf("usage: grafo orphaned-events [--name text] [--repo-name name] [--limit 100] [--json]")
 	}
 	options, err := a.catalogOptions(args)
 	if err != nil {
