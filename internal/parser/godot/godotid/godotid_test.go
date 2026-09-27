@@ -255,8 +255,10 @@ func TestAliasesFailClosedWhileAnyFileIsUnknown(t *testing.T) {
 	if incomplete.Agrees("uid://absent", "scenes/anything") {
 		t.Fatal("unknown evidence was read as approval")
 	}
-	if !incomplete.Agrees("uid://ok", "scenes/ok") {
-		t.Fatal("a UID that was read must still agree with its declaring resource")
+	// Nothing is provable while a file is unknown, in either direction: a UID
+	// found once among the readable files is not a UID declared once.
+	if incomplete.Agrees("uid://ok", "scenes/ok") {
+		t.Fatal("a found UID was accepted on unproven uniqueness")
 	}
 	if incomplete.Digest == complete.Digest {
 		t.Fatal("an unknown file must change the digest so dependent files reparse")
@@ -297,5 +299,44 @@ func TestProjectDigestCoversEveryDeclarationField(t *testing.T) {
 	}
 	if nested := godotid.ParseProject("client/project.godot", []byte(base)); nested.SemanticKey() == same.SemanticKey() {
 		t.Fatal("the owning project path must be part of the semantic key")
+	}
+}
+
+// TestAliasesRefuseAFoundUIDWhileAnyFileIsUnknown covers the positive direction
+// of the same rule: finding a UID once among the files that could be read is not
+// proof that it is declared once, because an unscanned file may declare it too.
+// Uniqueness is what licenses the edge, so an unproven declaration must fail
+// closed and must name the file that prevented the proof.
+func TestAliasesRefuseAFoundUIDWhileAnyFileIsUnknown(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "project.godot", "config_version=5\n")
+	write(t, root, "scenes/a.tscn", "[gd_scene format=3 uid=\"uid://shared\"]\n\n[node name=\"A\" type=\"Node\"]\n")
+
+	healthy, err := godotid.LoadAliases(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if healthy.Incomplete() || len(healthy.Unknown) != 0 {
+		t.Fatalf("a healthy repository must leave nothing unknown: %#v", healthy.Unknown)
+	}
+	if !healthy.Agrees("uid://shared", "scenes/a") {
+		t.Fatal("a uniquely declared UID must agree with its declaring resource")
+	}
+
+	// One unreadable candidate file is enough to make every declaration unproven.
+	write(t, root, "scenes/huge.tscn", "[gd_scene format=3 script_class=\""+strings.Repeat("x", 2<<20)+"\"]\n")
+	incomplete, err := godotid.LoadAliases(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if incomplete.Agrees("uid://shared", "scenes/a") {
+		t.Fatal("a found UID was accepted while another file could declare it too")
+	}
+	reason := incomplete.DisagreementReason("uid://shared", "scenes/a")
+	if !strings.Contains(reason, "scenes/huge.tscn") {
+		t.Fatalf("the reason must name the unreadable file; got %q", reason)
+	}
+	if !strings.Contains(reason, "uid://shared") {
+		t.Fatalf("the reason must name the UID; got %q", reason)
 	}
 }

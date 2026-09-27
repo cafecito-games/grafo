@@ -10,6 +10,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	godotparser "github.com/cafecito-games/grafo/internal/parser/godot"
+	"github.com/cafecito-games/grafo/internal/parser/godot/godotid"
 )
 
 func TestParserSupportsGodotSourceFormats(t *testing.T) {
@@ -698,6 +699,51 @@ func TestParserKeepsProjectEscapingReferencesUnresolved(t *testing.T) {
 		}
 		if fact.Kind == graph.EdgeInstantiates {
 			t.Fatalf("an escaping reference produced an instantiates fact: %#v", fact)
+		}
+	}
+}
+
+// TestParserNamesTheUnreadableFileThatBlockedAUIDProof covers the end of the
+// evidence chain: a reference whose UID is declared exactly once among the
+// readable files still resolves to nothing while another file could declare it
+// too, and the diagnostic names the file that prevented the proof so it can be
+// fixed rather than merely reported.
+func TestParserNamesTheUnreadableFileThatBlockedAUIDProof(t *testing.T) {
+	root := t.TempDir()
+	writeProjectFile(t, root, "project.godot", "config_version=5\n")
+	writeProjectFile(t, root, "scenes/target.tscn",
+		"[gd_scene format=3 uid=\"uid://target\"]\n\n[node name=\"T\" type=\"Node\"]\n")
+	content := `[gd_scene load_steps=2 format=3]
+
+[ext_resource type="PackedScene" uid="uid://target" path="res://scenes/target.tscn" id="1_t"]
+
+[node name="Root" type="Node"]
+
+[node name="Child" parent="." instance=ExtResource("1_t")]
+`
+
+	// While every file is readable the reference is proven and resolves.
+	healthy := parseIn(t, root, "scenes/caller.tscn", content)
+	if len(healthy.Diagnostics) != 0 {
+		t.Fatalf("unexpected diagnostics on readable input: %#v", healthy.Diagnostics)
+	}
+	assertFactTarget(t, healthy.Facts, graph.EdgeInstantiates, "scenes/target")
+
+	// One unreadable candidate file removes the proof of uniqueness. The indexer
+	// rescans the repository once per run, which is what picks the new file up;
+	// within a run the table stays fixed so every file sees the same evidence.
+	writeProjectFile(t, root, "scenes/unreadable.tscn",
+		"[gd_scene format=3 script_class=\""+strings.Repeat("x", 2<<20)+"\"]\n")
+	if _, err := godotid.LoadAliases(root); err != nil {
+		t.Fatal(err)
+	}
+	blocked := parseIn(t, root, "scenes/caller.tscn", content)
+	assertDiagnostic(t, blocked.Diagnostics, "scenes/unreadable.tscn")
+	assertDiagnostic(t, blocked.Diagnostics, "uid://target")
+	for _, fact := range blocked.Facts {
+		switch fact.Kind {
+		case graph.EdgeInstantiates, graph.EdgeImports:
+			t.Fatalf("an unproven UID still produced a resolved fact: %#v", fact)
 		}
 	}
 }

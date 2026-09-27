@@ -183,7 +183,7 @@ func (e *textResourceExtractor) prepareExtResources(document *textresource.Docum
 		// evidence the alias table could not read is not approval either, which
 		// is why the verdict comes from Agrees rather than from absence.
 		if uid != "" && !e.scope.aliases.Agrees(uid, canonical) {
-			e.rejectUID(uid, fmt.Sprintf("%s declares %s", uid, e.scope.aliases.Describe(uid)))
+			e.rejectUID(uid, e.scope.aliases.DisagreementReason(uid, canonical))
 		}
 		entry := extResource{
 			id: id, resource: resource, canonical: canonical, uid: uid,

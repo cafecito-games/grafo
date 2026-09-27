@@ -94,16 +94,20 @@ func (a *Aliases) Declared(uid string) ([]string, bool) {
 	return identities, ok
 }
 
-// Agrees reports whether path evidence is consistent with UID evidence: the
-// resource that declares the UID must be the one the path names. Absence is not
-// contradiction, so a UID no resource declares leaves the path standing and an
-// absent target stays an explicit external node - but only when the table can
-// prove the absence. If any file's declaration status is unknown, an unfound UID
-// might be declared by it, so unknown evidence fails closed instead of being
-// read as agreement.
+// Agrees reports whether path evidence is consistent with UID evidence: the UID
+// must be declared exactly once, by the resource the path names.
 //
-// A UID declared by several resources never agrees, because picking one of them
-// would be a guess.
+// Both halves of that sentence need the table to be complete, so an incomplete
+// table agrees with nothing. Absence is not contradiction - a UID no resource
+// declares leaves exact path evidence standing, and an absent target stays an
+// explicit external node - but only when the absence can be proven; an unscanned
+// file might hold the declaration. Uniqueness needs the same proof in the
+// positive direction: finding a UID once among the files that could be read is
+// not finding it once, because an unscanned file might declare it too, and
+// accepting it anyway would resolve an edge on unproven uniqueness.
+//
+// A UID declared by several resources never agrees either, because picking one of
+// them would be a guess.
 //
 // The check runs in this direction only. The reverse question - does the
 // resource the path names declare some other UID? - cannot be answered from
@@ -112,23 +116,48 @@ func (a *Aliases) Declared(uid string) ([]string, bool) {
 // their own. Asking it rejected 95 correct references in a real project and
 // zero incorrect ones.
 func (a *Aliases) Agrees(uid, identity string) bool {
+	if a.Incomplete() {
+		return false
+	}
 	declared, ok := a.Declared(uid)
 	if !ok {
-		return !a.Incomplete()
+		return true
 	}
 	return len(declared) == 1 && declared[0] == identity
 }
 
-// Describe renders the declaring resources of a UID for a diagnostic.
-func (a *Aliases) Describe(uid string) string {
-	declared, _ := a.Declared(uid)
-	if len(declared) == 0 {
-		if a.Incomplete() {
-			return "nothing readable (" + fmt.Sprint(len(a.Unknown)) + " file(s) could not be scanned)"
-		}
+// DisagreementReason explains, for a diagnostic, why UID and path evidence could
+// not be accepted. It names the specific obstacle - the resource that declares the
+// UID instead, or the file that could not be read - so the reference can be fixed
+// rather than merely reported.
+func (a *Aliases) DisagreementReason(uid, identity string) string {
+	if a.Incomplete() {
+		return fmt.Sprintf("%s could not be scanned, so no declaration of %s can be proven unique",
+			a.describeUnknown(), uid)
+	}
+	declared, ok := a.Declared(uid)
+	switch {
+	case !ok:
+		return fmt.Sprintf("%s is declared by nothing", uid)
+	case len(declared) > 1:
+		return fmt.Sprintf("%s is declared by %s", uid, strings.Join(declared, " and "))
+	default:
+		return fmt.Sprintf("%s is declared by %s", uid, declared[0])
+	}
+}
+
+// describeUnknown names the files whose declaration status is unknown, bounded so
+// one broken checkout cannot produce an unreadable diagnostic.
+func (a *Aliases) describeUnknown() string {
+	if a == nil || len(a.Unknown) == 0 {
 		return "nothing"
 	}
-	return strings.Join(declared, ", ")
+	const named = 3
+	if len(a.Unknown) <= named {
+		return strings.Join(a.Unknown, ", ")
+	}
+	return fmt.Sprintf("%s and %d more file(s)",
+		strings.Join(a.Unknown[:named], ", "), len(a.Unknown)-named)
 }
 
 type aliasCacheEntry struct{ aliases *Aliases }

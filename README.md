@@ -225,9 +225,10 @@ resource, whose `ExtResource` id is declared more than once, or whose autoload
 name is declared more than once is reported as a diagnostic and stays unresolved
 instead of resolving to a guess, and an autoload declared without Godot's `*`
 singleton marker never satisfies a global identifier in a script. Evidence that
-could not be read is never treated as agreement: if Grafo cannot determine
-whether a UID is declared, the reference stays unresolved instead of trusting the
-path that came with it.
+could not be read is never treated as agreement: a UID resolves only when Grafo
+can prove it is declared exactly once, so while any candidate file is unreadable
+the reference stays unresolved and the diagnostic names the file that blocked the
+proof.
 
 ### Bounded source search
 
