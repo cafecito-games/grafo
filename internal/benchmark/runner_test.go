@@ -102,13 +102,17 @@ func TestRestoreTrackedFilePreservesExecutableMode(t *testing.T) {
 }
 
 func TestRunRestoresExecutableMutationTarget(t *testing.T) {
-	repository := fixtureRepository(t)
-	target := filepath.Join(repository, "main.go")
+	repository := t.TempDir()
+	runTestGit(t, repository, "init", "-b", "main")
+	target := filepath.Join(repository, "tool.py")
+	if err := os.WriteFile(target, []byte("#!/usr/bin/env python3\nprint('ok')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chmod(target, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	runTestGit(t, repository, "add", "--chmod=+x", "main.go")
-	runTestGit(t, repository, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "make target executable")
+	runTestGit(t, repository, "add", "--chmod=+x", "tool.py")
+	runTestGit(t, repository, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "executable fixture")
 	before := sourceState(t, repository)
 
 	report, err := Run(context.Background(), Options{Repository: repository, Output: filepath.Join(t.TempDir(), "benchmark")})

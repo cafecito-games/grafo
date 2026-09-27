@@ -220,7 +220,14 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	if len(supportedPaths) == 0 {
 		return report, fmt.Errorf("corpus has no tracked inputs supported by the production parser registry")
 	}
-	target := chooseMutationTarget(supportedPaths)
+	target := chooseMutationTarget(supportedPaths, registry)
+	expectedMutationPaths := registry.SemanticAffectedPaths(supportedPaths, []string{target})
+	expectedDeletionPaths := make([]string, 0, len(expectedMutationPaths)-1)
+	for _, path := range expectedMutationPaths {
+		if path != target {
+			expectedDeletionPaths = append(expectedDeletionPaths, path)
+		}
+	}
 	targetPath := filepath.Join(isolation, filepath.FromSlash(target))
 	targetInfo, err := os.Stat(targetPath)
 	if err != nil {
@@ -292,15 +299,17 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	if err := os.WriteFile(targetPath, append(append([]byte{}, original...), '\n'), 0o644); err != nil {
 		return report, err
 	}
-	if err := runMutationPair(ctx, &report, "edit", "edit_unchanged", isolation, report.Artifacts.ResumeDatabase, target, 1, 0, cold.Index.Counts, false); err != nil {
+	if err := runMutationPair(ctx, &report, "edit", "edit_unchanged", isolation, report.Artifacts.ResumeDatabase, expectedMutationPaths, 0, cold.Index.Counts, false); err != nil {
 		return report, err
 	}
 	if err := os.Remove(targetPath); err != nil {
 		return report, err
 	}
 	deleted, err := executeScenario(ctx, "delete", isolation, report.Artifacts.ResumeDatabase, nil)
-	if err == nil && (deleted.Index.Removed != 1 || len(deleted.Index.RemovedPaths) != 1 || deleted.Index.RemovedPaths[0] != target) {
-		err = fmt.Errorf("delete scenario changed unexpected paths: %v", deleted.Index.RemovedPaths)
+	if err == nil && (deleted.Index.Removed != 1 || len(deleted.Index.RemovedPaths) != 1 || deleted.Index.RemovedPaths[0] != target ||
+		!reflect.DeepEqual(deleted.Index.UpdatedPaths, expectedDeletionPaths)) {
+		err = fmt.Errorf("delete scenario updated=%v removed=%v, want updated=%v removed=[%s]",
+			deleted.Index.UpdatedPaths, deleted.Index.RemovedPaths, expectedDeletionPaths, target)
 	}
 	report.Scenarios = append(report.Scenarios, withScenarioError(deleted, err))
 	if err != nil {
@@ -309,7 +318,7 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	if err := restoreTrackedFile(targetPath, original, targetInfo.Mode()); err != nil {
 		return report, err
 	}
-	if err := runMutationPair(ctx, &report, "restore", "restore_unchanged", isolation, report.Artifacts.ResumeDatabase, target, 1, 0, cold.Index.Counts, true); err != nil {
+	if err := runMutationPair(ctx, &report, "restore", "restore_unchanged", isolation, report.Artifacts.ResumeDatabase, expectedMutationPaths, 0, cold.Index.Counts, true); err != nil {
 		return report, err
 	}
 	if err := runGit(ctx, isolation, "diff", "--quiet", "--", target); err != nil {
@@ -330,7 +339,7 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	}
 	branchSwitch, err := executeScenario(ctx, "branch_switch", isolation, report.Artifacts.ResumeDatabase, nil)
 	if err == nil {
-		err = requireUpdatedPath(branchSwitch, target)
+		err = requireUpdatedPaths(branchSwitch, expectedMutationPaths)
 	}
 	report.Scenarios = append(report.Scenarios, withScenarioError(branchSwitch, err))
 	if err != nil {
@@ -341,7 +350,7 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	}
 	branchRestore, err := executeScenario(ctx, "branch_restore", isolation, report.Artifacts.ResumeDatabase, nil)
 	if err == nil {
-		err = requireUpdatedPath(branchRestore, target)
+		err = requireUpdatedPaths(branchRestore, expectedMutationPaths)
 	}
 	report.Scenarios = append(report.Scenarios, withScenarioError(branchRestore, err))
 	if err != nil {
@@ -446,13 +455,13 @@ func restoreTrackedFile(path string, content []byte, mode os.FileMode) error {
 	return nil
 }
 
-func runMutationPair(ctx context.Context, report *Report, changedName, stableName, root, database, target string, updated, removed int, expectedCounts graph.Counts, zeroReadStable bool) error {
+func runMutationPair(ctx context.Context, report *Report, changedName, stableName, root, database string, expectedUpdated []string, removed int, expectedCounts graph.Counts, zeroReadStable bool) error {
 	changed, err := executeScenario(ctx, changedName, root, database, nil)
-	if err == nil && (changed.Index.Updated != updated || changed.Index.Removed != removed) {
-		err = fmt.Errorf("%s changed updated=%d removed=%d, want %d/%d", changedName, changed.Index.Updated, changed.Index.Removed, updated, removed)
+	if err == nil && (changed.Index.Updated != len(expectedUpdated) || changed.Index.Removed != removed) {
+		err = fmt.Errorf("%s changed updated=%d removed=%d, want %d/%d", changedName, changed.Index.Updated, changed.Index.Removed, len(expectedUpdated), removed)
 	}
-	if err == nil && updated == 1 {
-		err = requireUpdatedPath(changed, target)
+	if err == nil {
+		err = requireUpdatedPaths(changed, expectedUpdated)
 	}
 	report.Scenarios = append(report.Scenarios, withScenarioError(changed, err))
 	if err != nil {
@@ -472,9 +481,9 @@ func runMutationPair(ctx context.Context, report *Report, changedName, stableNam
 	return err
 }
 
-func requireUpdatedPath(scenario ScenarioReport, path string) error {
-	if scenario.Index.Updated != 1 || len(scenario.Index.UpdatedPaths) != 1 || scenario.Index.UpdatedPaths[0] != path {
-		return fmt.Errorf("%s updated unexpected paths: %v", scenario.Name, scenario.Index.UpdatedPaths)
+func requireUpdatedPaths(scenario ScenarioReport, paths []string) error {
+	if !reflect.DeepEqual(scenario.Index.UpdatedPaths, paths) {
+		return fmt.Errorf("%s updated paths %v, want %v", scenario.Name, scenario.Index.UpdatedPaths, paths)
 	}
 	return nil
 }
@@ -688,16 +697,21 @@ func collectCoverage(ctx context.Context, root string, registry *parserapi.Regis
 	return coverage, indexable, nil
 }
 
-func chooseMutationTarget(paths []string) string {
+func chooseMutationTarget(paths []string, registry *parserapi.Registry) string {
 	preferences := []string{".go", ".gd", ".py", ".ts", ".tsx", ".sql", ".yaml", ".yml", ".json"}
+	fallback := paths[0]
 	for _, extension := range preferences {
 		for _, path := range paths {
 			if strings.EqualFold(filepath.Ext(path), extension) {
-				return path
+				if len(registry.SemanticAffectedPaths(paths, []string{path})) == 1 {
+					return path
+				}
+				fallback = path
+				break
 			}
 		}
 	}
-	return paths[0]
+	return fallback
 }
 
 func loadBaseline(path string) (Baseline, error) {
