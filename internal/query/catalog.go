@@ -149,7 +149,9 @@ type OrphanedEvent struct {
 	Status   OrphanStatus   `json:"status"`
 	// UnresolvedProducers and UnresolvedConsumers count edges that reach an
 	// unresolved external target this event may be. Any such edge makes the
-	// status unknown rather than orphaned.
+	// status unknown rather than orphaned. Counterpart evidence uses the
+	// fixed MaxCatalogLimit rather than the caller's bound, because a tighter
+	// bound would only turn more findings unknown.
 	UnresolvedProducers    int         `json:"unresolved_producers"`
 	UnresolvedConsumers    int         `json:"unresolved_consumers"`
 	UnresolvedCounterparts []UsageSite `json:"unresolved_counterparts,omitempty"`

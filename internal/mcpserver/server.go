@@ -133,7 +133,7 @@ func (s *Service) getSource(ctx context.Context, _ *mcp.CallToolRequest, input S
 		return nil, sourcecontext.Excerpt{}, err
 	}
 	result, err := s.source(ctx, input.Selector, input.ContextLines, input.MaxLines)
-	return nil, result, err
+	return nil, result, withCandidates(err)
 }
 
 type NodeOutput struct {
@@ -225,7 +225,7 @@ func (s *Service) getBlastRadius(ctx context.Context, _ *mcp.CallToolRequest, in
 type CatalogInput struct {
 	Repository string `json:"repository,omitempty" jsonschema:"restrict results to one indexed repository by name"`
 	Name       string `json:"name,omitempty" jsonschema:"optional name or qualified-name fragment"`
-	Limit      int    `json:"limit,omitempty" jsonschema:"maximum catalog entries, and separately the maximum evidence sites per relation; defaults to 100 and may not exceed 1000"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"maximum catalog entries per section, and separately the maximum evidence sites per relation; defaults to 100 and may not exceed 1000"`
 }
 
 func (i CatalogInput) options() query.CatalogOptions {

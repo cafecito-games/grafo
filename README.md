@@ -193,8 +193,8 @@ The same results are available as the `list_data_resources`,
 `find_orphaned_events` MCP tools. Every catalog accepts repository, kind, and
 name filters plus an explicit bound, reports truncation, and orders results
 deterministically. A name filter matches literally, so it narrows a catalog and
-never widens it. The bound applies to catalog entries and, separately, to the
-evidence sites of each relation.
+never widens it. The bound applies to each catalog section and, separately, to
+the evidence sites of each relation.
 
 `data-usage` partitions the edges reaching a table or view into readers,
 writers, and references, each with the source site that proves it. An ambiguous

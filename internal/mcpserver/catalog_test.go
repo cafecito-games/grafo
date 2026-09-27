@@ -118,6 +118,16 @@ func TestServerExposesCatalogTools(t *testing.T) {
 		t.Fatalf("an unsupported kind must be rejected, not answered: %#v", rejected.StructuredContent)
 	}
 
+	blank, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "list_data_resources", Arguments: map[string]any{"kinds": []string{" "}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !blank.IsError {
+		t.Fatalf("a kind list naming no kind must be rejected, not answered: %#v", blank.StructuredContent)
+	}
+
 	ambiguous := graph.Node{ID: graph.NodeID(graph.KindTable, "archive.stock"), Kind: graph.KindTable,
 		Name: "stock", QualifiedName: "archive.stock", OwnerFile: "archive.sql"}
 	other := graph.Node{ID: graph.NodeID(graph.KindTable, "live.stock"), Kind: graph.KindTable,
