@@ -31,7 +31,7 @@ func (r recordingResult) RowsAffected() (int64, error) { return int64(r), nil }
 
 func TestBatchWriterRespectsRowAndVariableLimits(t *testing.T) {
 	execer := &recordingExecer{}
-	writer, err := newBatchWriter(execer, batchLimits{MaxRows: 3, MaxVariables: 24, MaxBytes: 1 << 20})
+	writer, err := newBatchWriter(execer, batchLimits{MaxRows: 3, MaxVariables: 28, MaxBytes: 1 << 20})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,8 +49,8 @@ func TestBatchWriterRespectsRowAndVariableLimits(t *testing.T) {
 		t.Fatalf("executions = %d, want 3", len(execer.calls))
 	}
 	for _, call := range execer.calls {
-		if len(call.args) > 24 {
-			t.Fatalf("execution used %d variables, want at most 24", len(call.args))
+		if len(call.args) > 28 {
+			t.Fatalf("execution used %d variables, want at most 28", len(call.args))
 		}
 	}
 	stats := writer.stats()

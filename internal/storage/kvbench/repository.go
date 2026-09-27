@@ -513,7 +513,7 @@ func (r *Repository) SearchNodes(ctx context.Context, term string, limit int) ([
 	err := r.store.view(ctx, func(tx transaction) error {
 		return tx.scan(prefix("node"), func(_ []byte, value []byte) error {
 			node, err := decodeNode(value)
-			if err == nil && graph.LooseMatch(graph.MatchSubstring, term, node) {
+			if err == nil && unicodeNameSubstringMatch(term, node) {
 				nodes = append(nodes, node)
 			}
 			return err
@@ -536,6 +536,15 @@ func (r *Repository) SearchNodes(ctx context.Context, term string, limit int) ([
 		nodes = nodes[:limit]
 	}
 	return nodes, err
+}
+
+// unicodeNameSubstringMatch mirrors SQLite SearchNodes: Go lowercases both
+// operands before the existing SQLite-LIKE matcher applies wildcard semantics.
+// MatchNodes deliberately keeps its separate ASCII-NOCASE contract.
+func unicodeNameSubstringMatch(term string, node graph.Node) bool {
+	node.Name = strings.ToLower(node.Name)
+	node.QualifiedName = strings.ToLower(node.QualifiedName)
+	return graph.LooseMatch(graph.MatchSubstring, strings.ToLower(term), node)
 }
 
 func (r *Repository) MatchNodes(ctx context.Context, request graph.NodeMatchQuery) (graph.NodeMatchGroup, error) {

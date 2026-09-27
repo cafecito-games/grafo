@@ -93,7 +93,7 @@ func (q *Queries) ListEmbeddingsByModel(ctx context.Context, model string) ([]Em
 }
 
 const listSemanticCandidateNodes = `-- name: ListSemanticCandidateNodes :many
-SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, owner_file, external FROM nodes
+SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, owner_file, external, name_folded, qualified_name_folded FROM nodes
 WHERE external = 0
   AND kind IN ('function', 'method', 'type', 'class', 'interface', 'endpoint')
 ORDER BY qualified_name, id
@@ -121,6 +121,8 @@ func (q *Queries) ListSemanticCandidateNodes(ctx context.Context) ([]Node, error
 			&i.Properties,
 			&i.OwnerFile,
 			&i.External,
+			&i.NameFolded,
+			&i.QualifiedNameFolded,
 		); err != nil {
 			return nil, err
 		}

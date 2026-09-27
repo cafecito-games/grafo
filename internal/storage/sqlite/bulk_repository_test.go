@@ -102,7 +102,7 @@ func TestBulkConstraintErrorRollsBackTransaction(t *testing.T) {
 func TestBulkLimitsAndCommittedInstrumentation(t *testing.T) {
 	ctx := context.Background()
 	repository := openTestRepository(t)
-	repository.limits = batchLimits{MaxRows: 100, MaxVariables: 24, MaxBytes: 1 << 20}
+	repository.limits = batchLimits{MaxRows: 100, MaxVariables: 28, MaxBytes: 1 << 20}
 	parsed := graph.ParseResult{}
 	for index := range 5 {
 		id := fmt.Sprintf("node-%d", index)
@@ -261,7 +261,7 @@ func openTestRepository(t testing.TB) *Repository {
 func tableRows(t *testing.T, repository *Repository, table string) []string {
 	t.Helper()
 	columns := map[string]string{
-		"nodes": "id,kind,name,qualified_name,language,path,line,column_no,end_line,properties,owner_file,external",
+		"nodes": "id,kind,name,qualified_name,language,path,line,column_no,end_line,properties,owner_file,external,name_folded,qualified_name_folded",
 		"facts": "id,from_id,kind,target_id,target,target_kind,path,line,column_no,end_line,properties,owner_file",
 		"edges": "id,fact_id,from_id,to_id,kind,path,line,column_no,end_line,properties",
 	}[table]

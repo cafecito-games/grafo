@@ -42,10 +42,10 @@ var (
 	// to the sqlc single-row reference path.
 	nodeBatchSpec = batchSpec{
 		name:    "nodes",
-		columns: 12,
+		columns: 14,
 		prefix: `INSERT INTO nodes(
     id, kind, name, qualified_name, language, path, line, column_no, end_line,
-    properties, owner_file, external
+    properties, owner_file, external, name_folded, qualified_name_folded
 ) VALUES `,
 		suffix: ` ON CONFLICT(id) DO UPDATE SET
     kind = excluded.kind,
@@ -58,7 +58,9 @@ var (
     end_line = excluded.end_line,
     properties = excluded.properties,
     owner_file = excluded.owner_file,
-    external = excluded.external`,
+    external = excluded.external,
+    name_folded = excluded.name_folded,
+    qualified_name_folded = excluded.qualified_name_folded`,
 	}
 	factBatchSpec = batchSpec{
 		name:    "facts",
@@ -147,7 +149,8 @@ func errorsNewBatchLimits(message string) error {
 
 func (w *batchWriter) addNode(ctx context.Context, row sqlcgen.UpsertNodeParams) error {
 	return w.add(ctx, &w.nodes, []any{row.ID, row.Kind, row.Name, row.QualifiedName, row.Language,
-		row.Path, row.Line, row.ColumnNo, row.EndLine, row.Properties, row.OwnerFile, row.External})
+		row.Path, row.Line, row.ColumnNo, row.EndLine, row.Properties, row.OwnerFile, row.External,
+		row.NameFolded, row.QualifiedNameFolded})
 }
 
 func (w *batchWriter) addFact(ctx context.Context, row sqlcgen.UpsertFactParams) error {

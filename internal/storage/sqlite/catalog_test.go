@@ -115,3 +115,61 @@ func TestListNodesByKindEnumeratesExactKinds(t *testing.T) {
 		t.Fatalf("repository filter matched a foreign repository: %#v", other)
 	}
 }
+
+func TestNameMatchingUsesUnicodeLowercase(t *testing.T) {
+	ctx := context.Background()
+	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	if err := repository.SetMeta(ctx, "root", "/tmp/example/checkout"); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name      string
+		nodeName  string
+		qualified string
+		fragment  string
+	}{
+		{name: "ASCII", nodeName: "Orders", qualified: "Sales.Orders", fragment: "orders"},
+		{name: "non-ASCII uppercase", nodeName: "École", qualified: "Sales.École", fragment: "école"},
+		{name: "Kelvin sign", nodeName: "Kelvin", qualified: "Units.Kelvin", fragment: "kelvin"},
+	}
+	nodes := make([]graph.Node, 0, len(tests))
+	for _, test := range tests {
+		nodes = append(nodes, graph.Node{
+			ID:            graph.NodeID(graph.KindTable, test.qualified),
+			Kind:          graph.KindTable,
+			Name:          test.nodeName,
+			QualifiedName: test.qualified,
+			OwnerFile:     "schema.sql",
+		})
+	}
+	if err := repository.ReplaceOwner(ctx, "schema.sql", graph.ParseResult{Nodes: nodes}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			searched, err := repository.SearchNodes(ctx, test.fragment, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(searched) != 1 || searched[0].QualifiedName != test.qualified {
+				t.Fatalf("SearchNodes(%q) = %#v, want %q", test.fragment, searched, test.qualified)
+			}
+
+			listed, err := repository.ListNodesByKind(ctx, graph.NodeListQuery{
+				Kinds: []graph.NodeKind{graph.KindTable}, Name: test.fragment, Limit: 10,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(listed) != 1 || listed[0].Node.QualifiedName != test.qualified {
+				t.Fatalf("ListNodesByKind(%q) = %#v, want %q", test.fragment, listed, test.qualified)
+			}
+		})
+	}
+}

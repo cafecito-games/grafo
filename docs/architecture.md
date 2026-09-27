@@ -68,6 +68,14 @@ matches the parser's target and edge-kind constraints. Ambiguous names remain
 explicit external nodes until a parser can supply a qualified target; Grafo
 does not turn uncertainty into speculative fan-out.
 
+Node-name substring search uses shadow values written with Go's Unicode-aware
+lowercase rule. Both the stored `name` and `qualified_name` values and every
+search fragment pass through that same rule, so catalog filters and symbol
+search agree for ASCII and non-ASCII names without locale-sensitive or
+accent-insensitive collation. Migration 00005 preserves the old ASCII behavior
+for existing rows; semantic-index version 18 then requires a one-time reindex
+to populate Unicode-correct shadow values for every node.
+
 For Git worktrees, the indexer narrows content hashing to files changed since
 the indexed commit, current untracked files, and paths that were dirty during
 the previous run. Remembering the previous dirty set closes the restore case:
