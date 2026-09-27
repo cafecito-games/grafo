@@ -68,8 +68,13 @@ type Platform interface {
 	Supported() bool
 	// DefinitionPath resolves the user-scoped definition file.
 	DefinitionPath(reader agentinstall.Reader) (string, error)
-	// Definition renders the exact content Grafo generates for this host.
-	Definition(binary, stateDir string) string
+	// Definition renders the exact content Grafo generates for this host, or
+	// refuses when a path cannot be represented safely in the definition syntax.
+	Definition(binary, stateDir string) (string, error)
+	// definitionBinary reports the executable a definition actually starts. It
+	// parses the documented command field rather than searching the file, so a
+	// path that merely contains another path is never mistaken for it.
+	definitionBinary(contents string) (string, bool)
 	// activate loads and starts the service; deactivate stops and unloads it.
 	activate(ctx context.Context, env agentinstall.Environment) error
 	deactivate(ctx context.Context, env agentinstall.Environment) error
@@ -107,11 +112,11 @@ func Describe(ctx context.Context, env agentinstall.Environment) (State, error) 
 	contents, readErr := env.ReadFile(path)
 	if readErr == nil {
 		state.Installed = true
-		receipt, found, receiptErr := agentinstall.OwnedFile(env, agentinstall.ServiceOwner, platform.Name())
+		receipt, found, receiptErr := agentinstall.OwnedFileAt(env, agentinstall.ServiceOwner, platform.Name(), path)
 		if receiptErr != nil {
 			return state, receiptErr
 		}
-		state.Owned = found && agentinstall.ProvesFile(receipt, path, string(contents))
+		state.Owned = found && agentinstall.ProvesContents(receipt, string(contents))
 		state.Conflict = !state.Owned
 		if state.Conflict {
 			state.Detail = "a service definition at Grafo's path does not match anything Grafo recorded writing"
@@ -131,6 +136,10 @@ func Install(ctx context.Context, env agentinstall.Environment, binary, stateDir
 	if !platform.Supported() {
 		return nil, fmt.Errorf("background service installation is not supported on %s yet; run 'grafo watch' in a foreground terminal instead", env.GOOS())
 	}
+	binary, err := InstallableBinary(env, binary)
+	if err != nil {
+		return nil, err
+	}
 	path, err := platform.DefinitionPath(env)
 	if err != nil {
 		return nil, err
@@ -138,7 +147,10 @@ func Install(ctx context.Context, env agentinstall.Environment, binary, stateDir
 	if err := agentinstall.CheckUserConfigRoot(env, path); err != nil {
 		return nil, fmt.Errorf("refusing to write service definition %s: %w", path, err)
 	}
-	generated := platform.Definition(binary, stateDir)
+	generated, err := platform.Definition(binary, stateDir)
+	if err != nil {
+		return nil, err
+	}
 	current, readErr := env.ReadFile(path)
 	action := Action{Platform: platform.Name(), Kind: "definition", Target: path, DryRun: dryRun}
 	switch {
@@ -149,11 +161,11 @@ func Install(ctx context.Context, env agentinstall.Environment, binary, stateDir
 	case string(current) == generated:
 		action.Change = ChangeUnchanged
 	default:
-		receipt, found, receiptErr := agentinstall.OwnedFile(env, agentinstall.ServiceOwner, platform.Name())
+		receipt, found, receiptErr := agentinstall.OwnedFileAt(env, agentinstall.ServiceOwner, platform.Name(), path)
 		if receiptErr != nil {
 			return nil, receiptErr
 		}
-		if !found || !agentinstall.ProvesFile(receipt, path, string(current)) {
+		if !found || !agentinstall.ProvesContents(receipt, string(current)) {
 			action.Change = ChangeSkipped
 			action.Detail = "existing definition differs from Grafo's generated content and Grafo cannot prove it wrote it; move it aside and re-run"
 			return []Action{action}, fmt.Errorf("service definition %s conflicts with Grafo's generated content; move it aside and re-run", path)
@@ -191,8 +203,11 @@ func Install(ctx context.Context, env agentinstall.Environment, binary, stateDir
 }
 
 // Uninstall deactivates the service and removes the definition, but only when a
-// receipt proves Grafo wrote exactly the bytes on disk. Anything else is left in
-// place and reported. Uninstalling twice is not an error.
+// receipt proves Grafo wrote exactly the bytes at exactly this path. Ownership is
+// decided before anything happens, so a foreign unit at Grafo's path is never
+// stopped, disabled, or removed: stopping a service the user manages is itself a
+// mutation, and it must not happen on a file Grafo cannot prove it wrote.
+// Uninstalling twice is not an error.
 func Uninstall(ctx context.Context, env agentinstall.Environment, dryRun bool) ([]Action, error) {
 	platform := PlatformFor(env.GOOS())
 	if !platform.Supported() {
@@ -202,48 +217,62 @@ func Uninstall(ctx context.Context, env agentinstall.Environment, dryRun bool) (
 	if err != nil {
 		return nil, err
 	}
-	actions := []Action{{Platform: platform.Name(), Kind: "deactivate", Target: Label, Change: ChangeRemoved, DryRun: dryRun}}
-	if !dryRun {
-		if err := platform.deactivate(ctx, env); err != nil {
-			actions[0].Change = ChangeSkipped
-			actions[0].Detail = err.Error()
-		}
+	receipt, covered, receiptErr := agentinstall.OwnedFileAt(env, agentinstall.ServiceOwner, platform.Name(), path)
+	if receiptErr != nil {
+		return nil, receiptErr
 	}
-	action := Action{Platform: platform.Name(), Kind: "definition", Target: path, DryRun: dryRun}
+	definition := Action{Platform: platform.Name(), Kind: "definition", Target: path, DryRun: dryRun}
 	current, readErr := env.ReadFile(path)
 	switch {
 	case readErr != nil && errors.Is(readErr, fs.ErrNotExist):
-		action.Change = ChangeUnchanged
-		action.Detail = "no service definition is installed"
-		if !dryRun {
+		// Nothing is installed at Grafo's path. A receipt that covers it proves
+		// Grafo loaded a service here, so the init system is still cleaned up; with
+		// no receipt there is nothing of Grafo's to stop.
+		definition.Change = ChangeUnchanged
+		definition.Detail = "no service definition is installed"
+		actions := []Action{}
+		if covered {
+			actions = append(actions, deactivation(ctx, env, platform, dryRun))
+		}
+		actions = append(actions, definition)
+		if !dryRun && covered {
 			if err := agentinstall.ForgetOwnedFile(env, agentinstall.ServiceOwner, platform.Name()); err != nil {
-				return append(actions, action), err
+				return actions, err
 			}
 		}
-		return append(actions, action), nil
+		return actions, nil
 	case readErr != nil:
-		return actions, fmt.Errorf("read service definition %s: %w", path, readErr)
+		return nil, fmt.Errorf("read service definition %s: %w", path, readErr)
 	}
-	receipt, found, receiptErr := agentinstall.OwnedFile(env, agentinstall.ServiceOwner, platform.Name())
-	if receiptErr != nil {
-		return actions, receiptErr
+	if !covered || !agentinstall.ProvesContents(receipt, string(current)) {
+		definition.Change = ChangeSkipped
+		definition.Detail = "Grafo cannot prove it wrote this definition; it was left running untouched, so remove it manually if you no longer want it"
+		return []Action{definition}, nil
 	}
-	if !found || !agentinstall.ProvesFile(receipt, path, string(current)) {
-		action.Change = ChangeSkipped
-		action.Detail = "Grafo cannot prove it wrote this definition; remove it manually if you no longer want it"
-		return append(actions, action), nil
-	}
-	action.Change = ChangeRemoved
+	definition.Change = ChangeRemoved
+	actions := []Action{deactivation(ctx, env, platform, dryRun)}
 	if dryRun {
-		return append(actions, action), nil
+		return append(actions, definition), nil
 	}
 	if err := env.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return append(actions, action), fmt.Errorf("remove service definition %s: %w", path, err)
+		return append(actions, definition), fmt.Errorf("remove service definition %s: %w", path, err)
 	}
 	if err := agentinstall.ForgetOwnedFile(env, agentinstall.ServiceOwner, platform.Name()); err != nil {
-		return append(actions, action), err
+		return append(actions, definition), err
 	}
-	return append(actions, action), nil
+	return append(actions, definition), nil
+}
+
+// deactivation stops and unloads a service Grafo has already proven it owns.
+func deactivation(ctx context.Context, env agentinstall.Environment, platform Platform, dryRun bool) Action {
+	action := Action{Platform: platform.Name(), Kind: "deactivate", Target: Label, Change: ChangeRemoved, DryRun: dryRun}
+	if dryRun {
+		return action
+	}
+	if err := platform.deactivate(ctx, env); err != nil {
+		action.Change, action.Detail = ChangeSkipped, err.Error()
+	}
+	return action
 }
 
 // ---------------------------------------------------------------------------
@@ -260,7 +289,14 @@ func (launchd) DefinitionPath(reader agentinstall.Reader) (string, error) {
 	return agentinstall.HomeDirPath(reader, "Library", "LaunchAgents", Label+".plist")
 }
 
-func (launchd) Definition(binary, stateDir string) string {
+func (launchd) Definition(binary, stateDir string) (string, error) {
+	// plist strings are XML text: every argument stays its own array element, so
+	// nothing can be split, but control characters are not representable.
+	for _, value := range []string{binary, stateDir} {
+		if err := representableInDefinition(value); err != nil {
+			return "", err
+		}
+	}
 	logs := LogPath(stateDir)
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <!-- grafo-service-definition: ` + DefinitionVersion + ` -->
@@ -289,7 +325,33 @@ func (launchd) Definition(binary, stateDir string) string {
   <string>` + escapeXML(logs+".err") + `</string>
 </dict>
 </plist>
-`
+`, nil
+}
+
+// definitionBinary reads the first ProgramArguments element, which is the
+// executable launchd starts.
+func (launchd) definitionBinary(contents string) (string, bool) {
+	_, after, found := strings.Cut(contents, "<key>ProgramArguments</key>")
+	if !found {
+		return "", false
+	}
+	_, after, found = strings.Cut(after, "<array>")
+	if !found {
+		return "", false
+	}
+	array, _, found := strings.Cut(after, "</array>")
+	if !found {
+		return "", false
+	}
+	_, element, found := strings.Cut(array, "<string>")
+	if !found {
+		return "", false
+	}
+	value, _, found := strings.Cut(element, "</string>")
+	if !found {
+		return "", false
+	}
+	return unescapeXML(strings.TrimSpace(value)), true
 }
 
 // domain is the launchd GUI domain of the current user.
@@ -347,7 +409,18 @@ func (systemd) DefinitionPath(reader agentinstall.Reader) (string, error) {
 	return agentinstall.ConfigHomePath(reader, "systemd", "user", SystemdUnit)
 }
 
-func (systemd) Definition(binary, stateDir string) string {
+func (systemd) Definition(binary, stateDir string) (string, error) {
+	// ExecStart is parsed by systemd as a command line, so a path containing a
+	// space, a quote, or a "%" specifier must be quoted and escaped or the unit
+	// silently starts the wrong command.
+	executable, err := systemdArgument(binary)
+	if err != nil {
+		return "", fmt.Errorf("grafo executable %q cannot be written into a systemd unit: %w", binary, err)
+	}
+	directory, err := systemdArgument(stateDir)
+	if err != nil {
+		return "", fmt.Errorf("grafo state directory %q cannot be written into a systemd unit: %w", stateDir, err)
+	}
 	return `# grafo-service-definition: ` + DefinitionVersion + `
 # Generated by grafo; edits are replaced on the next 'grafo service install'.
 [Unit]
@@ -356,14 +429,92 @@ Documentation=https://github.com/cafecito-games/grafo
 
 [Service]
 Type=simple
-ExecStart=` + binary + ` service run --state-dir ` + stateDir + `
+ExecStart=` + executable + ` service run --state-dir ` + directory + `
 Restart=on-failure
 RestartSec=5
 Nice=10
 
 [Install]
 WantedBy=default.target
-`
+`, nil
+}
+
+// definitionBinary reads the executable argument of ExecStart, honouring
+// systemd's argument prefixes and its quoting rules.
+func (systemd) definitionBinary(contents string) (string, bool) {
+	for line := range strings.SplitSeq(contents, "\n") {
+		trimmed := strings.TrimSpace(line)
+		value, found := strings.CutPrefix(trimmed, "ExecStart=")
+		if !found {
+			continue
+		}
+		// systemd allows "-", "@", ":", "+", "!" and "!!" before the command.
+		value = strings.TrimLeft(strings.TrimSpace(value), "-@:+!")
+		executable, ok := firstSystemdArgument(strings.TrimSpace(value))
+		if !ok {
+			return "", false
+		}
+		return executable, true
+	}
+	return "", false
+}
+
+// systemdArgument renders one value as a single systemd command argument. It
+// always quotes, escapes systemd's own escape and quote characters, and doubles
+// "%" so no specifier is expanded. A value that cannot be represented at all is
+// refused rather than emitted broken.
+func systemdArgument(value string) (string, error) {
+	if err := representableInDefinition(value); err != nil {
+		return "", err
+	}
+	replacer := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "%", "%%")
+	return `"` + replacer.Replace(value) + `"`, nil
+}
+
+// firstSystemdArgument parses the first argument of a systemd command line,
+// undoing the quoting systemdArgument applies.
+func firstSystemdArgument(value string) (string, bool) {
+	if value == "" {
+		return "", false
+	}
+	if value[0] != '"' && value[0] != '\'' {
+		field := strings.Fields(value)
+		if len(field) == 0 {
+			return "", false
+		}
+		return strings.ReplaceAll(field[0], "%%", "%"), true
+	}
+	quote := value[0]
+	argument := &strings.Builder{}
+	for index := 1; index < len(value); index++ {
+		character := value[index]
+		switch {
+		case character == '\\' && index+1 < len(value):
+			index++
+			argument.WriteByte(value[index])
+		case character == quote:
+			return strings.ReplaceAll(argument.String(), "%%", "%"), true
+		default:
+			argument.WriteByte(character)
+		}
+	}
+	// An unterminated quote is not a command Grafo generated.
+	return "", false
+}
+
+// representableInDefinition refuses values that no service definition syntax can
+// carry safely: empty values and control characters, which would either truncate
+// a unit line or break the plist XML.
+func representableInDefinition(value string) error {
+	if strings.TrimSpace(value) == "" {
+		return errors.New("path is empty")
+	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return fmt.Errorf("path contains the control character %q", character)
+		}
+	}
+	return nil
 }
 
 func (systemd) activate(ctx context.Context, env agentinstall.Environment) error {
@@ -415,7 +566,11 @@ func (u unsupportedPlatform) DefinitionPath(agentinstall.Reader) (string, error)
 	return "", fmt.Errorf("no service definition location is defined for %s", u.goos)
 }
 
-func (unsupportedPlatform) Definition(string, string) string { return "" }
+func (u unsupportedPlatform) Definition(string, string) (string, error) {
+	return "", fmt.Errorf("no service definition is generated for %s", u.goos)
+}
+
+func (unsupportedPlatform) definitionBinary(string) (string, bool) { return "", false }
 
 func (u unsupportedPlatform) activate(context.Context, agentinstall.Environment) error {
 	return fmt.Errorf("background service installation is not supported on %s yet", u.goos)
@@ -437,4 +592,17 @@ func (unsupportedPlatform) runtime(context.Context, agentinstall.Reader) (bool, 
 func escapeXML(value string) string {
 	replacer := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;", "'", "&apos;")
 	return replacer.Replace(value)
+}
+
+// unescapeXML reverses escapeXML so a parsed plist argument is compared as the
+// path it names.
+func unescapeXML(value string) string {
+	replacer := strings.NewReplacer("&lt;", "<", "&gt;", ">", "&quot;", `"`, "&apos;", "'", "&amp;", "&")
+	return replacer.Replace(value)
+}
+
+// DefinitionBinary reports the executable an installed definition starts, parsed
+// from the platform's documented command field.
+func DefinitionBinary(goos, contents string) (string, bool) {
+	return PlatformFor(goos).definitionBinary(contents)
 }

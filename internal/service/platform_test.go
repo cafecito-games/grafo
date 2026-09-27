@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,9 +25,8 @@ type recordingEnvironment struct {
 
 func newRecordingEnvironment(t *testing.T, goos string) *recordingEnvironment {
 	t.Helper()
-	isolatedEnvironmentFor(t, goos)
 	return &recordingEnvironment{
-		hostEnvironment: hostEnvironment{goos: goos},
+		hostEnvironment: isolatedHost(t, goos),
 		outputs:         map[string]string{},
 		failures:        map[string]bool{},
 	}
@@ -204,5 +204,176 @@ func TestUninstallRemovesOnlyProvenDefinitionAndIsIdempotent(t *testing.T) {
 	last := actions[len(actions)-1]
 	if last.Change != ChangeSkipped || last.Detail == "" {
 		t.Fatalf("expected a reported skip, got %#v", last)
+	}
+}
+
+// Finding 1: stopping a service is itself a mutation, so it must happen only
+// after ownership is proven, never before.
+func TestUninstallNeverTouchesAServiceItCannotProveItOwns(t *testing.T) {
+	env := newRecordingEnvironment(t, "linux")
+	path, err := PlatformFor("linux").DefinitionPath(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(agentinstall.ParentPath("linux", path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	foreign := "[Unit]\nDescription=A unit the user manages\n[Service]\nExecStart=/usr/bin/true\n"
+	if err := os.WriteFile(path, []byte(foreign), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	actions, err := Uninstall(context.Background(), env, false)
+	if err != nil {
+		t.Fatalf("Uninstall: %v", err)
+	}
+	env.mutex.Lock()
+	commands := append([]string{}, env.commands...)
+	env.mutex.Unlock()
+	if len(commands) != 0 {
+		t.Fatalf("uninstall ran commands against a unit it does not own: %#v", commands)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil || string(contents) != foreign {
+		t.Fatalf("foreign unit was modified: %q (%v)", contents, err)
+	}
+	if len(actions) != 1 || actions[0].Kind != "definition" || actions[0].Change != ChangeSkipped {
+		t.Fatalf("actions = %#v", actions)
+	}
+	if !strings.Contains(actions[0].Detail, "left running untouched") {
+		t.Fatalf("the report does not say the service was left alone: %#v", actions[0])
+	}
+}
+
+// Finding 2: a receipt proves ownership of one location, not of an artifact kind.
+func TestInstallIgnoresAReceiptRecordedForAnotherPath(t *testing.T) {
+	env := newRecordingEnvironment(t, "linux")
+	stateDir, err := StateDir(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := PlatformFor("linux").DefinitionPath(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := "[Service]\nExecStart=/usr/bin/true\n"
+	// The receipt claims the very same bytes, but at a different location.
+	elsewhere, err := agentinstall.ConfigHomePath(env, "systemd", "user", "other-"+SystemdUnit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := agentinstall.RecordOwnedFile(env, agentinstall.ServiceOwner, "systemd", elsewhere, foreign); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(agentinstall.ParentPath("linux", path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(foreign), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Install(context.Background(), env, installedBinary(t), stateDir, false); err == nil {
+		t.Fatal("a receipt for another path must not authorize replacing this one")
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil || string(contents) != foreign {
+		t.Fatalf("definition was rewritten: %q (%v)", contents, err)
+	}
+	state, err := Describe(context.Background(), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Owned || !state.Conflict {
+		t.Fatalf("Describe trusted a receipt for another path: %#v", state)
+	}
+}
+
+// Finding 5: ExecStart is a command line, so every path must survive quoting.
+func TestSystemdArgumentQuotesEveryValueAndRefusesTheRest(t *testing.T) {
+	tests := []struct {
+		name      string
+		value     string
+		want      string
+		wantError bool
+	}{
+		{name: "plain path", value: "/usr/local/bin/grafo", want: `"/usr/local/bin/grafo"`},
+		{name: "space", value: "/home/a b/bin/grafo", want: `"/home/a b/bin/grafo"`},
+		{name: "tab is a control character", value: "/home/a\tb/grafo", wantError: true},
+		{name: "specifier", value: "/home/50%/grafo", want: `"/home/50%%/grafo"`},
+		{name: "double quote", value: `/home/a"b/grafo`, want: `"/home/a\"b/grafo"`},
+		{name: "backslash", value: `/home/a\b/grafo`, want: `"/home/a\\b/grafo"`},
+		{name: "semicolon", value: "/home/a;b/grafo", want: `"/home/a;b/grafo"`},
+		{name: "dollar", value: "/home/$HOME/grafo", want: `"/home/$HOME/grafo"`},
+		{name: "newline", value: "/home/a\nExecStart=/bin/sh", wantError: true},
+		{name: "empty", value: "   ", wantError: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := systemdArgument(test.value)
+			if test.wantError {
+				if err == nil {
+					t.Fatalf("systemdArgument(%q) = %q, want a refusal", test.value, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("systemdArgument(%q): %v", test.value, err)
+			}
+			if got != test.want {
+				t.Fatalf("systemdArgument(%q) = %q, want %q", test.value, got, test.want)
+			}
+			// Whatever is emitted must parse back to the original path.
+			parsed, ok := firstSystemdArgument(got + " service run")
+			if !ok || parsed != test.value {
+				t.Fatalf("round trip of %q gave %q (ok=%v)", test.value, parsed, ok)
+			}
+		})
+	}
+}
+
+func TestGeneratedDefinitionsSurviveAwkwardPaths(t *testing.T) {
+	for _, goos := range []string{"linux", "darwin"} {
+		t.Run(goos, func(t *testing.T) {
+			env := newRecordingEnvironment(t, goos)
+			binary := filepath.Join(t.TempDir(), "grafo tools", "grafo")
+			if err := os.MkdirAll(filepath.Dir(binary), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(binary, []byte("#!/bin/sh\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			stateDir := filepath.Join(t.TempDir(), "state dir 100%")
+			actions, err := Install(context.Background(), env, binary, stateDir, false)
+			if err != nil {
+				t.Fatalf("Install: %v", err)
+			}
+			contents, err := os.ReadFile(actions[0].Target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			declared, ok := DefinitionBinary(goos, string(contents))
+			if !ok {
+				t.Fatalf("could not parse the executable back out of:\n%s", contents)
+			}
+			if declared != binary {
+				t.Fatalf("definition starts %q, want %q", declared, binary)
+			}
+			if goos == "linux" && !strings.Contains(string(contents), `ExecStart="`+binary+`" service run --state-dir "`+strings.ReplaceAll(stateDir, "%", "%%")+`"`) {
+				t.Fatalf("systemd unit does not quote its arguments:\n%s", contents)
+			}
+		})
+	}
+}
+
+func TestDefinitionRefusesAPathItCannotRepresent(t *testing.T) {
+	env := newRecordingEnvironment(t, "linux")
+	stateDir := "/home/user/state\nExecStart=/bin/sh"
+	if _, err := Install(context.Background(), env, installedBinary(t), stateDir, false); err == nil {
+		t.Fatal("expected a refusal rather than a broken unit")
+	}
+	path, err := PlatformFor("linux").DefinitionPath(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("a refused definition was still written: %v", err)
 	}
 }

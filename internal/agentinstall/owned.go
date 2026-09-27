@@ -2,6 +2,7 @@ package agentinstall
 
 import (
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/cafecito-games/grafo/internal/agentguide"
@@ -60,9 +61,49 @@ func OwnedFile(reader Reader, owner, kind string) (Receipt, bool, error) {
 }
 
 // ProvesFile reports whether a receipt proves Grafo wrote exactly these bytes at
-// exactly this path.
+// exactly this path. The path is compared literally, so callers whose path may be
+// spelled differently from the recorded target must establish path coverage with
+// OwnedFileAt first and then prove the content with ProvesContents.
 func ProvesFile(receipt Receipt, path, contents string) bool {
 	return ownership{receipt: receipt, found: receipt.Target != ""}.provesFile(path, contents)
+}
+
+// ProvesContents reports whether a receipt's digest proves Grafo wrote exactly
+// these bytes. It says nothing about location: pair it with OwnedFileAt, which
+// binds a receipt to one resolved path.
+func ProvesContents(receipt Receipt, contents string) bool {
+	return receipt.Digest != "" && receipt.Digest == agentguide.Digest(contents)
+}
+
+// OwnedFileAt reports the receipt Grafo holds for one non-client artifact, but
+// only when that receipt covers this exact location. Targets are compared after
+// resolving every symlinked parent, so a receipt written for one path can never
+// authorize a mutation at a different path that merely resolves nearby, and a
+// path spelled differently from the recorded target still matches when both name
+// the same file.
+//
+// Keying ownership to the artifact kind alone is the defect PR #53 fixed for hook
+// receipts; this is the same contract for generated service definitions.
+func OwnedFileAt(reader Reader, owner, kind, path string) (Receipt, bool, error) {
+	receipt, found, err := OwnedFile(reader, owner, kind)
+	if err != nil || !found {
+		return Receipt{}, false, err
+	}
+	if strings.TrimSpace(receipt.Target) == "" {
+		return Receipt{}, false, nil
+	}
+	recorded, err := resolvePath(reader, receipt.Target)
+	if err != nil {
+		return Receipt{}, false, nil
+	}
+	resolved, err := resolvePath(reader, path)
+	if err != nil {
+		return Receipt{}, false, nil
+	}
+	if recorded != resolved {
+		return Receipt{}, false, nil
+	}
+	return receipt, true, nil
 }
 
 // RecordOwnedFile records a non-client artifact Grafo has just written. It is

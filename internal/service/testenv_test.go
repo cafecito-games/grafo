@@ -14,6 +14,11 @@ import (
 type hostEnvironment struct {
 	agentinstall.OSEnvironment
 	goos string
+	// temporaryDir overrides the reported temporary directory. Tests keep their
+	// fixtures under t.TempDir(), which really is inside the OS temporary
+	// directory, so a test binary there must not be judged ephemeral by the rule
+	// that protects production installs.
+	temporaryDir string
 }
 
 func (e hostEnvironment) GOOS() string {
@@ -21,6 +26,13 @@ func (e hostEnvironment) GOOS() string {
 		return e.OSEnvironment.GOOS()
 	}
 	return e.goos
+}
+
+func (e hostEnvironment) TempDir() string {
+	if e.temporaryDir == "" {
+		return e.OSEnvironment.TempDir()
+	}
+	return e.temporaryDir
 }
 
 // isolatedEnvironment points HOME and XDG_CONFIG_HOME at a throwaway directory
@@ -31,11 +43,19 @@ func isolatedEnvironment(t *testing.T) agentinstall.Environment {
 
 func isolatedEnvironmentFor(t *testing.T, goos string) agentinstall.Environment {
 	t.Helper()
+	return isolatedHost(t, goos)
+}
+
+func isolatedHost(t *testing.T, goos string) hostEnvironment {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
-	return hostEnvironment{goos: goos}
+	t.Setenv("GOTMPDIR", "")
+	t.Setenv("GOCACHE", "")
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	return hostEnvironment{goos: goos, temporaryDir: t.TempDir()}
 }
 
 func mkdir(path string) error { return os.MkdirAll(path, 0o755) }
