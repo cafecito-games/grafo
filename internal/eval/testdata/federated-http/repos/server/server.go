@@ -1,6 +1,6 @@
 package server
 
-func Handler() {}
+func Handler()     {}
 func WrongMethod() {}
 
 func Routes() {
