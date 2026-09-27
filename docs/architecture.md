@@ -116,6 +116,35 @@ searches file text. The node's repository identity and indexed location select
 one active worktree and one bounded line span. Canonical path validation rejects
 absolute paths, traversal, and symlinks that resolve outside the repository.
 
+## Catalogs and orphan detection
+
+`internal/graph` owns the resource kind and relationship vocabulary; a single
+catalog use case in `internal/query` owns usage direction and orphan
+classification. Storage adapters implement one narrow listing port,
+`graph.NodeListRepository`, which enumerates nodes by exact kind and attributes
+each one to an indexed repository. Adapters never interpret semantics, so a new
+catalog needs no new SQL and a new resource kind needs no presentation change.
+
+Node visibility is explicit rather than implicit: an enumeration asks for local
+declarations, unresolved external targets, or both, so a catalog never silently
+mixes a declaration with an unresolved reference. Each catalog reports the two
+classes in separate sections.
+
+Orphan status is a query result, never a persisted edge or diagnostic. An event
+with both a producer and a consumer is not reported. A one-sided event is
+classified as published-without-consumer, consumed-without-producer, or
+declared-with-neither, and its status is downgraded from orphaned to unknown
+whenever an unresolved target could be the missing counterpart. Because a
+federated edge keeps the fact identity of the unresolved edge it replaced,
+resolved cross-repository evidence is never double-counted as uncertainty. An
+event name that no declaration resolves is always unknown: the index does not
+bound where such a name is published or consumed.
+
+Configuration output is value-free by construction. Only properties on an
+explicit non-secret metadata list are returned, and the names of withheld
+properties are reported so a future parser that records a value cannot leak it
+through a catalog.
+
 ## Persistence
 
 Each branch has a separate SQLite file under `.grafo/indexes`. The database is
@@ -137,7 +166,9 @@ Grafo does not require sqlc.
   the router. Dialects emit the shared table/view/column/index graph vocabulary,
   while the router records the selected dialect in node metadata.
 - Add storage by implementing the small `IndexRepository`, `QueryRepository`,
-  and `StatusRepository` ports.
+  `StatusRepository`, and `NodeListRepository` ports.
+- Add a catalog by reusing `NodeListRepository` with another node kind; extend
+  `graph.DataResourceKinds` to widen the data catalog.
 - Add new relationships as facts first; keep graph-candidate reconciliation in
   the repository. A parser may provide an exact qualified target when its
   language's authoritative semantic model proves object identity.

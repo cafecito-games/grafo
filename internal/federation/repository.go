@@ -28,6 +28,7 @@ type Repository struct {
 }
 
 var _ graph.ReadRepository = (*Repository)(nil)
+var _ graph.CatalogRepository = (*Repository)(nil)
 var _ semantic.Repository = (*Repository)(nil)
 var _ sourcecontext.ProjectLocator = (*Repository)(nil)
 
@@ -224,6 +225,66 @@ func (r *Repository) SearchNodes(ctx context.Context, term string, limit int) ([
 	if len(result) > limit {
 		result = result[:limit]
 	}
+	return result, nil
+}
+
+// Repositories names every indexed repository in this federation.
+func (r *Repository) Repositories(_ context.Context) ([]string, error) {
+	result := make([]string, 0, len(r.members))
+	for _, item := range r.members {
+		result = append(result, item.project.Name)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+// ListNodesByKind enumerates catalog nodes across members and attributes each
+// one to the repository that declares it. The per-kind bound applies to every
+// member, so the caller still applies its own total bound.
+func (r *Repository) ListNodesByKind(ctx context.Context, request graph.NodeListQuery) ([]graph.ScopedNode, error) {
+	result := []graph.ScopedNode{}
+	seen := map[string]bool{}
+	for _, item := range r.members {
+		if request.Repository != "" && request.Repository != item.project.Name {
+			continue
+		}
+		lister, ok := item.repository.(graph.NodeListRepository)
+		if !ok {
+			return nil, fmt.Errorf("repository %s does not support node catalogs", item.project.Name)
+		}
+		member := request
+		member.Repository = ""
+		scopedNodes, err := lister.ListNodesByKind(ctx, member)
+		if err != nil {
+			return nil, err
+		}
+		for _, scoped := range scopedNodes {
+			if seen[scoped.Node.ID] {
+				continue
+			}
+			seen[scoped.Node.ID] = true
+			// Several members may record the same unresolved target, so
+			// attributing one of them would invent a home for a name no
+			// repository declares.
+			scoped.Repository = ""
+			if !scoped.Node.External {
+				scoped.Repository = item.project.Name
+			}
+			result = append(result, scoped)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Node.QualifiedName != result[j].Node.QualifiedName {
+			return result[i].Node.QualifiedName < result[j].Node.QualifiedName
+		}
+		if result[i].Node.Kind != result[j].Node.Kind {
+			return result[i].Node.Kind < result[j].Node.Kind
+		}
+		if result[i].Repository != result[j].Repository {
+			return result[i].Repository < result[j].Repository
+		}
+		return result[i].Node.ID < result[j].Node.ID
+	})
 	return result, nil
 }
 

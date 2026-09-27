@@ -17,6 +17,7 @@ import (
 type Service struct {
 	repository graph.ReadRepository
 	query      *query.Service
+	catalog    *query.Catalog
 	projects   []indexer.Project
 	refresh    func(context.Context) error
 	reusable   func(context.Context, string, int) (semantic.SearchResult, error)
@@ -29,7 +30,11 @@ func New(repository graph.Repository, project indexer.Project) *Service {
 }
 
 func NewFederated(repository graph.ReadRepository, projects []indexer.Project) *Service {
-	return &Service{repository: repository, query: query.NewService(repository), projects: projects}
+	service := &Service{repository: repository, query: query.NewService(repository), projects: projects}
+	if catalogRepository, ok := repository.(graph.CatalogRepository); ok {
+		service.catalog = query.NewCatalog(catalogRepository)
+	}
+	return service
 }
 
 // WithRefresh configures a synchronization hook that runs before every tool
@@ -73,6 +78,13 @@ func (s *Service) Server(version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{Name: "get_callers", Title: "Get callers", Description: "Walk incoming call and handler edges to find callers of a symbol.", Annotations: annotations}, s.getCallers)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_callees", Title: "Get callees", Description: "Walk outgoing call and handler edges to find callees of a symbol.", Annotations: annotations}, s.getCallees)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_blast_radius", Title: "Get blast radius", Description: "Walk incoming dependency edges to identify code structurally affected by a symbol change.", Annotations: annotations}, s.getBlastRadius)
+	if s.catalog != nil {
+		mcp.AddTool(server, &mcp.Tool{Name: "list_data_resources", Title: "List data resources", Description: "Catalog indexed tables and views with normalized dialect and object metadata, plus unresolved external targets kept explicit.", Annotations: annotations}, s.listDataResources)
+		mcp.AddTool(server, &mcp.Tool{Name: "get_data_resource_usage", Title: "Get data resource usage", Description: "Report the readers and writers of one table or view separately, each with its source evidence. An ambiguous name returns candidates instead of a guess.", Annotations: annotations}, s.getDataResourceUsage)
+		mcp.AddTool(server, &mcp.Tool{Name: "list_config_keys", Title: "List configuration keys", Description: "Catalog configuration keys with their definitions, readers, and unresolved references. Stored values are never returned.", Annotations: annotations}, s.listConfigKeys)
+		mcp.AddTool(server, &mcp.Tool{Name: "list_events", Title: "List events", Description: "Catalog events with their declarations, producers, consumers, and handlers.", Annotations: annotations}, s.listEvents)
+		mcp.AddTool(server, &mcp.Tool{Name: "find_orphaned_events", Title: "Find orphaned events", Description: "Report events published without a consumer, consumed without a producer, or declared with neither. An unresolved possible counterpart makes the status unknown rather than orphaned.", Annotations: annotations}, s.findOrphanedEvents)
+	}
 	mcp.AddTool(server, &mcp.Tool{Name: "get_index_status", Title: "Get index status", Description: "Return the active repository, branch, indexed commit, and graph counts.", Annotations: annotations}, s.getIndexStatus)
 	if s.reusable != nil {
 		semanticAnnotations := &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: true, OpenWorldHint: boolPointer(true)}
@@ -209,6 +221,66 @@ func (s *Service) getBlastRadius(ctx context.Context, _ *mcp.CallToolRequest, in
 	return nil, result, err
 }
 
+type CatalogInput struct {
+	Repository string `json:"repository,omitempty" jsonschema:"restrict results to one indexed repository by name"`
+	Name       string `json:"name,omitempty" jsonschema:"optional name or qualified-name fragment"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"maximum entries; defaults to 100 and may not exceed 1000"`
+}
+
+func (i CatalogInput) options() query.CatalogOptions {
+	return query.CatalogOptions{Repository: i.Repository, Name: i.Name, Limit: i.Limit}
+}
+
+type DataResourceInput struct {
+	CatalogInput
+	Kinds []string `json:"kinds,omitempty" jsonschema:"data resource kinds to catalog; defaults to table and view"`
+}
+
+func (s *Service) listDataResources(ctx context.Context, _ *mcp.CallToolRequest, input DataResourceInput) (*mcp.CallToolResult, query.DataResourceList, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.DataResourceList{}, err
+	}
+	result, err := s.catalog.DataResources(ctx, nodeKinds(input.Kinds), input.options())
+	return nil, result, err
+}
+
+type DataResourceUsageInput struct {
+	CatalogInput
+	Selector string `json:"selector" jsonschema:"table or view name, qualified name, or stable node ID"`
+}
+
+func (s *Service) getDataResourceUsage(ctx context.Context, _ *mcp.CallToolRequest, input DataResourceUsageInput) (*mcp.CallToolResult, query.DataResourceUsage, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.DataResourceUsage{}, err
+	}
+	result, err := s.catalog.DataResourceUsage(ctx, input.Selector, input.options())
+	return nil, result, err
+}
+
+func (s *Service) listConfigKeys(ctx context.Context, _ *mcp.CallToolRequest, input CatalogInput) (*mcp.CallToolResult, query.ConfigKeyList, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.ConfigKeyList{}, err
+	}
+	result, err := s.catalog.ConfigKeys(ctx, input.options())
+	return nil, result, err
+}
+
+func (s *Service) listEvents(ctx context.Context, _ *mcp.CallToolRequest, input CatalogInput) (*mcp.CallToolResult, query.EventList, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.EventList{}, err
+	}
+	result, err := s.catalog.Events(ctx, input.options())
+	return nil, result, err
+}
+
+func (s *Service) findOrphanedEvents(ctx context.Context, _ *mcp.CallToolRequest, input CatalogInput) (*mcp.CallToolResult, query.OrphanedEventList, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.OrphanedEventList{}, err
+	}
+	result, err := s.catalog.OrphanedEvents(ctx, input.options())
+	return nil, result, err
+}
+
 type StatusInput struct{}
 
 type FindReusableCodeInput struct {
@@ -251,6 +323,16 @@ func (s *Service) getIndexStatus(ctx context.Context, _ *mcp.CallToolRequest, _ 
 		return nil, StatusOutput{}, err
 	}
 	return nil, StatusOutput{Projects: s.projects, IndexedAt: indexedAt, IndexedCommit: commit, Counts: counts}, nil
+}
+
+func nodeKinds(values []string) []graph.NodeKind {
+	result := make([]graph.NodeKind, 0, len(values))
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			result = append(result, graph.NodeKind(value))
+		}
+	}
+	return result
 }
 
 func edgeKinds(values []string) []graph.EdgeKind {

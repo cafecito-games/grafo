@@ -175,3 +175,18 @@ func SimpleName(name string) string {
 	}
 	return name
 }
+
+// DataResourceKinds lists the node kinds that represent stored data resources.
+// Extending this list extends every data catalog without changing query or
+// presentation code.
+func DataResourceKinds() []NodeKind { return []NodeKind{KindTable, KindView} }
+
+// IsDataResourceKind reports whether kind names a stored data resource.
+func IsDataResourceKind(kind NodeKind) bool {
+	for _, candidate := range DataResourceKinds() {
+		if candidate == kind {
+			return true
+		}
+	}
+	return false
+}

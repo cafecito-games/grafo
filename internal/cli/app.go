@@ -80,6 +80,16 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		runErr = a.neighbors(ctx, parsed, "impact")
 	case "path":
 		runErr = a.path(ctx, parsed)
+	case "data-resources":
+		runErr = a.dataResources(ctx, parsed)
+	case "data-usage":
+		runErr = a.dataResourceUsage(ctx, parsed)
+	case "config-keys":
+		runErr = a.configKeys(ctx, parsed)
+	case "events":
+		runErr = a.events(ctx, parsed)
+	case "orphaned-events":
+		runErr = a.orphanedEvents(ctx, parsed)
 	default:
 		runErr = fmt.Errorf("unknown command %q (run 'grafo help')", parsed.command)
 	}
@@ -531,6 +541,224 @@ func (a *App) path(ctx context.Context, args parsedArguments) error {
 	return nil
 }
 
+func (a *App) catalogOptions(args parsedArguments) (query.CatalogOptions, error) {
+	limit, err := intOption(args, "limit", query.DefaultCatalogLimit)
+	if err != nil {
+		return query.CatalogOptions{}, err
+	}
+	return query.CatalogOptions{Repository: args.values["repository"],
+		Name: args.values["name"], Limit: limit}, nil
+}
+
+func openCatalog(ctx context.Context, args parsedArguments) (*query.Catalog, func() error, error) {
+	repository, _, closeRepository, err := openRead(ctx, args)
+	if err != nil {
+		return nil, nil, err
+	}
+	catalogRepository, ok := repository.(graph.CatalogRepository)
+	if !ok {
+		closeRepository()
+		return nil, nil, fmt.Errorf("repository does not support catalog queries")
+	}
+	return query.NewCatalog(catalogRepository), closeRepository, nil
+}
+
+func (a *App) dataResources(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) != 0 {
+		return fmt.Errorf("usage: grafo data-resources [--kind table,view] [--name text] [--limit 100]")
+	}
+	options, err := a.catalogOptions(args)
+	if err != nil {
+		return err
+	}
+	catalog, closeRepository, err := openCatalog(ctx, args)
+	if err != nil {
+		return err
+	}
+	defer closeRepository()
+	result, err := catalog.DataResources(ctx, parseNodeKinds(args.values["kind"]), options)
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, result)
+	}
+	for _, resource := range result.Resources {
+		a.printResource(resource)
+	}
+	for _, resource := range result.Unresolved {
+		a.printResource(resource)
+	}
+	a.printCatalogSummary(len(result.Resources), len(result.Unresolved), "resources", result.Truncated)
+	return nil
+}
+
+func (a *App) dataResourceUsage(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) != 1 {
+		return fmt.Errorf("usage: grafo data-usage <table-view-or-id> [--limit 100]")
+	}
+	options, err := a.catalogOptions(args)
+	if err != nil {
+		return err
+	}
+	catalog, closeRepository, err := openCatalog(ctx, args)
+	if err != nil {
+		return err
+	}
+	defer closeRepository()
+	result, err := catalog.DataResourceUsage(ctx, args.positionals[0], options)
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, result)
+	}
+	a.printResource(result.Resource)
+	a.printUsage("reader", result.Readers)
+	a.printUsage("writer", result.Writers)
+	a.printUsage("reference", result.References)
+	if result.Truncated {
+		fmt.Fprintln(a.stdout, "… truncated")
+	}
+	return nil
+}
+
+func (a *App) configKeys(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) != 0 {
+		return fmt.Errorf("usage: grafo config-keys [--name text] [--limit 100]")
+	}
+	options, err := a.catalogOptions(args)
+	if err != nil {
+		return err
+	}
+	catalog, closeRepository, err := openCatalog(ctx, args)
+	if err != nil {
+		return err
+	}
+	defer closeRepository()
+	result, err := catalog.ConfigKeys(ctx, options)
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, result)
+	}
+	for _, key := range append(append([]query.ConfigKey{}, result.Keys...), result.Unresolved...) {
+		a.printResource(key.Resource)
+		a.printUsage("definition", key.Definitions)
+		a.printUsage("reader", key.Readers)
+		a.printUsage("reference", key.References)
+	}
+	a.printCatalogSummary(len(result.Keys), len(result.Unresolved), "config keys", result.Truncated)
+	return nil
+}
+
+func (a *App) events(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) != 0 {
+		return fmt.Errorf("usage: grafo events [--name text] [--limit 100]")
+	}
+	options, err := a.catalogOptions(args)
+	if err != nil {
+		return err
+	}
+	catalog, closeRepository, err := openCatalog(ctx, args)
+	if err != nil {
+		return err
+	}
+	defer closeRepository()
+	result, err := catalog.Events(ctx, options)
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, result)
+	}
+	for _, event := range append(append([]query.Event{}, result.Events...), result.Unresolved...) {
+		a.printResource(event.Resource)
+		a.printUsage("declaration", event.Declarations)
+		a.printUsage("producer", event.Producers)
+		a.printUsage("consumer", event.Consumers)
+		a.printUsage("handler", event.Handlers)
+	}
+	a.printCatalogSummary(len(result.Events), len(result.Unresolved), "events", result.Truncated)
+	return nil
+}
+
+func (a *App) orphanedEvents(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) != 0 {
+		return fmt.Errorf("usage: grafo orphaned-events [--name text] [--limit 100]")
+	}
+	options, err := a.catalogOptions(args)
+	if err != nil {
+		return err
+	}
+	catalog, closeRepository, err := openCatalog(ctx, args)
+	if err != nil {
+		return err
+	}
+	defer closeRepository()
+	result, err := catalog.OrphanedEvents(ctx, options)
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, result)
+	}
+	for _, orphan := range result.Events {
+		fmt.Fprintf(a.stdout, "%-12s  %-10s  %-48s  %s\n", orphan.Category, orphan.Status,
+			orphan.Event.QualifiedName, formatLocation(orphan.Event.Location))
+		if orphan.UnresolvedProducers > 0 || orphan.UnresolvedConsumers > 0 {
+			fmt.Fprintf(a.stdout, "    %d unresolved producers · %d unresolved consumers\n",
+				orphan.UnresolvedProducers, orphan.UnresolvedConsumers)
+		}
+	}
+	fmt.Fprintf(a.stdout, "%d events", len(result.Events))
+	if result.Truncated {
+		fmt.Fprint(a.stdout, " · truncated")
+	}
+	fmt.Fprintln(a.stdout)
+	return nil
+}
+
+func (a *App) printResource(resource query.Resource) {
+	state := resource.ObjectKind
+	if state == "" {
+		state = string(resource.Kind)
+	}
+	if resource.Unresolved {
+		state += " (unresolved)"
+	}
+	fmt.Fprintf(a.stdout, "%-12s  %-20s  %-48s  %s\n", resource.Kind, state,
+		resource.QualifiedName, formatLocation(resource.Location))
+}
+
+func (a *App) printUsage(label string, sites []query.UsageSite) {
+	for _, site := range sites {
+		fmt.Fprintf(a.stdout, "    %-12s %-48s %s\n", label, site.Node.QualifiedName, formatLocation(site.Location))
+	}
+}
+
+func (a *App) printCatalogSummary(declared, unresolved int, noun string, truncated bool) {
+	fmt.Fprintf(a.stdout, "%d %s · %d unresolved", declared, noun, unresolved)
+	if truncated {
+		fmt.Fprint(a.stdout, " · truncated")
+	}
+	fmt.Fprintln(a.stdout)
+}
+
+func parseNodeKinds(raw string) []graph.NodeKind {
+	if raw == "" {
+		return nil
+	}
+	var result []graph.NodeKind
+	for _, value := range strings.Split(raw, ",") {
+		if value = strings.TrimSpace(value); value != "" {
+			result = append(result, graph.NodeKind(value))
+		}
+	}
+	return result
+}
+
 func openExisting(ctx context.Context, root string) (indexer.Project, graph.Repository, error) {
 	project, err := indexer.DiscoverProject(ctx, root)
 	if err != nil {
@@ -643,6 +871,7 @@ var valueOptions = map[string]bool{
 	"repo": true, "repos": true, "depth": true, "direction": true, "relation": true,
 	"limit": true, "interval": true, "max-file-size": true, "model": true,
 	"ollama-url": true, "batch-size": true, "context-lines": true, "max-lines": true,
+	"kind": true, "name": true, "repository": true,
 }
 
 func parseArguments(arguments []string) (parsedArguments, error) {
@@ -765,9 +994,17 @@ Usage:
   grafo callees <symbol-or-id> [--depth 3]
   grafo impact <symbol-or-id> [--depth 4]
   grafo path <from> <to> [--direction outgoing] [--relation calls,...]
+  grafo data-resources [--kind table,view] [--name text] [--limit 100] [--json]
+  grafo data-usage <table-view-or-id> [--limit 100] [--json]
+  grafo config-keys [--name text] [--limit 100] [--json]
+  grafo events [--name text] [--limit 100] [--json]
+  grafo orphaned-events [--name text] [--limit 100] [--json]
   grafo version
 
 Options may appear before or after positional arguments. All query commands
 accept --repo or a comma-separated --repos list. Active branch indexes are
 refreshed incrementally before queries and never substituted across branches.
+
+Catalog commands accept --repository to restrict results to one indexed
+repository by name, and report truncation whenever a bound is reached.
 `

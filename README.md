@@ -23,6 +23,11 @@ grafo find "MyHandler"
 grafo neighbors "MyHandler" --depth 2
 grafo path "HandleCheckout" "Charge"
 grafo source "HandleCheckout"
+grafo data-resources
+grafo data-usage "orders"
+grafo config-keys
+grafo events
+grafo orphaned-events
 grafo watch
 grafo mcp
 ```
@@ -46,8 +51,8 @@ the complete command surface.
 
 `grafo mcp` starts a standards-compatible MCP server over stdio with tools for
 symbol discovery, node lookup, traversal, shortest paths, callers, callees,
-blast radius, graph-addressed source retrieval, reusable-code discovery, and
-index status.
+blast radius, graph-addressed source retrieval, reusable-code discovery, index
+status, and the data, configuration, and event catalogs.
 
 `grafo source` resolves a graph node first, then reads its exact bounded source
 span from the active worktree. In a federation, the node ID selects the correct
@@ -169,6 +174,44 @@ Supported keywords are `function`, `method`, `class`, `interface`, `type`, and
 `endpoint`. Resolution uses exact qualified names or an unambiguous simple name.
 If several declarations match, Grafo retains an explicit unresolved node rather
 than guessing an edge.
+
+## Data, configuration, and event catalogs
+
+The catalogs answer inventory and usage questions directly instead of leaving
+them to manual traversal:
+
+```sh
+grafo data-resources --kind table,view --name order --json
+grafo data-usage "orders" --json
+grafo config-keys --name DATABASE_ --json
+grafo events --json
+grafo orphaned-events --json
+```
+
+The same results are available as the `list_data_resources`,
+`get_data_resource_usage`, `list_config_keys`, `list_events`, and
+`find_orphaned_events` MCP tools. Every catalog accepts repository, kind, and
+name filters plus an explicit bound, reports truncation, and orders results
+deterministically.
+
+`data-usage` partitions the edges reaching a table or view into readers,
+writers, and references, each with the source site that proves it. An ambiguous
+name returns its candidates and asks for a qualified name or node ID rather than
+choosing one. An unsupported kind is rejected instead of answered with an empty
+catalog that would imply absence.
+
+`config-keys` reports where a key is defined and read. Stored values are never
+returned: only properties classified as non-secret configuration metadata appear,
+and the names of anything withheld are listed in `withheld_properties`.
+
+`orphaned-events` separates three categories — published without a consumer,
+consumed without a producer, and declared with neither — and separates a
+confirmed orphan from an uncertain one. When an unresolved target could be the
+missing counterpart, the finding's status is `unknown` and the response carries
+the counterpart counts and their evidence. Event names that no declaration
+resolves are always `unknown`, because nothing in the index bounds where they
+are published or consumed. Federation applies the same contract: a producer in
+one repository and a consumer in another clear the orphan.
 
 ## SQL dialects
 

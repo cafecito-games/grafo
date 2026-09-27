@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/semantic"
@@ -32,6 +33,7 @@ const (
 )
 
 var _ graph.Repository = (*Repository)(nil)
+var _ graph.CatalogRepository = (*Repository)(nil)
 var _ semantic.Repository = (*Repository)(nil)
 
 func Open(ctx context.Context, path string) (*Repository, error) {
@@ -593,6 +595,66 @@ func (r *Repository) SearchNodes(ctx context.Context, term string, limit int) ([
 		result = append(result, nodeFromRow(row))
 	}
 	return result, nil
+}
+
+// Repositories reports the indexed repository this database stores, derived
+// from the root recorded at index time.
+func (r *Repository) Repositories(ctx context.Context) ([]string, error) {
+	name, err := r.repositoryName(ctx)
+	if err != nil || name == "" {
+		return []string{}, err
+	}
+	return []string{name}, nil
+}
+
+// ListNodesByKind enumerates nodes of the requested kinds. It only enumerates:
+// kind membership, name matching, and bounds are storage concerns, while usage
+// direction and orphan classification stay in the query use cases.
+func (r *Repository) ListNodesByKind(ctx context.Context, request graph.NodeListQuery) ([]graph.ScopedNode, error) {
+	name, err := r.repositoryName(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if request.Repository != "" && request.Repository != name {
+		return []graph.ScopedNode{}, nil
+	}
+	minExternal, maxExternal := int64(0), int64(0)
+	switch request.Visibility {
+	case graph.ExternalNodes:
+		minExternal, maxExternal = 1, 1
+	case graph.AllNodes:
+		minExternal, maxExternal = 0, 1
+	case "", graph.LocalNodes:
+	default:
+		return nil, fmt.Errorf("unsupported node visibility %q", request.Visibility)
+	}
+	limit := int64(-1)
+	if request.Limit > 0 {
+		limit = int64(request.Limit)
+	}
+	pattern := "%" + strings.ToLower(request.Name) + "%"
+	result := []graph.ScopedNode{}
+	for _, kind := range request.Kinds {
+		rows, err := r.queries.ListNodesByKind(ctx, sqlcgen.ListNodesByKindParams{
+			Kind: string(kind), MinExternal: minExternal, MaxExternal: maxExternal,
+			NamePattern: pattern, MaxResults: limit,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			result = append(result, graph.ScopedNode{Repository: name, Node: nodeFromRow(row)})
+		}
+	}
+	return result, nil
+}
+
+func (r *Repository) repositoryName(ctx context.Context) (string, error) {
+	root, err := r.Meta(ctx, "root")
+	if err != nil || root == "" {
+		return "", err
+	}
+	return filepath.Base(root), nil
 }
 
 func (r *Repository) Node(ctx context.Context, id string) (graph.Node, error) {
