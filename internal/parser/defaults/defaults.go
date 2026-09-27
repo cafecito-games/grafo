@@ -9,6 +9,7 @@ import (
 	godotparser "github.com/cafecito-games/grafo/internal/parser/godot"
 	golangparser "github.com/cafecito-games/grafo/internal/parser/golang"
 	manifestparser "github.com/cafecito-games/grafo/internal/parser/manifest"
+	markdownparser "github.com/cafecito-games/grafo/internal/parser/markdown"
 	pythonparser "github.com/cafecito-games/grafo/internal/parser/python"
 	sqlparser "github.com/cafecito-games/grafo/internal/parser/sql"
 	postgresparser "github.com/cafecito-games/grafo/internal/parser/sql/postgres"
@@ -19,6 +20,6 @@ import (
 func NewRegistry() *parserapi.Registry {
 	return parserapi.NewRegistry(
 		gdscriptparser.New(), godotparser.New(), golangparser.New(), pythonparser.New(), typescriptparser.New(),
-		manifestparser.New(), sqlparser.New(postgresparser.New(), sqliteparser.New()), configparser.New(),
+		manifestparser.New(), markdownparser.New(), sqlparser.New(postgresparser.New(), sqliteparser.New()), configparser.New(),
 	)
 }

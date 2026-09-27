@@ -6,12 +6,14 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	configparser "github.com/cafecito-games/grafo/internal/parser/config"
 	gdscriptparser "github.com/cafecito-games/grafo/internal/parser/gdscript"
 	godotparser "github.com/cafecito-games/grafo/internal/parser/godot"
 	golangparser "github.com/cafecito-games/grafo/internal/parser/golang"
+	markdownparser "github.com/cafecito-games/grafo/internal/parser/markdown"
 	pythonparser "github.com/cafecito-games/grafo/internal/parser/python"
 	sqlparser "github.com/cafecito-games/grafo/internal/parser/sql"
 	postgresparser "github.com/cafecito-games/grafo/internal/parser/sql/postgres"
@@ -19,6 +21,46 @@ import (
 	"github.com/cafecito-games/grafo/internal/query"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 )
+
+func TestServiceLinksDocumentationSectionsToCode(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	write(t, filepath.Join(root, "README.md"), "# Runtime flow\nThe function `Serve` delegates to class `Checkout` through endpoint `GET /orders`.\nSee [the implementation](server.ts).\n")
+	write(t, filepath.Join(root, "server.ts"), "export class Checkout {}\nexport function Serve() {}\nconst app = express();\napp.get(\"/orders\", Serve);\n")
+
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+	service := indexer.NewService(repository, parserapi.NewRegistry(markdownparser.New(), typescriptparser.New()))
+	report, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Updated) != 2 || report.Counts.ByKind[string(graph.KindDocSection)] != 1 || report.Counts.ByEdge[string(graph.EdgeDocuments)] != 4 {
+		t.Fatalf("unexpected documentation index report: %#v", report)
+	}
+
+	queries := query.NewService(repository)
+	flow, err := queries.Neighborhood(ctx, "README.md#runtime-flow", 1, query.Outgoing, []graph.EdgeKind{graph.EdgeDocuments}, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertReached(t, flow, "server.ts")
+	assertReached(t, flow, "server.Serve")
+	assertReached(t, flow, "server.Checkout")
+	for _, reached := range flow.Nodes {
+		if reached.Node.Kind == graph.KindEndpoint && reached.Node.Name == "GET /orders" && !reached.Node.External {
+			return
+		}
+	}
+	t.Fatalf("documentation did not resolve to endpoint: %#v", flow.Nodes)
+}
 
 func TestServiceIndexesOnlyChangedFiles(t *testing.T) {
 	ctx := context.Background()

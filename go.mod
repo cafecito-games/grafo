@@ -11,6 +11,7 @@ require (
 	github.com/tree-sitter/go-tree-sitter v0.25.0
 	github.com/tree-sitter/tree-sitter-python v0.25.0
 	github.com/tree-sitter/tree-sitter-typescript v0.23.2
+	github.com/yuin/goldmark v1.8.6
 	golang.org/x/mod v0.39.0
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.57.0
