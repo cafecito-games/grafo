@@ -266,6 +266,40 @@ func TestInstallRefusesUnsafeGuidanceTargets(t *testing.T) {
 	})
 }
 
+// A symlinked ancestor must not be able to redirect an approved target out of
+// the user configuration tree; the lexical prefix check alone cannot see it.
+func TestInstallRefusesSymlinkedParentDirectory(t *testing.T) {
+	environment := guidanceEnvironment()
+	environment.symlinks[linuxHome+"/.codex"] = "/srv/repo/instructions"
+	environment.dirs["/srv/repo/instructions"] = true
+
+	_, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"codex"}})
+	if err == nil || !strings.Contains(err.Error(), "outside the user configuration roots") {
+		t.Fatalf("error = %v", err)
+	}
+	for _, write := range environment.writes {
+		if strings.Contains(write.path, "AGENTS.md") {
+			t.Fatalf("wrote through a symlinked parent: %v", write)
+		}
+	}
+}
+
+// A symlinked ancestor that still resolves inside the user's own tree is a
+// normal dotfiles layout and must keep working.
+func TestInstallFollowsSymlinkedParentInsideUserTree(t *testing.T) {
+	environment := guidanceEnvironment()
+	environment.symlinks[linuxHome+"/.codex"] = linuxHome + "/dotfiles/codex"
+	environment.dirs[linuxHome+"/dotfiles/codex"] = true
+
+	actions, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"codex"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := findAction(t, actions, "codex", KindInstructions); got.Change != changeInstalled {
+		t.Fatalf("instructions action = %#v", got)
+	}
+}
+
 func TestGuidanceTargetsStayInsideUserConfigRoots(t *testing.T) {
 	environment := newFakeEnvironment("linux", linuxHome)
 	if err := checkUserConfigRoot(environment, "/etc/grafo/AGENTS.md"); err == nil {
@@ -337,6 +371,48 @@ func TestUninstallRemovesGuidanceAndKeepsUserContent(t *testing.T) {
 	}
 }
 
+// A user-modified skill file still carries Grafo's marker, but its digest no
+// longer matches the receipt, so Grafo cannot prove it wrote the current bytes.
+func TestUninstallRefusesModifiedSkillFile(t *testing.T) {
+	environment := guidanceEnvironment()
+	if _, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"claude"}}); err != nil {
+		t.Fatal(err)
+	}
+	modified := environment.files[claudeSkill] + "\nMy own extra house rule.\n"
+	environment.files[claudeSkill] = modified
+
+	actions, err := Uninstall(context.Background(), environment, Options{Targets: []string{"claude"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	skill := findAction(t, actions, "claude", KindSkill)
+	if skill.Change != changeSkipped || !strings.Contains(skill.Detail, "manually") {
+		t.Fatalf("skill action = %#v", skill)
+	}
+	if environment.files[claudeSkill] != modified {
+		t.Fatal("a modified skill file was deleted or rewritten")
+	}
+}
+
+// Without a receipt there is no proof Grafo wrote the file, even if the marker
+// is present, so the file stays.
+func TestUninstallRefusesUnreceiptedSkillFile(t *testing.T) {
+	environment := guidanceEnvironment()
+	environment.files[claudeSkill] = agentguide.Skill()
+
+	actions, err := Uninstall(context.Background(), environment, Options{Targets: []string{"claude"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	skill := findAction(t, actions, "claude", KindSkill)
+	if skill.Change != changeSkipped || !strings.Contains(skill.Detail, "manually") {
+		t.Fatalf("skill action = %#v", skill)
+	}
+	if environment.files[claudeSkill] != agentguide.Skill() {
+		t.Fatal("an unreceipted skill file was deleted")
+	}
+}
+
 func TestUninstallLeavesUnprovableArtifacts(t *testing.T) {
 	environment := guidanceEnvironment()
 	environment.files[claudeSkill] = "hand-written skill\n"
@@ -399,7 +475,7 @@ func TestHooksAreOptInAndAdvisory(t *testing.T) {
 	}
 	settings := environment.files[claudeSettings]
 	for _, phase := range hookPhases {
-		if !strings.Contains(settings, HookCommand(grafoPath, phase.phase)) {
+		if !strings.Contains(settings, HookCommand("linux", grafoPath, phase.phase)) {
 			t.Errorf("settings are missing the %s hook: %s", phase.phase, settings)
 		}
 	}
@@ -422,27 +498,14 @@ func TestHooksPreserveForeignEntriesAndRefreshOwnEntries(t *testing.T) {
             "command": "/usr/local/bin/audit"
           }
         ]
-      },
-      {
-        "matcher": "Grep",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/old/grafo guidance --hook pre-search"
-          }
-        ]
       }
     ]
   }
 }
 `
 	options := Options{Targets: []string{"claude"}, Hooks: true}
-	actions, err := Install(context.Background(), environment, grafoPath, options)
-	if err != nil {
+	if _, err := Install(context.Background(), environment, grafoPath, options); err != nil {
 		t.Fatal(err)
-	}
-	if got := findAction(t, actions, "claude", KindHooks); got.Change != changeUpdated {
-		t.Fatalf("hooks action = %#v", got)
 	}
 	entries := hookEntries(t, environment.files[claudeSettings])
 	if len(entries) != 1+len(hookPhases) {
@@ -457,12 +520,32 @@ func TestHooksPreserveForeignEntriesAndRefreshOwnEntries(t *testing.T) {
 
 	// Replaying the install leaves the file alone.
 	environment.writes = nil
-	actions, err = Install(context.Background(), environment, grafoPath, options)
+	actions, err := Install(context.Background(), environment, grafoPath, options)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := findAction(t, actions, "claude", KindHooks); got.Change != changeUnchanged {
 		t.Fatalf("replayed hooks action = %#v", got)
+	}
+
+	// Moving the binary refreshes Grafo's own entries in place, proven by the
+	// receipt, rather than appending a second copy.
+	moved := "/opt/elsewhere/grafo"
+	actions, err = Install(context.Background(), environment, moved, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := findAction(t, actions, "claude", KindHooks); got.Change != changeUpdated {
+		t.Fatalf("moved-binary hooks action = %#v", got)
+	}
+	entries = hookEntries(t, environment.files[claudeSettings])
+	if len(entries) != 1+len(hookPhases) {
+		t.Fatalf("refresh duplicated entries: %#v", entries)
+	}
+	for _, entry := range entries[1:] {
+		if !strings.HasPrefix(entry.Hooks[0].Command, moved+" ") {
+			t.Errorf("entry was not refreshed to the new path: %#v", entry)
+		}
 	}
 
 	// Uninstall removes Grafo's entries and keeps the user's.
@@ -499,18 +582,22 @@ func hookEntries(t *testing.T, settings string) []hookEntry {
 	return document.Hooks[hookEvent]
 }
 
-func TestGrafoHookCommandOwnership(t *testing.T) {
+func TestHookEntryOwnershipIsExact(t *testing.T) {
+	owned := []hookPair{{matcher: "Grep|Glob", command: "/opt/bin/grafo guidance --hook pre-search"}}
 	cases := map[string]bool{
-		"/opt/bin/grafo guidance --hook pre-search": true,
-		"grafo.exe guidance --hook pre-edit":        true,
-		"/opt/bin/grafo guidance --hook other":      false,
-		"/opt/bin/grafo mcp":                        false,
-		"/usr/local/bin/audit":                      false,
-		"other guidance --hook pre-edit":            false,
+		`{"matcher":"Grep|Glob","hooks":[{"type":"command","command":"/opt/bin/grafo guidance --hook pre-search"}]}`:                                                     true,
+		`{"hooks":[{"command":"/opt/bin/grafo guidance --hook pre-search","type":"command"}],"matcher":"Grep|Glob"}`:                                                     true,
+		`{"matcher":"Grep|Glob","hooks":[{"type":"command","command":"/opt/bin/grafo guidance --hook pre-search && evil"}]}`:                                             false,
+		`{"matcher":"Bash","hooks":[{"type":"command","command":"/opt/bin/grafo guidance --hook pre-search"}]}`:                                                          false,
+		`{"matcher":"Grep|Glob","hooks":[{"type":"command","command":"/opt/bin/grafo guidance --hook pre-search"}],"timeout":5}`:                                         false,
+		`{"matcher":"Grep|Glob","hooks":[{"type":"command","command":"/opt/bin/grafo guidance --hook pre-search","timeout":5}]}`:                                         false,
+		`{"matcher":"Grep|Glob","hooks":[{"type":"command","command":"/opt/bin/grafo guidance --hook pre-search"},{"type":"command","command":"/usr/local/bin/audit"}]}`: false,
+		`{"matcher":"Grep|Glob","hooks":[{"type":"prompt","command":"/opt/bin/grafo guidance --hook pre-search"}]}`:                                                      false,
+		`not json`: false,
 	}
-	for command, want := range cases {
-		if got := grafoHookCommand(command); got != want {
-			t.Errorf("grafoHookCommand(%q) = %v, want %v", command, got, want)
+	for entry, want := range cases {
+		if got := hookEntryIsExactly(json.RawMessage(entry), owned); got != want {
+			t.Errorf("hookEntryIsExactly(%s) = %v, want %v", entry, got, want)
 		}
 	}
 }
@@ -625,5 +712,332 @@ func TestSkippedClientsLeaveNoReceipt(t *testing.T) {
 		default:
 			t.Errorf("receipt for an artifact that was never mutated: %#v", receipt)
 		}
+	}
+}
+
+// Ownership of a hook entry must be exact. A user-authored entry that merely
+// starts like Grafo's command, or reuses Grafo's matcher, is not Grafo's.
+func TestHooksRefuseToClaimLookalikeEntries(t *testing.T) {
+	environment := guidanceEnvironment()
+	foreign := `{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/bin/grafo guidance --hook pre-search && /usr/local/bin/exfiltrate"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/bin/grafo guidance --hook pre-edit"
+          }
+        ]
+      }
+    ]
+  }
+}
+`
+	environment.files[claudeSettings] = foreign
+	options := Options{Targets: []string{"claude"}, Hooks: true}
+	if _, err := Install(context.Background(), environment, grafoPath, options); err != nil {
+		t.Fatal(err)
+	}
+	entries := hookEntries(t, environment.files[claudeSettings])
+	if len(entries) != 2+len(hookPhases) {
+		t.Fatalf("PreToolUse entries = %d, want %d: %s", len(entries), 2+len(hookPhases), environment.files[claudeSettings])
+	}
+	if !strings.Contains(entries[0].Hooks[0].Command, "exfiltrate") {
+		t.Errorf("a lookalike entry was claimed and rewritten: %#v", entries[0])
+	}
+	if entries[1].Matcher != "Bash" {
+		t.Errorf("a user entry reusing Grafo's command shape was claimed: %#v", entries[1])
+	}
+
+	if _, err := Uninstall(context.Background(), environment, Options{Targets: []string{"claude"}}); err != nil {
+		t.Fatal(err)
+	}
+	entries = hookEntries(t, environment.files[claudeSettings])
+	if len(entries) != 2 {
+		t.Fatalf("uninstall left %d entries, want the 2 user entries: %s", len(entries), environment.files[claudeSettings])
+	}
+	if !strings.Contains(entries[0].Hooks[0].Command, "exfiltrate") || entries[1].Matcher != "Bash" {
+		t.Fatalf("uninstall removed user-authored hooks: %#v", entries)
+	}
+}
+
+// Uninstall must be driven by what Grafo installed, not by whether the client
+// executable is still on PATH, or removing a client orphans its guidance.
+func TestUninstallRemovesGuidanceWhenClientExecutableIsGone(t *testing.T) {
+	environment := guidanceEnvironment()
+	if _, err := Install(context.Background(), environment, grafoPath,
+		Options{Targets: []string{"claude", "codex"}, Hooks: true}); err != nil {
+		t.Fatal(err)
+	}
+	// The user uninstalls Claude Code and Codex themselves.
+	delete(environment.lookups, "claude")
+	delete(environment.lookups, "codex")
+
+	actions, err := Uninstall(context.Background(), environment, Options{All: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{KindSkill, KindHooks} {
+		if got := findAction(t, actions, "claude", kind); got.Change != changeRemoved {
+			t.Errorf("claude %s action = %#v", kind, got)
+		}
+	}
+	if got := findAction(t, actions, "codex", KindInstructions); got.Change != changeRemoved {
+		t.Errorf("codex instructions action = %#v", got)
+	}
+	if _, exists := environment.files[claudeSkill]; exists {
+		t.Error("the orphaned skill file survived")
+	}
+	if _, exists := environment.files[codexAgents]; exists {
+		t.Error("the orphaned instruction file survived")
+	}
+	receipts, err := Receipts(environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(receipts) != 0 {
+		t.Errorf("orphaned receipts survived: %#v", receipts)
+	}
+}
+
+// A Grafo path containing a space must produce a hook command a shell can run.
+func TestHookCommandQuotesPathsWithSpaces(t *testing.T) {
+	cases := []struct {
+		goos, executable, want string
+	}{
+		{"linux", "/opt/bin/grafo", "/opt/bin/grafo guidance --hook pre-edit"},
+		{"linux", "/opt/my tools/grafo", "'/opt/my tools/grafo' guidance --hook pre-edit"},
+		{"linux", "/opt/o'brien/grafo", `'/opt/o'\''brien/grafo' guidance --hook pre-edit`},
+		{"windows", `C:\Program Files\grafo.exe`, `"C:\Program Files\grafo.exe" guidance --hook pre-edit`},
+	}
+	for _, test := range cases {
+		if got := hookCommandFor(test.goos, test.executable, "pre-edit"); got != test.want {
+			t.Errorf("hookCommandFor(%q, %q) = %q, want %q", test.goos, test.executable, got, test.want)
+		}
+	}
+}
+
+func TestHooksInstallQuotedExecutablePath(t *testing.T) {
+	environment := guidanceEnvironment()
+	spaced := "/opt/my tools/grafo"
+	options := Options{Targets: []string{"claude"}, Hooks: true}
+	if _, err := Install(context.Background(), environment, spaced, options); err != nil {
+		t.Fatal(err)
+	}
+	entries := hookEntries(t, environment.files[claudeSettings])
+	if len(entries) != len(hookPhases) {
+		t.Fatalf("PreToolUse entries = %#v", entries)
+	}
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Hooks[0].Command, "'"+spaced+"'") {
+			t.Errorf("hook command is not shell-safe: %q", entry.Hooks[0].Command)
+		}
+	}
+	// The quoted form is still recognized as Grafo's own on replay.
+	actions, err := Install(context.Background(), environment, spaced, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := findAction(t, actions, "claude", KindHooks); got.Change != changeUnchanged {
+		t.Fatalf("replay with a quoted path = %#v", got)
+	}
+}
+
+// A hook receipt authorizes mutations only at the exact settings file it
+// records. A stale receipt from an old configuration location must never let
+// install or uninstall touch an identical user-authored entry somewhere else.
+func TestHookReceiptDoesNotAuthorizeADifferentSettingsFile(t *testing.T) {
+	staleTarget := linuxHome + "/.config/claude/settings.json"
+	staleCommands := []string{
+		"/old/grafo guidance --hook pre-search",
+		"/old/grafo guidance --hook pre-edit",
+	}
+	// The user hand-wrote an entry that happens to match the stale recording.
+	userAuthored := `{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/old/grafo guidance --hook pre-search"
+          }
+        ]
+      }
+    ]
+  }
+}
+`
+	seed := func(t *testing.T) *fakeEnvironment {
+		t.Helper()
+		environment := guidanceEnvironment()
+		environment.files[claudeSettings] = userAuthored
+		ledger, err := json.Marshal(receiptFile{Format: receiptFormat, Receipts: []Receipt{{
+			Client: "claude", Kind: KindHooks, Target: staleTarget,
+			Commands: staleCommands, Grafo: "0.0.1", Updated: "2020-01-01T00:00:00Z",
+		}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		environment.files[receiptLedger] = string(ledger)
+		return environment
+	}
+
+	t.Run("uninstall", func(t *testing.T) {
+		environment := seed(t)
+		actions, err := Uninstall(context.Background(), environment, Options{Targets: []string{"claude"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		hooks := findAction(t, actions, "claude", KindHooks)
+		if hooks.Change != changeSkipped || !strings.Contains(hooks.Detail, "cannot prove") {
+			t.Fatalf("hooks action = %#v", hooks)
+		}
+		if environment.files[claudeSettings] != userAuthored {
+			t.Fatalf("a user-authored hook was removed: %s", environment.files[claudeSettings])
+		}
+	})
+
+	t.Run("install", func(t *testing.T) {
+		environment := seed(t)
+		actions, err := Install(context.Background(), environment, grafoPath,
+			Options{Targets: []string{"claude"}, Hooks: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := findAction(t, actions, "claude", KindHooks); got.Change != changeInstalled {
+			t.Fatalf("hooks action = %#v", got)
+		}
+		entries := hookEntries(t, environment.files[claudeSettings])
+		if len(entries) != 1+len(hookPhases) {
+			t.Fatalf("PreToolUse entries = %#v", entries)
+		}
+		if entries[0].Hooks[0].Command != staleCommands[0] {
+			t.Fatalf("a user-authored hook was replaced: %#v", entries[0])
+		}
+	})
+}
+
+// Containment is re-validated immediately before the write, so swapping a
+// parent for a symlink after planning cannot redirect it.
+func TestApplyRevalidatesTargetBeforeWriting(t *testing.T) {
+	environment := guidanceEnvironment()
+	options := Options{Targets: []string{"codex"}}
+	options.Announce = func([]Action) {
+		// Planning has finished; redirect the parent directory.
+		environment.symlinks[linuxHome+"/.codex"] = "/srv/repo/instructions"
+		environment.dirs["/srv/repo/instructions"] = true
+	}
+
+	_, err := Install(context.Background(), environment, grafoPath, options)
+	if err == nil || !strings.Contains(err.Error(), "outside the user configuration roots") {
+		t.Fatalf("error = %v", err)
+	}
+	for _, write := range environment.writes {
+		if strings.Contains(write.path, "AGENTS.md") {
+			t.Fatalf("wrote after the target was redirected: %v", write)
+		}
+	}
+}
+
+func TestApplyRevalidatesTargetBeforeDeleting(t *testing.T) {
+	environment := guidanceEnvironment()
+	if _, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"claude"}}); err != nil {
+		t.Fatal(err)
+	}
+	options := Options{Targets: []string{"claude"}}
+	options.Announce = func([]Action) {
+		environment.symlinks[linuxHome+"/.claude"] = "/srv/repo"
+		environment.dirs["/srv/repo"] = true
+	}
+
+	_, err := Uninstall(context.Background(), environment, options)
+	if err == nil || !strings.Contains(err.Error(), "outside the user configuration roots") {
+		t.Fatalf("error = %v", err)
+	}
+	if len(environment.removes) != 0 {
+		t.Fatalf("deleted after the target was redirected: %v", environment.removes)
+	}
+}
+
+func TestResolvePathHandlesWindowsRoots(t *testing.T) {
+	environment := newFakeEnvironment("windows", `C:\Users\u`)
+	environment.symlinks[`\\fileserver\profiles\u\.codex`] = `\\fileserver\other\codex`
+	environment.symlinks[`C:\Users\u\.codex`] = `C:\Users\u\dotfiles\codex`
+	cases := []struct{ path, want string }{
+		// A UNC path keeps both leading separators instead of collapsing into a
+		// current-drive-rooted path, so its ancestors are inspected at all.
+		{`\\fileserver\profiles\u\.codex\AGENTS.md`, `\\fileserver\other\codex\AGENTS.md`},
+		{`\\fileserver\share\file.md`, `\\fileserver\share\file.md`},
+		{`C:\Users\u\.codex\AGENTS.md`, `C:\Users\u\dotfiles\codex\AGENTS.md`},
+		{`C:\Users\u\.claude\settings.json`, `C:\Users\u\.claude\settings.json`},
+	}
+	for _, test := range cases {
+		got, err := resolvePath(environment, test.path)
+		if err != nil {
+			t.Errorf("resolvePath(%q): %v", test.path, err)
+			continue
+		}
+		if got != test.want {
+			t.Errorf("resolvePath(%q) = %q, want %q", test.path, got, test.want)
+		}
+	}
+}
+
+// A symlinked ancestor of a UNC configuration root must be detected, not missed
+// because the path was silently rewritten to the current drive.
+func TestUNCConfigRootDetectsSymlinkedAncestor(t *testing.T) {
+	environment := newFakeEnvironment("windows", `\\fileserver\profiles\u`)
+	environment.symlinks[`\\fileserver\profiles\u\.codex`] = `\\fileserver\public\shared`
+	environment.dirs[`\\fileserver\public\shared`] = true
+
+	err := checkUserConfigRoot(environment, `\\fileserver\profiles\u\.codex\AGENTS.md`)
+	if err == nil || !strings.Contains(err.Error(), "outside the user configuration roots") {
+		t.Fatalf("error = %v", err)
+	}
+	if err = checkUserConfigRoot(environment, `\\fileserver\profiles\u\.claude\skills\grafo\SKILL.md`); err != nil {
+		t.Fatalf("a UNC path inside the user root was refused: %v", err)
+	}
+}
+
+// cmd.exe expands %NAME% even inside double quotes, so such a path cannot be
+// quoted safely. Grafo refuses the hook explicitly instead of writing a command
+// that would run the wrong binary.
+func TestHooksRefuseUnquotableWindowsPath(t *testing.T) {
+	environment := newFakeEnvironment("windows", `C:\Users\u`)
+	environment.dirs[`C:\Users\u`] = true
+	environment.lookups["claude"] = `C:\bin\claude.exe`
+	environment.outputs[`C:\bin\claude.exe mcp list`] = ""
+
+	actions, err := Install(context.Background(), environment, `C:\Users\%USERNAME%\grafo.exe`,
+		Options{Targets: []string{"claude"}, Hooks: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hooks := findAction(t, actions, "claude", KindHooks)
+	if hooks.Change != changeSkipped {
+		t.Fatalf("hooks action = %#v", hooks)
+	}
+	if !strings.Contains(hooks.Detail, "%") || !strings.Contains(hooks.Detail, "cmd.exe") {
+		t.Errorf("diagnostic does not explain the refusal: %q", hooks.Detail)
+	}
+	if _, exists := environment.files[`C:\Users\u\.claude\settings.json`]; exists {
+		t.Fatal("an unquotable hook command was written")
+	}
+	// The safe artifacts are still installed.
+	if got := findAction(t, actions, "claude", KindSkill); got.Change != changeInstalled {
+		t.Fatalf("skill action = %#v", got)
 	}
 }
