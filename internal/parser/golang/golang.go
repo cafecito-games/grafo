@@ -694,8 +694,9 @@ func addHTTPRequest(b *parserapi.Builder, fromID string, loc graph.Location, met
 	identityRoute := route
 	if routeErr == nil {
 		copyHTTPRouteEvidence(properties, parsedRoute, "http_")
-		if parsedRoute.Authority == "" {
-			identityRoute = parsedRoute.Canonical
+		identityRoute = parsedRoute.Canonical
+		if parsedRoute.Authority != "" {
+			identityRoute = parsedRoute.Scheme + "://" + parsedRoute.Authority + parsedRoute.Canonical
 		}
 	} else {
 		properties["http_invalid"] = "true"
@@ -717,6 +718,7 @@ func copyHTTPRouteEvidence(properties map[string]string, route httpmodel.Route, 
 	}
 	if route.Authority != "" {
 		properties[prefix+"authority"] = route.Authority
+		properties[prefix+"scheme"] = route.Scheme
 	}
 }
 

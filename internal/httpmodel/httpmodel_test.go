@@ -4,12 +4,12 @@ import "testing"
 
 func TestParseRouteCanonicalizesIdentityAndPreservesEvidence(t *testing.T) {
 	tests := []struct {
-		name, input, canonical, query, fragment, authority string
+		name, input, canonical, query, fragment, scheme, authority string
 	}{
 		{name: "root", input: "/", canonical: "/"},
 		{name: "trailing slash", input: "/users/", canonical: "/users"},
 		{name: "query and fragment", input: "/users/?active=true#top", canonical: "/users", query: "active=true", fragment: "top"},
-		{name: "absolute URL", input: "https://api.example.test/users/42?q=go#result", canonical: "/users/42", query: "q=go", fragment: "result", authority: "api.example.test"},
+		{name: "absolute URL", input: "https://api.example.test/users/42?q=go#result", canonical: "/users/42", query: "q=go", fragment: "result", scheme: "https", authority: "api.example.test"},
 		{name: "parameter name", input: "/users/{characterID}", canonical: "/users/{_}"},
 		{name: "regex constraint", input: `/users/{characterID:[0-9]+}`, canonical: `/users/{_:[0-9]+}`},
 		{name: "regex query metacharacter", input: `/users/{characterID:[0-9]?}`, canonical: `/users/{_:[0-9]?}`},
@@ -23,7 +23,7 @@ func TestParseRouteCanonicalizesIdentityAndPreservesEvidence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if route.Canonical != test.canonical || route.Query != test.query || route.Fragment != test.fragment || route.Authority != test.authority {
+			if route.Canonical != test.canonical || route.Query != test.query || route.Fragment != test.fragment || route.Scheme != test.scheme || route.Authority != test.authority {
 				t.Fatalf("ParseRoute(%q) = %#v", test.input, route)
 			}
 		})

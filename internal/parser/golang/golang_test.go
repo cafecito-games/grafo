@@ -71,6 +71,7 @@ func Handler(http.ResponseWriter, *http.Request) {}
 func Routes() {
 	router.Get("/users/{characterID}/?view=full#details", Handler)
 	_, _ = http.Get("https://api.example.test/users/{id}/?expand=true#top")
+	_, _ = http.Get("https://api.example.test/users/{id}/?expand=false#other")
 	router.Get("/bad/%zz", Handler)
 }
 `)
@@ -90,16 +91,24 @@ func Routes() {
 		endpoint.Properties["query"] != "view=full" || endpoint.Properties["fragment"] != "details" {
 		t.Fatalf("canonical endpoint or raw evidence missing: %#v", endpoint)
 	}
-	var request graph.Fact
+	var requests []graph.Fact
 	for _, fact := range result.Facts {
 		if fact.Kind == graph.EdgeRequests {
-			request = fact
+			requests = append(requests, fact)
 		}
 	}
-	if request.Target != "GET https://api.example.test/users/{id}/?expand=true#top" ||
-		request.Properties["http_route"] != "/users/{_}" || request.Properties["http_authority"] != "api.example.test" ||
-		request.Properties["http_query"] != "expand=true" || request.Properties["http_fragment"] != "top" {
-		t.Fatalf("canonical request or raw evidence missing: %#v", request)
+	if len(requests) != 2 || requests[0].Target != "GET https://api.example.test/users/{_}" || requests[1].Target != requests[0].Target {
+		t.Fatalf("absolute URL identity contains non-path evidence: %#v", requests)
+	}
+	foundFirstEvidence := false
+	for _, request := range requests {
+		if request.Properties["http_query"] == "expand=true" {
+			foundFirstEvidence = request.Properties["http_route"] == "/users/{_}" &&
+				request.Properties["http_authority"] == "api.example.test" && request.Properties["http_fragment"] == "top"
+		}
+	}
+	if !foundFirstEvidence {
+		t.Fatalf("raw request evidence missing: %#v", requests)
 	}
 	foundDiagnostic := false
 	for _, diagnostic := range result.Diagnostics {

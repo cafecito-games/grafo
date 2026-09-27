@@ -61,6 +61,7 @@ type OutboundRequest struct {
 	Source      Resource       `json:"source"`
 	Method      string         `json:"method"`
 	Route       string         `json:"route"`
+	Authority   string         `json:"authority,omitempty"`
 	Status      BoundaryStatus `json:"status"`
 	Target      Endpoint       `json:"target"`
 	Destination Endpoint       `json:"destination,omitzero"`
@@ -228,7 +229,7 @@ func (t *Topology) ownership(ctx context.Context) (map[string]string, error) {
 	return owners, nil
 }
 
-func endpointMethodRoute(node graph.Node) (string, string) {
+func rawEndpointMethodRoute(node graph.Node) (string, string) {
 	method := strings.ToUpper(strings.TrimSpace(node.Properties["method"]))
 	route := strings.TrimSpace(node.Properties["route"])
 	if method == "" || route == "" {
@@ -248,6 +249,11 @@ func endpointMethodRoute(node graph.Node) (string, string) {
 			}
 		}
 	}
+	return method, route
+}
+
+func endpointMethodRoute(node graph.Node) (string, string) {
+	method, route := rawEndpointMethodRoute(node)
 	if normalized, err := httpmodel.NormalizeMethod(method); err == nil {
 		method = normalized
 	}
@@ -543,10 +549,10 @@ func endpointRouteCandidate(scoped graph.ScopedNode) (routeCandidate, bool) {
 }
 
 func requestMethodRoute(edge graph.Edge, target graph.Node) (string, httpmodel.Route, bool) {
+	fallbackMethod, fallbackRoute := rawEndpointMethodRoute(target)
 	method := strings.TrimSpace(edge.Properties["http_method"])
 	route := strings.TrimSpace(edge.Properties["http_route"])
 	if method == "" || route == "" {
-		fallbackMethod, fallbackRoute := endpointMethodRoute(target)
 		if method == "" {
 			method = fallbackMethod
 		}
@@ -556,6 +562,10 @@ func requestMethodRoute(edge graph.Edge, target graph.Node) (string, httpmodel.R
 	}
 	normalizedMethod, methodErr := httpmodel.NormalizeMethod(method)
 	parsedRoute, routeErr := httpmodel.ParseRoute(route)
+	if targetRoute, err := httpmodel.ParseRoute(fallbackRoute); err == nil && parsedRoute.Authority == "" {
+		parsedRoute.Scheme = targetRoute.Scheme
+		parsedRoute.Authority = targetRoute.Authority
+	}
 	valid := methodErr == nil && routeErr == nil && edge.Properties["http_invalid"] != "true"
 	return normalizedMethod, parsedRoute, valid
 }
@@ -663,7 +673,10 @@ func (t *Topology) collectOutboundRequests(ctx context.Context, options Topology
 			continue
 		}
 		request := OutboundRequest{Source: newResource(sourceScoped), Method: method, Route: route,
-			Candidates: []Endpoint{}}
+			Authority: routeModel.Authority, Candidates: []Endpoint{}}
+		if authority := strings.TrimSpace(base.Properties["http_authority"]); authority != "" {
+			request.Authority = authority
+		}
 		var requestTruncated bool
 		request.Target, requestTruncated, err = t.endpoint(ctx, scopes[target.ID], limit)
 		if err != nil {
@@ -673,7 +686,7 @@ func (t *Topology) collectOutboundRequests(ctx context.Context, options Topology
 		request.Target.Method, request.Target.Route = method, route
 		candidates := []graph.ScopedNode{}
 		bestRank := httpmodel.RankNone
-		if validRoute && base.Properties["http_authority"] == "" {
+		if validRoute && request.Authority == "" {
 			for _, declaration := range declarations {
 				if declaration.method != method {
 					continue
@@ -1053,6 +1066,10 @@ func (t *Topology) ServiceTopology(ctx context.Context, options TopologyOptions)
 				continue
 			}
 			from := repositoryService(request.Source.Repository)
+			boundaryName := request.Method + " " + request.Route
+			if request.Authority != "" {
+				boundaryName = request.Method + " //" + request.Authority + request.Route
+			}
 			var to ServiceNode
 			var endpointIDs []string
 			var targetNodes []Resource
@@ -1062,14 +1079,14 @@ func (t *Topology) ServiceTopology(ctx context.Context, options TopologyOptions)
 				endpointIDs = []string{request.Destination.ID}
 				targetNodes = []Resource{request.Destination.Resource}
 			case BoundaryAmbiguous:
-				to = externalService("http-ambiguous", request.Method+" "+request.Route)
+				to = externalService("http-ambiguous", boundaryName)
 				targetNodes = append(targetNodes, request.Target.Resource)
 				for _, candidate := range request.Candidates {
 					endpointIDs = append(endpointIDs, candidate.ID)
 					targetNodes = append(targetNodes, candidate.Resource)
 				}
 			default:
-				to = externalService("http", request.Method+" "+request.Route)
+				to = externalService("http", boundaryName)
 				endpointIDs = []string{request.Destination.ID}
 				targetNodes = []Resource{request.Target.Resource}
 			}

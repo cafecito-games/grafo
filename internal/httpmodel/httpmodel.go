@@ -45,6 +45,7 @@ type Route struct {
 	Canonical string
 	Query     string
 	Fragment  string
+	Scheme    string
 	Authority string
 	segments  []segment
 }
@@ -92,7 +93,7 @@ func ParseRoute(value string) (Route, error) {
 	if _, err := url.PathUnescape(fragment); err != nil {
 		return Route{}, fmt.Errorf("invalid HTTP route fragment in %q: %w", value, err)
 	}
-	path, authority := core, ""
+	path, scheme, authority := core, "", ""
 	if parsed, err := url.Parse(core); err != nil {
 		return Route{}, fmt.Errorf("parse HTTP route %q: %w", value, err)
 	} else if parsed.IsAbs() {
@@ -100,6 +101,7 @@ func ParseRoute(value string) (Route, error) {
 			return Route{}, fmt.Errorf("invalid absolute HTTP URL %q", value)
 		}
 		authority = parsed.Host
+		scheme = strings.ToLower(parsed.Scheme)
 		path = parsed.Path
 		if parsed.RawPath != "" {
 			path = parsed.RawPath
@@ -127,7 +129,7 @@ func ParseRoute(value string) (Route, error) {
 		return Route{}, fmt.Errorf("invalid HTTP route %q: %w", value, err)
 	}
 	return Route{Raw: raw, Path: path, Canonical: canonical, Query: query,
-		Fragment: fragment, Authority: authority, segments: segments}, nil
+		Fragment: fragment, Scheme: scheme, Authority: authority, segments: segments}, nil
 }
 
 func cutOutsideTemplate(value string, separator byte) (string, string) {
