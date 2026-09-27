@@ -10,13 +10,14 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/semantic"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/migrations"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/sqlcgen"
 	"github.com/pressly/goose/v3"
-	_ "modernc.org/sqlite"
+	modernsqlite "modernc.org/sqlite"
 )
 
 // Repository is the SQLite adapter for graph.Repository.
@@ -24,11 +25,17 @@ type Repository struct {
 	db      *sql.DB
 	queries *sqlcgen.Queries
 	path    string
+	limits  batchLimits
+
+	writeStatsMu sync.Mutex
+	writeStats   graph.WriteStats
+	afterBatch   func(string, graph.WriteBatchStats)
 }
 
 const (
 	reconciliationBatchSize = 10_000
 	resolutionCacheSize     = 50_000
+	sqliteLimitVariables    = 9
 )
 
 var _ graph.Repository = (*Repository)(nil)
@@ -63,7 +70,15 @@ func Open(ctx context.Context, path string) (*Repository, error) {
 		db.Close()
 		return nil, fmt.Errorf("prepare graph queries: %w", err)
 	}
-	repository := &Repository{db: db, queries: queries, path: path}
+	variableLimit, err := activeVariableLimit(ctx, db)
+	if err != nil {
+		queries.Close()
+		db.Close()
+		return nil, fmt.Errorf("read SQLite variable limit: %w", err)
+	}
+	repository := &Repository{db: db, queries: queries, path: path, limits: batchLimits{
+		MaxRows: defaultBatchRows, MaxVariables: variableLimit, MaxBytes: defaultBatchBytes,
+	}}
 	if err := repository.SetMeta(ctx, "schema_version", fmt.Sprint(graph.SchemaVersion)); err != nil {
 		repository.Close()
 		return nil, err
@@ -73,6 +88,12 @@ func Open(ctx context.Context, path string) (*Repository, error) {
 
 func (r *Repository) Close() error { return errors.Join(r.queries.Close(), r.db.Close()) }
 func (r *Repository) Path() string { return r.path }
+
+func (r *Repository) WriteStats() graph.WriteStats {
+	r.writeStatsMu.Lock()
+	defer r.writeStatsMu.Unlock()
+	return r.writeStats
+}
 
 func (r *Repository) SetMeta(ctx context.Context, key, value string) error {
 	return r.queries.SetMeta(ctx, sqlcgen.SetMetaParams{Key: key, Value: value})
@@ -158,7 +179,7 @@ func (r *Repository) Files(ctx context.Context) (map[string]graph.FileRecord, er
 }
 
 func (r *Repository) ReplaceFile(ctx context.Context, file graph.FileRecord, parsed graph.ParseResult) error {
-	return r.inTransaction(ctx, func(q *sqlcgen.Queries) error {
+	return r.inTransaction(ctx, func(q *sqlcgen.Queries, writer *batchWriter) error {
 		if err := markOwnerDirty(ctx, q, file.Path); err != nil {
 			return err
 		}
@@ -175,12 +196,12 @@ func (r *Repository) ReplaceFile(ctx context.Context, file graph.FileRecord, par
 			Language: file.Language, Size: file.Size, ModifiedNs: file.ModifiedNS, IndexedAt: file.IndexedAt}); err != nil {
 			return err
 		}
-		return insertParseResult(ctx, q, parsed)
+		return insertParseResult(ctx, q, writer, parsed)
 	})
 }
 
 func (r *Repository) ReplaceOwner(ctx context.Context, owner string, parsed graph.ParseResult) error {
-	return r.inTransaction(ctx, func(q *sqlcgen.Queries) error {
+	return r.inTransaction(ctx, func(q *sqlcgen.Queries, writer *batchWriter) error {
 		if err := markOwnerDirty(ctx, q, owner); err != nil {
 			return err
 		}
@@ -193,12 +214,12 @@ func (r *Repository) ReplaceOwner(ctx context.Context, owner string, parsed grap
 		if err := q.DeleteNodesByOwner(ctx, owner); err != nil {
 			return err
 		}
-		return insertParseResult(ctx, q, parsed)
+		return insertParseResult(ctx, q, writer, parsed)
 	})
 }
 
 func (r *Repository) RemoveFiles(ctx context.Context, paths []string) error {
-	return r.inTransaction(ctx, func(q *sqlcgen.Queries) error {
+	return r.inTransaction(ctx, func(q *sqlcgen.Queries, _ *batchWriter) error {
 		for _, path := range paths {
 			if err := markOwnerDirty(ctx, q, path); err != nil {
 				return err
@@ -220,23 +241,23 @@ func (r *Repository) RemoveFiles(ctx context.Context, paths []string) error {
 	})
 }
 
-func insertParseResult(ctx context.Context, q *sqlcgen.Queries, parsed graph.ParseResult) error {
+func insertParseResult(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter, parsed graph.ParseResult) error {
 	for _, node := range parsed.Nodes {
 		external := int64(0)
 		if node.External {
 			external = 1
 		}
-		if err := q.UpsertNode(ctx, nodeParams(node, external)); err != nil {
+		if err := writer.addNode(ctx, nodeParams(node, external)); err != nil {
 			return fmt.Errorf("upsert node %s: %w", node.QualifiedName, err)
 		}
 		if !node.External {
-			if err := markNodeDirty(ctx, q, node); err != nil {
+			if err := markNodeDirty(ctx, writer, node); err != nil {
 				return err
 			}
 		}
 	}
 	for _, fact := range parsed.Facts {
-		if err := q.UpsertFact(ctx, factParams(fact)); err != nil {
+		if err := writer.addFact(ctx, factParams(fact)); err != nil {
 			return fmt.Errorf("upsert fact %s: %w", fact.ID, err)
 		}
 	}
@@ -256,6 +277,7 @@ func (r *Repository) ReconcileWithStats(ctx context.Context, observer graph.Reco
 
 	resolved := newResolutionCache(resolutionCacheSize)
 	for {
+		before := r.WriteStats()
 		processed, err := r.reconcileBatch(ctx, resolved)
 		if err != nil {
 			return stats, fmt.Errorf("reconcile fact batch: %w", err)
@@ -264,6 +286,7 @@ func (r *Repository) ReconcileWithStats(ctx context.Context, observer graph.Reco
 			break
 		}
 		stats.Batches++
+		addWriteStats(&stats.Writes, subtractWriteStats(r.WriteStats(), before))
 		if observer != nil {
 			if err := observer(stats); err != nil {
 				return stats, err
@@ -280,7 +303,7 @@ func (r *Repository) ReconcileWithStats(ctx context.Context, observer graph.Reco
 	if !cleanupPending {
 		return stats, nil
 	}
-	if err := r.inTransaction(ctx, func(q *sqlcgen.Queries) error {
+	if err := r.inTransaction(ctx, func(q *sqlcgen.Queries, _ *batchWriter) error {
 		if err := q.DeleteOrphanExternalNodes(ctx); err != nil {
 			return err
 		}
@@ -292,7 +315,7 @@ func (r *Repository) ReconcileWithStats(ctx context.Context, observer graph.Reco
 }
 
 func (r *Repository) queueDirtyFacts(ctx context.Context) error {
-	return r.inTransaction(ctx, func(q *sqlcgen.Queries) error {
+	return r.inTransaction(ctx, func(q *sqlcgen.Queries, _ *batchWriter) error {
 		if err := q.PruneDirtyFacts(ctx); err != nil {
 			return err
 		}
@@ -314,7 +337,7 @@ func (r *Repository) queueDirtyFacts(ctx context.Context) error {
 
 func (r *Repository) reconcileBatch(ctx context.Context, resolved *resolutionCache) (int, error) {
 	processed := 0
-	err := r.inTransaction(ctx, func(q *sqlcgen.Queries) error {
+	err := r.inTransaction(ctx, func(q *sqlcgen.Queries, writer *batchWriter) error {
 		facts, err := q.ListDirtyFactBatch(ctx, reconciliationBatchSize)
 		if err != nil {
 			return err
@@ -328,7 +351,7 @@ func (r *Repository) reconcileBatch(ctx context.Context, resolved *resolutionCac
 		for _, row := range facts {
 			processed++
 			fact := factFromDirtyRow(row)
-			targets, err := resolveTargets(ctx, q, fact, row.TargetExists != 0, resolved)
+			targets, err := resolveTargets(ctx, q, writer, fact, row.TargetExists != 0, resolved)
 			if err != nil {
 				return err
 			}
@@ -336,10 +359,13 @@ func (r *Repository) reconcileBatch(ctx context.Context, resolved *resolutionCac
 				edge := graph.Edge{ID: graph.EdgeID(fact.ID, target), FactID: fact.ID,
 					FromID: fact.FromID, ToID: target, Kind: fact.Kind, Location: fact.Location,
 					Properties: fact.Properties}
-				if err := q.InsertEdge(ctx, edgeParams(edge)); err != nil {
+				if err := writer.addEdge(ctx, edgeParams(edge)); err != nil {
 					return err
 				}
 			}
+		}
+		if err := writer.flush(ctx); err != nil {
+			return err
 		}
 		return q.DeleteDirtyFactBatch(ctx, reconciliationBatchSize)
 	})
@@ -369,19 +395,35 @@ func markOwnerDirty(ctx context.Context, q *sqlcgen.Queries, owner string) error
 	return q.MarkOwnedNamesDirty(ctx, sqlcgen.MarkOwnedNamesDirtyParams{OwnerFile: owner, OwnerFile_2: owner})
 }
 
-func markNodeDirty(ctx context.Context, q *sqlcgen.Queries, node graph.Node) error {
-	if err := q.MarkDirtyNode(ctx, node.ID); err != nil {
+func markNodeDirty(ctx context.Context, writer *batchWriter, node graph.Node) error {
+	if err := writer.addDirtyNode(ctx, node.ID); err != nil {
 		return err
 	}
 	for _, target := range []string{node.Name, node.QualifiedName} {
 		if target == "" {
 			continue
 		}
-		if err := q.MarkDirtyTarget(ctx, sqlcgen.MarkDirtyTargetParams{Target: target, TargetKind: string(node.Kind)}); err != nil {
+		if err := writer.addDirtyTarget(ctx, target, string(node.Kind)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func subtractWriteStats(after, before graph.WriteStats) graph.WriteStats {
+	return graph.WriteStats{
+		Nodes: subtractBatchStats(after.Nodes, before.Nodes),
+		Facts: subtractBatchStats(after.Facts, before.Facts),
+		Edges: subtractBatchStats(after.Edges, before.Edges),
+	}
+}
+
+func subtractBatchStats(after, before graph.WriteBatchStats) graph.WriteBatchStats {
+	return graph.WriteBatchStats{
+		Batches: max(0, after.Batches-before.Batches),
+		Rows:    max(0, after.Rows-before.Rows),
+		Bytes:   max(0, after.Bytes-before.Bytes),
+	}
 }
 
 type resolutionKey struct {
@@ -436,13 +478,13 @@ type resolutionCandidate struct {
 	qualifiedName string
 }
 
-func resolveTargets(ctx context.Context, q *sqlcgen.Queries, fact graph.Fact, targetExists bool, cache *resolutionCache) ([]string, error) {
+func resolveTargets(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter, fact graph.Fact, targetExists bool, cache *resolutionCache) ([]string, error) {
 	if fact.TargetID != "" {
 		if targetExists {
 			return []string{fact.TargetID}, nil
 		}
 		external := externalNode(fact)
-		if err := q.UpsertNode(ctx, nodeParams(external, 1)); err != nil {
+		if err := writer.addNode(ctx, nodeParams(external, 1)); err != nil {
 			return nil, err
 		}
 		return []string{external.ID}, nil
@@ -490,7 +532,7 @@ func resolveTargets(ctx context.Context, q *sqlcgen.Queries, fact graph.Fact, ta
 	}
 	if len(targets) == 0 {
 		external := externalNode(fact)
-		if err := q.UpsertNode(ctx, nodeParams(external, 1)); err != nil {
+		if err := writer.addNode(ctx, nodeParams(external, 1)); err != nil {
 			return nil, err
 		}
 		targets = []string{external.ID}
@@ -629,16 +671,50 @@ func (r *Repository) ExternalEdgesTo(ctx context.Context, node graph.Node) ([]gr
 	return edgesFromRows(rows), nil
 }
 
-func (r *Repository) inTransaction(ctx context.Context, fn func(*sqlcgen.Queries) error) error {
+func (r *Repository) inTransaction(ctx context.Context, fn func(*sqlcgen.Queries, *batchWriter) error) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if err := fn(r.queries.WithTx(tx)); err != nil {
+	writer, err := newBatchWriter(tx, r.limits)
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	defer writer.close()
+	writer.afterBatch = r.afterBatch
+	if err := fn(r.queries.WithTx(tx), writer); err != nil {
+		return err
+	}
+	if err := writer.flush(ctx); err != nil {
+		return err
+	}
+	if err := writer.close(); err != nil {
+		return fmt.Errorf("close SQLite batch statements: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	r.writeStatsMu.Lock()
+	addWriteStats(&r.writeStats, writer.stats())
+	r.writeStatsMu.Unlock()
+	return nil
+}
+
+func activeVariableLimit(ctx context.Context, db *sql.DB) (int, error) {
+	connection, err := db.Conn(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer connection.Close()
+	limit, err := modernsqlite.Limit(connection, sqliteLimitVariables, -1)
+	if err != nil {
+		return 0, err
+	}
+	if limit <= 0 {
+		return 0, fmt.Errorf("driver reported invalid limit %d", limit)
+	}
+	return limit, nil
 }
 
 func nodeParams(n graph.Node, external int64) sqlcgen.UpsertNodeParams {
