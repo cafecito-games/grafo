@@ -701,6 +701,124 @@ func (r *Repository) repositoryName(ctx context.Context) (string, error) {
 	return filepath.Base(root), nil
 }
 
+// DefaultNodeMatchLimit bounds the candidate list MatchNodes returns when a
+// caller does not ask for a different size. Totals are never bounded by it.
+const DefaultNodeMatchLimit = 25
+
+// matchScope pairs a match level with the node scope it is evaluated over.
+// Scopes are ordered so a local declaration always outranks an external boundary
+// node at the same level, and exact evidence about an external target is still
+// exact rather than being pushed down into the substring level.
+type matchScope struct {
+	level    graph.NodeMatchLevel
+	external bool
+}
+
+var matchScopes = []matchScope{
+	{graph.MatchQualifiedName, false},
+	{graph.MatchQualifiedName, true},
+	{graph.MatchName, false},
+	{graph.MatchName, true},
+	{graph.MatchSubstring, false},
+	{graph.MatchSubstring, true},
+}
+
+// MatchNodes resolves a selector against the narrow, index-backed match queries
+// in nodes.sql. Scopes are tried strongest first and the first one holding a
+// case-sensitive match wins, so a substring match never competes with an exact
+// name match, an unresolved boundary node never competes with a real declaration,
+// and a case-insensitive-only hit at a strong level never outranks a
+// case-sensitive match at a weaker one. A scope with only case-insensitive matches
+// is kept as the fallback for selectors that match nothing case-sensitively. The
+// count query runs before the row query so the reported totals cover the whole
+// graph even when the row list is truncated.
+func (r *Repository) MatchNodes(ctx context.Context, request graph.NodeMatchQuery) (graph.NodeMatchGroup, error) {
+	selector := strings.TrimSpace(request.Selector)
+	if selector == "" {
+		return graph.NodeMatchGroup{}, nil
+	}
+	limit := request.Limit
+	if limit <= 0 {
+		limit = DefaultNodeMatchLimit
+	}
+	var fallback graph.NodeMatchGroup
+	for _, scope := range matchScopes {
+		group, err := r.matchNodesInScope(ctx, scope, selector, string(request.Kind), limit)
+		if err != nil {
+			return graph.NodeMatchGroup{}, err
+		}
+		if group.Strict > 0 {
+			return group, nil
+		}
+		if group.StrongerThan(fallback) {
+			fallback = group
+		}
+	}
+	return fallback, nil
+}
+
+func (r *Repository) matchNodesInScope(ctx context.Context, scope matchScope,
+	selector, kind string, limit int) (graph.NodeMatchGroup, error) {
+	group := graph.NodeMatchGroup{Level: scope.level, External: scope.external}
+	external := int64(0)
+	if scope.external {
+		external = 1
+	}
+	var rows []sqlcgen.Node
+	var err error
+	switch scope.level {
+	case graph.MatchQualifiedName:
+		counts, countErr := r.queries.CountNodeMatchesByQualifiedName(ctx,
+			sqlcgen.CountNodeMatchesByQualifiedNameParams{Target: selector, External: external, Kind: kind})
+		if countErr != nil {
+			return graph.NodeMatchGroup{}, countErr
+		}
+		group.Total, group.Strict = int(counts.Total), int(counts.StrictMatches)
+		if group.Total == 0 {
+			return group, nil
+		}
+		rows, err = r.queries.MatchNodesByQualifiedName(ctx,
+			sqlcgen.MatchNodesByQualifiedNameParams{Target: selector, External: external, Kind: kind,
+				MaxResults: int64(limit)})
+	case graph.MatchName:
+		counts, countErr := r.queries.CountNodeMatchesByName(ctx,
+			sqlcgen.CountNodeMatchesByNameParams{Target: selector, External: external, Kind: kind})
+		if countErr != nil {
+			return graph.NodeMatchGroup{}, countErr
+		}
+		group.Total, group.Strict = int(counts.Total), int(counts.StrictMatches)
+		if group.Total == 0 {
+			return group, nil
+		}
+		rows, err = r.queries.MatchNodesByName(ctx,
+			sqlcgen.MatchNodesByNameParams{Target: selector, External: external, Kind: kind,
+				MaxResults: int64(limit)})
+	case graph.MatchSubstring:
+		counts, countErr := r.queries.CountNodeMatchesBySubstring(ctx,
+			sqlcgen.CountNodeMatchesBySubstringParams{Target: selector, External: external, Kind: kind})
+		if countErr != nil {
+			return graph.NodeMatchGroup{}, countErr
+		}
+		group.Total, group.Strict = int(counts.Total), int(counts.StrictMatches)
+		if group.Total == 0 {
+			return group, nil
+		}
+		rows, err = r.queries.MatchNodesBySubstring(ctx,
+			sqlcgen.MatchNodesBySubstringParams{Target: selector, External: external, Kind: kind,
+				MaxResults: int64(limit)})
+	default:
+		return graph.NodeMatchGroup{}, fmt.Errorf("unknown node match level %q", scope.level)
+	}
+	if err != nil {
+		return graph.NodeMatchGroup{}, err
+	}
+	group.Nodes = make([]graph.Node, 0, len(rows))
+	for _, row := range rows {
+		group.Nodes = append(group.Nodes, nodeFromRow(row))
+	}
+	return group, nil
+}
+
 func (r *Repository) Node(ctx context.Context, id string) (graph.Node, error) {
 	row, err := r.queries.GetNode(ctx, id)
 	if err != nil {

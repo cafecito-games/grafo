@@ -566,6 +566,52 @@ func (c *catalogRepository) ListNodesByKind(_ context.Context, request graph.Nod
 	return result, nil
 }
 
+// MatchNodes implements the graph.NodeMatchGroup contract over the fake's node
+// set, so catalog tests exercise the same selector resolution as production.
+func (c *catalogRepository) MatchNodes(_ context.Context, request graph.NodeMatchQuery) (graph.NodeMatchGroup, error) {
+	selector := strings.TrimSpace(request.Selector)
+	if selector == "" {
+		return graph.NodeMatchGroup{}, nil
+	}
+	limit := request.Limit
+	if limit <= 0 {
+		limit = 25
+	}
+	var fallback graph.NodeMatchGroup
+	for _, level := range []graph.NodeMatchLevel{graph.MatchQualifiedName, graph.MatchName, graph.MatchSubstring} {
+		for _, external := range []bool{false, true} {
+			group := graph.NodeMatchGroup{Level: level, External: external}
+			for _, node := range c.nodes {
+				if request.Kind != "" && node.Kind != request.Kind {
+					continue
+				}
+				if node.External != external || !graph.LooseMatch(level, selector, node) {
+					continue
+				}
+				group.Total++
+				if graph.StrictMatch(level, selector, node) {
+					group.Strict++
+				}
+				group.Nodes = append(group.Nodes, node)
+			}
+			if group.Total == 0 {
+				continue
+			}
+			graph.SortNodeMatches(level, selector, group.Nodes)
+			if len(group.Nodes) > limit {
+				group.Nodes = group.Nodes[:limit]
+			}
+			if group.Strict > 0 {
+				return group, nil
+			}
+			if group.StrongerThan(fallback) {
+				fallback = group
+			}
+		}
+	}
+	return fallback, nil
+}
+
 func (c *catalogRepository) SearchNodes(_ context.Context, term string, limit int) ([]graph.Node, error) {
 	var result []graph.Node
 	for _, node := range c.nodes {

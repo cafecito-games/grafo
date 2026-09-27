@@ -366,7 +366,7 @@ func evaluateQueries(ctx context.Context, repository graph.QueryRepository, orig
 	service := query.NewService(repository)
 	result := make([]QuerySpec, 0, len(specifications))
 	for _, specification := range specifications {
-		path, err := service.ShortestPath(ctx, specification.From, specification.To, query.Direction(specification.Direction), specification.Relations, 10_000)
+		path, err := service.ShortestPath(ctx, specification.From, specification.To, "", query.Direction(specification.Direction), specification.Relations, 10_000)
 		if err != nil {
 			return nil, fmt.Errorf("query %q (%s -> %s): %w", specification.ID, specification.From, specification.To, err)
 		}
@@ -448,7 +448,7 @@ func countNodeMatches(nodes []NodeRef, ref NodeRef) int {
 func evaluateForbiddenPaths(ctx context.Context, repository graph.QueryRepository, patterns []PathPattern) error {
 	service := query.NewService(repository)
 	for _, pattern := range patterns {
-		path, err := service.ShortestPath(ctx, pattern.From, pattern.To, query.Direction(pattern.Direction), pattern.Relations, 10_000)
+		path, err := service.ShortestPath(ctx, pattern.From, pattern.To, "", query.Direction(pattern.Direction), pattern.Relations, 10_000)
 		if err == nil {
 			return fmt.Errorf("forbidden path exists from %s to %s: %v", pattern.From, pattern.To, qualifiedNames(path.Nodes))
 		}

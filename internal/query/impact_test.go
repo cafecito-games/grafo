@@ -545,3 +545,84 @@ func TestImpactRelationSetsAreShared(t *testing.T) {
 		t.Fatal("UpstreamRelations must return a defensive copy")
 	}
 }
+
+// TestImpactResolvesDeclarationNotItsOwnMembers guards the reported case behind
+// this test file's package: "grafo impact query.Service.Impact" was made ambiguous
+// by that method's own parameters and local variables, and a silently resolved
+// root would have produced a confident report for the wrong symbol.
+func TestImpactResolvesDeclarationNotItsOwnMembers(t *testing.T) {
+	method := graph.Node{ID: graph.NodeID(graph.KindMethod, "example.com/query.Service.Impact"),
+		Kind: graph.KindMethod, Name: "Impact", QualifiedName: "example.com/query.Service.Impact",
+		Location: graph.Location{Path: "internal/query/impact.go", Line: 184, EndLine: 220}}
+	members := []graph.Node{method}
+	for _, member := range []struct {
+		kind graph.NodeKind
+		name string
+	}{
+		{graph.KindParameter, "ctx"}, {graph.KindParameter, "selector"},
+		{graph.KindParameter, "options"}, {graph.KindVariable, "err@185"},
+		{graph.KindVariable, "root@185"}, {graph.KindVariable, "report@200"},
+	} {
+		qualified := method.QualifiedName + "." + member.name
+		members = append(members, graph.Node{ID: graph.NodeID(member.kind, qualified), Kind: member.kind,
+			Name: member.name, QualifiedName: qualified,
+			Location: graph.Location{Path: "internal/query/impact.go", Line: 185, EndLine: 185}})
+	}
+	// A case-insensitive-only rival, as the real graph has in impactSection.
+	members = append(members, graph.Node{ID: graph.NodeID(graph.KindMethod, "example.com/query.Service.impactSection"),
+		Kind: graph.KindMethod, Name: "impactSection", QualifiedName: "example.com/query.Service.impactSection",
+		Location: graph.Location{Path: "internal/query/impact.go", Line: 246, EndLine: 260}})
+
+	service := query.NewService(&fakeRepository{nodes: nodeSet(members...)})
+	report, err := service.Impact(context.Background(), "Service.Impact", query.ImpactOptions{})
+	if err != nil {
+		t.Fatalf("expected the method to resolve, got %v", err)
+	}
+	if report.Root.ID != method.ID {
+		t.Fatalf("unexpected impact root: %#v", report.Root)
+	}
+}
+
+// TestImpactReportsCompleteAmbiguity proves an ambiguous root never yields a
+// report and that the error states the true match count.
+func TestImpactReportsCompleteAmbiguity(t *testing.T) {
+	var nodes []graph.Node
+	for index := 0; index < 8; index++ {
+		qualified := "example.com/pkg" + string(rune('a'+index)) + ".Service.Charge"
+		nodes = append(nodes, graph.Node{ID: graph.NodeID(graph.KindMethod, qualified), Kind: graph.KindMethod,
+			Name: "Charge", QualifiedName: qualified, Location: graph.Location{Path: "charge.go", Line: 1, EndLine: 2}})
+	}
+	service := query.NewService(&fakeRepository{nodes: nodeSet(nodes...), matchLimit: 3})
+	report, err := service.Impact(context.Background(), "Charge", query.ImpactOptions{})
+	var ambiguous *query.AmbiguousError
+	if !errors.As(err, &ambiguous) {
+		t.Fatalf("expected *AmbiguousError, got %v", err)
+	}
+	if ambiguous.Total != 8 || len(ambiguous.Candidates) != 3 {
+		t.Fatalf("expected 8 matches with 3 listed, got %d and %d", ambiguous.Total, len(ambiguous.Candidates))
+	}
+	if !reflect.DeepEqual(report, query.ImpactReport{}) {
+		t.Fatalf("failed resolution must not return a partial report: %#v", report)
+	}
+}
+
+// TestImpactKindNarrowsResolution proves the kind filter reaches Impact.
+func TestImpactKindNarrowsResolution(t *testing.T) {
+	method := graph.Node{ID: graph.NodeID(graph.KindMethod, "example.com/pkg.Service.Charge"),
+		Kind: graph.KindMethod, Name: "Charge", QualifiedName: "example.com/pkg.Service.Charge",
+		Location: graph.Location{Path: "charge.go", Line: 1, EndLine: 4}}
+	rival := graph.Node{ID: graph.NodeID(graph.KindField, "example.com/pkg.Request.Charge"),
+		Kind: graph.KindField, Name: "Charge", QualifiedName: "example.com/pkg.Request.Charge",
+		Location: graph.Location{Path: "request.go", Line: 9, EndLine: 9}}
+	service := query.NewService(&fakeRepository{nodes: nodeSet(method, rival)})
+	if _, err := service.Impact(context.Background(), "Charge", query.ImpactOptions{}); err == nil {
+		t.Fatal("expected an unfiltered selector to stay ambiguous")
+	}
+	report, err := service.Impact(context.Background(), "Charge", query.ImpactOptions{Kind: graph.KindMethod})
+	if err != nil {
+		t.Fatalf("kind-filtered impact failed: %v", err)
+	}
+	if report.Root.ID != method.ID {
+		t.Fatalf("unexpected impact root: %#v", report.Root)
+	}
+}

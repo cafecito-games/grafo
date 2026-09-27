@@ -106,6 +106,10 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		var ambiguous *query.AmbiguousError
 		if errors.As(runErr, &ambiguous) {
 			a.printNodes(ambiguous.Candidates)
+			if ambiguous.Total > len(ambiguous.Candidates) {
+				fmt.Fprintf(a.stderr, "grafo: %d further matches are not listed; narrow the selector or add --kind\n",
+					ambiguous.Total-len(ambiguous.Candidates))
+			}
 		}
 		return 1
 	}
@@ -437,7 +441,7 @@ func (a *App) mcp(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	service.WithSource(sourceService.Read)
+	service.WithSource(sourceService.ReadKind)
 	searchService, err := newSearchService(repository, projects)
 	if err != nil {
 		return err
@@ -562,14 +566,18 @@ func (a *App) find(ctx context.Context, args parsedArguments) error {
 
 func (a *App) show(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 1 {
-		return fmt.Errorf("usage: grafo show <symbol-or-id>")
+		return fmt.Errorf("usage: grafo show <symbol-or-id> [--kind function]")
+	}
+	kind, err := nodeKindOption(args)
+	if err != nil {
+		return err
 	}
 	repository, _, closeRepository, err := openRead(ctx, args)
 	if err != nil {
 		return err
 	}
 	defer closeRepository()
-	node, err := query.NewService(repository).Resolve(ctx, args.positionals[0])
+	node, err := query.NewService(repository).ResolveKind(ctx, args.positionals[0], kind)
 	if err != nil {
 		return err
 	}
@@ -582,7 +590,11 @@ func (a *App) show(ctx context.Context, args parsedArguments) error {
 
 func (a *App) source(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 1 {
-		return fmt.Errorf("usage: grafo source <symbol-or-id> [--context-lines 2] [--max-lines 200]")
+		return fmt.Errorf("usage: grafo source <symbol-or-id> [--kind function] [--context-lines 2] [--max-lines 200]")
+	}
+	kind, err := nodeKindOption(args)
+	if err != nil {
+		return err
 	}
 	contextLines, err := nonNegativeIntOption(args, "context-lines", 2)
 	if err != nil {
@@ -601,7 +613,7 @@ func (a *App) source(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	excerpt, err := service.Read(ctx, args.positionals[0], contextLines, maxLines)
+	excerpt, err := service.ReadKind(ctx, args.positionals[0], kind, contextLines, maxLines)
 	if err != nil {
 		return err
 	}
@@ -628,7 +640,11 @@ func newSourceService(repository graph.ReadRepository, projects []indexer.Projec
 
 func (a *App) neighbors(ctx context.Context, args parsedArguments, mode string) error {
 	if len(args.positionals) != 1 {
-		return fmt.Errorf("usage: grafo %s <symbol-or-id>", args.command)
+		return fmt.Errorf("usage: grafo %s <symbol-or-id> [--kind function]", args.command)
+	}
+	kind, err := nodeKindOption(args)
+	if err != nil {
+		return err
 	}
 	depthDefault := 1
 	direction := query.Direction(args.values["direction"])
@@ -654,7 +670,7 @@ func (a *App) neighbors(ctx context.Context, args parsedArguments, mode string) 
 		return err
 	}
 	defer closeRepository()
-	result, err := query.NewService(repository).Neighborhood(ctx, args.positionals[0], depth, direction, relations, limit)
+	result, err := query.NewService(repository).Neighborhood(ctx, args.positionals[0], kind, depth, direction, relations, limit)
 	if err != nil {
 		return err
 	}
@@ -678,7 +694,11 @@ func (a *App) neighbors(ctx context.Context, args parsedArguments, mode string) 
 
 func (a *App) path(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 2 {
-		return fmt.Errorf("usage: grafo path <from> <to>")
+		return fmt.Errorf("usage: grafo path <from> <to> [--kind function]")
+	}
+	kind, err := nodeKindOption(args)
+	if err != nil {
+		return err
 	}
 	limit, err := intOption(args, "limit", 10000)
 	if err != nil {
@@ -690,7 +710,7 @@ func (a *App) path(ctx context.Context, args parsedArguments) error {
 		return err
 	}
 	defer closeRepository()
-	result, err := query.NewService(repository).ShortestPath(ctx, args.positionals[0], args.positionals[1], direction, parseRelations(args.values["relation"]), limit)
+	result, err := query.NewService(repository).ShortestPath(ctx, args.positionals[0], args.positionals[1], kind, direction, parseRelations(args.values["relation"]), limit)
 	if err != nil {
 		return err
 	}
@@ -708,7 +728,11 @@ func (a *App) path(ctx context.Context, args parsedArguments) error {
 
 func (a *App) impact(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 1 {
-		return fmt.Errorf("usage: grafo %s <symbol-or-id> [--depth 4] [--upstream-depth n] [--downstream-depth n] [--source]", args.command)
+		return fmt.Errorf("usage: grafo %s <symbol-or-id> [--kind method] [--depth 4] [--upstream-depth n] [--downstream-depth n] [--source]", args.command)
+	}
+	kind, err := nodeKindOption(args)
+	if err != nil {
+		return err
 	}
 	depth, err := intOption(args, "depth", 4)
 	if err != nil {
@@ -719,6 +743,7 @@ func (a *App) impact(ctx context.Context, args parsedArguments) error {
 		return err
 	}
 	options := query.ImpactOptions{
+		Kind:          kind,
 		UpstreamDepth: depth, DownstreamDepth: depth,
 		UpstreamLimit: limit, DownstreamLimit: limit,
 		IncludeSource: args.flags["source"],
@@ -1330,6 +1355,13 @@ func parseArguments(arguments []string) (parsedArguments, error) {
 	return result, nil
 }
 
+// nodeKindOption reads the optional --kind filter shared by every command that
+// takes a selector. An unknown kind fails here rather than resolving to a filter
+// that can never match.
+func nodeKindOption(args parsedArguments) (graph.NodeKind, error) {
+	return graph.ParseNodeKind(args.values["kind"])
+}
+
 func optionalPath(positionals []string) (string, error) {
 	if len(positionals) > 1 {
 		return "", fmt.Errorf("expected at most one repository path")
@@ -1410,19 +1442,19 @@ Usage:
   grafo embed [path] [--model embeddinggemma] [--ollama-url http://localhost:11434] [--force]
   grafo reusable <description> [--repo path | --repos pathA,pathB] [--limit 5] [--json]
   grafo find <text> [--limit 20] [--repo path | --repos pathA,pathB] [--json]
-  grafo show <symbol-or-id> [--repo path | --repos pathA,pathB] [--json]
-  grafo source <symbol-or-id> [--context-lines 2] [--max-lines 200] [--json]
-  grafo neighbors <symbol-or-id> [--depth 1] [--direction both]
-  grafo callers <symbol-or-id> [--depth 3]
-  grafo callees <symbol-or-id> [--depth 3]
-  grafo impact <symbol-or-id> [--depth 4] [--upstream-depth n] [--downstream-depth n]
+  grafo show <symbol-or-id> [--kind function] [--repo path | --repos pathA,pathB] [--json]
+  grafo source <symbol-or-id> [--kind function] [--context-lines 2] [--max-lines 200] [--json]
+  grafo neighbors <symbol-or-id> [--kind function] [--depth 1] [--direction both]
+  grafo callers <symbol-or-id> [--kind function] [--depth 3]
+  grafo callees <symbol-or-id> [--kind function] [--depth 3]
+  grafo impact <symbol-or-id> [--kind method] [--depth 4] [--upstream-depth n] [--downstream-depth n]
                               [--upstream-limit n] [--downstream-limit n]
                               [--source] [--context-lines 2] [--max-lines 200] [--source-limit 10]
   grafo search <pattern>... [--regex] [--case-sensitive] [--path-prefix dir,...]
                             [--language go,...] [--repo-name name,...] [--context-lines 0]
                             [--max-matches 500] [--max-matches-per-file 50]
                             [--max-matches-per-pattern 200] [--max-file-size 1048576]
-  grafo path <from> <to> [--direction outgoing] [--relation calls,...]
+  grafo path <from> <to> [--kind function] [--direction outgoing] [--relation calls,...]
   grafo data-resources [--kind table,view] [--name text] [--repo-name name]
                        [--limit 100] [--json]
   grafo data-usage <table-view-or-id> [--repo-name name] [--limit 100] [--json]
@@ -1432,7 +1464,9 @@ Usage:
   grafo version
 
 Options may appear before or after positional arguments. All query commands
-accept --repo or a comma-separated --repos list. Active branch indexes are
+accept --repo or a comma-separated --repos list. Commands that take a selector
+accept --kind to restrict resolution to one node kind, so a selector shared by a
+function and its own parameter resolves without guessing. Active branch indexes are
 refreshed incrementally before queries and never substituted across branches.
 
 'grafo install --list' only detects clients and never writes; '--dry-run'

@@ -37,6 +37,40 @@ const (
 	KindExternal   NodeKind = "external"
 )
 
+// nodeKinds is the closed node vocabulary, in declaration order. It backs
+// ParseNodeKind so a caller-supplied kind filter is validated against the
+// vocabulary instead of silently matching nothing.
+var nodeKinds = []NodeKind{
+	KindRepository, KindFile, KindPackage, KindModule, KindFunction, KindMethod,
+	KindType, KindClass, KindInterface, KindField, KindVariable, KindParameter,
+	KindTable, KindView, KindColumn, KindIndex, KindConfigKey, KindEndpoint,
+	KindEvent, KindDocSection, KindExternal,
+}
+
+// NodeKinds returns the node vocabulary. Callers must not mutate the result.
+func NodeKinds() []NodeKind { return append([]NodeKind(nil), nodeKinds...) }
+
+// ParseNodeKind validates a caller-supplied node kind. An empty value parses to
+// the empty kind, which every filter treats as "any kind"; an unknown value is
+// an error rather than a filter that can never match.
+func ParseNodeKind(value string) (NodeKind, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", nil
+	}
+	candidate := NodeKind(strings.ToLower(trimmed))
+	for _, kind := range nodeKinds {
+		if kind == candidate {
+			return kind, nil
+		}
+	}
+	names := make([]string, 0, len(nodeKinds))
+	for _, kind := range nodeKinds {
+		names = append(names, string(kind))
+	}
+	return "", fmt.Errorf("unknown node kind %q; expected one of %s", value, strings.Join(names, ", "))
+}
+
 type EdgeKind string
 
 const (

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/cafecito-games/grafo/internal/graph"
 )
@@ -18,13 +20,62 @@ const (
 	Both     Direction = "both"
 )
 
+// AmbiguousError reports that a selector matched several equally good nodes.
+// Total is the number of matches in the graph, which can exceed the number of
+// listed Candidates, so a caller can always tell that the list is partial. Level
+// and Reason say why the candidates were grouped together: they all matched the
+// selector the same way, and no weaker match is ever mixed in.
 type AmbiguousError struct {
-	Term       string
-	Candidates []graph.Node
+	Term       string               `json:"term"`
+	Kind       graph.NodeKind       `json:"kind,omitempty"`
+	Level      graph.NodeMatchLevel `json:"level,omitempty"`
+	Reason     string               `json:"reason,omitempty"`
+	Total      int                  `json:"total"`
+	Candidates []graph.Node         `json:"candidates"`
 }
 
 func (e *AmbiguousError) Error() string {
-	return fmt.Sprintf("%q matches %d nodes; use a qualified name or node ID", e.Term, len(e.Candidates))
+	total := e.Total
+	if total < len(e.Candidates) {
+		total = len(e.Candidates)
+	}
+	var message strings.Builder
+	fmt.Fprintf(&message, "%q matches %d nodes", e.Term, total)
+	if e.Kind != "" {
+		fmt.Fprintf(&message, " of kind %s", e.Kind)
+	}
+	if e.Reason != "" {
+		message.WriteString(" " + e.Reason)
+	}
+	if len(e.Candidates) < total {
+		fmt.Fprintf(&message, " (showing %d)", len(e.Candidates))
+	}
+	message.WriteString("; use a qualified name or node ID")
+	return message.String()
+}
+
+// matchReason names the evidence that grouped a set of candidates, for the
+// human-readable half of AmbiguousError. A group with no case-sensitive match says
+// so, because the caller's spelling did not match any candidate exactly.
+func matchReason(group graph.NodeMatchGroup) string {
+	var reason string
+	switch group.Level {
+	case graph.MatchQualifiedName:
+		reason = "by qualified name"
+	case graph.MatchName:
+		reason = "by name"
+	case graph.MatchSubstring:
+		reason = "by substring"
+	default:
+		return ""
+	}
+	if group.Strict == 0 {
+		reason += " ignoring case"
+	}
+	if group.External {
+		reason += " among external nodes"
+	}
+	return reason
 }
 
 var ErrNotFound = errors.New("node not found")
@@ -63,49 +114,180 @@ func (s *Service) Find(ctx context.Context, term string, limit int) ([]graph.Nod
 	return s.repository.SearchNodes(ctx, strings.TrimSpace(term), limit)
 }
 
+// candidateLimit bounds how many candidates an ambiguity report lists. It never
+// bounds the counts the ambiguity decision is made from: the repository reports
+// complete totals, so truncating this list can never narrow a match set.
+const candidateLimit = 25
+
+// Resolve resolves a selector to exactly one node, or reports why it cannot.
+// It is the single resolution path behind every CLI command and MCP tool.
 func (s *Service) Resolve(ctx context.Context, selector string) (graph.Node, error) {
+	return s.ResolveKind(ctx, selector, "")
+}
+
+// ResolveKind resolves a selector restricted to one node kind; an empty kind
+// accepts any kind. A caller that means the function rather than one of its
+// parameters can say so instead of guessing at the candidate list.
+//
+// The contract is that resolution either returns one node on evidence or fails,
+// never one of several equally good matches. That holds because every decision
+// below is made from graph.NodeMatchGroup totals, which cover the whole graph,
+// rather than from the truncated candidate list:
+//
+//   - Only the strongest match level contributes. A substring match can never
+//     make an exact name match ambiguous.
+//   - Within a level, case-sensitive matches decide uniqueness whenever any
+//     exist, so "impact" resolves to App.impact rather than tying with
+//     Service.Impact. Case-insensitive-only matches remain in the reported
+//     candidate list, because they are what the caller most likely has to
+//     disambiguate between.
+//   - A candidate whose qualified name merely extends another candidate's is a
+//     descendant of it, not a rival: a method is preferred over its own
+//     parameters and local variables.
+//   - Narrowing a truncated list is refused outright, because the nodes that
+//     were cut off could be equally good matches.
+func (s *Service) ResolveKind(ctx context.Context, selector string, kind graph.NodeKind) (graph.Node, error) {
 	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return graph.Node{}, errors.New("selector is required")
+	}
 	if strings.HasPrefix(selector, "n:") {
-		if node, err := s.repository.Node(ctx, selector); err == nil {
+		if node, err := s.repository.Node(ctx, selector); err == nil && (kind == "" || node.Kind == kind) {
 			return node, nil
 		}
 	}
-	candidates, err := s.repository.SearchNodes(ctx, selector, 25)
+	group, err := s.repository.MatchNodes(ctx, graph.NodeMatchQuery{Selector: selector, Kind: kind, Limit: candidateLimit})
 	if err != nil {
 		return graph.Node{}, err
 	}
-	if len(candidates) == 0 {
+	if group.Total == 0 || len(group.Nodes) == 0 {
 		return graph.Node{}, fmt.Errorf("%w: %s", ErrNotFound, selector)
 	}
-	var exactQualified, exactName []graph.Node
-	for _, node := range candidates {
-		if strings.EqualFold(node.QualifiedName, selector) {
-			exactQualified = append(exactQualified, node)
+	// The pool is the evidence uniqueness is decided from; it is complete only
+	// when the repository listed every match it counted.
+	pool, poolTotal := group.Nodes, group.Total
+	if group.Strict > 0 {
+		pool, poolTotal = strictMatches(group, selector), group.Strict
+	}
+	if poolTotal == 1 && len(pool) == 1 {
+		return pool[0], nil
+	}
+	if poolTotal <= len(pool) {
+		if declarations := preferDeclarations(pool); len(declarations) == 1 {
+			return declarations[0], nil
 		}
-		if strings.EqualFold(node.Name, selector) {
-			exactName = append(exactName, node)
+	}
+	// Report every match at this level, not just the case-sensitive ones: the
+	// caller needs to see the near miss that made the selector ambiguous.
+	candidates, total := group.Nodes, group.Total
+	if total <= len(candidates) {
+		if declarations := preferDeclarations(candidates); len(declarations) < len(candidates) {
+			candidates, total = declarations, len(declarations)
 		}
 	}
-	if len(exactQualified) == 1 {
-		return exactQualified[0], nil
-	}
-	if len(exactName) == 1 {
-		return exactName[0], nil
-	}
-	if len(candidates) == 1 {
-		return candidates[0], nil
-	}
-	ambiguous := candidates
-	if len(exactQualified) > 1 {
-		ambiguous = exactQualified
-	} else if len(exactName) > 1 {
-		ambiguous = exactName
-	}
-	return graph.Node{}, &AmbiguousError{Term: selector, Candidates: ambiguous}
+	return graph.Node{}, &AmbiguousError{Term: selector, Kind: kind, Level: group.Level,
+		Reason: matchReason(group), Total: total, Candidates: candidates}
 }
 
-func (s *Service) Neighborhood(ctx context.Context, selector string, depth int, direction Direction, relations []graph.EdgeKind, limit int) (Traversal, error) {
-	root, err := s.Resolve(ctx, selector)
+// strictMatches keeps the case-sensitive matches of a group. The group contract
+// orders them first, so the result holds every strict match in the graph
+// whenever group.Strict does not exceed the listed candidates.
+func strictMatches(group graph.NodeMatchGroup, selector string) []graph.Node {
+	result := make([]graph.Node, 0, len(group.Nodes))
+	for _, node := range group.Nodes {
+		if graph.StrictMatch(group.Level, selector, node) {
+			result = append(result, node)
+		}
+	}
+	return result
+}
+
+// preferDeclarations drops candidates that are provably sub-parts of another
+// candidate, so a selector naming a declaration is not made ambiguous by that
+// declaration's own parameters, local variables, fields, or columns. The caller
+// named the parent rather than the child.
+//
+// Suppression is structural, and deliberately so: a member kind is only a hint,
+// because a parser may use one for something that is a declaration in its own
+// right - Godot models scene nodes as hierarchical graph.KindVariable nodes. The
+// three conditions in isSubPartOfCandidate enforce the suppression invariant
+// documented above graph.memberKinds, whose point is that no qualified-name
+// convention, present or future, can cause a real declaration to be suppressed.
+// The input is returned unchanged when the rule would leave nothing.
+func preferDeclarations(nodes []graph.Node) []graph.Node {
+	if len(nodes) < 2 {
+		return nodes
+	}
+	result := make([]graph.Node, 0, len(nodes))
+	for index, node := range nodes {
+		if !isSubPartOfCandidate(index, nodes) {
+			result = append(result, node)
+		}
+	}
+	if len(result) == 0 {
+		return nodes
+	}
+	return result
+}
+
+// isSubPartOfCandidate reports whether nodes[index] is a sub-part of another
+// candidate rather than a declaration of its own. All three conditions of the
+// suppression invariant must hold: the candidate's kind is one parsers use for a
+// sub-part, nothing else in the set is nested inside it, and the nearest candidate
+// containing it is a real declaration rather than another member.
+//
+// The last two conditions are what keep the rule honest for hierarchical member
+// kinds. A Godot scene node "scenes/main:Player" containing
+// "scenes/main:Player/Player" is a container, not a sub-part, so it survives by
+// the second condition; the child survives by the third, because its container is
+// itself a KindVariable and therefore not evidence of a declaration. The selector
+// stays ambiguous, which is the whole point.
+func isSubPartOfCandidate(index int, nodes []graph.Node) bool {
+	node := nodes[index]
+	if !graph.IsDeclarationMember(node.Kind) {
+		return false
+	}
+	container := -1
+	for other := range nodes {
+		if other == index {
+			continue
+		}
+		if extendsQualifiedName(nodes[other].QualifiedName, node.QualifiedName) {
+			// Something in the match set is nested inside this candidate, so it is
+			// a container and suppressing it would hide that nested declaration's
+			// parent from the ambiguity report.
+			return false
+		}
+		if !extendsQualifiedName(node.QualifiedName, nodes[other].QualifiedName) {
+			continue
+		}
+		// Keep the nearest container, which is the longest qualified name this
+		// candidate extends.
+		if container < 0 || len(nodes[other].QualifiedName) > len(nodes[container].QualifiedName) {
+			container = other
+		}
+	}
+	if container < 0 {
+		return false
+	}
+	return !graph.IsDeclarationMember(nodes[container].Kind)
+}
+
+// extendsQualifiedName reports whether child continues parent past a separator.
+// The boundary test keeps sibling symbols apart: "Impacted" does not extend
+// "Impact", while "Impact.selector" and "Impact.err@185" both do.
+func extendsQualifiedName(child, parent string) bool {
+	if parent == "" || len(child) <= len(parent) || !strings.HasPrefix(child, parent) {
+		return false
+	}
+	next, _ := utf8.DecodeRuneInString(child[len(parent):])
+	return !(next == '_' || unicode.IsLetter(next) || unicode.IsDigit(next))
+}
+
+// Neighborhood walks edges from a resolved root. kind optionally restricts
+// which node the selector may resolve to; an empty kind accepts any kind.
+func (s *Service) Neighborhood(ctx context.Context, selector string, kind graph.NodeKind, depth int, direction Direction, relations []graph.EdgeKind, limit int) (Traversal, error) {
+	root, err := s.ResolveKind(ctx, selector, kind)
 	if err != nil {
 		return Traversal{}, err
 	}
@@ -177,12 +359,14 @@ func (s *Service) Neighborhood(ctx context.Context, selector string, depth int, 
 	return result, nil
 }
 
-func (s *Service) ShortestPath(ctx context.Context, fromSelector, toSelector string, direction Direction, relations []graph.EdgeKind, limit int) (Path, error) {
-	from, err := s.Resolve(ctx, fromSelector)
+// ShortestPath walks from one resolved node to another. kind optionally
+// restricts both endpoints to one node kind.
+func (s *Service) ShortestPath(ctx context.Context, fromSelector, toSelector string, kind graph.NodeKind, direction Direction, relations []graph.EdgeKind, limit int) (Path, error) {
+	from, err := s.ResolveKind(ctx, fromSelector, kind)
 	if err != nil {
 		return Path{}, err
 	}
-	to, err := s.Resolve(ctx, toSelector)
+	to, err := s.ResolveKind(ctx, toSelector, kind)
 	if err != nil {
 		return Path{}, err
 	}

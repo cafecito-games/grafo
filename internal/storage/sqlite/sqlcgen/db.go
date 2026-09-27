@@ -54,6 +54,15 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.countFilesStmt, err = db.PrepareContext(ctx, countFiles); err != nil {
 		return nil, fmt.Errorf("error preparing query CountFiles: %w", err)
 	}
+	if q.countNodeMatchesByNameStmt, err = db.PrepareContext(ctx, countNodeMatchesByName); err != nil {
+		return nil, fmt.Errorf("error preparing query CountNodeMatchesByName: %w", err)
+	}
+	if q.countNodeMatchesByQualifiedNameStmt, err = db.PrepareContext(ctx, countNodeMatchesByQualifiedName); err != nil {
+		return nil, fmt.Errorf("error preparing query CountNodeMatchesByQualifiedName: %w", err)
+	}
+	if q.countNodeMatchesBySubstringStmt, err = db.PrepareContext(ctx, countNodeMatchesBySubstring); err != nil {
+		return nil, fmt.Errorf("error preparing query CountNodeMatchesBySubstring: %w", err)
+	}
 	if q.countNodesStmt, err = db.PrepareContext(ctx, countNodes); err != nil {
 		return nil, fmt.Errorf("error preparing query CountNodes: %w", err)
 	}
@@ -153,6 +162,15 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.markReconciliationCleanupStmt, err = db.PrepareContext(ctx, markReconciliationCleanup); err != nil {
 		return nil, fmt.Errorf("error preparing query MarkReconciliationCleanup: %w", err)
 	}
+	if q.matchNodesByNameStmt, err = db.PrepareContext(ctx, matchNodesByName); err != nil {
+		return nil, fmt.Errorf("error preparing query MatchNodesByName: %w", err)
+	}
+	if q.matchNodesByQualifiedNameStmt, err = db.PrepareContext(ctx, matchNodesByQualifiedName); err != nil {
+		return nil, fmt.Errorf("error preparing query MatchNodesByQualifiedName: %w", err)
+	}
+	if q.matchNodesBySubstringStmt, err = db.PrepareContext(ctx, matchNodesBySubstring); err != nil {
+		return nil, fmt.Errorf("error preparing query MatchNodesBySubstring: %w", err)
+	}
 	if q.pruneDirtyFactsStmt, err = db.PrepareContext(ctx, pruneDirtyFacts); err != nil {
 		return nil, fmt.Errorf("error preparing query PruneDirtyFacts: %w", err)
 	}
@@ -230,6 +248,21 @@ func (q *Queries) Close() error {
 	if q.countFilesStmt != nil {
 		if cerr := q.countFilesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing countFilesStmt: %w", cerr)
+		}
+	}
+	if q.countNodeMatchesByNameStmt != nil {
+		if cerr := q.countNodeMatchesByNameStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countNodeMatchesByNameStmt: %w", cerr)
+		}
+	}
+	if q.countNodeMatchesByQualifiedNameStmt != nil {
+		if cerr := q.countNodeMatchesByQualifiedNameStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countNodeMatchesByQualifiedNameStmt: %w", cerr)
+		}
+	}
+	if q.countNodeMatchesBySubstringStmt != nil {
+		if cerr := q.countNodeMatchesBySubstringStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countNodeMatchesBySubstringStmt: %w", cerr)
 		}
 	}
 	if q.countNodesStmt != nil {
@@ -397,6 +430,21 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing markReconciliationCleanupStmt: %w", cerr)
 		}
 	}
+	if q.matchNodesByNameStmt != nil {
+		if cerr := q.matchNodesByNameStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing matchNodesByNameStmt: %w", cerr)
+		}
+	}
+	if q.matchNodesByQualifiedNameStmt != nil {
+		if cerr := q.matchNodesByQualifiedNameStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing matchNodesByQualifiedNameStmt: %w", cerr)
+		}
+	}
+	if q.matchNodesBySubstringStmt != nil {
+		if cerr := q.matchNodesBySubstringStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing matchNodesBySubstringStmt: %w", cerr)
+		}
+	}
 	if q.pruneDirtyFactsStmt != nil {
 		if cerr := q.pruneDirtyFactsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing pruneDirtyFactsStmt: %w", cerr)
@@ -474,115 +522,127 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 }
 
 type Queries struct {
-	db                               DBTX
-	tx                               *sql.Tx
-	clearDirtyNodesStmt              *sql.Stmt
-	clearDirtyOwnersStmt             *sql.Stmt
-	clearDirtyTargetsStmt            *sql.Stmt
-	clearReconciliationCleanupStmt   *sql.Stmt
-	countDirtyFactsStmt              *sql.Stmt
-	countEdgesStmt                   *sql.Stmt
-	countEdgesByKindStmt             *sql.Stmt
-	countExternalNodesStmt           *sql.Stmt
-	countFactsStmt                   *sql.Stmt
-	countFilesStmt                   *sql.Stmt
-	countNodesStmt                   *sql.Stmt
-	countNodesByKindStmt             *sql.Stmt
-	deleteAllEdgesStmt               *sql.Stmt
-	deleteDirtyFactBatchStmt         *sql.Stmt
-	deleteEdgesByDirtyFactBatchStmt  *sql.Stmt
-	deleteEdgesByOwnerFactsStmt      *sql.Stmt
-	deleteExternalNodesStmt          *sql.Stmt
-	deleteFactsByOwnerStmt           *sql.Stmt
-	deleteFileStmt                   *sql.Stmt
-	deleteNodesByOwnerStmt           *sql.Stmt
-	deleteOrphanExternalNodesStmt    *sql.Stmt
-	deleteStaleEmbeddingsStmt        *sql.Stmt
-	enqueueDirtyFactsStmt            *sql.Stmt
-	findNodesExactStmt               *sql.Stmt
-	findNodesExactKindStmt           *sql.Stmt
-	getMetaStmt                      *sql.Stmt
-	getNodeStmt                      *sql.Stmt
-	insertEdgeStmt                   *sql.Stmt
-	listDirtyFactBatchStmt           *sql.Stmt
-	listEdgesFromStmt                *sql.Stmt
-	listEdgesToStmt                  *sql.Stmt
-	listEmbeddingHashesByModelStmt   *sql.Stmt
-	listEmbeddingsByModelStmt        *sql.Stmt
-	listExternalEdgesMatchingStmt    *sql.Stmt
-	listFilesStmt                    *sql.Stmt
-	listNodesByKindStmt              *sql.Stmt
-	listSemanticCandidateNodesStmt   *sql.Stmt
-	markDirtyNodeStmt                *sql.Stmt
-	markDirtyOwnerStmt               *sql.Stmt
-	markDirtyTargetStmt              *sql.Stmt
-	markOwnedNamesDirtyStmt          *sql.Stmt
-	markOwnedNodesDirtyStmt          *sql.Stmt
-	markReconciliationCleanupStmt    *sql.Stmt
-	pruneDirtyFactsStmt              *sql.Stmt
-	reconciliationCleanupPendingStmt *sql.Stmt
-	searchNodesStmt                  *sql.Stmt
-	setMetaStmt                      *sql.Stmt
-	upsertEmbeddingStmt              *sql.Stmt
-	upsertFactStmt                   *sql.Stmt
-	upsertFileStmt                   *sql.Stmt
-	upsertNodeStmt                   *sql.Stmt
+	db                                  DBTX
+	tx                                  *sql.Tx
+	clearDirtyNodesStmt                 *sql.Stmt
+	clearDirtyOwnersStmt                *sql.Stmt
+	clearDirtyTargetsStmt               *sql.Stmt
+	clearReconciliationCleanupStmt      *sql.Stmt
+	countDirtyFactsStmt                 *sql.Stmt
+	countEdgesStmt                      *sql.Stmt
+	countEdgesByKindStmt                *sql.Stmt
+	countExternalNodesStmt              *sql.Stmt
+	countFactsStmt                      *sql.Stmt
+	countFilesStmt                      *sql.Stmt
+	countNodeMatchesByNameStmt          *sql.Stmt
+	countNodeMatchesByQualifiedNameStmt *sql.Stmt
+	countNodeMatchesBySubstringStmt     *sql.Stmt
+	countNodesStmt                      *sql.Stmt
+	countNodesByKindStmt                *sql.Stmt
+	deleteAllEdgesStmt                  *sql.Stmt
+	deleteDirtyFactBatchStmt            *sql.Stmt
+	deleteEdgesByDirtyFactBatchStmt     *sql.Stmt
+	deleteEdgesByOwnerFactsStmt         *sql.Stmt
+	deleteExternalNodesStmt             *sql.Stmt
+	deleteFactsByOwnerStmt              *sql.Stmt
+	deleteFileStmt                      *sql.Stmt
+	deleteNodesByOwnerStmt              *sql.Stmt
+	deleteOrphanExternalNodesStmt       *sql.Stmt
+	deleteStaleEmbeddingsStmt           *sql.Stmt
+	enqueueDirtyFactsStmt               *sql.Stmt
+	findNodesExactStmt                  *sql.Stmt
+	findNodesExactKindStmt              *sql.Stmt
+	getMetaStmt                         *sql.Stmt
+	getNodeStmt                         *sql.Stmt
+	insertEdgeStmt                      *sql.Stmt
+	listDirtyFactBatchStmt              *sql.Stmt
+	listEdgesFromStmt                   *sql.Stmt
+	listEdgesToStmt                     *sql.Stmt
+	listEmbeddingHashesByModelStmt      *sql.Stmt
+	listEmbeddingsByModelStmt           *sql.Stmt
+	listExternalEdgesMatchingStmt       *sql.Stmt
+	listFilesStmt                       *sql.Stmt
+	listNodesByKindStmt                 *sql.Stmt
+	listSemanticCandidateNodesStmt      *sql.Stmt
+	markDirtyNodeStmt                   *sql.Stmt
+	markDirtyOwnerStmt                  *sql.Stmt
+	markDirtyTargetStmt                 *sql.Stmt
+	markOwnedNamesDirtyStmt             *sql.Stmt
+	markOwnedNodesDirtyStmt             *sql.Stmt
+	markReconciliationCleanupStmt       *sql.Stmt
+	matchNodesByNameStmt                *sql.Stmt
+	matchNodesByQualifiedNameStmt       *sql.Stmt
+	matchNodesBySubstringStmt           *sql.Stmt
+	pruneDirtyFactsStmt                 *sql.Stmt
+	reconciliationCleanupPendingStmt    *sql.Stmt
+	searchNodesStmt                     *sql.Stmt
+	setMetaStmt                         *sql.Stmt
+	upsertEmbeddingStmt                 *sql.Stmt
+	upsertFactStmt                      *sql.Stmt
+	upsertFileStmt                      *sql.Stmt
+	upsertNodeStmt                      *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                               tx,
-		tx:                               tx,
-		clearDirtyNodesStmt:              q.clearDirtyNodesStmt,
-		clearDirtyOwnersStmt:             q.clearDirtyOwnersStmt,
-		clearDirtyTargetsStmt:            q.clearDirtyTargetsStmt,
-		clearReconciliationCleanupStmt:   q.clearReconciliationCleanupStmt,
-		countDirtyFactsStmt:              q.countDirtyFactsStmt,
-		countEdgesStmt:                   q.countEdgesStmt,
-		countEdgesByKindStmt:             q.countEdgesByKindStmt,
-		countExternalNodesStmt:           q.countExternalNodesStmt,
-		countFactsStmt:                   q.countFactsStmt,
-		countFilesStmt:                   q.countFilesStmt,
-		countNodesStmt:                   q.countNodesStmt,
-		countNodesByKindStmt:             q.countNodesByKindStmt,
-		deleteAllEdgesStmt:               q.deleteAllEdgesStmt,
-		deleteDirtyFactBatchStmt:         q.deleteDirtyFactBatchStmt,
-		deleteEdgesByDirtyFactBatchStmt:  q.deleteEdgesByDirtyFactBatchStmt,
-		deleteEdgesByOwnerFactsStmt:      q.deleteEdgesByOwnerFactsStmt,
-		deleteExternalNodesStmt:          q.deleteExternalNodesStmt,
-		deleteFactsByOwnerStmt:           q.deleteFactsByOwnerStmt,
-		deleteFileStmt:                   q.deleteFileStmt,
-		deleteNodesByOwnerStmt:           q.deleteNodesByOwnerStmt,
-		deleteOrphanExternalNodesStmt:    q.deleteOrphanExternalNodesStmt,
-		deleteStaleEmbeddingsStmt:        q.deleteStaleEmbeddingsStmt,
-		enqueueDirtyFactsStmt:            q.enqueueDirtyFactsStmt,
-		findNodesExactStmt:               q.findNodesExactStmt,
-		findNodesExactKindStmt:           q.findNodesExactKindStmt,
-		getMetaStmt:                      q.getMetaStmt,
-		getNodeStmt:                      q.getNodeStmt,
-		insertEdgeStmt:                   q.insertEdgeStmt,
-		listDirtyFactBatchStmt:           q.listDirtyFactBatchStmt,
-		listEdgesFromStmt:                q.listEdgesFromStmt,
-		listEdgesToStmt:                  q.listEdgesToStmt,
-		listEmbeddingHashesByModelStmt:   q.listEmbeddingHashesByModelStmt,
-		listEmbeddingsByModelStmt:        q.listEmbeddingsByModelStmt,
-		listExternalEdgesMatchingStmt:    q.listExternalEdgesMatchingStmt,
-		listFilesStmt:                    q.listFilesStmt,
-		listNodesByKindStmt:              q.listNodesByKindStmt,
-		listSemanticCandidateNodesStmt:   q.listSemanticCandidateNodesStmt,
-		markDirtyNodeStmt:                q.markDirtyNodeStmt,
-		markDirtyOwnerStmt:               q.markDirtyOwnerStmt,
-		markDirtyTargetStmt:              q.markDirtyTargetStmt,
-		markOwnedNamesDirtyStmt:          q.markOwnedNamesDirtyStmt,
-		markOwnedNodesDirtyStmt:          q.markOwnedNodesDirtyStmt,
-		markReconciliationCleanupStmt:    q.markReconciliationCleanupStmt,
-		pruneDirtyFactsStmt:              q.pruneDirtyFactsStmt,
-		reconciliationCleanupPendingStmt: q.reconciliationCleanupPendingStmt,
-		searchNodesStmt:                  q.searchNodesStmt,
-		setMetaStmt:                      q.setMetaStmt,
-		upsertEmbeddingStmt:              q.upsertEmbeddingStmt,
-		upsertFactStmt:                   q.upsertFactStmt,
-		upsertFileStmt:                   q.upsertFileStmt,
-		upsertNodeStmt:                   q.upsertNodeStmt,
+		db:                                  tx,
+		tx:                                  tx,
+		clearDirtyNodesStmt:                 q.clearDirtyNodesStmt,
+		clearDirtyOwnersStmt:                q.clearDirtyOwnersStmt,
+		clearDirtyTargetsStmt:               q.clearDirtyTargetsStmt,
+		clearReconciliationCleanupStmt:      q.clearReconciliationCleanupStmt,
+		countDirtyFactsStmt:                 q.countDirtyFactsStmt,
+		countEdgesStmt:                      q.countEdgesStmt,
+		countEdgesByKindStmt:                q.countEdgesByKindStmt,
+		countExternalNodesStmt:              q.countExternalNodesStmt,
+		countFactsStmt:                      q.countFactsStmt,
+		countFilesStmt:                      q.countFilesStmt,
+		countNodeMatchesByNameStmt:          q.countNodeMatchesByNameStmt,
+		countNodeMatchesByQualifiedNameStmt: q.countNodeMatchesByQualifiedNameStmt,
+		countNodeMatchesBySubstringStmt:     q.countNodeMatchesBySubstringStmt,
+		countNodesStmt:                      q.countNodesStmt,
+		countNodesByKindStmt:                q.countNodesByKindStmt,
+		deleteAllEdgesStmt:                  q.deleteAllEdgesStmt,
+		deleteDirtyFactBatchStmt:            q.deleteDirtyFactBatchStmt,
+		deleteEdgesByDirtyFactBatchStmt:     q.deleteEdgesByDirtyFactBatchStmt,
+		deleteEdgesByOwnerFactsStmt:         q.deleteEdgesByOwnerFactsStmt,
+		deleteExternalNodesStmt:             q.deleteExternalNodesStmt,
+		deleteFactsByOwnerStmt:              q.deleteFactsByOwnerStmt,
+		deleteFileStmt:                      q.deleteFileStmt,
+		deleteNodesByOwnerStmt:              q.deleteNodesByOwnerStmt,
+		deleteOrphanExternalNodesStmt:       q.deleteOrphanExternalNodesStmt,
+		deleteStaleEmbeddingsStmt:           q.deleteStaleEmbeddingsStmt,
+		enqueueDirtyFactsStmt:               q.enqueueDirtyFactsStmt,
+		findNodesExactStmt:                  q.findNodesExactStmt,
+		findNodesExactKindStmt:              q.findNodesExactKindStmt,
+		getMetaStmt:                         q.getMetaStmt,
+		getNodeStmt:                         q.getNodeStmt,
+		insertEdgeStmt:                      q.insertEdgeStmt,
+		listDirtyFactBatchStmt:              q.listDirtyFactBatchStmt,
+		listEdgesFromStmt:                   q.listEdgesFromStmt,
+		listEdgesToStmt:                     q.listEdgesToStmt,
+		listEmbeddingHashesByModelStmt:      q.listEmbeddingHashesByModelStmt,
+		listEmbeddingsByModelStmt:           q.listEmbeddingsByModelStmt,
+		listExternalEdgesMatchingStmt:       q.listExternalEdgesMatchingStmt,
+		listFilesStmt:                       q.listFilesStmt,
+		listNodesByKindStmt:                 q.listNodesByKindStmt,
+		listSemanticCandidateNodesStmt:      q.listSemanticCandidateNodesStmt,
+		markDirtyNodeStmt:                   q.markDirtyNodeStmt,
+		markDirtyOwnerStmt:                  q.markDirtyOwnerStmt,
+		markDirtyTargetStmt:                 q.markDirtyTargetStmt,
+		markOwnedNamesDirtyStmt:             q.markOwnedNamesDirtyStmt,
+		markOwnedNodesDirtyStmt:             q.markOwnedNodesDirtyStmt,
+		markReconciliationCleanupStmt:       q.markReconciliationCleanupStmt,
+		matchNodesByNameStmt:                q.matchNodesByNameStmt,
+		matchNodesByQualifiedNameStmt:       q.matchNodesByQualifiedNameStmt,
+		matchNodesBySubstringStmt:           q.matchNodesBySubstringStmt,
+		pruneDirtyFactsStmt:                 q.pruneDirtyFactsStmt,
+		reconciliationCleanupPendingStmt:    q.reconciliationCleanupPendingStmt,
+		searchNodesStmt:                     q.searchNodesStmt,
+		setMetaStmt:                         q.setMetaStmt,
+		upsertEmbeddingStmt:                 q.upsertEmbeddingStmt,
+		upsertFactStmt:                      q.upsertFactStmt,
+		upsertFileStmt:                      q.upsertFileStmt,
+		upsertNodeStmt:                      q.upsertNodeStmt,
 	}
 }
