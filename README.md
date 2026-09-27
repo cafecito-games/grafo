@@ -133,6 +133,12 @@ artifacts, recreates a service definition Grafo installed, and restarts a stale
 service. It never deletes repository indexes, never guesses where a moved
 repository went, and never rewrites content Grafo cannot prove it wrote.
 
+Ownership is bound to one resolved path, so a receipt for one definition never
+authorizes writing another, and a unit Grafo cannot prove it wrote is never even
+stopped. Service definitions must name a durable binary: installing or repairing
+from a `go run` build is refused, because the unit would outlive the build
+directory it points into.
+
 Every query supports `--json` for agent-friendly output. Run `grafo help` for
 the complete command surface.
 

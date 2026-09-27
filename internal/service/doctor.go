@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -49,10 +48,14 @@ type Finding struct {
 
 // BinaryCheck reports the Grafo binary a service definition can point at.
 type BinaryCheck struct {
-	Path      string `json:"path"`
-	Version   string `json:"version"`
-	Installed bool   `json:"installed"`
-	Detail    string `json:"detail,omitempty"`
+	Path    string `json:"path"`
+	Version string `json:"version"`
+	// Installed reports that the path exists and is a file.
+	Installed bool `json:"installed"`
+	// Serviceable reports that the path is durable enough for a service
+	// definition to name. A `go run` build is installed but not serviceable.
+	Serviceable bool   `json:"serviceable"`
+	Detail      string `json:"detail,omitempty"`
 }
 
 // RegistryCheck reports the watched-root registry itself.
@@ -222,12 +225,22 @@ func checkBinary(env agentinstall.Environment, binary string, diagnosis *Diagnos
 	if info, err := env.Stat(binary); err == nil && !info.IsDir() {
 		check.Installed = true
 	}
-	temporary := strings.TrimSpace(env.TempDir())
-	if temporary != "" && strings.HasPrefix(binary, filepath.Clean(temporary)+string(filepath.Separator)) {
-		check.Detail = "the running binary lives in a temporary directory and cannot back a background service"
+	// A binary that will not outlive this command must never end up in a service
+	// definition, so the same rule that guards installation is reported here.
+	if _, err := InstallableBinary(env, binary); err != nil {
+		check.Detail = err.Error()
 		diagnosis.Findings = append(diagnosis.Findings, Finding{
 			Area: "binary", Level: "warning", Target: binary, Detail: check.Detail,
-			Manual: "install grafo with 'go install github.com/cafecito-games/grafo/cmd/grafo@latest' and re-run",
+			Manual: "install grafo with 'go install github.com/cafecito-games/grafo/cmd/grafo@latest', then re-run 'grafo service install' or 'grafo doctor --repair'",
+		})
+		return check
+	}
+	check.Serviceable = check.Installed
+	if !check.Installed {
+		check.Detail = "the running binary path does not exist"
+		diagnosis.Findings = append(diagnosis.Findings, Finding{
+			Area: "binary", Level: "warning", Target: binary, Detail: check.Detail,
+			Manual: "re-run doctor from an installed grafo binary",
 		})
 	}
 	return check
@@ -385,7 +398,7 @@ func checkService(env agentinstall.Environment, state State, registry Registry, 
 	case !state.Installed:
 		// A receipt for a definition that is no longer on disk is the one case
 		// where Grafo can recreate it: it proves Grafo installed it before.
-		_, found, _ := agentinstall.OwnedFile(env, agentinstall.ServiceOwner, state.Platform)
+		_, found, _ := agentinstall.OwnedFileAt(env, agentinstall.ServiceOwner, state.Platform, state.Definition)
 		finding := Finding{
 			Area: "service", Level: "warning", Target: state.Definition,
 			Detail: "no service definition is installed, so registered roots are only indexed in the foreground",
@@ -413,7 +426,8 @@ func checkService(env agentinstall.Environment, state State, registry Registry, 
 			Manual: "run 'grafo service install' to reload it",
 		})
 	}
-	if state.Installed && state.Owned && binary.Path != "" && !state.pointsAt(env, binary.Path) {
+	if state.Installed && state.Owned && binary.Path != "" &&
+		!definitionStartsBinary(env, PlatformFor(env.GOOS()), state, binary.Path) {
 		diagnosis.Findings = append(diagnosis.Findings, Finding{
 			Area: "service", Level: "error", Target: state.Definition,
 			Detail: "the service definition points at a different grafo binary than the one running",
@@ -570,8 +584,12 @@ func repair(ctx context.Context, env agentinstall.Environment, store *Store, opt
 				continue
 			}
 			applied[RepairServiceDefinition] = true
-			if diagnosis.Binary.Path == "" || !diagnosis.Binary.Installed {
-				failures = append(failures, errors.New("cannot recreate the service definition without an installed grafo binary"))
+			// A definition may only ever name a durable binary; recreating one from a
+			// `go run` build would install a service that breaks the moment this
+			// command exits.
+			if !diagnosis.Binary.Serviceable {
+				failures = append(failures, fmt.Errorf("cannot recreate the service definition: %s",
+					orDash(diagnosis.Binary.Detail)))
 				continue
 			}
 			installed, err := Install(ctx, env, diagnosis.Binary.Path, stateDir, false)
@@ -602,17 +620,43 @@ func repair(ctx context.Context, env agentinstall.Environment, store *Store, opt
 	return actions, errors.Join(failures...)
 }
 
-// pointsAt reports whether an installed definition names this binary. It reads
-// the definition Grafo owns, so a foreign file is never parsed for meaning.
-func (s State) pointsAt(reader agentinstall.Reader, binary string) bool {
-	if s.Definition == "" || !s.Owned {
+// definitionStartsBinary reports whether an installed definition starts this
+// exact binary.
+//
+// The executable is read from the platform's documented command field and
+// compared as a whole resolved path. A substring test over the file would report
+// "/opt/grafo-next/grafo" as correct while the current binary is "/opt/grafo",
+// and would also match a comment or a log path that merely mentions it. Only a
+// definition Grafo owns is parsed, so a foreign file is never read for meaning.
+// The platform is passed in rather than derived from State.Platform, which names
+// the init system and not the operating system.
+func definitionStartsBinary(reader agentinstall.Reader, platform Platform, state State, binary string) bool {
+	if state.Definition == "" || !state.Owned {
 		return true
 	}
-	contents, err := reader.ReadFile(s.Definition)
+	contents, err := reader.ReadFile(state.Definition)
 	if err != nil {
 		return true
 	}
-	return strings.Contains(string(contents), binary)
+	declared, found := platform.definitionBinary(string(contents))
+	if !found {
+		return false
+	}
+	return samePath(reader, declared, binary)
+}
+
+// samePath compares two paths after resolving every symlinked parent, so one
+// spelling of a location is never mistaken for a different location.
+func samePath(reader agentinstall.Reader, left, right string) bool {
+	if left == right {
+		return true
+	}
+	resolvedLeft, leftErr := agentinstall.ResolvePath(reader, left)
+	resolvedRight, rightErr := agentinstall.ResolvePath(reader, right)
+	if leftErr != nil || rightErr != nil {
+		return false
+	}
+	return resolvedLeft == resolvedRight
 }
 
 // Fprint writes a human-readable diagnosis.

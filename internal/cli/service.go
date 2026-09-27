@@ -129,7 +129,7 @@ func (a *App) serviceList(environment agentinstall.Environment, args parsedArgum
 }
 
 func (a *App) serviceInstall(ctx context.Context, environment agentinstall.Environment, args parsedArguments) error {
-	binary, err := installedExecutable()
+	binary, err := installedExecutable(environment)
 	if err != nil {
 		return err
 	}
@@ -356,14 +356,13 @@ func (a *App) stateDir(environment agentinstall.Environment, args parsedArgument
 }
 
 // installedExecutable resolves the running binary and refuses one that will not
-// survive, so a service definition never points at a temporary path.
-func installedExecutable() (string, error) {
+// survive the command, so a service definition never points at a path the Go
+// toolchain deletes. The rule itself lives in internal/service, so installation
+// and doctor repair cannot disagree about it.
+func installedExecutable(environment agentinstall.Environment) (string, error) {
 	executable, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("locate grafo executable: %w", err)
 	}
-	if strings.Contains(executable, string(os.PathSeparator)+"go-build") {
-		return "", errors.New("cannot install a service from a temporary 'go run' binary; install grafo with 'go install github.com/cafecito-games/grafo/cmd/grafo@latest' first")
-	}
-	return executable, nil
+	return service.InstallableBinary(environment, executable)
 }
