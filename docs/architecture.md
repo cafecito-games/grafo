@@ -21,6 +21,7 @@ storage can evolve independently.
        ├─ defaults/*       production registry shared by CLI and evaluation
        ├─ gdscript/*       gdparser GDScript AST adapter
        ├─ godot/*          gdparser scene, resource, config, UID, and shader adapters
+       ├─ java/*           Tree-sitter Java AST adapter
        ├─ swift/*          Tree-sitter Swift AST adapter
        └─ sql/*            dialect adapters such as PostgreSQL
   internal/storage/sqlite  Goose + sqlc adapter
@@ -109,12 +110,70 @@ ID and returned with a one-hop traversal from the graph repository. Similarity
 search can later move to a specialized vector index without changing graph
 parsers, traversal, or the MCP contract.
 
+## Change impact
+
+`internal/query` owns the bidirectional impact use case. Upstream is an incoming
+traversal and downstream an outgoing one over the same relation set, so one
+definition of "what participates in impact" serves the CLI and the MCP server
+instead of each keeping its own list. The report separates the two directions,
+each with its own depth, node limit, and truncation flag, and adds impacted
+files, cross-repository hops, and configuration, data, and event relations
+derived from the edges already traversed. No new node or edge vocabulary is
+introduced, and an unresolved or external target is never reported as a
+confirmed dependency.
+
+Impacted files are keyed by repository identity plus canonical relative path and
+retain every node and edge that caused inclusion, so a diagram or summary is
+never the only evidence. Optional source excerpts arrive through a narrow
+`SourceReader` port; `internal/source` adapts to it, which keeps the dependency
+pointing from source retrieval to query and not back.
+
 ## Source retrieval
 
 Source retrieval begins with normal deterministic node resolution; it never
 searches file text. The node's repository identity and indexed location select
 one active worktree and one bounded line span. Canonical path validation rejects
 absolute paths, traversal, and symlinks that resolve outside the repository.
+`source.SafePath` is the single implementation of that validation and is shared
+by every bounded reader.
+
+## Source search
+
+`internal/search` answers content questions the graph does not model. Index
+membership, not the filesystem, decides what is searchable: the service reads a
+`graph.FileCatalog` per repository and opens only those paths in the matching
+worktree, through `source.SafePath`. Files are streamed one at a time and
+abandoned as soon as a bound is reached, so no repository corpus is held in
+memory and source text is never persisted. Every cap that clips a result is
+named in the response rather than applied silently, and ordering is by
+repository, path, line, and column so results never depend on directory
+enumeration order.
+
+## Agent installation
+
+`internal/agentinstall` models each MCP client as an adapter declaring identity,
+detection, scope, and either an official CLI or a documented user-level config
+file. Detection and mutation are separated at the type level: detection and
+planning take a read-only `Reader`, and only a real run reaches `Writer`, which
+makes `--list` and `--dry-run` unable to write by construction. Platform config
+paths resolve through the injected environment rather than `runtime.GOOS`, so
+macOS, Linux, and Windows layouts are all testable anywhere. File-backed
+adapters parse structurally, preserve unknown keys and ordering, and replace
+files atomically; uninstall removes only a registration Grafo owns.
+
+Agent guidance is a second artifact kind on the same seam. `internal/agentguide`
+owns one embedded playbook, one format version, and the exact begin/end markers
+that make an installed copy provably Grafo-owned; it renders either an isolated
+skill file or a delimited managed block and never touches bytes outside its
+markers. `internal/agentinstall` declares, per client, which documented
+user-scoped surfaces exist, refuses targets that are symlinks, non-regular,
+world-writable, or outside the user configuration roots, and treats a conflicting
+or unowned file as a reported conflict rather than something to repair. Advisory
+hooks are opt-in, capability-gated to a client whose hook API is documented, and
+fail open because the hook command always exits 0. Every mutation is followed by
+a receipt under the Grafo configuration directory recording target, digest,
+guidance version, and marker, so uninstall and upgrade prove ownership from
+receipts plus exact markers instead of substring matching.
 
 ## Catalogs and orphan detection
 
@@ -169,9 +228,14 @@ Grafo does not require sqlc.
   the router. Dialects emit the shared table/view/column/index graph vocabulary,
   while the router records the selected dialect in node metadata.
 - Add storage by implementing the small `IndexRepository`, `QueryRepository`,
-  `StatusRepository`, and `NodeListRepository` ports.
+  `StatusRepository`, `FileCatalog`, and `NodeListRepository` ports.
 - Add a catalog by reusing `NodeListRepository` with another node kind; extend
   `graph.DataResourceKinds` to widen the data catalog.
+- Add an MCP client by adding one adapter to the `internal/agentinstall`
+  registry. Declare a client only when both install and uninstall use a
+  documented surface covered by fixtures. Add a guidance surface for it only when
+  the client documents a user-scoped instruction or hook API that install and
+  uninstall can both drive safely.
 - Add new relationships as facts first; keep graph-candidate reconciliation in
   the repository. A parser may provide an exact qualified target when its
   language's authoritative semantic model proves object identity.

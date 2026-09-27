@@ -82,7 +82,7 @@ func (s *Service) Read(ctx context.Context, selector string, contextLines, maxLi
 	if err != nil {
 		return Excerpt{}, fmt.Errorf("locate repository for %s: %w", node.QualifiedName, err)
 	}
-	absolute, err := safeSourcePath(project.Root, node.Location.Path)
+	absolute, err := SafePath(project.Root, node.Location.Path)
 	if err != nil {
 		return Excerpt{}, err
 	}
@@ -113,7 +113,11 @@ func (s *Service) Read(ctx context.Context, selector string, contextLines, maxLi
 		Content: strings.Join(lines[start-1:end], "\n"), Truncated: end < desiredEnd}, nil
 }
 
-func safeSourcePath(root, relative string) (string, error) {
+// SafePath resolves a repository-relative path against root and confines the
+// result to that root: absolute paths and ".." are rejected, symlinks are
+// resolved, and a path escaping the root after resolution is an error. It is
+// exported so other bounded readers reuse one implementation.
+func SafePath(root, relative string) (string, error) {
 	if filepath.IsAbs(relative) {
 		return "", fmt.Errorf("source path %q is absolute", relative)
 	}

@@ -51,6 +51,7 @@ type Path struct {
 
 type Service struct {
 	repository graph.QueryRepository
+	source     SourceReader
 }
 
 func NewService(repository graph.QueryRepository) *Service { return &Service{repository: repository} }

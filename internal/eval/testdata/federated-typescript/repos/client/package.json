@@ -1,0 +1,6 @@
+{
+  "name": "@fixture/client",
+  "dependencies": {
+    "@fixture/tools": "workspace:*"
+  }
+}

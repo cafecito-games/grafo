@@ -5,8 +5,8 @@ can query from the command line. Source symbols, calls, imports, configuration,
 HTTP routes, and event-like publish/subscribe operations become nodes and edges.
 
 This repository is at the foundation stage. Go is parsed with the Go compiler
-AST, Godot source formats use `gdparser`, Python, Swift, and TypeScript/TSX use
-Tree-sitter, PostgreSQL SQL uses PostgreSQL's own parser, and SQLite SQL uses
+AST, Godot source formats use `gdparser`, Java, Python, Swift, and TypeScript/TSX
+use Tree-sitter, PostgreSQL SQL uses PostgreSQL's own parser, and SQLite SQL uses
 Meyer's SQLite grammar. The index is local, incremental, branch-aware, and
 stored in SQLite.
 
@@ -22,6 +22,8 @@ grafo status
 grafo find "MyHandler"
 grafo neighbors "MyHandler" --depth 2
 grafo path "HandleCheckout" "Charge"
+grafo impact "Charge"
+grafo search "chargeRetryLimit"
 grafo source "HandleCheckout"
 grafo data-resources
 grafo data-usage "orders"
@@ -32,13 +34,62 @@ grafo watch
 grafo mcp
 ```
 
-`grafo install` detects Claude Code, Codex, and OpenCode on `PATH` and adds
-Grafo to each one as a user-level MCP server. To configure only selected
-agents, name them explicitly:
+### Installing into MCP clients
+
+`grafo install` detects every supported MCP client and registers Grafo with
+each one as a user-level stdio server. Supported clients are Claude Code,
+Claude Desktop, Cline, Codex, Cursor, Gemini CLI, OpenCode, VS Code, and
+Windsurf. Clients with an official CLI are configured through it; the rest are
+configured by editing their documented user-level config file.
 
 ```sh
-grafo install claude codex
+grafo install --list          # detect only; never writes
+grafo install --all --dry-run # report every file and command a real run touches
+grafo install claude codex    # or: grafo install --client cursor,vscode
+grafo install --mcp-only      # register the server without installing guidance
+grafo install --refresh       # update only artifacts that already exist
+grafo install --hooks         # also install advisory, fail-open hooks
+grafo uninstall --all         # remove only Grafo-owned artifacts
 ```
+
+Config files are parsed structurally, written atomically, and unrelated servers
+and settings are preserved. `--list` and `--dry-run` cannot write. Naming a
+client that is not installed is an error; automatic and `--all` mode skip
+missing clients and say so. All of these accept `--json`.
+
+### Installed agent guidance
+
+Registration alone does not teach an agent when to use the graph, so `grafo
+install` also installs one canonical, embedded guidance playbook: prefer graph
+structure over content search for symbol, call, endpoint, event, data, and impact
+questions; check `get_index_status` before trusting the graph; search for reusable
+code before adding code; run bidirectional `get_blast_radius` before a
+behaviour-changing edit; and fall back to native tools deliberately when the
+content is not code or the branch has no index.
+
+Guidance is installed only through documented, user-scoped surfaces: an isolated
+Grafo-owned skill file for Claude Code, and one delimited managed block
+(`<!-- BEGIN grafo-guidance -->` … `<!-- END grafo-guidance -->`) for Codex,
+Gemini CLI, OpenCode, and Windsurf. Everything outside the markers is preserved
+byte-for-byte, a file with no Grafo ownership marker is never overwritten, and
+duplicated or half-present markers are reported instead of repaired.
+Repository-local instruction files are never edited, no permission is granted,
+and no edit is ever blocked.
+
+`--hooks` opts in to advisory `PreToolUse` hooks in Claude Code's documented
+personal settings. They only inject context: `grafo guidance --hook pre-search`
+and `--hook pre-edit` print one advisory line and always exit 0, so a missing or
+broken Grafo can never block a tool call. `grafo guidance` prints the same
+canonical text plus whether the current repository and branch actually have an
+index.
+
+Every installed artifact is recorded in a receipt under the Grafo configuration
+directory (`$XDG_CONFIG_HOME/grafo/installed-artifacts.json`) with its target,
+digest, guidance version, and ownership marker, so an upgrade replaces exactly
+the previous Grafo-owned content and `grafo uninstall` removes only what it can
+prove Grafo wrote. Anything it cannot prove is left in place and reported with
+the manual step. Re-running install is idempotent, `--dry-run` writes nothing,
+and a real run prints every target and action before mutating anything.
 
 The generated MCP configuration uses the absolute path of the installed Grafo
 binary, so agents do not depend on their launch environment's `PATH`. Re-run
@@ -51,8 +102,46 @@ the complete command surface.
 
 `grafo mcp` starts a standards-compatible MCP server over stdio with tools for
 symbol discovery, node lookup, traversal, shortest paths, callers, callees,
-blast radius, graph-addressed source retrieval, reusable-code discovery, index
-status, and the data, configuration, and event catalogs.
+change impact, graph-addressed source retrieval, bounded source search,
+reusable-code discovery, index status, and the data, configuration, and event
+catalogs.
+
+Symbol, node, source, caller, callee, path, and impact tools accept a batch of
+inputs and return one result or error per input in the caller's order, so one
+bad selector never erases unrelated results. The scalar input fields remain
+supported.
+
+### Change impact
+
+`grafo impact` (also `grafo blast-radius`, and the MCP `get_blast_radius` tool)
+returns one bidirectional report instead of an incoming-only traversal: what
+depends on the symbol, what the symbol depends on, the impacted files, any
+cross-repository hops, and the related configuration, data, and event facts.
+
+```sh
+grafo impact "Charge" --upstream-depth 3 --downstream-depth 2
+grafo impact "Charge" --source --max-lines 40 --json
+```
+
+Upstream and downstream depth and node limits are bounded independently and
+each section reports its own truncation. Source excerpts are opt-in and read
+through the same bounded reader `grafo source` uses.
+
+### Bounded source search
+
+`grafo search` (MCP `search_source`) answers content questions the graph does
+not model. It searches only files that belong to a refreshed Grafo index,
+reading them from the matching worktree, and never copies source into SQLite.
+
+```sh
+grafo search "chargeRetryLimit" --context-lines 2
+grafo search "func \(s \*Service\) [A-Z]" --regex --language go --path-prefix internal
+```
+
+Patterns are literal by default, or Go RE2 with `--regex`. Binary and oversized
+files are skipped, every cap is reported rather than silently applied, and
+ordering is by repository, path, line, and column so results never depend on
+filesystem enumeration. Prefer the graph tools when the question is structural.
 
 `grafo source` resolves a graph node first, then reads its exact bounded source
 span from the active worktree. In a federation, the node ID selects the correct
@@ -105,6 +194,11 @@ are marked `federated` and retain their original evidence.
   parameters, local variables, basic assignment/argument/return flow, imports,
   calls, inheritance, `process.env`, Express-style routes, and common
   publish/subscribe calls.
+- Java packages, imports, classes, interfaces, records, enums, annotations,
+  methods, constructors, fields, parameters, local variables, inheritance and
+  interface implementation, basic assignment/argument/return flow,
+  `System.getenv`/`getProperty`, Spring and JAX-RS routes, common outbound HTTP
+  client calls, and publish/subscribe calls.
 - PostgreSQL tables, views, columns, indexes, functions, procedures, and the
   relations read or written by DDL and DML statements in `.sql`, `.pgsql`, and
   `.psql` files.
@@ -135,7 +229,7 @@ are marked `federated` and retain their original evidence.
   `.cfg`, `.gdextension`, `.import`, and `.remap`) and `.uid` sidecars; and
   shader/include modules, uniforms, structs, functions, parameters, locals,
   calls, global references, and `#include` relationships.
-- `.env`, YAML, JSON, and Java `.properties` keys and value references.
+- `.env`, YAML, JSON, TOML, and Java `.properties` keys and value references.
 - Markdown documents (`.md` and `.markdown`) as structural graphs: headings are
   bounded `document_section` nodes, relative links connect sections to files or
   other document sections, and explicit code keywords connect prose to symbols.

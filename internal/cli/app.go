@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cafecito-games/grafo/internal/agentguide"
 	"github.com/cafecito-games/grafo/internal/agentinstall"
 	"github.com/cafecito-games/grafo/internal/embedding/ollama"
 	"github.com/cafecito-games/grafo/internal/federation"
@@ -19,6 +20,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/mcpserver"
 	parserdefaults "github.com/cafecito-games/grafo/internal/parser/defaults"
 	"github.com/cafecito-games/grafo/internal/query"
+	"github.com/cafecito-games/grafo/internal/search"
 	"github.com/cafecito-games/grafo/internal/semantic"
 	sourcecontext "github.com/cafecito-games/grafo/internal/source"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
@@ -52,6 +54,10 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 	switch parsed.command {
 	case "install":
 		runErr = a.install(ctx, parsed)
+	case "uninstall":
+		runErr = a.uninstall(ctx, parsed)
+	case "guidance":
+		runErr = a.guidance(ctx, parsed)
 	case "index":
 		runErr = a.index(ctx, parsed)
 	case "watch":
@@ -77,7 +83,9 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 	case "callees":
 		runErr = a.neighbors(ctx, parsed, "callees")
 	case "impact", "blast-radius":
-		runErr = a.neighbors(ctx, parsed, "impact")
+		runErr = a.impact(ctx, parsed)
+	case "search":
+		runErr = a.search(ctx, parsed)
 	case "path":
 		runErr = a.path(ctx, parsed)
 	case "data-resources":
@@ -104,7 +112,64 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 	return 0
 }
 
+// installTargets merges the legacy positional client names with --client so
+// both spellings keep resolving to the same clients.
+func installTargets(args parsedArguments) agentinstall.Options {
+	targets := append([]string{}, args.positionals...)
+	targets = append(targets, splitList(args.values["client"])...)
+	if args.flags["all"] {
+		targets = nil
+	}
+	return agentinstall.Options{
+		Targets: targets,
+		All:     args.flags["all"],
+		DryRun:  args.flags["dry-run"],
+		MCPOnly: args.flags["mcp-only"],
+		Hooks:   args.flags["hooks"],
+		Refresh: args.flags["refresh"],
+	}
+}
+
+// announcer reports every planned target and action before anything is mutated.
+// Dry runs and JSON output already print the full plan, so they pass nil.
+func (a *App) announcer(args parsedArguments) func([]agentinstall.Action) {
+	if args.flags["dry-run"] || args.flags["json"] {
+		return nil
+	}
+	return func(planned []agentinstall.Action) {
+		if len(planned) == 0 {
+			return
+		}
+		fmt.Fprintln(a.stdout, "planned changes:")
+		for _, action := range planned {
+			action.DryRun = true
+			a.printAgentAction(action, "  ")
+		}
+		fmt.Fprintln(a.stdout, "applying:")
+	}
+}
+
 func (a *App) install(ctx context.Context, args parsedArguments) error {
+	environment := agentinstall.NewOSEnvironment()
+	if args.flags["list"] {
+		statuses, err := agentinstall.Detect(ctx, environment, installTargets(args).Targets)
+		if err != nil {
+			return err
+		}
+		if args.flags["json"] {
+			return writeJSON(a.stdout, statuses)
+		}
+		for _, status := range statuses {
+			state := "not installed"
+			if status.Installed && status.Registered {
+				state = "registered"
+			} else if status.Installed {
+				state = "installed, grafo not registered"
+			}
+			fmt.Fprintf(a.stdout, "%-14s  %-18s  %-32s  %s\n", status.Client.Name, status.Client.Display, state, status.Path)
+		}
+		return nil
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("locate grafo executable: %w", err)
@@ -112,16 +177,117 @@ func (a *App) install(ctx context.Context, args parsedArguments) error {
 	if strings.Contains(executable, string(os.PathSeparator)+"go-build") {
 		return fmt.Errorf("cannot install from a temporary 'go run' binary; install grafo with 'go install github.com/cafecito-games/grafo/cmd/grafo@latest' first")
 	}
-
-	results, installErr := agentinstall.Install(ctx, agentinstall.ExecRunner{}, executable, args.positionals)
-	for _, result := range results {
-		fmt.Fprintf(a.stdout, "configured grafo for %s (%s scope)\n", result.Agent, result.Scope)
+	options := installTargets(args)
+	options.Announce = a.announcer(args)
+	actions, installErr := agentinstall.Install(ctx, environment, executable, options)
+	if err := a.printAgentActions(actions, args.flags["json"]); err != nil {
+		return err
 	}
 	if installErr != nil {
 		return installErr
 	}
-	fmt.Fprintln(a.stdout, "run 'grafo index .' once in each repository before using the MCP tools")
+	if !args.flags["dry-run"] && !args.flags["json"] {
+		fmt.Fprintln(a.stdout, "run 'grafo index .' once in each repository before using the MCP tools")
+	}
 	return nil
+}
+
+func (a *App) uninstall(ctx context.Context, args parsedArguments) error {
+	options := installTargets(args)
+	options.Announce = a.announcer(args)
+	actions, uninstallErr := agentinstall.Uninstall(ctx, agentinstall.NewOSEnvironment(), options)
+	if err := a.printAgentActions(actions, args.flags["json"]); err != nil {
+		return err
+	}
+	return uninstallErr
+}
+
+func (a *App) printAgentActions(actions []agentinstall.Action, asJSON bool) error {
+	if asJSON {
+		return writeJSON(a.stdout, actions)
+	}
+	for _, action := range actions {
+		a.printAgentAction(action, "")
+	}
+	return nil
+}
+
+// plannedVerbs render a dry-run or announced row as an intention.
+var plannedVerbs = map[string]string{
+	"installed": "install", "updated": "update", "removed": "remove",
+	"unchanged": "leave unchanged", "skipped": "skip",
+}
+
+func (a *App) printAgentAction(action agentinstall.Action, indent string) {
+	change := action.Change
+	if action.DryRun {
+		verb, known := plannedVerbs[change]
+		if !known {
+			verb = change
+		}
+		change = "would " + verb
+	}
+	fmt.Fprintf(a.stdout, "%s%s %s", indent, change, action.Client.Display)
+	if action.Kind != "" {
+		fmt.Fprintf(a.stdout, " %s", action.Kind)
+	}
+	if action.Scope != "" {
+		fmt.Fprintf(a.stdout, " (%s scope)", action.Scope)
+	}
+	if action.Target != "" {
+		fmt.Fprintf(a.stdout, " · %s", action.Target)
+	}
+	if action.Detail != "" {
+		fmt.Fprintf(a.stdout, " · %s", action.Detail)
+	}
+	fmt.Fprintln(a.stdout)
+}
+
+// guidance prints Grafo's canonical agent guidance, or one advisory hook hint.
+//
+// Hook mode is advisory only: it never fails and never returns a nonzero exit
+// status, so a client hook cannot block a tool call when Grafo is unavailable or
+// the repository has no index.
+func (a *App) guidance(ctx context.Context, args parsedArguments) error {
+	root := repoPath(args)
+	if phase := strings.TrimSpace(args.values["hook"]); phase != "" {
+		fmt.Fprintln(a.stdout, advisoryHint(phase, a.indexSummary(ctx, root)))
+		return nil
+	}
+	fmt.Fprint(a.stdout, agentguide.Text())
+	fmt.Fprintf(a.stdout, "\n%s\n", a.indexSummary(ctx, root))
+	return nil
+}
+
+// advisoryHint renders the short context a pre-search or pre-edit hook injects.
+func advisoryHint(phase, index string) string {
+	switch phase {
+	case "pre-search":
+		return "Grafo advisory (pre-search): " + index +
+			" For symbol, call, endpoint, event, data, or impact questions, resolve the symbol with" +
+			" Grafo's graph tools before searching text."
+	case "pre-edit":
+		return "Grafo advisory (pre-edit): " + index +
+			" Run get_blast_radius (grafo impact <symbol>) before a behaviour-changing edit, and" +
+			" find_reusable_code before adding new code."
+	default:
+		return "Grafo advisory: " + index
+	}
+}
+
+// indexSummary reports whether the current repository and branch have an index,
+// so guidance never recommends the graph for an unindexed branch.
+func (a *App) indexSummary(ctx context.Context, root string) string {
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		return "Index status: unknown (" + err.Error() + "); use native tools."
+	}
+	if _, statErr := os.Stat(project.IndexPath); statErr != nil {
+		return fmt.Sprintf("Index status: none for %s on branch %s; use native tools, or run 'grafo index %s' first.",
+			project.Name, project.Branch, root)
+	}
+	return fmt.Sprintf("Index status: ready for %s on branch %s; prefer Grafo's graph tools.",
+		project.Name, project.Branch)
 }
 
 func (a *App) index(ctx context.Context, args parsedArguments) error {
@@ -272,6 +438,11 @@ func (a *App) mcp(ctx context.Context, args parsedArguments) error {
 		return err
 	}
 	service.WithSource(sourceService.Read)
+	searchService, err := newSearchService(repository, projects)
+	if err != nil {
+		return err
+	}
+	service.WithSearch(searchService)
 	return service.Run(ctx, Version)
 }
 
@@ -469,12 +640,6 @@ func (a *App) neighbors(ctx context.Context, args parsedArguments, mode string) 
 	case "callees":
 		depthDefault, direction = 3, query.Outgoing
 		relations = []graph.EdgeKind{graph.EdgeCalls, graph.EdgeHandledBy}
-	case "impact":
-		depthDefault, direction = 4, query.Incoming
-		relations = []graph.EdgeKind{graph.EdgeCalls, graph.EdgeHandledBy, graph.EdgeImports,
-			graph.EdgeExtends, graph.EdgeImplements, graph.EdgeEmbeds, graph.EdgeReferences,
-			graph.EdgeReads, graph.EdgeWrites, graph.EdgeAssigns, graph.EdgeReturns,
-			graph.EdgePasses, graph.EdgeRequests, graph.EdgeDependsOn}
 	}
 	depth, err := intOption(args, "depth", depthDefault)
 	if err != nil {
@@ -541,12 +706,251 @@ func (a *App) path(ctx context.Context, args parsedArguments) error {
 	return nil
 }
 
+func (a *App) impact(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) != 1 {
+		return fmt.Errorf("usage: grafo %s <symbol-or-id> [--depth 4] [--upstream-depth n] [--downstream-depth n] [--source]", args.command)
+	}
+	depth, err := intOption(args, "depth", 4)
+	if err != nil {
+		return err
+	}
+	limit, err := intOption(args, "limit", 1000)
+	if err != nil {
+		return err
+	}
+	options := query.ImpactOptions{
+		UpstreamDepth: depth, DownstreamDepth: depth,
+		UpstreamLimit: limit, DownstreamLimit: limit,
+		IncludeSource: args.flags["source"],
+	}
+	for name, field := range map[string]*int{
+		"upstream-depth": &options.UpstreamDepth, "downstream-depth": &options.DownstreamDepth,
+		"upstream-limit": &options.UpstreamLimit, "downstream-limit": &options.DownstreamLimit,
+		"source-limit": &options.SourceLimit, "max-lines": &options.SourceMaxLines,
+	} {
+		if args.values[name] == "" {
+			continue
+		}
+		value, err := intOption(args, name, 0)
+		if err != nil {
+			return err
+		}
+		*field = value
+	}
+	options.SourceContextLines, err = nonNegativeIntOption(args, "context-lines", 2)
+	if err != nil {
+		return err
+	}
+	repository, projects, closeRepository, err := openRead(ctx, args)
+	if err != nil {
+		return err
+	}
+	defer closeRepository()
+	service := query.NewService(repository)
+	if options.IncludeSource {
+		sourceService, err := newSourceService(repository, projects)
+		if err != nil {
+			return err
+		}
+		service = service.WithSourceReader(sourceService)
+	}
+	report, err := service.Impact(ctx, args.positionals[0], options)
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, report)
+	}
+	a.printImpactReport(report)
+	return nil
+}
+
+func (a *App) printImpactReport(report query.ImpactReport) {
+	fmt.Fprintf(a.stdout, "%s [%s]\n", report.Root.QualifiedName, report.Root.Kind)
+	for _, section := range []query.ImpactSection{report.Upstream, report.Downstream} {
+		label := "depends on this"
+		if section.Direction == query.Downstream {
+			label = "this depends on"
+		}
+		fmt.Fprintf(a.stdout, "\n%s · %s (depth %d · %d nodes · %d edges)",
+			section.Direction, label, section.Depth, len(section.Nodes), len(section.Edges))
+		if section.Truncated {
+			fmt.Fprint(a.stdout, " · truncated")
+		}
+		fmt.Fprintln(a.stdout)
+		for _, reached := range section.Nodes {
+			if reached.Depth == 0 {
+				continue
+			}
+			fmt.Fprintf(a.stdout, "%s↳ %s [%s] %s\n", strings.Repeat("  ", reached.Depth-1),
+				reached.Node.QualifiedName, reached.Node.Kind, formatLocation(reached.Node.Location))
+		}
+	}
+	if len(report.ImpactedFiles) > 0 {
+		fmt.Fprintf(a.stdout, "\nimpacted files (%d)\n", len(report.ImpactedFiles))
+		for _, file := range report.ImpactedFiles {
+			marker := ""
+			if file.Federated {
+				marker = " · federated"
+			}
+			fmt.Fprintf(a.stdout, "  %s%s [%s]%s\n", prefixRepository(file.Repository), file.Path,
+				strings.Join(file.Directions, ","), marker)
+		}
+	}
+	for _, group := range []struct {
+		label     string
+		relations []query.ImpactRelation
+	}{
+		{label: "config relations", relations: report.Config},
+		{label: "data relations", relations: report.Data},
+		{label: "event relations", relations: report.Events},
+	} {
+		if len(group.relations) == 0 {
+			continue
+		}
+		fmt.Fprintf(a.stdout, "\n%s (%d)\n", group.label, len(group.relations))
+		for _, relation := range group.relations {
+			fmt.Fprintf(a.stdout, "  %s --%s--> %s [%s]\n", relation.Direction, relation.Edge.Kind,
+				relation.Node.QualifiedName, relation.Node.Kind)
+		}
+	}
+	if len(report.CrossRepository) > 0 {
+		fmt.Fprintf(a.stdout, "\ncross-repository hops (%d)\n", len(report.CrossRepository))
+		for _, hop := range report.CrossRepository {
+			fmt.Fprintf(a.stdout, "  %s --%s--> %s [%s]\n", hop.Direction, hop.Edge.Kind,
+				hop.Node.QualifiedName, hop.Node.Kind)
+		}
+	}
+	for _, excerpt := range report.Sources {
+		fmt.Fprintf(a.stdout, "\n%s%s:%d-%d\n", prefixRepository(excerpt.Repository), excerpt.Path,
+			excerpt.StartLine, excerpt.EndLine)
+		fmt.Fprintln(a.stdout, excerpt.Content)
+		if excerpt.Truncated {
+			fmt.Fprintln(a.stdout, "… truncated")
+		}
+	}
+}
+
+func prefixRepository(name string) string {
+	if name == "" {
+		return ""
+	}
+	return name + " · "
+}
+
+func (a *App) search(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) == 0 {
+		return fmt.Errorf("usage: grafo search <pattern>... [--regex] [--case-sensitive] [--path-prefix dir] [--language go] [--context-lines 0] [--max-matches 500]")
+	}
+	request := search.Request{
+		Patterns:      args.positionals,
+		Regex:         args.flags["regex"],
+		CaseSensitive: args.flags["case-sensitive"],
+		PathPrefixes:  splitList(args.values["path-prefix"]),
+		Languages:     splitList(args.values["language"]),
+		Repositories:  splitList(args.values["repo-name"]),
+	}
+	contextLines, err := nonNegativeIntOption(args, "context-lines", 0)
+	if err != nil {
+		return err
+	}
+	request.ContextLines = contextLines
+	for name, field := range map[string]*int{
+		"max-matches": &request.MaxMatches, "max-matches-per-file": &request.MaxMatchesPerFile,
+		"max-matches-per-pattern": &request.MaxMatchesPattern,
+	} {
+		if args.values[name] == "" {
+			continue
+		}
+		value, err := intOption(args, name, 0)
+		if err != nil {
+			return err
+		}
+		*field = value
+	}
+	if args.values["max-file-size"] != "" {
+		request.MaxFileBytes, err = int64Option(args, "max-file-size", 0)
+		if err != nil {
+			return err
+		}
+	}
+	repository, projects, closeRepository, err := openRead(ctx, args)
+	if err != nil {
+		return err
+	}
+	defer closeRepository()
+	service, err := newSearchService(repository, projects)
+	if err != nil {
+		return err
+	}
+	result, err := service.Search(ctx, request)
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, result)
+	}
+	for _, match := range result.Matches {
+		for offset, line := range match.Before {
+			fmt.Fprintf(a.stdout, "%s%s-%d- %s\n", prefixRepository(match.Repository), match.Path,
+				match.Line-len(match.Before)+offset, line)
+		}
+		fmt.Fprintf(a.stdout, "%s%s:%d:%d: %s\n", prefixRepository(match.Repository), match.Path,
+			match.Line, match.Column, match.Text)
+		for offset, line := range match.After {
+			fmt.Fprintf(a.stdout, "%s%s-%d- %s\n", prefixRepository(match.Repository), match.Path,
+				match.Line+offset+1, line)
+		}
+	}
+	fmt.Fprintf(a.stdout, "%d matches · %d files searched · %d skipped", len(result.Matches),
+		result.FilesSearched, result.FilesSkipped)
+	if result.Truncated {
+		fmt.Fprint(a.stdout, " · truncated")
+	}
+	fmt.Fprintln(a.stdout)
+	for _, note := range result.Notes {
+		fmt.Fprintf(a.stderr, "grafo search: %s\n", note)
+	}
+	return nil
+}
+
+// newSearchService binds search to the file catalogs of the opened indexes.
+// Index membership, not the filesystem, decides what is searchable.
+func newSearchService(repository graph.ReadRepository, projects []indexer.Project) (*search.Service, error) {
+	if federated, ok := repository.(*federation.Repository); ok {
+		members := federated.Members()
+		sources := make([]search.Source, 0, len(members))
+		for _, member := range members {
+			sources = append(sources, search.Source{Project: member.Project, Catalog: member.Files})
+		}
+		return search.NewService(sources), nil
+	}
+	catalog, ok := repository.(graph.FileCatalog)
+	if !ok || len(projects) != 1 {
+		return nil, fmt.Errorf("repository does not expose an indexed file catalog")
+	}
+	return search.NewService([]search.Source{{Project: projects[0], Catalog: catalog}}), nil
+}
+
+func splitList(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var result []string
+	for _, value := range strings.Split(raw, ",") {
+		if value = strings.TrimSpace(value); value != "" {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
 func (a *App) catalogOptions(args parsedArguments) (query.CatalogOptions, error) {
 	limit, err := intOption(args, "limit", query.DefaultCatalogLimit)
 	if err != nil {
 		return query.CatalogOptions{}, err
 	}
-	return query.CatalogOptions{Repository: args.values["repository"],
+	return query.CatalogOptions{Repository: args.values["repo-name"],
 		Name: args.values["name"], Limit: limit}, nil
 }
 
@@ -571,15 +975,15 @@ func (a *App) dataResources(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
+	kinds, err := parseNodeKinds(args.values["kind"])
+	if err != nil {
+		return err
+	}
 	catalog, closeRepository, err := openCatalog(ctx, args)
 	if err != nil {
 		return err
 	}
 	defer closeRepository()
-	kinds, err := parseNodeKinds(args.values["kind"])
-	if err != nil {
-		return err
-	}
 	result, err := catalog.DataResources(ctx, kinds, options)
 	if err != nil {
 		return err
@@ -875,12 +1279,19 @@ type parsedArguments struct {
 	values      map[string]string
 }
 
-var booleanOptions = map[string]bool{"json": true, "force": true, "help": true}
+var booleanOptions = map[string]bool{
+	"json": true, "force": true, "help": true, "source": true, "regex": true, "case-sensitive": true,
+	"list": true, "all": true, "dry-run": true, "mcp-only": true, "hooks": true, "refresh": true,
+}
 var valueOptions = map[string]bool{
 	"repo": true, "repos": true, "depth": true, "direction": true, "relation": true,
 	"limit": true, "interval": true, "max-file-size": true, "model": true,
 	"ollama-url": true, "batch-size": true, "context-lines": true, "max-lines": true,
-	"kind": true, "name": true, "repository": true,
+	"upstream-depth": true, "downstream-depth": true, "upstream-limit": true,
+	"downstream-limit": true, "source-limit": true, "path-prefix": true, "language": true,
+	"repo-name": true, "max-matches": true, "max-matches-per-file": true,
+	"max-matches-per-pattern": true, "client": true, "hook": true,
+	"kind": true, "name": true,
 }
 
 func parseArguments(arguments []string) (parsedArguments, error) {
@@ -988,7 +1399,10 @@ func parseRelations(raw string) []graph.EdgeKind {
 const helpText = `Grafo builds a deterministic semantic graph of a repository.
 
 Usage:
-  grafo install [claude|codex|opencode|all]
+  grafo install [client...] [--client a,b] [--all] [--list] [--dry-run] [--json]
+                 [--mcp-only] [--hooks] [--refresh]
+  grafo uninstall [client...] [--client a,b] [--all] [--dry-run] [--json]
+  grafo guidance [--repo path] [--hook pre-search|pre-edit]
   grafo index [path] [--force] [--json]
   grafo watch [path] [--interval 1s]
   grafo status [path] [--repos pathA,pathB] [--json]
@@ -1001,7 +1415,13 @@ Usage:
   grafo neighbors <symbol-or-id> [--depth 1] [--direction both]
   grafo callers <symbol-or-id> [--depth 3]
   grafo callees <symbol-or-id> [--depth 3]
-  grafo impact <symbol-or-id> [--depth 4]
+  grafo impact <symbol-or-id> [--depth 4] [--upstream-depth n] [--downstream-depth n]
+                              [--upstream-limit n] [--downstream-limit n]
+                              [--source] [--context-lines 2] [--max-lines 200] [--source-limit 10]
+  grafo search <pattern>... [--regex] [--case-sensitive] [--path-prefix dir,...]
+                            [--language go,...] [--repo-name name,...] [--context-lines 0]
+                            [--max-matches 500] [--max-matches-per-file 50]
+                            [--max-matches-per-pattern 200] [--max-file-size 1048576]
   grafo path <from> <to> [--direction outgoing] [--relation calls,...]
   grafo data-resources [--kind table,view] [--name text] [--limit 100] [--json]
   grafo data-usage <table-view-or-id> [--limit 100] [--json]
@@ -1014,6 +1434,25 @@ Options may appear before or after positional arguments. All query commands
 accept --repo or a comma-separated --repos list. Active branch indexes are
 refreshed incrementally before queries and never substituted across branches.
 
-Catalog commands accept --repository to restrict results to one indexed
-repository by name, and report truncation whenever a bound is reached.
+'grafo install --list' only detects clients and never writes; '--dry-run'
+reports every file and command a real run would touch. 'grafo install' also installs
+Grafo's agent guidance as an isolated skill file or a delimited managed block and
+reports every target before mutating anything; '--mcp-only' registers the server
+alone, '--refresh' updates only artifacts that already exist, and '--hooks' opts
+in to advisory pre-search and pre-edit hooks for clients that document a safe
+hook API. 'grafo uninstall' removes only Grafo's own registration, skill, managed
+block, and hooks, and leaves anything whose ownership it cannot prove.
+
+'grafo guidance' prints that canonical guidance plus the index status of the
+current repository and branch; '--hook' prints one advisory hint and always exits
+successfully, so a client hook can never block a tool call.
+
+'grafo impact' reports both directions: what depends on the symbol and what it
+depends on, plus impacted files, cross-repository hops, and config, data, and
+event relationships. 'grafo search' reads only files that belong to a refreshed
+index and never persists source text.
+
+The catalog commands accept --repo-name to restrict results to one indexed
+repository, and report truncation whenever a bound is reached. A --name fragment
+is matched literally and is trimmed, so a blank one narrows nothing.
 `

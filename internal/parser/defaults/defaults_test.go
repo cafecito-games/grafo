@@ -19,6 +19,7 @@ func TestRegistryRoutesEverySupportedFixtureFormat(t *testing.T) {
 		"shader.gdshader":            "godot",
 		"include.gdshaderinc":        "godot",
 		"main.go":                    "go",
+		"Worker.java":                "java",
 		"service.py":                 "python",
 		"types.pyi":                  "python",
 		"Service.swift":              "swift",
@@ -35,6 +36,7 @@ func TestRegistryRoutesEverySupportedFixtureFormat(t *testing.T) {
 		"config.yml":                 "config",
 		"settings.properties":        "config",
 		"config.json":                "config",
+		"config.toml":                "config",
 		"README.md":                  "markdown",
 		"docs/architecture.markdown": "markdown",
 	}

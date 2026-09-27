@@ -18,7 +18,7 @@ import (
 
 const workspaceOwner = "__workspace__"
 const workspaceSemanticKeysMeta = "parser_workspace_semantic_keys"
-const SemanticIndexVersion = "14"
+const SemanticIndexVersion = "15"
 
 type Options struct {
 	Force       bool
@@ -65,6 +65,7 @@ type Report struct {
 	Diagnostics           []graph.Diagnostic `json:"diagnostics,omitempty"`
 	Counts                graph.Counts       `json:"counts"`
 	Phases                PhaseDurations     `json:"phases"`
+	Writes                graph.WriteStats   `json:"writes"`
 	ReconciliationBatches int                `json:"reconciliation_batches"`
 	ElapsedMS             int64              `json:"elapsed_ms"`
 	ReconcileMS           int64              `json:"reconciliation_ms"`
@@ -82,11 +83,13 @@ func NewService(repository graph.IndexRepository, parsers *parserapi.Registry) *
 
 func (s *Service) Run(ctx context.Context, project Project, options Options) (report Report, runErr error) {
 	started := time.Now()
+	writeStart := writeStats(s.repository)
 	if options.MaxFileSize <= 0 {
 		options.MaxFileSize = 5 << 20
 	}
 	report = Report{Project: project, Updated: []string{}, Removed: []string{}}
 	defer func() {
+		report.Writes = writeStatsDelta(writeStats(s.repository), writeStart)
 		report.Phases.TotalNS = time.Since(started).Nanoseconds()
 		report.ElapsedMS = time.Since(started).Milliseconds()
 	}()
@@ -345,6 +348,28 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		return report, err
 	}
 	return report, nil
+}
+
+func writeStats(repository graph.IndexRepository) graph.WriteStats {
+	if instrumented, ok := repository.(graph.InstrumentedWriteRepository); ok {
+		return instrumented.WriteStats()
+	}
+	return graph.WriteStats{}
+}
+
+func writeStatsDelta(after, before graph.WriteStats) graph.WriteStats {
+	subtract := func(after, before graph.WriteBatchStats) graph.WriteBatchStats {
+		return graph.WriteBatchStats{
+			Batches: max(0, after.Batches-before.Batches),
+			Rows:    max(0, after.Rows-before.Rows),
+			Bytes:   max(0, after.Bytes-before.Bytes),
+		}
+	}
+	return graph.WriteStats{
+		Nodes: subtract(after.Nodes, before.Nodes),
+		Facts: subtract(after.Facts, before.Facts),
+		Edges: subtract(after.Edges, before.Edges),
+	}
 }
 
 func selectChangedPaths(paths []string, known map[string]graph.FileRecord, changed, previousDirty []string, parsers *parserapi.Registry) map[string]bool {

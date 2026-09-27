@@ -1,0 +1,10 @@
+{
+  // user preferences
+  "theme": "Default",
+  "mcpServers": {
+    "memory": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"]
+    }
+  }
+}

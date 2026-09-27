@@ -143,7 +143,7 @@ func TestCatalogCommandsRejectUnsupportedFilters(t *testing.T) {
 	if code, _, stderr := execute(t, "data-resources", "--repo", root, "--kind", "function"); code == 0 {
 		t.Fatalf("an unsupported kind must fail: %s", stderr)
 	}
-	if code, _, stderr := execute(t, "data-resources", "--repo", root, "--repository", "missing"); code == 0 {
+	if code, _, stderr := execute(t, "data-resources", "--repo", root, "--repo-name", "missing"); code == 0 {
 		t.Fatalf("an unknown repository filter must fail: %s", stderr)
 	}
 	if code, _, stderr := execute(t, "data-usage", "missing_table", "--repo", root); code == 0 {
