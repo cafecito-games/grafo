@@ -44,6 +44,10 @@ plugins:
 	assertProjection(t, result, graph.KindType, "example.com/generated/acme/v1.Envelope", "acme.v1.Envelope")
 	assertProjection(t, result, graph.KindMethod, "example.com/generated/acme/v1.Envelope.GetText", "acme.v1.Envelope.text")
 	assertProjection(t, result, graph.KindType, "example.com/generated/acme/v1.Envelope_Text", "acme.v1.Envelope.text")
+	assertProjection(t, result, graph.KindMethod, "example.com/generated/acme/v1.Envelope.GetText_2", "acme.v1.Envelope.text_2")
+	assertProjection(t, result, graph.KindType, "example.com/generated/acme/v1.Envelope_Text_2", "acme.v1.Envelope.text_2")
+	assertProjection(t, result, graph.KindMethod, "example.com/generated/acme/v1.Envelope.GetText2", "acme.v1.Envelope.text2")
+	assertProjection(t, result, graph.KindMethod, "example.com/generated/acme/v1.Envelope.GetXPrivate", "acme.v1.Envelope._private")
 	assertProjection(t, result, graph.KindClass, "AcmeV1EnvelopeEnvelope", "acme.v1.Envelope")
 	assertProjection(t, result, graph.KindMethod, "AcmeV1EnvelopeEnvelope.set_text", "acme.v1.Envelope.text")
 	assertProjection(t, result, graph.KindMethod, "AcmeV1EnvelopeEnvelope.has_text", "acme.v1.Envelope.text")
@@ -111,6 +115,30 @@ message Envelope {}
 	assertProjection(t, result, graph.KindType, "example.com/from-option.Envelope", "acme.v1.Envelope")
 }
 
+func TestLoaderDiagnosesAndSkipsUnreadableSemanticInput(t *testing.T) {
+	root := fixture(t, "version: v2\nplugins:\n  - local: protoc-gen-gdscript\n    out: gen\n")
+	schema := filepath.Join(root, "proto", "acme", "v1", "envelope.proto")
+	if err := os.Remove(schema); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("missing.proto", schema); err != nil {
+		t.Fatal(err)
+	}
+	content, _ := os.ReadFile(filepath.Join(root, "buf.gen.yaml"))
+	result, err := protobufbinding.New(nil).Parse(context.Background(), parserapi.Input{Root: root, Path: "buf.gen.yaml", Content: content, RepoID: "repo:test"})
+	if err != nil {
+		t.Fatalf("unreadable schema aborted binding registry: %v", err)
+	}
+	if len(result.Diagnostics) == 0 || !strings.Contains(result.Diagnostics[0].Message, "read Protobuf binding input") {
+		t.Fatalf("unreadable schema was not diagnosed: %#v", result.Diagnostics)
+	}
+	for _, node := range result.Nodes {
+		if node.Properties["generated_binding"] == "true" {
+			t.Fatalf("unreadable schema produced a projection: %#v", node)
+		}
+	}
+}
+
 func TestParserRejectsMalformedAndUnsupportedGenerationConfiguration(t *testing.T) {
 	tests := []struct{ name, config, want string }{
 		{"malformed", "version: [", "parse Buf generation configuration"},
@@ -146,10 +174,15 @@ func fixture(t *testing.T, config string) string {
 	write(t, root, "proto/acme/v1/envelope.proto", `syntax = "proto3";
 package acme.v1;
 message Envelope {
-  oneof payload { string text = 1; }
+	oneof payload {
+		string text = 1;
+		string text_2 = 5;
+	}
   repeated string tags = 2;
   Child child = 3;
   State state = 4;
+	string text2 = 6;
+	string _private = 7;
 }
 message Child {}
 enum State { STATE_UNSPECIFIED = 0; STATE_READY = 1; }

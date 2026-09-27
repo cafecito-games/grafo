@@ -18,7 +18,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"unicode"
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
@@ -181,8 +180,9 @@ func IsSemanticInput(path string) bool {
 }
 
 type fileContent struct {
-	path    string
-	content []byte
+	path      string
+	content   []byte
+	readError string
 }
 
 func relevantFiles(ctx context.Context, root string) ([]fileContent, string, error) {
@@ -198,7 +198,12 @@ func relevantFiles(ctx context.Context, root string) ([]fileContent, string, err
 		}
 		content, readErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
 		if readErr != nil {
-			return nil, "", fmt.Errorf("read protobuf binding input %s: %w", path, readErr)
+			files = append(files, fileContent{path: clean(path), readError: readErr.Error()})
+			_, _ = hash.Write([]byte(path))
+			_, _ = hash.Write([]byte{0})
+			_, _ = hash.Write([]byte("unreadable"))
+			_, _ = hash.Write([]byte{0})
+			continue
 		}
 		files = append(files, fileContent{path: clean(path), content: content})
 		_, _ = hash.Write([]byte(path))
@@ -259,9 +264,14 @@ type declaration struct {
 func buildRegistry(ctx context.Context, input parserapi.Input, files []fileContent, digest string) Registry {
 	result := Registry{Digest: digest, Configs: map[string]Config{}, Outputs: map[string]GeneratedFile{}}
 	byPath := map[string][]byte{}
+	var inputDiagnostics []graph.Diagnostic
 	var declarations []declaration
 	for _, file := range files {
 		byPath[file.path] = file.content
+		if file.readError != "" {
+			inputDiagnostics = append(inputDiagnostics, diagnostic(file.path, 0, "read Protobuf binding input: "+file.readError))
+			continue
+		}
 		if !strings.EqualFold(filepath.Ext(file.path), ".proto") {
 			continue
 		}
@@ -294,7 +304,11 @@ func buildRegistry(ctx context.Context, input parserapi.Input, files []fileConte
 		if base != "buf.gen.yaml" && base != "buf.gen.yml" {
 			continue
 		}
+		if file.readError != "" {
+			continue
+		}
 		config, parsed := parseConfig(input, file, byPath, declarations)
+		config.Diagnostics = append(config.Diagnostics, inputDiagnostics...)
 		result.Configs[file.path] = config
 		if parsed.outputs == nil {
 			continue
@@ -572,19 +586,19 @@ func goProjection(input parserapi.Input, d declaration, pkg, generator, version,
 	if len(path) == 0 {
 		return nil
 	}
-	typeName := strings.Join(path, "_")
+	typeName := goTypeName(path)
 	qualified := pkg + "." + typeName
 	if d.kind == graph.KindType {
 		return []Projection{projection(input, graph.KindType, qualified, d.id, d.canonical, graph.KindType, "go", generator, version, configPath, map[string]string{"projection": d.form})}
 	}
 	ownerCanonical := strings.TrimSuffix(d.canonical, "."+d.name)
-	owner := strings.Join(schemaTypePath(declaration{canonical: ownerCanonical, pkg: d.pkg}), "_")
+	owner := goTypeName(schemaTypePath(declaration{canonical: ownerCanonical, pkg: d.pkg}))
 	if owner == "" {
 		return nil
 	}
 	field := goCamel(d.name)
 	if d.form == "enum_value" {
-		return []Projection{projection(input, graph.KindField, pkg+"."+owner+"_"+d.name, d.id, d.canonical, graph.KindField, "go", generator, version, configPath, map[string]string{"projection": "enum_value"})}
+		return []Projection{projection(input, graph.KindField, pkg+"."+owner+"_"+goCamel(d.name), d.id, d.canonical, graph.KindField, "go", generator, version, configPath, map[string]string{"projection": "enum_value"})}
 	}
 	base := pkg + "." + owner
 	result := []Projection{
@@ -672,6 +686,14 @@ func schemaTypePath(d declaration) []string {
 	return strings.Split(name, ".")
 }
 
+func goTypeName(path []string) string {
+	result := make([]string, 0, len(path))
+	for _, part := range path {
+		result = append(result, goCamel(part))
+	}
+	return strings.Join(result, "_")
+}
+
 func uniqueProjections(values []Projection) []Projection {
 	seen := map[string]bool{}
 	result := values[:0]
@@ -726,22 +748,38 @@ func generatedLine(line int) int {
 }
 
 func goCamel(value string) string {
-	var result []rune
-	upper := true
-	for _, r := range value {
-		if r == '_' || r == '-' || r == '.' {
-			upper = true
+	// Match the protoc-gen-go v1 GoCamelCase contract exactly. In particular,
+	// underscores are retained unless followed by a lowercase letter, and a
+	// leading underscore becomes X so distinct protobuf names stay distinct.
+	result := make([]byte, 0, len(value))
+	for i := 0; i < len(value); i++ {
+		current := value[i]
+		switch {
+		case current == '.' && i+1 < len(value) && asciiLower(value[i+1]):
 			continue
-		}
-		if upper {
-			result = append(result, unicode.ToUpper(r))
-			upper = false
-		} else {
-			result = append(result, r)
+		case current == '.':
+			result = append(result, '_')
+		case current == '_' && (i == 0 || value[i-1] == '.'):
+			result = append(result, 'X')
+		case current == '_' && i+1 < len(value) && asciiLower(value[i+1]):
+			continue
+		case current >= '0' && current <= '9':
+			result = append(result, current)
+		default:
+			if asciiLower(current) {
+				current -= 'a' - 'A'
+			}
+			result = append(result, current)
+			for i+1 < len(value) && asciiLower(value[i+1]) {
+				i++
+				result = append(result, value[i])
+			}
 		}
 	}
 	return string(result)
 }
+
+func asciiLower(value byte) bool { return value >= 'a' && value <= 'z' }
 
 func gdCamel(value string) string {
 	parts := strings.FieldsFunc(value, func(r rune) bool { return r == '.' || r == '_' || r == '-' || r == '/' })
