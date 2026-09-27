@@ -31,6 +31,7 @@ const maxExportDepth = 128
 type symbolRef struct {
 	qualified string
 	kind      graph.NodeKind
+	owner     string
 }
 
 type exportRef struct {
@@ -54,6 +55,7 @@ type compilerConfig struct {
 	path             string
 	baseURL          string
 	paths            map[string][]string
+	pathsBase        string
 	rootDirs         []string
 	moduleResolution string
 	digest           string
@@ -72,7 +74,9 @@ type moduleCatalog struct {
 	root        string
 	repoID      string
 	modules     map[string]*moduleInfo
+	moduleNames map[string]int
 	modulePaths []string
+	tracked     map[string]bool
 	configs     map[string]compilerConfig
 	packages    []packageInfo
 	diagnostics []string
@@ -84,6 +88,14 @@ func (c *moduleCatalog) clone() *moduleCatalog {
 	copyCatalog.modules = make(map[string]*moduleInfo, len(c.modules))
 	for path, module := range c.modules {
 		copyCatalog.modules[path] = module
+	}
+	copyCatalog.moduleNames = make(map[string]int, len(c.moduleNames))
+	for name, count := range c.moduleNames {
+		copyCatalog.moduleNames[name] = count
+	}
+	copyCatalog.tracked = make(map[string]bool, len(c.tracked))
+	for path, tracked := range c.tracked {
+		copyCatalog.tracked[path] = tracked
 	}
 	copyCatalog.modulePaths = append([]string(nil), c.modulePaths...)
 	copyCatalog.packages = append([]packageInfo(nil), c.packages...)
@@ -99,13 +111,14 @@ var (
 	exportedDeclarationPattern = regexp.MustCompile(`(?m)\bexport\s+(type\s+)?(?:declare\s+)?(?:abstract\s+)?(class|interface|function|const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
 	defaultDeclarationPattern  = regexp.MustCompile(`(?m)\bexport\s+default\s+(?:async\s+)?(?:abstract\s+)?(?:class|function)\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
 	defaultIdentifierPattern   = regexp.MustCompile(`(?m)\bexport\s+default\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*;?\s*$`)
-	defaultAnonymousPattern    = regexp.MustCompile(`(?m)\bexport\s+default\s+(?:async\s+)?(?:abstract\s+)?(?:class\s*\{|function\s*\()`)
+	defaultAnonymousPattern    = regexp.MustCompile(`(?m)\bexport\s+default\s+(?:async\s+)?(?:abstract\s+)?(?:class(?:\s+extends\s+[^\{]+)?\s*\{|function\s*\()`)
 	exportListPattern          = regexp.MustCompile(`(?ms)\bexport\s+(type\s+)?\{([^}]*)\}\s*(?:from\s*["']([^"']+)["'])?`)
 	exportStarPattern          = regexp.MustCompile(`(?m)\bexport\s+(type\s+)?\*\s*(?:as\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*)?from\s*["']([^"']+)["']`)
 )
 
 func buildModuleCatalog(ctx context.Context, input parserapi.Input) (*moduleCatalog, error) {
-	catalog := &moduleCatalog{root: input.Root, repoID: input.RepoID, modules: map[string]*moduleInfo{}, configs: map[string]compilerConfig{}}
+	catalog := &moduleCatalog{root: input.Root, repoID: input.RepoID, modules: map[string]*moduleInfo{}, moduleNames: map[string]int{},
+		tracked: map[string]bool{}, configs: map[string]compilerConfig{}}
 	if catalog.root == "" {
 		return catalog, nil
 	}
@@ -115,12 +128,14 @@ func buildModuleCatalog(ctx context.Context, input parserapi.Input) (*moduleCata
 	}
 	digest := sha256.New()
 	for _, path := range paths {
+		catalog.tracked[path] = true
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		content, readErr := os.ReadFile(filepath.Join(catalog.root, filepath.FromSlash(path)))
 		if readErr != nil {
-			return nil, readErr
+			catalog.diagnostics = append(catalog.diagnostics, fmt.Sprintf("read resolution input %s: %v", path, readErr))
+			continue
 		}
 		_, _ = digest.Write([]byte(path))
 		_, _ = digest.Write([]byte{0})
@@ -134,6 +149,7 @@ func buildModuleCatalog(ctx context.Context, input parserapi.Input) (*moduleCata
 				continue
 			}
 			catalog.modules[path] = info
+			catalog.moduleNames[info.name]++
 			catalog.modulePaths = append(catalog.modulePaths, path)
 		case strings.EqualFold(filepath.Base(path), "package.json"):
 			catalog.loadPackage(path, content)
@@ -166,7 +182,7 @@ func moduleCatalogDigest(ctx context.Context, root string) (string, error) {
 		}
 		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
 		if err != nil {
-			return "", err
+			continue
 		}
 		_, _ = digest.Write([]byte(path))
 		_, _ = digest.Write([]byte{0})
@@ -187,7 +203,10 @@ func repositoryResolutionFiles(ctx context.Context, root string) ([]string, erro
 			path := filepath.ToSlash(string(raw))
 			base := strings.ToLower(filepath.Base(path))
 			if isTypeScriptPath(path) || base == "tsconfig.json" || strings.HasPrefix(base, "tsconfig.") && strings.HasSuffix(base, ".json") || base == "package.json" {
-				result = append(result, path)
+				info, statErr := os.Stat(filepath.Join(root, filepath.FromSlash(path)))
+				if statErr == nil && info.Mode().IsRegular() {
+					result = append(result, path)
+				}
 			}
 		}
 		sort.Strings(result)
@@ -263,7 +282,11 @@ func scanModule(path string, content []byte) (*moduleInfo, error) {
 	}
 	defer tree.Close()
 	collectModuleDeclarations(tree.RootNode(), content, info, "")
-	text := string(content)
+	collectModuleExports(info, string(content), 0)
+	return info, nil
+}
+
+func collectModuleExports(info *moduleInfo, text string, lineOffset int) {
 	for _, match := range exportedDeclarationPattern.FindAllStringSubmatch(text, -1) {
 		name := match[3]
 		info.exports[name] = append(info.exports[name], exportRef{local: name, typeOnly: strings.TrimSpace(match[1]) != ""})
@@ -277,7 +300,7 @@ func scanModule(path string, content []byte) (*moduleInfo, error) {
 		}
 	}
 	for _, index := range defaultAnonymousPattern.FindAllStringIndex(text, -1) {
-		line := 1 + strings.Count(text[:index[0]], "\n")
+		line := lineOffset + 1 + strings.Count(text[:index[0]], "\n")
 		name := fmt.Sprintf("anonymous@%d", line)
 		info.exports["default"] = append(info.exports["default"], exportRef{local: name})
 	}
@@ -314,7 +337,6 @@ func scanModule(path string, content []byte) (*moduleInfo, error) {
 			info.stars = append(info.stars, ref)
 		}
 	}
-	return info, nil
 }
 
 func collectModuleDeclarations(node *treesitter.Node, source []byte, info *moduleInfo, container string) {
@@ -322,7 +344,7 @@ func collectModuleDeclarations(node *treesitter.Node, source []byte, info *modul
 		return
 	}
 	kind := node.Kind()
-	if kind == "class_declaration" || kind == "abstract_class_declaration" || kind == "interface_declaration" {
+	if kind == "class" || kind == "class_declaration" || kind == "abstract_class_declaration" || kind == "interface_declaration" {
 		name := nodeText(node.ChildByFieldName("name"), source)
 		if name == "" && kind != "interface_declaration" {
 			name = fmt.Sprintf("anonymous@%d", node.StartPosition().Row+1)
@@ -333,7 +355,7 @@ func collectModuleDeclarations(node *treesitter.Node, source []byte, info *modul
 				nodeKind = graph.KindInterface
 			}
 			qualified := info.name + "." + name
-			info.locals[name] = symbolRef{qualified: qualified, kind: nodeKind}
+			info.locals[name] = symbolRef{qualified: qualified, kind: nodeKind, owner: info.path}
 			if info.methods[name] == nil {
 				info.methods[name] = map[string]symbolRef{}
 			}
@@ -346,7 +368,7 @@ func collectModuleDeclarations(node *treesitter.Node, source []byte, info *modul
 	if container != "" && (kind == "method_definition" || kind == "method_signature" || kind == "abstract_method_signature") {
 		name := nodeText(node.ChildByFieldName("name"), source)
 		if name != "" {
-			info.methods[container][name] = symbolRef{qualified: info.name + "." + container + "." + name, kind: graph.KindMethod}
+			info.methods[container][name] = symbolRef{qualified: info.name + "." + container + "." + name, kind: graph.KindMethod, owner: info.path}
 		}
 		return
 	}
@@ -356,14 +378,20 @@ func collectModuleDeclarations(node *treesitter.Node, source []byte, info *modul
 			name = fmt.Sprintf("anonymous@%d", node.StartPosition().Row+1)
 		}
 		if name != "" {
-			info.locals[name] = symbolRef{qualified: info.name + "." + name, kind: graph.KindFunction}
+			info.locals[name] = symbolRef{qualified: info.name + "." + name, kind: graph.KindFunction, owner: info.path}
 		}
 	}
 	if container == "" && kind == "variable_declarator" {
 		name := nodeText(node.ChildByFieldName("name"), source)
 		value := node.ChildByFieldName("value")
-		if isIdentifier(name) && value != nil && (value.Kind() == "arrow_function" || value.Kind() == "function_expression" || value.Kind() == "generator_function") {
-			info.locals[name] = symbolRef{qualified: info.name + "." + name, kind: graph.KindFunction}
+		if isIdentifier(name) {
+			kind := graph.KindVariable
+			qualified := fmt.Sprintf("%s.%s@%d", info.name, name, node.StartPosition().Row+1)
+			if value != nil && (value.Kind() == "arrow_function" || value.Kind() == "function_expression" || value.Kind() == "generator_function") {
+				kind = graph.KindFunction
+				qualified = info.name + "." + name
+			}
+			info.locals[name] = symbolRef{qualified: qualified, kind: kind, owner: info.path}
 		}
 	}
 	for i := uint(0); i < node.NamedChildCount(); i++ {
@@ -379,11 +407,19 @@ func nodeText(node *treesitter.Node, source []byte) string {
 }
 
 func (c *moduleCatalog) moduleID(info *moduleInfo) string {
-	return graph.NodeID(graph.KindModule, c.repoID+":"+info.name)
+	return graph.NodeID(graph.KindModule, c.repoID+":"+info.path)
 }
 
 func (c *moduleCatalog) moduleForPath(path string) *moduleInfo {
 	return c.modules[filepath.ToSlash(path)]
+}
+
+func (c *moduleCatalog) ambiguousSymbol(symbol symbolRef) bool {
+	if symbol.owner == "" {
+		return false
+	}
+	module := c.modules[symbol.owner]
+	return module != nil && c.moduleNames[module.name] > 1
 }
 
 func (c *moduleCatalog) resolveModule(fromPath, specifier string) (*moduleInfo, string) {
@@ -483,7 +519,7 @@ func (c *moduleCatalog) resolvePathsAlias(config compilerConfig, specifier strin
 			target = strings.ReplaceAll(target, "*", capture)
 			base := config.baseURL
 			if base == "" {
-				base = filepath.ToSlash(filepath.Dir(config.path))
+				base = config.pathsBase
 			}
 			if info := c.resolvePath(filepath.ToSlash(filepath.Join(base, filepath.FromSlash(target)))); info != nil {
 				return info, ""
@@ -535,7 +571,7 @@ func (c *moduleCatalog) resolveExportDepth(module *moduleInfo, name string, acti
 		case ref.namespace:
 			target, diagnostic := c.resolveModule(module.path, ref.specifier)
 			if target != nil {
-				result = append(result, symbolRef{qualified: target.name, kind: graph.KindModule})
+				result = append(result, symbolRef{qualified: target.name, kind: graph.KindModule, owner: target.path})
 			} else if diagnostic != "" {
 				diagnostics = append(diagnostics, diagnostic)
 			}
@@ -580,7 +616,7 @@ func uniqueSymbols(values []symbolRef) []symbolRef {
 	seen := map[string]bool{}
 	result := values[:0]
 	for _, value := range values {
-		key := string(value.kind) + "\x00" + value.qualified
+		key := string(value.kind) + "\x00" + value.qualified + "\x00" + value.owner
 		if !seen[key] {
 			seen[key] = true
 			result = append(result, value)
@@ -604,19 +640,32 @@ func uniqueStrings(values []string) []string {
 }
 
 func (c *moduleCatalog) member(symbol symbolRef, member string) (symbolRef, bool) {
+	if symbol.owner != "" {
+		info := c.modules[symbol.owner]
+		if info == nil || c.moduleNames[info.name] > 1 {
+			return symbolRef{}, false
+		}
+		typeName := strings.TrimPrefix(symbol.qualified, info.name+".")
+		memberSymbol, ok := info.methods[typeName][member]
+		return memberSymbol, ok
+	}
 	parts := strings.Split(symbol.qualified, ".")
 	if len(parts) < 2 {
 		return symbolRef{}, false
 	}
 	moduleName := strings.Join(parts[:len(parts)-1], ".")
 	typeName := parts[len(parts)-1]
+	var result symbolRef
+	matches := 0
 	for _, info := range c.modules {
 		if info.name == moduleName {
-			memberSymbol, ok := info.methods[typeName][member]
-			return memberSymbol, ok
+			if memberSymbol, ok := info.methods[typeName][member]; ok {
+				result = memberSymbol
+				matches++
+			}
 		}
 	}
-	return symbolRef{}, false
+	return result, matches == 1
 }
 
 func (c *moduleCatalog) loadPackage(path string, content []byte) {
@@ -701,7 +750,7 @@ func (c *moduleCatalog) configFor(sourcePath string) compilerConfig {
 		if directory != "." && directory != "" {
 			configPath = directory + "/tsconfig.json"
 		}
-		if _, err := os.Stat(filepath.Join(c.root, filepath.FromSlash(configPath))); err == nil {
+		if c.tracked[configPath] {
 			config, ok := c.configs[configPath]
 			if ok {
 				return config
@@ -724,6 +773,9 @@ func (c *moduleCatalog) configFor(sourcePath string) compilerConfig {
 
 func (c *moduleCatalog) loadConfig(path string, active map[string]bool) (compilerConfig, error) {
 	path = filepath.ToSlash(filepath.Clean(path))
+	if !c.tracked[path] {
+		return compilerConfig{path: path}, fmt.Errorf("tsconfig %s is not a tracked resolution input", path)
+	}
 	if active[path] {
 		return compilerConfig{path: path}, fmt.Errorf("cyclic tsconfig extends at %s", path)
 	}
@@ -767,6 +819,7 @@ func (c *moduleCatalog) loadConfig(path string, active map[string]bool) (compile
 	}
 	if raw.CompilerOptions.Paths != nil {
 		config.paths = raw.CompilerOptions.Paths
+		config.pathsBase = configDir
 	}
 	if raw.CompilerOptions.RootDirs != nil {
 		config.rootDirs = make([]string, 0, len(raw.CompilerOptions.RootDirs))
@@ -823,6 +876,36 @@ func stripJSONComments(content []byte) []byte {
 		output.WriteByte(ch)
 	}
 	withoutComments := output.Bytes()
-	trailingComma := regexp.MustCompile(`,\s*([}\]])`)
-	return trailingComma.ReplaceAll(withoutComments, []byte("$1"))
+	output.Reset()
+	inString, escaped = false, false
+	for index := 0; index < len(withoutComments); index++ {
+		ch := withoutComments[index]
+		if inString {
+			output.WriteByte(ch)
+			if escaped {
+				escaped = false
+			} else if ch == '\\' {
+				escaped = true
+			} else if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+		if ch == '"' {
+			inString = true
+			output.WriteByte(ch)
+			continue
+		}
+		if ch == ',' {
+			lookahead := index + 1
+			for lookahead < len(withoutComments) && (withoutComments[lookahead] == ' ' || withoutComments[lookahead] == '\t' || withoutComments[lookahead] == '\r' || withoutComments[lookahead] == '\n') {
+				lookahead++
+			}
+			if lookahead < len(withoutComments) && (withoutComments[lookahead] == '}' || withoutComments[lookahead] == ']') {
+				continue
+			}
+		}
+		output.WriteByte(ch)
+	}
+	return output.Bytes()
 }

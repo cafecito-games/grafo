@@ -1314,54 +1314,6 @@
         "relation": "exports",
         "to": {
           "repo": "typescript",
-          "kind": "class",
-          "qualified_name": "src/lib/service.Service"
-        },
-        "source": {
-          "path": "src/lib/barrel.ts",
-          "line": 2,
-          "column": 1
-        },
-        "properties": {
-          "exported": "RenamedService",
-          "imported": "Service",
-          "reexport": "true",
-          "specifier": "./service"
-        }
-      },
-      {
-        "from": {
-          "repo": "typescript",
-          "kind": "module",
-          "qualified_name": "src/lib/barrel"
-        },
-        "relation": "exports",
-        "to": {
-          "repo": "typescript",
-          "kind": "function",
-          "qualified_name": "src/lib/service.direct"
-        },
-        "source": {
-          "path": "src/lib/barrel.ts",
-          "line": 1,
-          "column": 1
-        },
-        "properties": {
-          "exported": "direct",
-          "imported": "default",
-          "reexport": "true",
-          "specifier": "./service"
-        }
-      },
-      {
-        "from": {
-          "repo": "typescript",
-          "kind": "module",
-          "qualified_name": "src/lib/barrel"
-        },
-        "relation": "exports",
-        "to": {
-          "repo": "typescript",
           "kind": "function",
           "qualified_name": "src/lib/service.direct"
         },
@@ -1392,31 +1344,6 @@
         "source": {
           "path": "src/lib/barrel.ts",
           "line": 1,
-          "column": 1
-        },
-        "properties": {
-          "exported": "Contract",
-          "imported": "Contract",
-          "reexport": "true",
-          "specifier": "./service",
-          "type_only": "true"
-        }
-      },
-      {
-        "from": {
-          "repo": "typescript",
-          "kind": "module",
-          "qualified_name": "src/lib/barrel"
-        },
-        "relation": "exports",
-        "to": {
-          "repo": "typescript",
-          "kind": "interface",
-          "qualified_name": "src/lib/service.Contract"
-        },
-        "source": {
-          "path": "src/lib/barrel.ts",
-          "line": 2,
           "column": 1
         },
         "properties": {

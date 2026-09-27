@@ -3,6 +3,7 @@ package typescript_test
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -94,7 +95,7 @@ function use(runner: Runner) {
 	}
 	assertHasNode(t, result.Nodes, graph.KindModule, "src/caller")
 	assertHasFactTargetID(t, result.Facts, graph.EdgeImports,
-		graph.NodeID(graph.KindModule, "repo:sample:src/barrel"))
+		graph.NodeID(graph.KindModule, "repo:sample:src/barrel.ts"))
 	assertHasFactProperty(t, result.Facts, graph.EdgeImports, "local", "Service")
 	assertHasFactProperty(t, result.Facts, graph.EdgeImports, "type_only", "true")
 	assertHasFactProperty(t, result.Facts, graph.EdgeImports, "binding_kind", "namespace")
@@ -158,6 +159,137 @@ func TestParserDiagnosesInvalidConfigAndStillResolvesRelativeModules(t *testing.
 	}
 	assertHasFact(t, result.Facts, graph.EdgeCalls, "src/service.invoke")
 	assertDiagnosticContains(t, result.Diagnostics, "invalid tsconfig")
+}
+
+func TestParserResolvesInheritedPathsFromDeclaringConfig(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "tsconfig.base.json", `{"compilerOptions":{"paths":{"@app/*":["src/*"]}}}`)
+	writeFile(t, root, "packages/client/tsconfig.json", `{"extends":"../../tsconfig.base.json"}`)
+	writeFile(t, root, "src/service.ts", `export function invoke() {}`)
+	writeFile(t, root, "packages/client/src/service.ts", `export function invoke() {}`)
+	caller := `import { invoke } from "@app/service"; invoke();`
+	writeFile(t, root, "packages/client/caller.ts", caller)
+
+	result, err := typescriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "packages/client/caller.ts", Content: []byte(caller), Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "src/service.invoke")
+}
+
+func TestParserKeepsCollidingPhysicalModulesDistinctAndCallsUnresolved(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "src/service.ts", `export class Service { run() {} }`)
+	writeFile(t, root, "src/service.d.ts", `export declare class Service { run(): void }`)
+	caller := `import { Service } from "./service"; new Service().run();`
+	writeFile(t, root, "src/caller.ts", caller)
+
+	result, err := typescriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "src/caller.ts", Content: []byte(caller), Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasFactTargetID(t, result.Facts, graph.EdgeImports,
+		graph.NodeID(graph.KindModule, "repo:sample:src/service.ts"))
+	assertDiagnosticContains(t, result.Diagnostics, "module identity src/service is ambiguous")
+	assertLacksFact(t, result.Facts, graph.EdgeCalls, "src/service.Service.run")
+}
+
+func TestParserToleratesSemanticInputRaces(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "service.ts", `export function oldName() {}`)
+	writeFile(t, root, "caller.ts", `import { oldName } from "./service"; oldName();`)
+	parser := typescriptparser.New()
+	key, err := parser.WorkspaceSemanticKey(context.Background(), parserapi.Input{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, root, "service.ts", `export function newName() {}`)
+	content := []byte(`import { newName } from "./service"; newName();`)
+	result, err := parser.Parse(context.Background(), parserapi.Input{Root: root, Path: "caller.ts", Content: content,
+		Repository: "sample", RepoID: "repo:sample", SemanticKey: key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "service.newName")
+	assertDiagnosticContains(t, result.Diagnostics, "resolution inputs changed during parsing")
+}
+
+func TestParserSkipsTrackedResolutionInputsThatDisappear(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "deleted.ts", `export function gone() {}`)
+	if err := os.Symlink("missing-target.ts", filepath.Join(root, "broken.ts")); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init", "-q"}, {"add", "deleted.ts", "broken.ts"}} {
+		command := exec.Command("git", args...)
+		command.Dir = root
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
+	if err := os.Remove(filepath.Join(root, "deleted.ts")); err != nil {
+		t.Fatal(err)
+	}
+
+	parser := typescriptparser.New()
+	if _, err := parser.WorkspaceSemanticKey(context.Background(), parserapi.Input{Root: root}); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte(`export function current() {}`)
+	result, err := parser.Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "current.ts", Content: content, Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasNode(t, result.Nodes, graph.KindFunction, "current")
+}
+
+func TestParserAttributesEachExportToItsStatement(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "a.ts", `export function one() {}`)
+	writeFile(t, root, "b.ts", `export function two() {}`)
+	content := []byte("export { one } from \"./a\";\nexport { two } from \"./b\";")
+	writeFile(t, root, "barrel.ts", string(content))
+	result, err := typescriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "barrel.ts", Content: content, Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasFactAtLine(t, result.Facts, graph.EdgeExports, "a.one", 1)
+	assertHasFactAtLine(t, result.Facts, graph.EdgeExports, "b.two", 2)
+}
+
+func TestParserExportsValuesAndAnonymousDefaultClass(t *testing.T) {
+	root := t.TempDir()
+	values := []byte("export const answer = 42;\nconst config = {}; export default config;")
+	writeFile(t, root, "values.ts", string(values))
+	result, err := typescriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "values.ts", Content: values, Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasFact(t, result.Facts, graph.EdgeExports, "values.answer@1")
+	assertHasFact(t, result.Facts, graph.EdgeExports, "values.config@2")
+
+	writeFile(t, root, "base.ts", `export class Base {}`)
+	anonymous := []byte("import { Base } from \"./base\";\nexport default class extends Base { run() {} }")
+	writeFile(t, root, "anonymous.ts", string(anonymous))
+	result, err = typescriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "anonymous.ts", Content: anonymous, Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasNode(t, result.Nodes, graph.KindClass, "anonymous@2")
+	assertHasFact(t, result.Facts, graph.EdgeExports, "anonymous.anonymous@2")
+	assertHasFact(t, result.Facts, graph.EdgeExtends, "base.Base")
 }
 
 func TestParserExtractsSymbolsAndWiring(t *testing.T) {
@@ -228,6 +360,25 @@ func assertHasFact(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, target
 		}
 	}
 	t.Fatalf("missing %s fact to %q; got %#v", kind, target, facts)
+}
+
+func assertLacksFact(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, target string) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.Kind == kind && fact.Target == target {
+			t.Fatalf("unexpected %s fact to %q: %#v", kind, target, fact)
+		}
+	}
+}
+
+func assertHasFactAtLine(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, target string, line int) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.Kind == kind && fact.Target == target && fact.Location.Line == line {
+			return
+		}
+	}
+	t.Fatalf("missing %s fact to %q at line %d; got %#v", kind, target, line, facts)
 }
 
 func assertFactCount(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, target string, expected int) {

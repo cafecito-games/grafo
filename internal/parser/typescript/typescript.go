@@ -151,6 +151,7 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 			return b.Finish(), fmt.Errorf("scan current TypeScript module: %w", err)
 		}
 		catalog.modules[input.Path] = info
+		catalog.moduleNames[info.name]++
 	}
 	moduleID := catalog.moduleID(info)
 	b.Declare(b.FileID(), graph.Node{ID: moduleID, Kind: graph.KindModule, Name: module,
@@ -179,7 +180,7 @@ func (p *Parser) catalogFor(ctx context.Context, input parserapi.Input) (*module
 		return nil, err
 	}
 	if input.SemanticKey != "" && input.SemanticKey != catalog.digest {
-		return nil, fmt.Errorf("TypeScript semantic key does not match tracked module catalog")
+		catalog.diagnostics = append(catalog.diagnostics, "TypeScript resolution inputs changed during parsing; rebuilt the module catalog")
 	}
 	p.storeCatalog(input.Root, catalog)
 	return catalog.clone(), nil
@@ -206,7 +207,7 @@ func (e *extractor) walk(node *treesitter.Node, current scope) {
 	case "function_declaration", "generator_function_declaration", "function_expression", "generator_function":
 		e.parseFunction(node, current, graph.KindFunction)
 		return
-	case "class_declaration", "abstract_class_declaration":
+	case "class", "class_declaration", "abstract_class_declaration":
 		e.parseClass(node, current)
 		return
 	case "interface_declaration":
@@ -278,17 +279,20 @@ func (e *extractor) parseImport(node *treesitter.Node) {
 		if resolvedModule != nil {
 			targetID, target = e.catalog.moduleID(resolvedModule), ""
 			if binding.namespace {
-				binding.symbol = symbolRef{qualified: resolvedModule.name, kind: graph.KindModule}
+				binding.symbol = symbolRef{qualified: resolvedModule.name, kind: graph.KindModule, owner: resolvedModule.path}
 			} else if binding.imported != "" {
 				resolved, exportDiagnostic := e.catalog.resolveExport(resolvedModule, binding.imported)
 				e.reportCatalogDiagnostics()
 				if exportDiagnostic != "" && strings.Contains(exportDiagnostic, "cyclic export") {
 					e.b.Diagnostic(int(node.StartPosition().Row)+1, "warning", exportDiagnostic)
 				}
-				if len(resolved) == 1 {
+				if len(resolved) == 1 && !e.catalog.ambiguousSymbol(resolved[0]) {
 					binding.symbol = resolved[0]
 				} else {
 					binding.unresolved = true
+					if len(resolved) == 1 && e.catalog.ambiguousSymbol(resolved[0]) {
+						exportDiagnostic = fmt.Sprintf("module identity %s is ambiguous across tracked source files", resolvedModule.name)
+					}
 					if exportDiagnostic != "" && !strings.Contains(exportDiagnostic, "cyclic export") {
 						e.b.Diagnostic(int(node.StartPosition().Row)+1, "warning", exportDiagnostic)
 					}
@@ -398,19 +402,18 @@ func (e *extractor) parseExport(node *treesitter.Node) {
 		}
 		return
 	}
-	emitted := map[string]bool{}
-	exportedNames := make([]string, 0, len(e.info.exports))
-	for exported := range e.info.exports {
+	statement := &moduleInfo{path: e.info.path, name: e.info.name, locals: e.info.locals,
+		methods: e.info.methods, exports: map[string][]exportRef{}}
+	collectModuleExports(statement, text, int(node.StartPosition().Row))
+	exportedNames := make([]string, 0, len(statement.exports))
+	for exported := range statement.exports {
 		exportedNames = append(exportedNames, exported)
 	}
 	sort.Strings(exportedNames)
 	for _, exported := range exportedNames {
-		refs := e.info.exports[exported]
+		refs := statement.exports[exported]
 		for _, ref := range refs {
-			if ref.specifier != "" && !strings.Contains(text, ref.specifier) || ref.local != "" && !regexp.MustCompile(`\b`+regexp.QuoteMeta(ref.local)+`\b`).MatchString(text) {
-				continue
-			}
-			resolved, _ := e.catalog.resolveExport(e.info, exported)
+			resolved := e.resolveExportRef(ref)
 			properties := map[string]string{"exported": exported}
 			if ref.local != "" {
 				properties["local"] = ref.local
@@ -424,14 +427,29 @@ func (e *extractor) parseExport(node *treesitter.Node) {
 				properties["type_only"] = "true"
 			}
 			for _, symbol := range resolved {
-				key := exported + "\x00" + symbol.qualified
-				if !emitted[key] {
-					e.b.AddFact(e.moduleID, graph.EdgeExports, "", symbol.qualified, symbol.kind, loc, properties)
-					emitted[key] = true
-				}
+				e.b.AddFact(e.moduleID, graph.EdgeExports, "", symbol.qualified, symbol.kind, loc, properties)
 			}
 		}
 	}
+}
+
+func (e *extractor) resolveExportRef(ref exportRef) []symbolRef {
+	switch {
+	case ref.local != "":
+		if symbol, ok := e.info.locals[ref.local]; ok {
+			return []symbolRef{symbol}
+		}
+	case ref.namespace:
+		if target, _ := e.catalog.resolveModule(e.info.path, ref.specifier); target != nil {
+			return []symbolRef{{qualified: target.name, kind: graph.KindModule, owner: target.path}}
+		}
+	default:
+		if target, _ := e.catalog.resolveModule(e.info.path, ref.specifier); target != nil {
+			resolved, _ := e.catalog.resolveExport(target, ref.imported)
+			return resolved
+		}
+	}
+	return nil
 }
 
 func (e *extractor) reportCatalogDiagnostics() {
@@ -837,16 +855,19 @@ func (e *extractor) resolveTypeName(typeName string) string {
 }
 
 func (e *extractor) resolveMember(typeName, member string) (string, bool) {
+	resolved := ""
+	matches := 0
 	for _, info := range e.catalog.modules {
 		for localName, symbol := range info.locals {
 			if symbol.qualified == typeName {
 				if method, ok := info.methods[localName][member]; ok {
-					return method.qualified, true
+					resolved = method.qualified
+					matches++
 				}
 			}
 		}
 	}
-	return "", false
+	return resolved, matches == 1
 }
 
 func isTypeScriptPrimitive(value string) bool {
