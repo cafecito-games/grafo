@@ -9,6 +9,8 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
 	"github.com/cafecito-games/grafo/internal/mcpserver"
+	"github.com/cafecito-games/grafo/internal/query"
+	sourcecontext "github.com/cafecito-games/grafo/internal/source"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -165,4 +167,50 @@ func contentText(result *mcp.CallToolResult) string {
 		}
 	}
 	return builder.String()
+}
+
+func TestSourceToolNamesAmbiguousCandidates(t *testing.T) {
+	ctx := context.Background()
+	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repository.Close()
+
+	candidates := []graph.Node{
+		{ID: "n:archive-stock", Kind: graph.KindTable, Name: "stock", QualifiedName: "archive.stock"},
+		{ID: "n:live-stock", Kind: graph.KindTable, Name: "stock", QualifiedName: "live.stock"},
+	}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := mcpserver.New(repository, indexer.Project{Name: "shop", Branch: "main"}).
+		WithSource(func(context.Context, string, int, int) (sourcecontext.Excerpt, error) {
+			return sourcecontext.Excerpt{}, &query.AmbiguousError{Term: "stock", Candidates: candidates}
+		}).
+		Server("test").Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverSession.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "grafo-test", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientSession.Close()
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "get_source", Arguments: map[string]any{"selector": "stock"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError {
+		t.Fatalf("an ambiguous selector must not resolve: %#v", result.StructuredContent)
+	}
+	message := contentText(result)
+	for _, want := range []string{"archive.stock", "live.stock"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("source ambiguity error does not name candidate %q: %s", want, message)
+		}
+	}
 }
