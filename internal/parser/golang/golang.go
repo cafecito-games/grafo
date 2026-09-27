@@ -662,6 +662,7 @@ func addEndpoint(b *parserapi.Builder, loc graph.Location, method, route string)
 	if methodErr == nil {
 		properties["method"] = normalizedMethod
 	} else {
+		identityMethod = method
 		properties["method"] = method
 	}
 	if routeErr == nil {

@@ -516,7 +516,7 @@ selected service.
 Each indexed repository is one stable service identity. Endpoint and event
 nodes, source components, edge IDs, fact IDs, locations, and federation markers
 remain in the structured response beneath those service boundaries. HTTP route
-identity excludes queries, fragments, and one trailing slash, and template
+identity excludes queries, fragments, and trailing slashes, and template
 parameter names are canonicalized while regex constraints and catchalls remain
 distinct. Resolution ranks exact literals ahead of compatible single-segment
 templates, then compatible catchalls. Several declarations at the best rank
