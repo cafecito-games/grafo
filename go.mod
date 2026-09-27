@@ -9,6 +9,7 @@ require (
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/sqlc-dev/meyer v0.1.2
 	github.com/tree-sitter/go-tree-sitter v0.25.0
+	github.com/tree-sitter/tree-sitter-java v0.23.5
 	github.com/tree-sitter/tree-sitter-python v0.25.0
 	github.com/tree-sitter/tree-sitter-swift v0.0.0-20260601004120-31d17fe7e818
 	github.com/tree-sitter/tree-sitter-typescript v0.23.2
