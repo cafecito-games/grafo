@@ -42,12 +42,6 @@
       {
         "repo": "typescript",
         "kind": "external",
-        "qualified_name": "API.direct",
-        "external": true
-      },
-      {
-        "repo": "typescript",
-        "kind": "external",
         "qualified_name": "Service | Contract.execute",
         "external": true
       },
@@ -55,6 +49,12 @@
         "repo": "typescript",
         "kind": "external",
         "qualified_name": "any.execute",
+        "external": true
+      },
+      {
+        "repo": "typescript",
+        "kind": "external",
+        "qualified_name": "duplicate",
         "external": true
       },
       {
@@ -80,7 +80,27 @@
       {
         "repo": "typescript",
         "kind": "file",
+        "qualified_name": "src/lib/a.ts"
+      },
+      {
+        "repo": "typescript",
+        "kind": "file",
+        "qualified_name": "src/lib/b.ts"
+      },
+      {
+        "repo": "typescript",
+        "kind": "file",
         "qualified_name": "src/lib/barrel.ts"
+      },
+      {
+        "repo": "typescript",
+        "kind": "file",
+        "qualified_name": "src/lib/cycle-a.ts"
+      },
+      {
+        "repo": "typescript",
+        "kind": "file",
+        "qualified_name": "src/lib/cycle-b.ts"
       },
       {
         "repo": "typescript",
@@ -111,6 +131,16 @@
         "repo": "typescript",
         "kind": "function",
         "qualified_name": "src/app.run"
+      },
+      {
+        "repo": "typescript",
+        "kind": "function",
+        "qualified_name": "src/lib/a.duplicate"
+      },
+      {
+        "repo": "typescript",
+        "kind": "function",
+        "qualified_name": "src/lib/b.duplicate"
       },
       {
         "repo": "typescript",
@@ -166,7 +196,27 @@
       {
         "repo": "typescript",
         "kind": "module",
+        "qualified_name": "src/lib/a"
+      },
+      {
+        "repo": "typescript",
+        "kind": "module",
+        "qualified_name": "src/lib/b"
+      },
+      {
+        "repo": "typescript",
+        "kind": "module",
         "qualified_name": "src/lib/barrel"
+      },
+      {
+        "repo": "typescript",
+        "kind": "module",
+        "qualified_name": "src/lib/cycle-a"
+      },
+      {
+        "repo": "typescript",
+        "kind": "module",
+        "qualified_name": "src/lib/cycle-b"
       },
       {
         "repo": "typescript",
@@ -206,7 +256,7 @@
       {
         "repo": "typescript",
         "kind": "variable",
-        "qualified_name": "src/app.run.service@11"
+        "qualified_name": "src/app.run.service@13"
       }
     ],
     "edges": [
@@ -350,7 +400,7 @@
         },
         "source": {
           "path": "src/app.ts",
-          "line": 6,
+          "line": 7,
           "column": 8
         }
       },
@@ -510,8 +560,106 @@
           "column": 1
         },
         "properties": {
-          "binding_kind": "side_effect",
+          "binding_kind": "namespace",
+          "imported": "*",
+          "local": "API",
           "specifier": "./lib/barrel"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/app.ts"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/cycle-a"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 5,
+          "column": 1
+        },
+        "properties": {
+          "binding_kind": "named",
+          "imported": "duplicate",
+          "local": "duplicate",
+          "specifier": "./lib/cycle-a"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/lib/a.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/lib/a.duplicate"
+        },
+        "source": {
+          "path": "src/lib/a.ts",
+          "line": 1,
+          "column": 8
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/lib/a.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/a"
+        },
+        "source": {
+          "path": "src/lib/a.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/lib/b.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/lib/b.duplicate"
+        },
+        "source": {
+          "path": "src/lib/b.ts",
+          "line": 1,
+          "column": 8
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/lib/b.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/b"
+        },
+        "source": {
+          "path": "src/lib/b.ts",
+          "line": 1,
+          "column": 1
         }
       },
       {
@@ -528,6 +676,42 @@
         },
         "source": {
           "path": "src/lib/barrel.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/lib/cycle-a.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/cycle-a"
+        },
+        "source": {
+          "path": "src/lib/cycle-a.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/lib/cycle-b.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/cycle-b"
+        },
+        "source": {
+          "path": "src/lib/cycle-b.ts",
           "line": 1,
           "column": 1
         }
@@ -726,30 +910,11 @@
         },
         "source": {
           "path": "src/app.ts",
-          "line": 11,
+          "line": 13,
           "column": 19
         },
         "properties": {
           "constructor": "true"
-        }
-      },
-      {
-        "from": {
-          "repo": "typescript",
-          "kind": "function",
-          "qualified_name": "src/app.run"
-        },
-        "relation": "calls",
-        "to": {
-          "repo": "typescript",
-          "kind": "external",
-          "qualified_name": "API.direct",
-          "external": true
-        },
-        "source": {
-          "path": "src/app.ts",
-          "line": 8,
-          "column": 3
         }
       },
       {
@@ -767,7 +932,7 @@
         },
         "source": {
           "path": "src/app.ts",
-          "line": 15,
+          "line": 17,
           "column": 3
         }
       },
@@ -786,7 +951,26 @@
         },
         "source": {
           "path": "src/app.ts",
-          "line": 14,
+          "line": 16,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/app.run"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "typescript",
+          "kind": "external",
+          "qualified_name": "duplicate",
+          "external": true
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 11,
           "column": 3
         }
       },
@@ -804,7 +988,7 @@
         },
         "source": {
           "path": "src/app.ts",
-          "line": 9,
+          "line": 10,
           "column": 3
         }
       },
@@ -822,7 +1006,25 @@
         },
         "source": {
           "path": "src/app.ts",
-          "line": 7,
+          "line": 8,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/app.run"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/lib/service.direct"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 9,
           "column": 3
         }
       },
@@ -840,7 +1042,7 @@
         },
         "source": {
           "path": "src/app.ts",
-          "line": 13,
+          "line": 15,
           "column": 3
         }
       },
@@ -858,7 +1060,7 @@
         },
         "source": {
           "path": "src/app.ts",
-          "line": 10,
+          "line": 12,
           "column": 3
         }
       },
@@ -876,7 +1078,7 @@
         },
         "source": {
           "path": "src/app.ts",
-          "line": 12,
+          "line": 14,
           "column": 3
         }
       },
@@ -894,7 +1096,7 @@
         },
         "source": {
           "path": "src/app.ts",
-          "line": 6,
+          "line": 7,
           "column": 21
         }
       },
@@ -912,7 +1114,7 @@
         },
         "source": {
           "path": "src/app.ts",
-          "line": 6,
+          "line": 7,
           "column": 41
         }
       },
@@ -930,7 +1132,7 @@
         },
         "source": {
           "path": "src/app.ts",
-          "line": 6,
+          "line": 7,
           "column": 55
         }
       },
@@ -944,11 +1146,11 @@
         "to": {
           "repo": "typescript",
           "kind": "variable",
-          "qualified_name": "src/app.run.service@11"
+          "qualified_name": "src/app.run.service@13"
         },
         "source": {
           "path": "src/app.ts",
-          "line": 11,
+          "line": 13,
           "column": 9
         }
       },
@@ -1027,7 +1229,7 @@
         },
         "source": {
           "path": "src/app.ts",
-          "line": 6,
+          "line": 7,
           "column": 1
         },
         "properties": {
@@ -1039,6 +1241,50 @@
         "from": {
           "repo": "typescript",
           "kind": "module",
+          "qualified_name": "src/lib/a"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/lib/a.duplicate"
+        },
+        "source": {
+          "path": "src/lib/a.ts",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "exported": "duplicate",
+          "local": "duplicate"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/b"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/lib/b.duplicate"
+        },
+        "source": {
+          "path": "src/lib/b.ts",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "exported": "duplicate",
+          "local": "duplicate"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "module",
           "qualified_name": "src/lib/barrel"
         },
         "relation": "exports",
@@ -1179,6 +1425,98 @@
           "reexport": "true",
           "specifier": "./service",
           "type_only": "true"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/cycle-a"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/a"
+        },
+        "source": {
+          "path": "src/lib/cycle-a.ts",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "exported": "*",
+          "reexport": "true",
+          "specifier": "./a"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/cycle-a"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/b"
+        },
+        "source": {
+          "path": "src/lib/cycle-a.ts",
+          "line": 2,
+          "column": 1
+        },
+        "properties": {
+          "exported": "*",
+          "reexport": "true",
+          "specifier": "./b"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/cycle-a"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/cycle-b"
+        },
+        "source": {
+          "path": "src/lib/cycle-a.ts",
+          "line": 3,
+          "column": 1
+        },
+        "properties": {
+          "exported": "*",
+          "reexport": "true",
+          "specifier": "./cycle-b"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/cycle-b"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "typescript",
+          "kind": "module",
+          "qualified_name": "src/lib/cycle-a"
+        },
+        "source": {
+          "path": "src/lib/cycle-b.ts",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "exported": "*",
+          "reexport": "true",
+          "specifier": "./cycle-a"
         }
       },
       {
@@ -1351,10 +1689,82 @@
         "to": {
           "repo": "typescript",
           "kind": "file",
+          "qualified_name": "src/lib/a.ts"
+        },
+        "source": {
+          "path": "src/lib/a.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "repository",
+          "qualified_name": "typescript"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/lib/b.ts"
+        },
+        "source": {
+          "path": "src/lib/b.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "repository",
+          "qualified_name": "typescript"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "typescript",
+          "kind": "file",
           "qualified_name": "src/lib/barrel.ts"
         },
         "source": {
           "path": "src/lib/barrel.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "repository",
+          "qualified_name": "typescript"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/lib/cycle-a.ts"
+        },
+        "source": {
+          "path": "src/lib/cycle-a.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "repository",
+          "qualified_name": "typescript"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "typescript",
+          "kind": "file",
+          "qualified_name": "src/lib/cycle-b.ts"
+        },
+        "source": {
+          "path": "src/lib/cycle-b.ts",
           "line": 1,
           "column": 1
         }
@@ -1432,6 +1842,15 @@
         }
       }
     ],
+    "diagnostics": [
+      {
+        "repo": "typescript",
+        "path": "src/app.ts",
+        "line": 5,
+        "level": "warning",
+        "message_contains": "ambiguous export duplicate"
+      }
+    ],
     "forbidden_edges": [
       {
         "from": {
@@ -1444,6 +1863,32 @@
           "repo": "typescript",
           "kind": "method",
           "qualified_name": "src/lib/other.Other.execute"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/app.run"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/lib/a.duplicate"
+        }
+      },
+      {
+        "from": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/app.run"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "typescript",
+          "kind": "function",
+          "qualified_name": "src/lib/b.duplicate"
         }
       }
     ]

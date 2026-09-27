@@ -5,12 +5,46 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	typescriptparser "github.com/cafecito-games/grafo/internal/parser/typescript"
 )
+
+func TestParserCatalogCacheSupportsConcurrentParses(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "a.ts", `export function a() {}`)
+	writeFile(t, root, "b.ts", `import { a } from "./a"; export function b() { a() }`)
+	parser := typescriptparser.New()
+	key, err := parser.WorkspaceSemanticKey(context.Background(), parserapi.Input{Root: root, RepoID: "repo:sample"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wait sync.WaitGroup
+	errors := make(chan error, 8)
+	for index := 0; index < 8; index++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			_, parseErr := parser.Parse(context.Background(), parserapi.Input{Root: root, Path: "b.ts",
+				Content: []byte(`import { a } from "./a"; export function b() { a() }`), RepoID: "repo:sample", SemanticKey: key})
+			errors <- parseErr
+		}()
+	}
+	wait.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	metrics := parser.ResolutionMetrics()
+	if metrics.CatalogLoads < 1 || metrics.CatalogLoads > 8 || metrics.CacheEntries != 1 || metrics.CachedModules != 2 {
+		t.Fatalf("unexpected bounded cache metrics: %#v", metrics)
+	}
+}
 
 func TestParserResolvesModuleBindingsAndReceiverCalls(t *testing.T) {
 	root := t.TempDir()
@@ -24,6 +58,7 @@ export { Service as RenamedService, type Runner } from "./service";
 export { default as direct } from "./service";
 `)
 	writeFile(t, root, "src/directory/index.ts", `export function indexed() {}`)
+	writeFile(t, root, "src/anonymous.ts", `export default function () {}`)
 	writeFile(t, root, "packages/tools/package.json", `{"name":"@sample/tools","exports":{".":{"types":"./src/index.ts","default":"./dist/index.js"}}}`)
 	writeFile(t, root, "packages/tools/src/index.ts", `export function packaged() {}`)
 	caller := `
@@ -32,12 +67,14 @@ import * as API from "./barrel";
 import directDefault from "./service";
 import { indexed } from "./directory";
 import { packaged } from "@sample/tools";
+import anonymous from "./anonymous";
 import "missing-package";
 function use(runner: Runner) {
   invoke();
   directDefault();
   indexed();
   packaged();
+  anonymous();
   Service.create();
   const service = new Service();
   service.run();
@@ -60,17 +97,28 @@ function use(runner: Runner) {
 		graph.NodeID(graph.KindModule, "repo:sample:src/barrel"))
 	assertHasFactProperty(t, result.Facts, graph.EdgeImports, "local", "Service")
 	assertHasFactProperty(t, result.Facts, graph.EdgeImports, "type_only", "true")
+	assertHasFactProperty(t, result.Facts, graph.EdgeImports, "binding_kind", "namespace")
 	for _, target := range []string{
 		"src/service.direct",
 		"src/directory.indexed",
 		"packages/tools/src.packaged",
+		"src/anonymous.anonymous@1",
 		"src/service.Service.create",
 		"src/service.Service.run",
 		"src/service.Runner.run",
 	} {
 		assertHasFact(t, result.Facts, graph.EdgeCalls, target)
 	}
+	assertFactCount(t, result.Facts, graph.EdgeCalls, "src/service.direct", 3)
 	assertHasFact(t, result.Facts, graph.EdgeImports, "missing-package")
+
+	anonymousResult, err := typescriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "src/anonymous.ts", Content: []byte(`export default function () {}`), Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasNode(t, anonymousResult.Nodes, graph.KindFunction, "anonymous@1")
 }
 
 func TestParserKeepsAmbiguousBarrelAndDynamicReceiversUnresolved(t *testing.T) {
@@ -180,6 +228,19 @@ func assertHasFact(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, target
 		}
 	}
 	t.Fatalf("missing %s fact to %q; got %#v", kind, target, facts)
+}
+
+func assertFactCount(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, target string, expected int) {
+	t.Helper()
+	count := 0
+	for _, fact := range facts {
+		if fact.Kind == kind && fact.Target == target {
+			count++
+		}
+	}
+	if count != expected {
+		t.Fatalf("expected %d %s facts to %q, got %d: %#v", expected, kind, target, count, facts)
+	}
 }
 
 func assertHasFactTargetID(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, targetID string) {

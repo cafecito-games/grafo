@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -78,9 +79,27 @@ type moduleCatalog struct {
 	digest      string
 }
 
+func (c *moduleCatalog) clone() *moduleCatalog {
+	copyCatalog := *c
+	copyCatalog.modules = make(map[string]*moduleInfo, len(c.modules))
+	for path, module := range c.modules {
+		copyCatalog.modules[path] = module
+	}
+	copyCatalog.modulePaths = append([]string(nil), c.modulePaths...)
+	copyCatalog.packages = append([]packageInfo(nil), c.packages...)
+	copyCatalog.configs = make(map[string]compilerConfig, len(c.configs))
+	for path, config := range c.configs {
+		copyCatalog.configs[path] = config
+	}
+	copyCatalog.diagnostics = append([]string(nil), c.diagnostics...)
+	return &copyCatalog
+}
+
 var (
 	exportedDeclarationPattern = regexp.MustCompile(`(?m)\bexport\s+(type\s+)?(?:declare\s+)?(?:abstract\s+)?(class|interface|function|const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
-	defaultDeclarationPattern  = regexp.MustCompile(`(?m)\bexport\s+default\s+(?:async\s+)?(?:(?:abstract\s+)?(?:class|function)\s+)?([A-Za-z_$][A-Za-z0-9_$]*)`)
+	defaultDeclarationPattern  = regexp.MustCompile(`(?m)\bexport\s+default\s+(?:async\s+)?(?:abstract\s+)?(?:class|function)\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
+	defaultIdentifierPattern   = regexp.MustCompile(`(?m)\bexport\s+default\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*;?\s*$`)
+	defaultAnonymousPattern    = regexp.MustCompile(`(?m)\bexport\s+default\s+(?:async\s+)?(?:abstract\s+)?(?:class\s*\{|function\s*\()`)
 	exportListPattern          = regexp.MustCompile(`(?ms)\bexport\s+(type\s+)?\{([^}]*)\}\s*(?:from\s*["']([^"']+)["'])?`)
 	exportStarPattern          = regexp.MustCompile(`(?m)\bexport\s+(type\s+)?\*\s*(?:as\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*)?from\s*["']([^"']+)["']`)
 )
@@ -90,7 +109,7 @@ func buildModuleCatalog(ctx context.Context, input parserapi.Input) (*moduleCata
 	if catalog.root == "" {
 		return catalog, nil
 	}
-	paths, err := repositoryResolutionFiles(catalog.root)
+	paths, err := repositoryResolutionFiles(ctx, catalog.root)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +150,49 @@ func buildModuleCatalog(ctx context.Context, input parserapi.Input) (*moduleCata
 	return catalog, nil
 }
 
-func repositoryResolutionFiles(root string) ([]string, error) {
+func moduleCatalogDigest(ctx context.Context, root string) (string, error) {
+	if root == "" {
+		sum := sha256.Sum256(nil)
+		return hex.EncodeToString(sum[:]), nil
+	}
+	paths, err := repositoryResolutionFiles(ctx, root)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.New()
+	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
+		if err != nil {
+			return "", err
+		}
+		_, _ = digest.Write([]byte(path))
+		_, _ = digest.Write([]byte{0})
+		_, _ = digest.Write(content)
+		_, _ = digest.Write([]byte{0})
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+func repositoryResolutionFiles(ctx context.Context, root string) ([]string, error) {
+	command := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	if output, err := command.Output(); err == nil {
+		var result []string
+		for _, raw := range bytes.Split(output, []byte{0}) {
+			if len(raw) == 0 {
+				continue
+			}
+			path := filepath.ToSlash(string(raw))
+			base := strings.ToLower(filepath.Base(path))
+			if isTypeScriptPath(path) || base == "tsconfig.json" || strings.HasPrefix(base, "tsconfig.") && strings.HasSuffix(base, ".json") || base == "package.json" {
+				result = append(result, path)
+			}
+		}
+		sort.Strings(result)
+		return result, nil
+	}
 	var result []string
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -210,6 +271,16 @@ func scanModule(path string, content []byte) (*moduleInfo, error) {
 	for _, match := range defaultDeclarationPattern.FindAllStringSubmatch(text, -1) {
 		info.exports["default"] = append(info.exports["default"], exportRef{local: match[1]})
 	}
+	for _, match := range defaultIdentifierPattern.FindAllStringSubmatch(text, -1) {
+		if match[1] != "class" && match[1] != "function" {
+			info.exports["default"] = append(info.exports["default"], exportRef{local: match[1]})
+		}
+	}
+	for _, index := range defaultAnonymousPattern.FindAllStringIndex(text, -1) {
+		line := 1 + strings.Count(text[:index[0]], "\n")
+		name := fmt.Sprintf("anonymous@%d", line)
+		info.exports["default"] = append(info.exports["default"], exportRef{local: name})
+	}
 	for _, match := range exportListPattern.FindAllStringSubmatch(text, -1) {
 		listTypeOnly := strings.TrimSpace(match[1]) != ""
 		for _, item := range strings.Split(match[2], ",") {
@@ -253,6 +324,9 @@ func collectModuleDeclarations(node *treesitter.Node, source []byte, info *modul
 	kind := node.Kind()
 	if kind == "class_declaration" || kind == "abstract_class_declaration" || kind == "interface_declaration" {
 		name := nodeText(node.ChildByFieldName("name"), source)
+		if name == "" && kind != "interface_declaration" {
+			name = fmt.Sprintf("anonymous@%d", node.StartPosition().Row+1)
+		}
 		if name != "" {
 			nodeKind := graph.KindClass
 			if kind == "interface_declaration" {
@@ -276,8 +350,11 @@ func collectModuleDeclarations(node *treesitter.Node, source []byte, info *modul
 		}
 		return
 	}
-	if container == "" && (kind == "function_declaration" || kind == "generator_function_declaration") {
+	if container == "" && (kind == "function_declaration" || kind == "generator_function_declaration" || kind == "function_expression") {
 		name := nodeText(node.ChildByFieldName("name"), source)
+		if name == "" {
+			name = fmt.Sprintf("anonymous@%d", node.StartPosition().Row+1)
+		}
 		if name != "" {
 			info.locals[name] = symbolRef{qualified: info.name + "." + name, kind: graph.KindFunction}
 		}

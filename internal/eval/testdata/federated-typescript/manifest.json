@@ -1,0 +1,386 @@
+{
+  "schema_version": 1,
+  "case_id": "federated-typescript",
+  "repositories": [
+    {
+      "id": "client",
+      "path": "repos/client"
+    },
+    {
+      "id": "tools",
+      "path": "repos/tools"
+    }
+  ],
+  "expect": {
+    "nodes": [
+      {
+        "repo": "client",
+        "kind": "external",
+        "qualified_name": "remoteTask",
+        "external": true
+      },
+      {
+        "repo": "client",
+        "kind": "file",
+        "qualified_name": "package.json"
+      },
+      {
+        "repo": "client",
+        "kind": "file",
+        "qualified_name": "src/app.ts"
+      },
+      {
+        "repo": "client",
+        "kind": "function",
+        "qualified_name": "src/app.invoke"
+      },
+      {
+        "repo": "client",
+        "kind": "module",
+        "qualified_name": "@fixture/client"
+      },
+      {
+        "repo": "client",
+        "kind": "module",
+        "qualified_name": "@fixture/tools",
+        "external": true
+      },
+      {
+        "repo": "client",
+        "kind": "module",
+        "qualified_name": "src/app"
+      },
+      {
+        "repo": "client",
+        "kind": "repository",
+        "qualified_name": "client"
+      },
+      {
+        "repo": "tools",
+        "kind": "file",
+        "qualified_name": "package.json"
+      },
+      {
+        "repo": "tools",
+        "kind": "file",
+        "qualified_name": "src/index.ts"
+      },
+      {
+        "repo": "tools",
+        "kind": "function",
+        "qualified_name": "src.remoteTask"
+      },
+      {
+        "repo": "tools",
+        "kind": "module",
+        "qualified_name": "@fixture/tools"
+      },
+      {
+        "repo": "tools",
+        "kind": "module",
+        "qualified_name": "src"
+      },
+      {
+        "repo": "tools",
+        "kind": "repository",
+        "qualified_name": "tools"
+      }
+    ],
+    "edges": [
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "package.json"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "module",
+          "qualified_name": "@fixture/client"
+        },
+        "source": {
+          "path": "package.json",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "src/app.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "src/app.invoke"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 3,
+          "column": 8
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "src/app.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "module",
+          "qualified_name": "src/app"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "src/app.ts"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "tools",
+          "kind": "module",
+          "qualified_name": "@fixture/tools"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "binding_kind": "named",
+          "federated": "true",
+          "imported": "remoteTask",
+          "local": "remoteTask",
+          "specifier": "@fixture/tools"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "src/app.invoke"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "tools",
+          "kind": "function",
+          "qualified_name": "src.remoteTask"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 4,
+          "column": 3
+        },
+        "properties": {
+          "federated": "true"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "module",
+          "qualified_name": "@fixture/client"
+        },
+        "relation": "depends_on",
+        "to": {
+          "repo": "tools",
+          "kind": "module",
+          "qualified_name": "@fixture/tools"
+        },
+        "source": {
+          "path": "package.json",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "ecosystem": "npm",
+          "federated": "true",
+          "scope": "runtime",
+          "version": "workspace:*"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "module",
+          "qualified_name": "src/app"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "src/app.invoke"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 3,
+          "column": 1
+        },
+        "properties": {
+          "exported": "invoke",
+          "local": "invoke"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "repository",
+          "qualified_name": "client"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "package.json"
+        },
+        "source": {
+          "path": "package.json",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "repository",
+          "qualified_name": "client"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "src/app.ts"
+        },
+        "source": {
+          "path": "src/app.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "tools",
+          "kind": "file",
+          "qualified_name": "package.json"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "tools",
+          "kind": "module",
+          "qualified_name": "@fixture/tools"
+        },
+        "source": {
+          "path": "package.json",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "tools",
+          "kind": "file",
+          "qualified_name": "src/index.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "tools",
+          "kind": "function",
+          "qualified_name": "src.remoteTask"
+        },
+        "source": {
+          "path": "src/index.ts",
+          "line": 1,
+          "column": 8
+        }
+      },
+      {
+        "from": {
+          "repo": "tools",
+          "kind": "file",
+          "qualified_name": "src/index.ts"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "tools",
+          "kind": "module",
+          "qualified_name": "src"
+        },
+        "source": {
+          "path": "src/index.ts",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "tools",
+          "kind": "module",
+          "qualified_name": "src"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "tools",
+          "kind": "function",
+          "qualified_name": "src.remoteTask"
+        },
+        "source": {
+          "path": "src/index.ts",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "exported": "remoteTask",
+          "local": "remoteTask"
+        }
+      },
+      {
+        "from": {
+          "repo": "tools",
+          "kind": "repository",
+          "qualified_name": "tools"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "tools",
+          "kind": "file",
+          "qualified_name": "package.json"
+        },
+        "source": {
+          "path": "package.json",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "tools",
+          "kind": "repository",
+          "qualified_name": "tools"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "tools",
+          "kind": "file",
+          "qualified_name": "src/index.ts"
+        },
+        "source": {
+          "path": "src/index.ts",
+          "line": 1,
+          "column": 1
+        }
+      }
+    ]
+  }
+}

@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"unicode"
 
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -14,10 +17,37 @@ import (
 	tstypescript "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
 )
 
-type Parser struct{}
+type Parser struct {
+	cacheMu       sync.Mutex
+	cacheRoot     string
+	cacheKey      string
+	cacheCatalog  *moduleCatalog
+	catalogLoads  atomic.Int64
+	cacheHits     atomic.Int64
+	cachedModules atomic.Int64
+}
+
+type ResolutionMetrics struct {
+	CatalogLoads     int64 `json:"catalog_loads"`
+	CacheHits        int64 `json:"cache_hits"`
+	CachedModules    int64 `json:"cached_modules"`
+	CacheEntries     int   `json:"cache_entries"`
+	ExportDepthLimit int   `json:"export_depth_limit"`
+}
 
 func New() *Parser               { return &Parser{} }
 func (*Parser) Language() string { return "typescript" }
+
+func (p *Parser) ResolutionMetrics() ResolutionMetrics {
+	entries := 0
+	p.cacheMu.Lock()
+	if p.cacheCatalog != nil {
+		entries = 1
+	}
+	p.cacheMu.Unlock()
+	return ResolutionMetrics{CatalogLoads: p.catalogLoads.Load(), CacheHits: p.cacheHits.Load(),
+		CachedModules: p.cachedModules.Load(), CacheEntries: entries, ExportDepthLimit: maxExportDepth}
+}
 
 func (*Parser) Supports(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {
@@ -28,12 +58,8 @@ func (*Parser) Supports(path string) bool {
 	}
 }
 
-func (*Parser) WorkspaceSemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
-	catalog, err := buildModuleCatalog(ctx, input)
-	if err != nil {
-		return "", err
-	}
-	return catalog.digest, nil
+func (p *Parser) WorkspaceSemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
+	return moduleCatalogDigest(ctx, input.Root)
 }
 
 func (*Parser) SemanticAffectedPaths(allPaths, changedPaths []string) []string {
@@ -93,22 +119,22 @@ type importBinding struct {
 	unresolved bool
 }
 
-func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseResult, error) {
+func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseResult, error) {
 	b := parserapi.NewBuilder(input, "typescript")
-	catalog, err := buildModuleCatalog(ctx, input)
+	catalog, err := p.catalogFor(ctx, input)
 	if err != nil {
 		return b.Finish(), fmt.Errorf("build TypeScript module catalog: %w", err)
 	}
-	p := treesitter.NewParser()
-	defer p.Close()
+	treeParser := treesitter.NewParser()
+	defer treeParser.Close()
 	language := tstypescript.LanguageTypescript()
 	if strings.EqualFold(filepath.Ext(input.Path), ".tsx") {
 		language = tstypescript.LanguageTSX()
 	}
-	if err := p.SetLanguage(treesitter.NewLanguage(language)); err != nil {
+	if err := treeParser.SetLanguage(treesitter.NewLanguage(language)); err != nil {
 		return b.Finish(), fmt.Errorf("load TypeScript grammar: %w", err)
 	}
-	tree := p.ParseCtx(ctx, input.Content, nil)
+	tree := treeParser.ParseCtx(ctx, input.Content, nil)
 	if tree == nil {
 		return b.Finish(), fmt.Errorf("TypeScript parser returned no syntax tree")
 	}
@@ -137,6 +163,36 @@ func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseRes
 	return b.Finish(), nil
 }
 
+func (p *Parser) catalogFor(ctx context.Context, input parserapi.Input) (*moduleCatalog, error) {
+	if input.SemanticKey != "" {
+		p.cacheMu.Lock()
+		if p.cacheCatalog != nil && p.cacheRoot == input.Root && p.cacheKey == input.SemanticKey {
+			catalog := p.cacheCatalog.clone()
+			p.cacheMu.Unlock()
+			p.cacheHits.Add(1)
+			return catalog, nil
+		}
+		p.cacheMu.Unlock()
+	}
+	catalog, err := buildModuleCatalog(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	if input.SemanticKey != "" && input.SemanticKey != catalog.digest {
+		return nil, fmt.Errorf("TypeScript semantic key does not match tracked module catalog")
+	}
+	p.storeCatalog(input.Root, catalog)
+	return catalog.clone(), nil
+}
+
+func (p *Parser) storeCatalog(root string, catalog *moduleCatalog) {
+	p.cacheMu.Lock()
+	p.cacheRoot, p.cacheKey, p.cacheCatalog = root, catalog.digest, catalog
+	p.cacheMu.Unlock()
+	p.catalogLoads.Add(1)
+	p.cachedModules.Store(int64(len(catalog.modules)))
+}
+
 func (e *extractor) walk(node *treesitter.Node, current scope) {
 	if node == nil {
 		return
@@ -147,7 +203,7 @@ func (e *extractor) walk(node *treesitter.Node, current scope) {
 		return
 	case "export_statement":
 		e.parseExport(node)
-	case "function_declaration", "generator_function_declaration":
+	case "function_declaration", "generator_function_declaration", "function_expression", "generator_function":
 		e.parseFunction(node, current, graph.KindFunction)
 		return
 	case "class_declaration", "abstract_class_declaration":
@@ -226,11 +282,14 @@ func (e *extractor) parseImport(node *treesitter.Node) {
 			} else if binding.imported != "" {
 				resolved, exportDiagnostic := e.catalog.resolveExport(resolvedModule, binding.imported)
 				e.reportCatalogDiagnostics()
+				if exportDiagnostic != "" && strings.Contains(exportDiagnostic, "cyclic export") {
+					e.b.Diagnostic(int(node.StartPosition().Row)+1, "warning", exportDiagnostic)
+				}
 				if len(resolved) == 1 {
 					binding.symbol = resolved[0]
 				} else {
 					binding.unresolved = true
-					if exportDiagnostic != "" {
+					if exportDiagnostic != "" && !strings.Contains(exportDiagnostic, "cyclic export") {
 						e.b.Diagnostic(int(node.StartPosition().Row)+1, "warning", exportDiagnostic)
 					}
 				}
@@ -264,9 +323,9 @@ func parseImportBindings(statement, specifier string) []importBinding {
 		return []importBinding{{local: clause, imported: "default", specifier: specifier, typeOnly: statementTypeOnly}}
 	}
 	if strings.HasPrefix(clause, "*") {
-		parts := regexp.MustCompile(`\s+as\s+`).Split(strings.TrimSpace(strings.TrimPrefix(clause, "*")), 2)
-		if len(parts) == 2 && isIdentifier(strings.TrimSpace(parts[1])) {
-			result = append(result, importBinding{local: strings.TrimSpace(parts[1]), imported: "*", specifier: specifier, typeOnly: statementTypeOnly, namespace: true})
+		match := regexp.MustCompile(`^\*\s+as\s+([A-Za-z_$][A-Za-z0-9_$]*)$`).FindStringSubmatch(clause)
+		if len(match) == 2 {
+			result = append(result, importBinding{local: match[1], imported: "*", specifier: specifier, typeOnly: statementTypeOnly, namespace: true})
 		}
 		return result
 	}
@@ -340,7 +399,13 @@ func (e *extractor) parseExport(node *treesitter.Node) {
 		return
 	}
 	emitted := map[string]bool{}
-	for exported, refs := range e.info.exports {
+	exportedNames := make([]string, 0, len(e.info.exports))
+	for exported := range e.info.exports {
+		exportedNames = append(exportedNames, exported)
+	}
+	sort.Strings(exportedNames)
+	for _, exported := range exportedNames {
+		refs := e.info.exports[exported]
 		for _, ref := range refs {
 			if ref.specifier != "" && !strings.Contains(text, ref.specifier) || ref.local != "" && !regexp.MustCompile(`\b`+regexp.QuoteMeta(ref.local)+`\b`).MatchString(text) {
 				continue
@@ -436,7 +501,7 @@ func (e *extractor) parseFunctionVariable(node *treesitter.Node, current scope) 
 func (e *extractor) parseClass(node *treesitter.Node, current scope) {
 	name := strings.TrimSpace(e.text(node.ChildByFieldName("name")))
 	if name == "" {
-		return
+		name = fmt.Sprintf("anonymous@%d", node.StartPosition().Row+1)
 	}
 	qualified := e.qualify(current.container, name)
 	loc := e.location(node)

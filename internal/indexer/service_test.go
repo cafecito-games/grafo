@@ -90,13 +90,17 @@ export function execute() { const service = new Service(); service.run(); }
 		t.Fatal(err)
 	}
 	defer repository.Close()
-	service := indexer.NewService(repository, parserapi.NewRegistry(typescriptparser.New(), configparser.New()))
+	typeScriptParser := typescriptparser.New()
+	service := indexer.NewService(repository, parserapi.NewRegistry(typeScriptParser, configparser.New()))
 	first, err := service.Run(ctx, project, indexer.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(first.Updated) != 5 {
 		t.Fatalf("unexpected first TypeScript report: %#v", first)
+	}
+	if metrics := typeScriptParser.ResolutionMetrics(); metrics.CatalogLoads != 1 || metrics.CacheHits != 3 || metrics.CacheEntries != 1 || metrics.CachedModules != 4 {
+		t.Fatalf("TypeScript catalog cache was not bounded and reused: %#v", metrics)
 	}
 	assertOutgoingTarget(t, ctx, repository, "src/app.execute", graph.EdgeCalls, "src/service.Service.run")
 
