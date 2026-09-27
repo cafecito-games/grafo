@@ -82,6 +82,94 @@ func TestRepositoryExplicitTargetKindMatchesSQLite(t *testing.T) {
 	}
 }
 
+func TestRepositoryKindlessGodotResolutionMatchesSQLite(t *testing.T) {
+	ctx := context.Background()
+	for _, engine := range []Engine{EngineBolt, EnginePebble} {
+		t.Run(string(engine), func(t *testing.T) {
+			control, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "control.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer control.Close()
+			candidate, err := Open(ctx, engine, filepath.Join(t.TempDir(), "candidate"), Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer candidate.Close()
+
+			source := testNode("a", graph.KindFunction, "pkg.A", "source.go")
+			target := testNode("scene", graph.KindGodotScene, "scenes/main", "main.tscn")
+			fact := testFact("reference", source.ID, graph.EdgeReferences, target.QualifiedName, "", "", "source.go")
+			for _, repository := range []graph.Repository{control, candidate} {
+				if err := repository.ReplaceFile(ctx, testFile("source.go"), graph.ParseResult{Nodes: []graph.Node{source}, Facts: []graph.Fact{fact}}); err != nil {
+					t.Fatal(err)
+				}
+				if err := repository.ReplaceFile(ctx, testFile("main.tscn"), graph.ParseResult{Nodes: []graph.Node{target}}); err != nil {
+					t.Fatal(err)
+				}
+				if err := repository.Reconcile(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			assertEquivalent(t, control, candidate)
+		})
+	}
+}
+
+func TestRepositorySearchAndMatchMirrorSQLiteTextSemantics(t *testing.T) {
+	ctx := context.Background()
+	for _, engine := range []Engine{EngineBolt, EnginePebble} {
+		t.Run(string(engine), func(t *testing.T) {
+			control, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "control.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer control.Close()
+			candidate, err := Open(ctx, engine, filepath.Join(t.TempDir(), "candidate"), Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer candidate.Close()
+
+			nodes := []graph.Node{
+				testNode("wildcard", graph.KindFunction, "pkg.aXb", "one.go"),
+				{ID: "n:unicode", Kind: graph.KindFunction, Name: "needle", QualifiedName: "é", OwnerFile: "one.go"},
+				{ID: "n:ascii", Kind: graph.KindFunction, Name: "needle", QualifiedName: "aa", OwnerFile: "one.go"},
+				{ID: "n:accent", Kind: graph.KindFunction, Name: "café", QualifiedName: "pkg.café", OwnerFile: "one.go"},
+			}
+			for _, repository := range []graph.Repository{control, candidate} {
+				if err := repository.ReplaceFile(ctx, testFile("one.go"), graph.ParseResult{Nodes: nodes}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, term := range []string{"a_b", "needle", "CAFÉ"} {
+				controlNodes, err := control.SearchNodes(ctx, term, 100)
+				if err != nil {
+					t.Fatal(err)
+				}
+				candidateNodes, err := candidate.SearchNodes(ctx, term, 100)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(controlNodes, candidateNodes) {
+					t.Fatalf("search %q differs:\ncontrol=%#v\ncandidate=%#v", term, controlNodes, candidateNodes)
+				}
+				controlMatch, err := control.MatchNodes(ctx, graph.NodeMatchQuery{Selector: term, Limit: 100})
+				if err != nil {
+					t.Fatal(err)
+				}
+				candidateMatch, err := candidate.MatchNodes(ctx, graph.NodeMatchQuery{Selector: term, Limit: 100})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(controlMatch, candidateMatch) {
+					t.Fatalf("match %q differs:\ncontrol=%#v\ncandidate=%#v", term, controlMatch, candidateMatch)
+				}
+			}
+		})
+	}
+}
+
 func TestRepositoryRestartResumesCommittedReconciliationBatches(t *testing.T) {
 	ctx := context.Background()
 	for _, engine := range []Engine{EngineBolt, EnginePebble} {

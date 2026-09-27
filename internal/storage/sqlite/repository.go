@@ -547,47 +547,9 @@ func filterCandidates(fact graph.Fact, rows []resolutionCandidate) []resolutionC
 	if fact.TargetKind != "" {
 		return rows
 	}
-	allowed := func(kind graph.NodeKind) bool { return true }
-	switch fact.Kind {
-	case graph.EdgeCalls, graph.EdgePasses, graph.EdgeHandledBy:
-		allowed = func(kind graph.NodeKind) bool { return kind == graph.KindFunction || kind == graph.KindMethod }
-	case graph.EdgeReads, graph.EdgeWrites:
-		allowed = func(kind graph.NodeKind) bool { return kind == graph.KindTable || kind == graph.KindView }
-	case graph.EdgeReferences:
-		allowed = func(kind graph.NodeKind) bool {
-			return kind == graph.KindConfigKey || kind == graph.KindTable || kind == graph.KindView ||
-				kind == graph.KindGodotAutoload || kind == graph.KindGodotScene ||
-				kind == graph.KindGodotResource || kind == graph.KindGodotSceneNode
-		}
-	case graph.EdgeImports, graph.EdgeDependsOn:
-		allowed = func(kind graph.NodeKind) bool {
-			return kind == graph.KindModule || kind == graph.KindPackage ||
-				kind == graph.KindGodotScene || kind == graph.KindGodotResource
-		}
-	case graph.EdgeInstantiates:
-		allowed = func(kind graph.NodeKind) bool {
-			return kind == graph.KindGodotScene || kind == graph.KindGodotResource
-		}
-	case graph.EdgeAttachesScript:
-		allowed = func(kind graph.NodeKind) bool {
-			return kind == graph.KindModule || kind == graph.KindClass
-		}
-	case graph.EdgeAutoloads:
-		allowed = func(kind graph.NodeKind) bool {
-			return kind == graph.KindModule || kind == graph.KindClass || kind == graph.KindGodotScene
-		}
-	case graph.EdgeUsesInputAction:
-		allowed = func(kind graph.NodeKind) bool { return kind == graph.KindGodotInputAction }
-	case graph.EdgeInGroup, graph.EdgeUsesGroup:
-		allowed = func(kind graph.NodeKind) bool { return kind == graph.KindGodotNodeGroup }
-	case graph.EdgeExtends, graph.EdgeImplements, graph.EdgeEmbeds:
-		allowed = func(kind graph.NodeKind) bool {
-			return kind == graph.KindType || kind == graph.KindClass || kind == graph.KindInterface
-		}
-	}
 	result := rows[:0]
 	for _, row := range rows {
-		if allowed(row.kind) {
+		if graph.AllowsResolutionKind(fact.Kind, row.kind) {
 			result = append(result, row)
 		}
 	}

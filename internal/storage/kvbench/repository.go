@@ -416,7 +416,7 @@ func (r *Repository) resolveTargets(tx transaction, fact graph.Fact) ([]string, 
 		}
 		for _, node := range nodes {
 			if node.External || fact.TargetKind != "" && node.Kind != fact.TargetKind ||
-				fact.TargetKind == "" && !allowsKind(fact.Kind, node.Kind) {
+				fact.TargetKind == "" && !graph.AllowsResolutionKind(fact.Kind, node.Kind) {
 				continue
 			}
 			candidates[node.ID] = node
@@ -510,11 +510,10 @@ func (r *Repository) Counts(ctx context.Context) (graph.Counts, error) {
 
 func (r *Repository) SearchNodes(ctx context.Context, term string, limit int) ([]graph.Node, error) {
 	nodes := make([]graph.Node, 0)
-	needle := strings.ToLower(term)
 	err := r.store.view(ctx, func(tx transaction) error {
 		return tx.scan(prefix("node"), func(_ []byte, value []byte) error {
 			node, err := decodeNode(value)
-			if err == nil && (strings.Contains(strings.ToLower(node.Name), needle) || strings.Contains(strings.ToLower(node.QualifiedName), needle)) {
+			if err == nil && graph.LooseMatch(graph.MatchSubstring, term, node) {
 				nodes = append(nodes, node)
 			}
 			return err
@@ -901,23 +900,6 @@ func deletePrefix(tx transaction, p []byte) error {
 		}
 	}
 	return nil
-}
-
-func allowsKind(edge graph.EdgeKind, kind graph.NodeKind) bool {
-	switch edge {
-	case graph.EdgeCalls, graph.EdgePasses, graph.EdgeHandledBy:
-		return kind == graph.KindFunction || kind == graph.KindMethod
-	case graph.EdgeReads, graph.EdgeWrites:
-		return kind == graph.KindTable || kind == graph.KindView
-	case graph.EdgeReferences:
-		return kind == graph.KindConfigKey || kind == graph.KindTable || kind == graph.KindView
-	case graph.EdgeImports, graph.EdgeDependsOn:
-		return kind == graph.KindModule || kind == graph.KindPackage
-	case graph.EdgeExtends, graph.EdgeImplements, graph.EdgeEmbeds:
-		return kind == graph.KindType || kind == graph.KindClass || kind == graph.KindInterface
-	default:
-		return true
-	}
 }
 
 const keySeparator = "\x00"

@@ -1,10 +1,79 @@
 package graph_test
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
 )
+
+func TestLooseMatchMirrorsSQLiteTextSemantics(t *testing.T) {
+	tests := []struct {
+		name     string
+		level    graph.NodeMatchLevel
+		selector string
+		node     graph.Node
+		want     bool
+	}{
+		{name: "ascii case fold", level: graph.MatchName, selector: "path", node: graph.Node{Name: "Path"}, want: true},
+		{name: "non ascii is not folded", level: graph.MatchName, selector: "CAFÉ", node: graph.Node{Name: "café"}, want: false},
+		{name: "percent wildcard", level: graph.MatchSubstring, selector: "a%b", node: graph.Node{Name: "axxxb"}, want: true},
+		{name: "underscore wildcard", level: graph.MatchSubstring, selector: "a_b", node: graph.Node{Name: "aXb"}, want: true},
+		{name: "underscore matches one rune", level: graph.MatchSubstring, selector: "a_b", node: graph.Node{Name: "aéb"}, want: true},
+		{name: "wildcard still respects suffix", level: graph.MatchSubstring, selector: "a_b", node: graph.Node{Name: "aXXb"}, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := graph.LooseMatch(test.level, test.selector, test.node); got != test.want {
+				t.Fatalf("LooseMatch(%q, %q, %#v) = %v, want %v", test.level, test.selector, test.node, got, test.want)
+			}
+		})
+	}
+}
+
+func TestSortNodeMatchesUsesSQLiteCharacterLength(t *testing.T) {
+	nodes := []graph.Node{
+		{ID: "n:ascii", Name: "needle", QualifiedName: "aa"},
+		{ID: "n:unicode", Name: "needle", QualifiedName: "é"},
+	}
+	graph.SortNodeMatches(graph.MatchName, "needle", nodes)
+	if got := []string{nodes[0].ID, nodes[1].ID}; !reflect.DeepEqual(got, []string{"n:unicode", "n:ascii"}) {
+		t.Fatalf("ordered IDs = %v, want SQLite character-length order", got)
+	}
+}
+
+func TestAllowsResolutionKindCoversRestrictedEdges(t *testing.T) {
+	tests := []struct {
+		edge graph.EdgeKind
+		kind graph.NodeKind
+		want bool
+	}{
+		{graph.EdgeCalls, graph.KindMethod, true},
+		{graph.EdgeCalls, graph.KindTable, false},
+		{graph.EdgeReferences, graph.KindGodotSceneNode, true},
+		{graph.EdgeReferences, graph.KindModule, false},
+		{graph.EdgeImports, graph.KindGodotResource, true},
+		{graph.EdgeImports, graph.KindFunction, false},
+		{graph.EdgeInstantiates, graph.KindGodotScene, true},
+		{graph.EdgeInstantiates, graph.KindClass, false},
+		{graph.EdgeAttachesScript, graph.KindClass, true},
+		{graph.EdgeAttachesScript, graph.KindGodotScene, false},
+		{graph.EdgeAutoloads, graph.KindGodotScene, true},
+		{graph.EdgeAutoloads, graph.KindGodotResource, false},
+		{graph.EdgeUsesInputAction, graph.KindGodotInputAction, true},
+		{graph.EdgeUsesInputAction, graph.KindConfigKey, false},
+		{graph.EdgeInGroup, graph.KindGodotNodeGroup, true},
+		{graph.EdgeUsesGroup, graph.KindGodotSceneNode, false},
+		{graph.EdgeExtends, graph.KindInterface, true},
+		{graph.EdgeExtends, graph.KindFunction, false},
+		{graph.EdgeContains, graph.KindFunction, true},
+	}
+	for _, test := range tests {
+		if got := graph.AllowsResolutionKind(test.edge, test.kind); got != test.want {
+			t.Errorf("AllowsResolutionKind(%q, %q) = %v, want %v", test.edge, test.kind, got, test.want)
+		}
+	}
+}
 
 // TestIsDeclarationMemberClassifiesTheWholeVocabulary records the ruling for every
 // node kind, so adding a kind to the vocabulary without classifying it fails here
