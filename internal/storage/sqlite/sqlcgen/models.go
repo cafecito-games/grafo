@@ -74,18 +74,20 @@ type Meta struct {
 }
 
 type Node struct {
-	ID            string `json:"id"`
-	Kind          string `json:"kind"`
-	Name          string `json:"name"`
-	QualifiedName string `json:"qualified_name"`
-	Language      string `json:"language"`
-	Path          string `json:"path"`
-	Line          int64  `json:"line"`
-	ColumnNo      int64  `json:"column_no"`
-	EndLine       int64  `json:"end_line"`
-	Properties    string `json:"properties"`
-	OwnerFile     string `json:"owner_file"`
-	External      int64  `json:"external"`
+	ID                  string `json:"id"`
+	Kind                string `json:"kind"`
+	Name                string `json:"name"`
+	QualifiedName       string `json:"qualified_name"`
+	Language            string `json:"language"`
+	Path                string `json:"path"`
+	Line                int64  `json:"line"`
+	ColumnNo            int64  `json:"column_no"`
+	EndLine             int64  `json:"end_line"`
+	Properties          string `json:"properties"`
+	OwnerFile           string `json:"owner_file"`
+	External            int64  `json:"external"`
+	NameFolded          string `json:"name_folded"`
+	QualifiedNameFolded string `json:"qualified_name_folded"`
 }
 
 type ReconciliationCleanup struct {

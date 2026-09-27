@@ -611,7 +611,7 @@ func (r *Repository) Counts(ctx context.Context) (graph.Counts, error) {
 }
 
 func (r *Repository) SearchNodes(ctx context.Context, term string, limit int) ([]graph.Node, error) {
-	rows, err := r.queries.SearchNodes(ctx, sqlcgen.SearchNodesParams{Term: term, MaxResults: int64(limit)})
+	rows, err := r.queries.SearchNodes(ctx, sqlcgen.SearchNodesParams{Term: foldName(term), MaxResults: int64(limit)})
 	if err != nil {
 		return nil, err
 	}
@@ -659,7 +659,7 @@ func (r *Repository) ListNodesByKind(ctx context.Context, request graph.NodeList
 	}
 	// The fragment is matched literally, so a name containing % or _ narrows
 	// the catalog instead of silently widening it.
-	fragment := strings.ToLower(request.Name)
+	fragment := foldName(request.Name)
 	result := []graph.ScopedNode{}
 	for _, kind := range request.Kinds {
 		rows, err := r.queries.ListNodesByKind(ctx, sqlcgen.ListNodesByKindParams{
@@ -886,7 +886,12 @@ func nodeParams(n graph.Node, external int64) sqlcgen.UpsertNodeParams {
 	return sqlcgen.UpsertNodeParams{ID: n.ID, Kind: string(n.Kind), Name: n.Name,
 		QualifiedName: n.QualifiedName, Language: n.Language, Path: n.Location.Path,
 		Line: int64(n.Location.Line), ColumnNo: int64(n.Location.Column), EndLine: int64(n.Location.EndLine),
-		Properties: graph.MarshalProperties(n.Properties), OwnerFile: n.OwnerFile, External: external}
+		Properties: graph.MarshalProperties(n.Properties), OwnerFile: n.OwnerFile, External: external,
+		NameFolded: foldName(n.Name), QualifiedNameFolded: foldName(n.QualifiedName)}
+}
+
+func foldName(name string) string {
+	return strings.ToLower(name)
 }
 
 func factParams(f graph.Fact) sqlcgen.UpsertFactParams {

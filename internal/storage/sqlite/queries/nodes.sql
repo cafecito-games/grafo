@@ -1,8 +1,8 @@
 -- name: UpsertNode :exec
 INSERT INTO nodes(
     id, kind, name, qualified_name, language, path, line, column_no, end_line,
-    properties, owner_file, external
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    properties, owner_file, external, name_folded, qualified_name_folded
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     kind = excluded.kind,
     name = excluded.name,
@@ -14,7 +14,9 @@ ON CONFLICT(id) DO UPDATE SET
     end_line = excluded.end_line,
     properties = excluded.properties,
     owner_file = excluded.owner_file,
-    external = excluded.external;
+    external = excluded.external,
+    name_folded = excluded.name_folded,
+    qualified_name_folded = excluded.qualified_name_folded;
 
 -- name: DeleteNodesByOwner :exec
 DELETE FROM nodes WHERE owner_file = ?;
@@ -50,8 +52,8 @@ WHERE nodes.name = @target AND nodes.external = 0 AND nodes.kind = @kind AND nod
 
 -- name: SearchNodes :many
 SELECT * FROM nodes
-WHERE lower(name) LIKE '%' || lower(@term) || '%'
-   OR lower(qualified_name) LIKE '%' || lower(@term) || '%'
+WHERE name_folded LIKE '%' || CAST(@term AS TEXT) || '%'
+   OR qualified_name_folded LIKE '%' || CAST(@term AS TEXT) || '%'
 ORDER BY
     external, length(qualified_name), qualified_name, id
 LIMIT @max_results;
@@ -70,7 +72,7 @@ SELECT * FROM nodes
 WHERE kind = @kind
   AND external >= @min_external
   AND external <= @max_external
-  AND (instr(lower(name), @name_fragment) > 0 OR instr(lower(qualified_name), @name_fragment) > 0)
+  AND (instr(name_folded, @name_fragment) > 0 OR instr(qualified_name_folded, @name_fragment) > 0)
 ORDER BY qualified_name, id
 LIMIT @max_results;
 
@@ -86,7 +88,7 @@ LIMIT @max_results;
 
 -- name: MatchNodesByQualifiedName :many
 SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line,
-       properties, owner_file, external
+       properties, owner_file, external, name_folded, qualified_name_folded
 FROM (
     SELECT nodes.*, CASE WHEN qualified_name = @target THEN 0 ELSE 1 END AS strict_rank
     FROM nodes
@@ -108,7 +110,7 @@ WHERE qualified_name = @target COLLATE NOCASE
 
 -- name: MatchNodesByName :many
 SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line,
-       properties, owner_file, external
+       properties, owner_file, external, name_folded, qualified_name_folded
 FROM (
     SELECT nodes.*, CASE WHEN name = @target THEN 0 ELSE 1 END AS strict_rank
     FROM nodes
@@ -130,7 +132,7 @@ WHERE name = @target COLLATE NOCASE
 
 -- name: MatchNodesBySubstring :many
 SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line,
-       properties, owner_file, external
+       properties, owner_file, external, name_folded, qualified_name_folded
 FROM (
     SELECT nodes.*,
         CASE WHEN instr(qualified_name, @target) > 0 OR instr(name, @target) > 0 THEN 0 ELSE 1 END AS strict_rank
