@@ -1,166 +1,157 @@
-// Package agentinstall registers Grafo's MCP server with supported coding agents.
+// Package agentinstall registers Grafo's MCP server with supported MCP clients.
+//
+// The package is built from three parts: a declarative client registry
+// (registry.go), adapters that either drive a client's own CLI or edit a
+// documented user-level configuration file (adapters.go), and the injected
+// Environment seam (env.go). Detection and dry-run planning only ever receive
+// the read-only half of that seam, so neither can mutate anything.
 package agentinstall
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
-	"path/filepath"
-	"slices"
 	"strings"
 )
 
-const serverName = "grafo"
-
-type agent struct {
-	name       string
-	display    string
-	executable string
+// Status is one row of detection output. Detect never mutates anything.
+type Status struct {
+	Client     Client `json:"client"`
+	Installed  bool   `json:"installed"`      // the client itself was found
+	Path       string `json:"path,omitempty"` // client executable or config file
+	Registered bool   `json:"registered"`     // grafo is already registered
+	Detail     string `json:"detail,omitempty"`
 }
 
-var supportedAgents = []agent{
-	{name: "claude", display: "Claude Code", executable: "claude"},
-	{name: "codex", display: "Codex", executable: "codex"},
-	{name: "opencode", display: "OpenCode", executable: "opencode"},
+// Action is what Install/Uninstall did (or, in dry-run, would do) for one client.
+type Action struct {
+	Client Client `json:"client"`
+	Scope  string `json:"scope"`
+	Target string `json:"target"` // config path or client executable
+	Change string `json:"change"` // "installed", "updated", "removed", "unchanged", "skipped"
+	DryRun bool   `json:"dry_run,omitempty"`
+	Detail string `json:"detail,omitempty"`
 }
 
-// Runner provides the process operations needed to configure an agent.
-type Runner interface {
-	LookPath(file string) (string, error)
-	Output(ctx context.Context, name string, arguments ...string) ([]byte, error)
-	Run(ctx context.Context, name string, arguments ...string) ([]byte, error)
+// Options selects clients and controls mutation.
+type Options struct {
+	Targets []string // explicit client names; empty or ["all"] means every supported client
+	All     bool
+	DryRun  bool
 }
 
-// ExecRunner configures agents through their installed command-line tools.
-type ExecRunner struct{}
-
-func (ExecRunner) LookPath(file string) (string, error) { return exec.LookPath(file) }
-
-func (ExecRunner) Output(ctx context.Context, name string, arguments ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, arguments...).Output()
-}
-
-func (ExecRunner) Run(ctx context.Context, name string, arguments ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, name, arguments...).CombinedOutput()
-}
-
-// Result describes one successfully configured agent.
-type Result struct {
-	Agent string
-	Scope string
-}
-
-// Install registers executable as the Grafo MCP server. With no targets (or
-// the target "all"), every supported agent found on PATH is configured.
-func Install(ctx context.Context, runner Runner, executable string, targets []string) ([]Result, error) {
-	if strings.TrimSpace(executable) == "" {
-		return nil, fmt.Errorf("locate grafo executable: empty path")
-	}
-	executable, err := filepath.Abs(executable)
+// Detect reports what is installed and whether Grafo is already registered. It
+// uses only the read-only half of the environment and writes nothing.
+func Detect(ctx context.Context, env Environment, targets []string) ([]Status, error) {
+	selected, _, err := selectAdapters(targets, false)
 	if err != nil {
-		return nil, fmt.Errorf("locate grafo executable: %w", err)
+		return nil, err
 	}
+	return detect(ctx, Reader(env), selected)
+}
 
-	selected, automatic, err := selectAgents(targets)
+func detect(ctx context.Context, reader Reader, selected []adapter) ([]Status, error) {
+	statuses := make([]Status, 0, len(selected))
+	var failures []error
+	for _, entry := range selected {
+		identity := entry.client()
+		place, err := entry.locate(ctx, reader)
+		if err != nil {
+			failures = append(failures, err)
+			statuses = append(statuses, Status{Client: identity, Detail: err.Error()})
+			continue
+		}
+		statuses = append(statuses, Status{
+			Client:     identity,
+			Installed:  place.found,
+			Path:       place.target,
+			Registered: place.registered,
+			Detail:     place.detail,
+		})
+	}
+	return statuses, errors.Join(failures...)
+}
+
+// Install registers executable as the Grafo MCP server for the selected
+// clients. With no explicit targets (or Options.All) every supported client is
+// considered and genuinely uninstalled ones are reported as skipped.
+func Install(ctx context.Context, env Environment, executable string, options Options) ([]Action, error) {
+	resolved, err := resolveExecutable(Reader(env), executable)
+	if err != nil {
+		return nil, err
+	}
+	return run(ctx, env, options, func(entry adapter, reader Reader, place location) (plan, error) {
+		return entry.planInstall(ctx, reader, place, resolved)
+	})
+}
+
+// Uninstall removes only Grafo's own registration from the selected clients.
+func Uninstall(ctx context.Context, env Environment, options Options) ([]Action, error) {
+	return run(ctx, env, options, func(entry adapter, reader Reader, place location) (plan, error) {
+		return entry.planUninstall(ctx, reader, place)
+	})
+}
+
+type planner func(entry adapter, reader Reader, place location) (plan, error)
+
+func run(ctx context.Context, env Environment, options Options, build planner) ([]Action, error) {
+	selected, automatic, err := selectAdapters(options.Targets, options.All)
 	if err != nil {
 		return nil, err
 	}
 
-	var results []Result
-	var installErrors []error
-	for _, candidate := range selected {
-		agentPath, lookErr := runner.LookPath(candidate.executable)
-		if lookErr != nil {
-			if automatic {
+	// Planning is restricted to the read-only view so a dry run provably cannot
+	// reach a mutating operation.
+	reader := Reader(env)
+
+	actions := make([]Action, 0, len(selected))
+	var failures []error
+	changed := false
+	for _, entry := range selected {
+		identity := entry.client()
+		place, locateErr := entry.locate(ctx, reader)
+		if locateErr != nil {
+			failures = append(failures, locateErr)
+			continue
+		}
+		if !place.found {
+			if !automatic {
+				failures = append(failures, fmt.Errorf("%s is not installed", identity.Display))
 				continue
 			}
-			installErrors = append(installErrors, fmt.Errorf("%s is not installed or is not on PATH", candidate.display))
+			actions = append(actions, Action{
+				Client: identity, Scope: identity.Scope, Target: place.target,
+				Change: changeSkipped, DryRun: options.DryRun, Detail: place.detail,
+			})
 			continue
 		}
 
-		arguments, scope := installArguments(ctx, runner, candidate, executable, agentPath)
-		output, runErr := runner.Run(ctx, agentPath, arguments...)
-		if candidate.name == "claude" && runErr != nil && bytes.Contains(bytes.ToLower(output), []byte("already exists")) {
-			// Claude refuses to update an existing entry, while Codex and OpenCode
-			// replace it. Remove only Grafo's user-scoped entry, then retry.
-			removeOutput, removeErr := runner.Run(ctx, agentPath, "mcp", "remove", "--scope", "user", serverName)
-			if removeErr != nil {
-				installErrors = append(installErrors, commandError("replace "+candidate.display+" configuration", removeOutput, removeErr))
-				continue
+		intended, planErr := build(entry, reader, place)
+		if planErr != nil {
+			failures = append(failures, planErr)
+			continue
+		}
+		action := Action{
+			Client: identity, Scope: identity.Scope, Target: place.target,
+			Change: intended.change, DryRun: options.DryRun, Detail: intended.detail,
+		}
+		if options.DryRun || intended.change == changeUnchanged {
+			actions = append(actions, action)
+			if intended.change != changeUnchanged {
+				changed = true
 			}
-			output, runErr = runner.Run(ctx, agentPath, arguments...)
-		}
-		if runErr != nil {
-			installErrors = append(installErrors, commandError("configure "+candidate.display, output, runErr))
 			continue
 		}
-		results = append(results, Result{Agent: candidate.display, Scope: scope})
-	}
-
-	if automatic && len(results) == 0 && len(installErrors) == 0 {
-		return nil, fmt.Errorf("no supported agents found on PATH (supported: claude, codex, opencode)")
-	}
-	return results, errors.Join(installErrors...)
-}
-
-func commandError(action string, output []byte, err error) error {
-	detail := strings.TrimSpace(string(output))
-	if detail == "" {
-		detail = err.Error()
-	}
-	return fmt.Errorf("%s: %s", action, detail)
-}
-
-func selectAgents(targets []string) ([]agent, bool, error) {
-	if len(targets) == 0 {
-		return supportedAgents, true, nil
-	}
-
-	names := make([]string, 0, len(targets))
-	for _, target := range targets {
-		name := strings.ToLower(strings.TrimSpace(target))
-		if name == "all" {
-			if len(targets) != 1 {
-				return nil, false, fmt.Errorf("agent target %q cannot be combined with other targets", target)
-			}
-			return supportedAgents, true, nil
-		}
-		if name == "claude-code" {
-			name = "claude"
-		}
-		if slices.Contains(names, name) {
+		if applyErr := intended.apply(ctx, env, identity.Display, place.target); applyErr != nil {
+			failures = append(failures, applyErr)
 			continue
 		}
-		names = append(names, name)
+		actions = append(actions, action)
+		changed = true
 	}
 
-	selected := make([]agent, 0, len(names))
-	for _, name := range names {
-		index := slices.IndexFunc(supportedAgents, func(candidate agent) bool { return candidate.name == name })
-		if index == -1 {
-			return nil, false, fmt.Errorf("unsupported agent %q (supported: claude, codex, opencode, all)", name)
-		}
-		selected = append(selected, supportedAgents[index])
+	if automatic && !changed && len(failures) == 0 {
+		return actions, fmt.Errorf("no supported MCP clients detected (supported: %s)", strings.Join(clientNames(), ", "))
 	}
-	return selected, false, nil
-}
-
-func installArguments(ctx context.Context, runner Runner, candidate agent, grafoPath, agentPath string) ([]string, string) {
-	switch candidate.name {
-	case "claude":
-		return []string{"mcp", "add", "--scope", "user", serverName, "--", grafoPath, "mcp"}, "user"
-	case "codex":
-		return []string{"mcp", "add", serverName, "--", grafoPath, "mcp"}, "user"
-	case "opencode":
-		arguments := []string{"mcp", "add", serverName}
-		help, _ := runner.Output(ctx, agentPath, "mcp", "add", "--help")
-		if bytes.Contains(help, []byte("--global")) {
-			arguments = append(arguments, "--global")
-		}
-		return append(arguments, "--", grafoPath, "mcp"), "user"
-	default:
-		panic("unsupported agent: " + candidate.name)
-	}
+	return actions, errors.Join(failures...)
 }

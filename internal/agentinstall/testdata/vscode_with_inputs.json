@@ -1,0 +1,15 @@
+{
+  "inputs": [
+    {
+      "id": "api-key",
+      "type": "promptString"
+    }
+  ],
+  "servers": {
+    "fetch": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["mcp-server-fetch"]
+    }
+  }
+}

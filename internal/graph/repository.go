@@ -88,3 +88,9 @@ type Counts struct {
 }
 
 func NowUTC() string { return time.Now().UTC().Format(time.RFC3339Nano) }
+
+// FileCatalog exposes the indexed file records of one repository index. It is
+// the authority for search membership; search never walks the filesystem.
+type FileCatalog interface {
+	Files(context.Context) (map[string]FileRecord, error)
+}

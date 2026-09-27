@@ -446,3 +446,19 @@ func matchRank(node graph.Node, term string) int {
 		return 4
 	}
 }
+
+// Member pairs one federated index with its project so callers can build
+// per-repository services without reaching into federation internals.
+type Member struct {
+	Project indexer.Project
+	Files   graph.FileCatalog
+}
+
+// Members returns each federated index in deterministic order.
+func (r *Repository) Members() []Member {
+	result := make([]Member, 0, len(r.members))
+	for _, item := range r.members {
+		result = append(result, Member{Project: item.project, Files: item.repository})
+	}
+	return result
+}

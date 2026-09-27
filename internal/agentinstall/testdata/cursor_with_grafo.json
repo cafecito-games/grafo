@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "github": {
+      "command": "/usr/local/bin/github-mcp",
+      "args": ["stdio"]
+    },
+    "grafo": {
+      "command": "/old/path/grafo",
+      "args": ["mcp"],
+      "disabled": false
+    }
+  }
+}
