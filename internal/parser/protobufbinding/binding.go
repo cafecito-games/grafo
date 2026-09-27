@@ -598,6 +598,13 @@ func goProjection(input parserapi.Input, d declaration, pkg, generator, version,
 	}
 	field := goCamel(d.name)
 	if d.form == "enum_value" {
+		// protoc-gen-go prefixes top-level values with the enum type, but
+		// historically prefixes nested values with the containing message and
+		// omits the nested enum name.
+		enumPath := schemaTypePath(declaration{canonical: ownerCanonical, pkg: d.pkg})
+		if len(enumPath) > 1 {
+			owner = goTypeName(enumPath[:len(enumPath)-1])
+		}
 		return []Projection{projection(input, graph.KindField, pkg+"."+owner+"_"+d.name, d.id, d.canonical, graph.KindField, "go", generator, version, configPath, map[string]string{"projection": "enum_value"})}
 	}
 	base := pkg + "." + owner

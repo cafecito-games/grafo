@@ -60,6 +60,7 @@ plugins:
 	assertProjection(t, result, graph.KindField, "AcmeV1EnvelopeState.State.STATE_READY", "acme.v1.State.STATE_READY")
 	assertProjection(t, result, graph.KindField, "example.com/generated/acme/v1.Lower_a_b", "acme.v1.Lower.a_b")
 	assertProjection(t, result, graph.KindField, "example.com/generated/acme/v1.Lower_aB", "acme.v1.Lower.aB")
+	assertProjection(t, result, graph.KindField, "example.com/generated/acme/v1.Envelope_NESTED_READY", "acme.v1.Envelope.NestedState.NESTED_READY")
 
 	registry, err := loader.Load(context.Background(), parserapi.Input{Root: root, Repository: "fixture", RepoID: "repo:fixture"})
 	if err != nil {
@@ -185,6 +186,7 @@ message Envelope {
   State state = 4;
 	string text2 = 6;
 	string _private = 7;
+	enum NestedState { NESTED_UNSPECIFIED = 0; NESTED_READY = 1; }
 }
 message Child {}
 enum State { STATE_UNSPECIFIED = 0; STATE_READY = 1; }
