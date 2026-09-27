@@ -110,6 +110,9 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 		b.Diagnostic(0, "warning", err.Error())
 	}
 	packageName := packageQualified(input, file.Name.Name)
+	if semantic.PackagePath != "" {
+		packageName = semantic.PackagePath
+	}
 	imports := map[string]string{}
 	for _, spec := range file.Imports {
 		importPath, unquoteErr := strconv.Unquote(spec.Path.Value)

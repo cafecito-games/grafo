@@ -208,6 +208,22 @@ func TestPackageSemanticLoaderDoesNotResolveOrDownloadMissingModule(t *testing.T
 	}
 }
 
+func TestPackageSemanticLoaderUsesWorkspaceModuleImportPath(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.work"), "go 1.26\n\nuse ./service\n")
+	writeFile(t, filepath.Join(root, "service", "go.mod"), "module example.com/workspace/service\n\ngo 1.26\n")
+	content := []byte("package service\nfunc helper() {}\nfunc Run() { helper() }\n")
+	writeFile(t, filepath.Join(root, "service", "service.go"), string(content))
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "service/service.go", Content: content, Repository: "workspace", RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasNodeQualified(t, result.Nodes, graph.KindFunction, "example.com/workspace/service.Run")
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "example.com/workspace/service.helper")
+}
+
 func TestPackageSemanticLoaderRetainsProvenFactsForBrokenPackage(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/broken\n\ngo 1.26\n")
@@ -253,6 +269,16 @@ func assertHasNode(t *testing.T, nodes []graph.Node, kind graph.NodeKind, name s
 		}
 	}
 	t.Fatalf("missing %s node %q", kind, name)
+}
+
+func assertHasNodeQualified(t *testing.T, nodes []graph.Node, kind graph.NodeKind, qualified string) {
+	t.Helper()
+	for _, node := range nodes {
+		if node.Kind == kind && node.QualifiedName == qualified {
+			return
+		}
+	}
+	t.Fatalf("missing %s node %q", kind, qualified)
 }
 
 func assertHasFact(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, target string) {

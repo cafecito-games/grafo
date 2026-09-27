@@ -21,6 +21,7 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	"golang.org/x/mod/modfile"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -45,6 +46,7 @@ type SemanticImplementation struct {
 type SemanticView struct {
 	Available       bool
 	Included        bool
+	PackagePath     string
 	BuildContext    string
 	Calls           map[int]SemanticCall
 	Implementations []SemanticImplementation
@@ -202,7 +204,11 @@ func loadWorkspace(ctx context.Context, root, buildContext string) (map[string]S
 			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedTypesSizes | packages.NeedModule,
 		Tests: false,
 	}
-	loaded, err := packages.Load(config, "./...")
+	patterns, err := workspacePackagePatterns(root)
+	if err != nil {
+		return nil, err
+	}
+	loaded, err := packages.Load(config, patterns...)
 	if err != nil {
 		return nil, err
 	}
@@ -241,6 +247,7 @@ func collectPackageViews(root, buildContext string, pkg *packages.Package, views
 		view := views[path]
 		view.Available = true
 		view.Included = true
+		view.PackagePath = pkg.PkgPath
 		view.BuildContext = buildContext
 		if view.Calls == nil {
 			view.Calls = map[int]SemanticCall{}
@@ -249,6 +256,47 @@ func collectPackageViews(root, buildContext string, pkg *packages.Package, views
 		views[path] = view
 	}
 	collectPackageDiagnostics(root, pkg, views, buildContext)
+}
+
+func workspacePackagePatterns(root string) ([]string, error) {
+	workspace := discoverGoWorkspace(root)
+	if workspace == "" || workspace == "off" {
+		return []string{"./..."}, nil
+	}
+	content, err := os.ReadFile(workspace)
+	if err != nil {
+		return nil, err
+	}
+	parsed, err := modfile.ParseWork(workspace, content, nil)
+	if err != nil {
+		return nil, err
+	}
+	workspaceDir := filepath.Dir(workspace)
+	seen := map[string]bool{}
+	var patterns []string
+	for _, use := range parsed.Use {
+		moduleDir := use.Path
+		if !filepath.IsAbs(moduleDir) {
+			moduleDir = filepath.Join(workspaceDir, moduleDir)
+		}
+		relative, err := filepath.Rel(root, moduleDir)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			continue
+		}
+		pattern := "./..."
+		if relative != "." {
+			pattern = "./" + filepath.ToSlash(relative) + "/..."
+		}
+		if !seen[pattern] {
+			seen[pattern] = true
+			patterns = append(patterns, pattern)
+		}
+	}
+	if len(patterns) == 0 {
+		return []string{"./..."}, nil
+	}
+	sort.Strings(patterns)
+	return patterns, nil
 }
 
 func collectCalls(pkg *packages.Package, file *goast.File, calls map[int]SemanticCall) {
