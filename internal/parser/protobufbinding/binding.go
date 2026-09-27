@@ -543,7 +543,7 @@ func moduleRoots(configPath string, all map[string][]byte) ([]string, error) {
 	var roots []string
 	for _, module := range config.Modules {
 		if module.Path == "" {
-			return nil, fmt.Errorf("Buf module path must not be empty")
+			return nil, fmt.Errorf("buf module path must not be empty")
 		}
 		roots = append(roots, resolveRelative(dir, module.Path))
 	}
