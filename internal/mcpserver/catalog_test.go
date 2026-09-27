@@ -183,7 +183,7 @@ func TestSourceToolNamesAmbiguousCandidates(t *testing.T) {
 	}
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	serverSession, err := mcpserver.New(repository, indexer.Project{Name: "shop", Branch: "main"}).
-		WithSource(func(context.Context, string, int, int) (sourcecontext.Excerpt, error) {
+		WithSource(func(context.Context, string, graph.NodeKind, int, int) (sourcecontext.Excerpt, error) {
 			return sourcecontext.Excerpt{}, &query.AmbiguousError{Term: "stock", Candidates: candidates}
 		}).
 		Server("test").Connect(ctx, serverTransport, nil)

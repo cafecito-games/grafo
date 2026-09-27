@@ -340,3 +340,49 @@ func TestShowReportsAmbiguityAndHonorsKind(t *testing.T) {
 		t.Fatalf("an unknown kind must fail loudly, got %d: %s", code, stderr)
 	}
 }
+
+// TestShowPrefersTableOverItsOwnColumn is the SQL half of declaration-member
+// suppression, end to end through the real parser: "CREATE TABLE charge (charge
+// TEXT)" produces a table named charge and a column named charge whose qualified
+// name extends it, and the selector must name the table rather than reporting them
+// as rivals. The column stays reachable by kind and by qualified name.
+func TestShowPrefersTableOverItsOwnColumn(t *testing.T) {
+	root := t.TempDir()
+	// The statement is valid in both dialects, so name the dialect explicitly
+	// rather than letting the router report ambiguous syntax.
+	if err := os.WriteFile(filepath.Join(root, "grafo.yaml"),
+		[]byte("sql:\n  default_dialect: sqlite\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "schema.sql"),
+		[]byte("CREATE TABLE charge (charge TEXT);\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := run(t, "index", root); code != 0 {
+		t.Fatalf("index exited with %d", code)
+	}
+
+	stdout, stderr, code := output(t, "show", "charge", "--repo", root)
+	if code != 0 {
+		t.Fatalf("a table must win over its own column, got %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "table") || strings.Contains(stdout, "column") {
+		t.Fatalf("expected the table, got:\n%s", stdout)
+	}
+
+	stdout, stderr, code = output(t, "show", "charge", "--repo", root, "--kind", "column")
+	if code != 0 {
+		t.Fatalf("kind-filtered show exited with %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "column") || !strings.Contains(stdout, "charge.charge") {
+		t.Fatalf("--kind column should select the column, got:\n%s", stdout)
+	}
+
+	stdout, stderr, code = output(t, "show", "charge.charge", "--repo", root)
+	if code != 0 {
+		t.Fatalf("a column's qualified name must resolve, got %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "column") {
+		t.Fatalf("expected the column, got:\n%s", stdout)
+	}
+}

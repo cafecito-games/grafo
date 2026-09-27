@@ -50,10 +50,31 @@ type NodeMatchQuery struct {
 	Limit    int      `json:"limit,omitempty"`
 }
 
-// memberKinds are the node kinds that only ever exist as part of a declaration:
-// a function's parameters and local variables, and a type's fields. Their
-// qualified names are prefixed by the declaring symbol's, so a selector naming
-// the parent also matches them.
+// memberKinds are the node kinds that exist only as part of a declaration: a
+// function's parameters and local variables, a type's fields, and a table's
+// columns. Every parser builds their qualified name by extending the declaring
+// symbol's, so a selector naming the parent also matches them, and selector
+// resolution may drop them in favour of that parent.
+//
+// The rule for classifying a kind, for whoever extends the vocabulary: a kind
+// belongs here only if both of these hold.
+//
+//  1. Every parser that emits it builds its qualified name by extending the
+//     declaring symbol's. Check the emitting parser rather than reasoning from
+//     the name. KindIndex is the counter-example: internal/parser/sql/sqlite and
+//     .../postgres give an index its own top-level qualified name, not
+//     "table.index", so it never nests in the first place.
+//  2. It cannot be referenced on its own bare name, only through its parent.
+//     KindDocSection and KindConfigKey are the counter-examples: markdown links
+//     resolve "path#anchor" as a target and config references resolve a bare key,
+//     so both are declarations that merely happen to nest. KindEvent is another:
+//     a GDScript signal's qualified name extends its class's, but signals are
+//     connected and emitted by their bare name.
+//
+// When in doubt, leave the kind out. A wrongly excluded kind costs an ambiguity
+// error, which a caller resolves with a qualified name or a kind filter; a
+// wrongly included one silently suppresses a real declaration, which is the
+// defect this resolution path exists to prevent.
 //
 // Every other kind is a declaration in its own right even when its qualified name
 // nests under another candidate's. Go allows "type Charge struct{}" beside
@@ -64,11 +85,13 @@ var memberKinds = map[NodeKind]bool{
 	KindParameter: true,
 	KindVariable:  true,
 	KindField:     true,
+	KindColumn:    true,
 }
 
 // IsDeclarationMember reports whether kind only ever exists as part of a
 // declaration. Only such a node may be treated as a sub-part of the symbol whose
-// qualified name it extends; anything else is a rival declaration.
+// qualified name it extends; anything else is a rival declaration. See
+// memberKinds for the rule that decides which bucket a kind belongs in.
 func IsDeclarationMember(kind NodeKind) bool { return memberKinds[kind] }
 
 // NodeMatchGroup is the complete evidence for a selector at one level.

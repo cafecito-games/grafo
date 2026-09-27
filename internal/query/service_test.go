@@ -432,6 +432,34 @@ func TestResolveSuppressesOnlyDeclarationMembers(t *testing.T) {
 			selector: "Charge",
 			resolves: "example.com/pkg.Charge",
 		},
+		{
+			// "CREATE TABLE charge (charge TEXT)" in a schema-qualified database:
+			// both SQL parsers build a column's qualified name as
+			// "<table>.<column>", and a column is only ever referenced through its
+			// table, so the table wins. Qualified names are prefixed here so the
+			// decision is made at the name level, which is where the suppression
+			// rule applies; the unprefixed shape resolves even earlier, on the
+			// table's exact qualified name.
+			name: "a column is suppressed under the table that declares it",
+			nodes: []graph.Node{
+				resolutionNode(graph.KindTable, "charge", "main.charge"),
+				resolutionNode(graph.KindColumn, "charge", "main.charge.charge"),
+			},
+			selector: "charge",
+			resolves: "main.charge",
+		},
+		{
+			// An index is not a member kind, so even the nesting shape a member
+			// would have leaves it a rival declaration. Real SQL indexes do not
+			// nest at all - see the memberKinds ruling in internal/graph/match.go.
+			name: "a non-member kind nested under a candidate stays ambiguous",
+			nodes: []graph.Node{
+				resolutionNode(graph.KindTable, "charge", "main.charge"),
+				resolutionNode(graph.KindIndex, "charge", "main.charge.charge"),
+			},
+			selector: "charge",
+			total:    2,
+		},
 	}
 
 	for _, test := range tests {
