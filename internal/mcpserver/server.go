@@ -17,16 +17,17 @@ import (
 )
 
 type Service struct {
-	repository graph.ReadRepository
-	query      *query.Service
-	projects   []indexer.Project
-	refresh    func(context.Context) error
-	reusable   func(context.Context, string, int) (semantic.SearchResult, error)
-	source     func(context.Context, string, graph.NodeKind, int, int) (sourcecontext.Excerpt, error)
-	search     *search.Service
-	catalog    *query.Catalog
-	topology   *query.Topology
-	refreshMu  sync.Mutex
+	repository  graph.ReadRepository
+	query       *query.Service
+	projects    []indexer.Project
+	refresh     func(context.Context) error
+	reusable    func(context.Context, string, int) (semantic.SearchResult, error)
+	source      func(context.Context, string, graph.NodeKind, int, int) (sourcecontext.Excerpt, error)
+	search      *search.Service
+	catalog     *query.Catalog
+	topology    *query.Topology
+	messageFlow *query.MessageFlowService
+	refreshMu   sync.Mutex
 }
 
 func New(repository graph.Repository, project indexer.Project) *Service {
@@ -40,6 +41,7 @@ func NewFederated(repository graph.ReadRepository, projects []indexer.Project) *
 	}
 	if topologyRepository, ok := repository.(graph.TopologyRepository); ok {
 		service.topology = query.NewTopology(topologyRepository)
+		service.messageFlow = query.NewMessageFlow(topologyRepository)
 	}
 	return service
 }
@@ -81,7 +83,7 @@ func (s *Service) ready(ctx context.Context) error {
 
 func (s *Service) Server(version string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "grafo", Version: version}, &mcp.ServerOptions{
-		Instructions: "Use Grafo tools for deterministic structural code retrieval. Resolve symbols first, then walk graph edges. Treat external nodes as explicit unresolved boundaries. Prefer get_blast_radius before a behavior-changing edit: it reports both what depends on a symbol and what it depends on. Symbol, node, source, caller, callee, path, and impact tools accept a batch of inputs and return one result or error per input in order. Use search_source only for content questions the graph does not model. Reusable-code search uses embeddings only to select candidates and includes graph-resolved context.",
+		Instructions: "Use Grafo tools for deterministic structural code retrieval. Resolve symbols first, then walk graph edges. Treat external nodes as explicit unresolved boundaries. Use get_message_flow and list_message_coverage for canonical Protobuf flow instead of inferring stages from names; unknown is not proof of a missing runtime stage. Prefer get_blast_radius before a behavior-changing edit: it reports both what depends on a symbol and what it depends on. Symbol, node, source, caller, callee, path, impact, and message-flow tools accept a batch of inputs and return one result or error per input in order. Use search_source only for content questions the graph does not model. Reusable-code search uses embeddings only to select candidates and includes graph-resolved context.",
 	})
 	annotations := &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: boolPointer(false)}
 	mcp.AddTool(server, &mcp.Tool{Name: "find_symbols", Title: "Find symbols", Description: "Find graph nodes by deterministic name matching. Use this to obtain an unambiguous qualified name or stable node ID.", Annotations: annotations}, s.findSymbols)
@@ -110,6 +112,8 @@ func (s *Service) Server(version string) *mcp.Server {
 		mcp.AddTool(server, &mcp.Tool{Name: "list_outbound_requests", Title: "List outbound requests", Description: "List outbound HTTP facts and resolve each to the strongest compatible endpoint when available. Equal-best declarations remain ambiguous and unknown targets remain external.", Annotations: annotations}, s.listOutboundRequests)
 		mcp.AddTool(server, &mcp.Tool{Name: "find_handler", Title: "Find handler", Description: "Find HTTP and event handlers only from handled_by graph evidence, preserving ambiguous, missing, and unresolved targets.", Annotations: annotations}, s.findHandler)
 		mcp.AddTool(server, &mcp.Tool{Name: "get_service_topology", Title: "Get service topology", Description: "Return component-backed service nodes, repository fallbacks for unassigned files, and evidence-backed synchronous HTTP and asynchronous event links. Every link retains its endpoint or event node IDs and underlying edge IDs.", Annotations: annotations}, s.getServiceTopology)
+		mcp.AddTool(server, &mcp.Tool{Name: "get_message_flow", Title: "Get message flow", Description: "Trace a canonical protocol message through generated bindings, field producers and consumers, codecs, transport operations, channels, and handlers. Missing and uncertain evidence remain explicit; ambiguous selectors are never guessed.", Annotations: annotations}, s.getMessageFlow)
+		mcp.AddTool(server, &mcp.Tool{Name: "list_message_coverage", Title: "List message coverage", Description: "List protocol message-flow coverage and proven gaps, with package, message, oneof, direction, component, repository, and status filters.", Annotations: annotations}, s.listMessageCoverage)
 	}
 	mcp.AddTool(server, &mcp.Tool{Name: "get_index_status", Title: "Get index status", Description: "Return the active repository, branch, indexed commit, and graph counts.", Annotations: annotations}, s.getIndexStatus)
 	if s.reusable != nil {
@@ -721,6 +725,58 @@ func (s *Service) getServiceTopology(ctx context.Context, _ *mcp.CallToolRequest
 		return nil, query.ServiceTopology{}, err
 	}
 	result, err := s.topology.ServiceTopology(ctx, input.options())
+	return nil, result, err
+}
+
+type MessageFlowInput struct {
+	Selector   string   `json:"selector,omitempty" jsonschema:"canonical message name, qualified name, or stable canonical node ID"`
+	Selectors  []string `json:"selectors,omitempty" jsonschema:"batch of canonical message selectors resolved in caller order"`
+	Repository string   `json:"repository,omitempty" jsonschema:"restrict resolution and evidence to one indexed repository"`
+	Component  string   `json:"component,omitempty" jsonschema:"restrict application evidence to one exact component name or stable component ID"`
+	Direction  string   `json:"direction,omitempty" jsonschema:"outgoing, incoming, or both; defaults to both"`
+	Limit      int      `json:"limit,omitempty" jsonschema:"maximum evidence sites per exact relation; defaults to 100 and may not exceed 1000"`
+}
+
+type MessageFlowOutput struct {
+	query.MessageFlow
+	Results []ResultEnvelope[query.MessageFlow] `json:"results,omitempty"`
+}
+
+func (s *Service) getMessageFlow(ctx context.Context, _ *mcp.CallToolRequest, input MessageFlowInput) (*mcp.CallToolResult, MessageFlowOutput, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, MessageFlowOutput{}, err
+	}
+	selectors, batched, err := batchInputs("selector", input.Selector, input.Selectors)
+	if err != nil {
+		return nil, MessageFlowOutput{}, err
+	}
+	options := query.MessageFlowOptions{Repository: input.Repository, Component: input.Component,
+		Direction: query.Direction(input.Direction), Limit: input.Limit}
+	results := runBatch(ctx, selectors, namingCandidates(func(flowContext context.Context, selector string) (query.MessageFlow, error) {
+		return s.messageFlow.Flow(flowContext, selector, options)
+	}))
+	flow, err := firstValue(results, batched)
+	return nil, MessageFlowOutput{MessageFlow: flow, Results: results}, err
+}
+
+type MessageCoverageInput struct {
+	Repository string `json:"repository,omitempty" jsonschema:"restrict messages and evidence to one indexed repository"`
+	Package    string `json:"package,omitempty" jsonschema:"exact canonical protocol package"`
+	Message    string `json:"message,omitempty" jsonschema:"exact message name or qualified canonical message name"`
+	Oneof      string `json:"oneof,omitempty" jsonschema:"exact oneof name; each selected arm is evaluated independently"`
+	Direction  string `json:"direction,omitempty" jsonschema:"outgoing, incoming, or both; defaults to both"`
+	Component  string `json:"component,omitempty" jsonschema:"restrict application evidence to one exact component name or stable component ID"`
+	Status     string `json:"status,omitempty" jsonschema:"resolved, missing_evidence, or unknown"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"maximum messages and evidence sites per exact relation; defaults to 100 and may not exceed 1000"`
+}
+
+func (s *Service) listMessageCoverage(ctx context.Context, _ *mcp.CallToolRequest, input MessageCoverageInput) (*mcp.CallToolResult, query.MessageCoverageList, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, query.MessageCoverageList{}, err
+	}
+	result, err := s.messageFlow.Coverage(ctx, query.MessageCoverageOptions{Repository: input.Repository,
+		Package: input.Package, Message: input.Message, Oneof: input.Oneof, Direction: query.Direction(input.Direction),
+		Component: input.Component, Status: query.CoverageStatus(input.Status), Limit: input.Limit})
 	return nil, result, err
 }
 

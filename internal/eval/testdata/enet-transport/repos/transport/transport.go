@@ -8,6 +8,15 @@ import (
 
 const gameplayChannel = 3
 
+type localPeer struct{}
+type localMessage struct{ Text string }
+
+func (*localPeer) SendBytes([]byte, int, int) error { return nil }
+func sameNameOnly(peer *localPeer, message *localMessage) {
+	message.Text = "not protobuf"
+	_ = peer.SendBytes([]byte(message.Text), gameplayChannel, 1)
+}
+
 func send(peer enet.Peer, payload []byte) {
 	_ = peer.SendBytes(payload, gameplayChannel, enet.PacketFlagReliable)
 }

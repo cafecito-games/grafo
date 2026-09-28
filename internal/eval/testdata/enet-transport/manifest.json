@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "case_id": "enet-transport",
   "repositories": [
     {
@@ -54,6 +54,12 @@
       {
         "repo": "transport",
         "kind": "external",
+        "qualified_name": "PackedByteArray",
+        "external": true
+      },
+      {
+        "repo": "transport",
+        "kind": "external",
         "qualified_name": "github.com/codecat/go-enet.Event.GetChannelID",
         "external": true
       },
@@ -89,8 +95,24 @@
       },
       {
         "repo": "transport",
+        "kind": "external",
+        "qualified_name": "print",
+        "external": true
+      },
+      {
+        "repo": "transport",
         "kind": "field",
         "qualified_name": "TransportClient.GAMEPLAY_CHANNEL"
+      },
+      {
+        "repo": "transport",
+        "kind": "field",
+        "qualified_name": "acme.v1.Envelope.image"
+      },
+      {
+        "repo": "transport",
+        "kind": "field",
+        "qualified_name": "acme.v1.Envelope.receipt"
       },
       {
         "repo": "transport",
@@ -100,12 +122,52 @@
       {
         "repo": "transport",
         "kind": "field",
+        "qualified_name": "acme.v1.Envelope.unused"
+      },
+      {
+        "repo": "transport",
+        "kind": "field",
+        "qualified_name": "example.com/transport.localMessage.Text"
+      },
+      {
+        "repo": "transport",
+        "kind": "field",
+        "qualified_name": "example.com/transport/generated/go/proto.Envelope.Image"
+      },
+      {
+        "repo": "transport",
+        "kind": "field",
+        "qualified_name": "example.com/transport/generated/go/proto.Envelope.Image"
+      },
+      {
+        "repo": "transport",
+        "kind": "field",
+        "qualified_name": "example.com/transport/generated/go/proto.Envelope.Receipt"
+      },
+      {
+        "repo": "transport",
+        "kind": "field",
+        "qualified_name": "example.com/transport/generated/go/proto.Envelope.Receipt"
+      },
+      {
+        "repo": "transport",
+        "kind": "field",
         "qualified_name": "example.com/transport/generated/go/proto.Envelope.Text"
       },
       {
         "repo": "transport",
         "kind": "field",
         "qualified_name": "example.com/transport/generated/go/proto.Envelope.Text"
+      },
+      {
+        "repo": "transport",
+        "kind": "field",
+        "qualified_name": "example.com/transport/generated/go/proto.Envelope.Unused"
+      },
+      {
+        "repo": "transport",
+        "kind": "field",
+        "qualified_name": "example.com/transport/generated/go/proto.Envelope.Unused"
       },
       {
         "repo": "transport",
@@ -180,6 +242,11 @@
       {
         "repo": "transport",
         "kind": "function",
+        "qualified_name": "example.com/transport.sameNameOnly"
+      },
+      {
+        "repo": "transport",
+        "kind": "function",
         "qualified_name": "example.com/transport.send"
       },
       {
@@ -191,6 +258,12 @@
         "repo": "transport",
         "kind": "function",
         "qualified_name": "example.com/transport/third_party/protobuf/proto.Unmarshal"
+      },
+      {
+        "repo": "transport",
+        "kind": "interface",
+        "qualified_name": "builtin.error",
+        "external": true
       },
       {
         "repo": "transport",
@@ -220,7 +293,42 @@
       {
         "repo": "transport",
         "kind": "method",
+        "qualified_name": "AcmeV1EnvelopeEnvelope.get_image"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "AcmeV1EnvelopeEnvelope.get_receipt"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
         "qualified_name": "AcmeV1EnvelopeEnvelope.get_text"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "AcmeV1EnvelopeEnvelope.get_unused"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "AcmeV1EnvelopeEnvelope.has_image"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "AcmeV1EnvelopeEnvelope.has_receipt"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "AcmeV1EnvelopeEnvelope.has_text"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "AcmeV1EnvelopeEnvelope.has_unused"
       },
       {
         "repo": "transport",
@@ -230,12 +338,32 @@
       {
         "repo": "transport",
         "kind": "method",
+        "qualified_name": "AcmeV1EnvelopeEnvelope.set_image"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "AcmeV1EnvelopeEnvelope.set_receipt"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
         "qualified_name": "AcmeV1EnvelopeEnvelope.set_text"
       },
       {
         "repo": "transport",
         "kind": "method",
+        "qualified_name": "AcmeV1EnvelopeEnvelope.set_unused"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
         "qualified_name": "AcmeV1EnvelopeEnvelope.to_bytes"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "TransportClient.ambiguous_send"
       },
       {
         "repo": "transport",
@@ -250,7 +378,27 @@
       {
         "repo": "transport",
         "kind": "method",
+        "qualified_name": "example.com/transport.localPeer.SendBytes"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "example.com/transport/generated/go/proto.Envelope.GetImage"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "example.com/transport/generated/go/proto.Envelope.GetReceipt"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
         "qualified_name": "example.com/transport/generated/go/proto.Envelope.GetText"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "example.com/transport/generated/go/proto.Envelope.GetUnused"
       },
       {
         "repo": "transport",
@@ -312,6 +460,21 @@
       {
         "repo": "transport",
         "kind": "parameter",
+        "qualified_name": "TransportClient.ambiguous_send.alternate"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
+        "qualified_name": "TransportClient.ambiguous_send.message"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
+        "qualified_name": "TransportClient.ambiguous_send.peer"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
         "qualified_name": "TransportClient.receive.peer"
       },
       {
@@ -347,6 +510,16 @@
       {
         "repo": "transport",
         "kind": "parameter",
+        "qualified_name": "example.com/transport.sameNameOnly.message"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
+        "qualified_name": "example.com/transport.sameNameOnly.peer"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
         "qualified_name": "example.com/transport.send.payload"
       },
       {
@@ -377,27 +550,32 @@
       {
         "repo": "transport",
         "kind": "transport_operation",
-        "qualified_name": "client.gd:6:2:ENetPacketPeer.send:send"
+        "qualified_name": "client.gd:14:2:ENetPacketPeer.send:send"
       },
       {
         "repo": "transport",
         "kind": "transport_operation",
-        "qualified_name": "client.gd:9:15:ENetPacketPeer.get_packet:receive"
+        "qualified_name": "client.gd:17:15:ENetPacketPeer.get_packet:receive"
       },
       {
         "repo": "transport",
         "kind": "transport_operation",
-        "qualified_name": "transport.go:12:6:github.com/codecat/go-enet.Peer.SendBytes:send"
+        "qualified_name": "client.gd:8:2:ENetPacketPeer.send:send"
       },
       {
         "repo": "transport",
         "kind": "transport_operation",
-        "qualified_name": "transport.go:17:2:github.com/codecat/go-enet.Peer.SendBytes:send"
+        "qualified_name": "transport.go:21:6:github.com/codecat/go-enet.Peer.SendBytes:send"
       },
       {
         "repo": "transport",
         "kind": "transport_operation",
-        "qualified_name": "transport.go:22:13:github.com/codecat/go-enet.Packet.GetData:receive"
+        "qualified_name": "transport.go:26:2:github.com/codecat/go-enet.Peer.SendBytes:send"
+      },
+      {
+        "repo": "transport",
+        "kind": "transport_operation",
+        "qualified_name": "transport.go:31:13:github.com/codecat/go-enet.Packet.GetData:receive"
       },
       {
         "repo": "transport",
@@ -407,12 +585,42 @@
       {
         "repo": "transport",
         "kind": "type",
+        "qualified_name": "example.com/transport.localMessage"
+      },
+      {
+        "repo": "transport",
+        "kind": "type",
+        "qualified_name": "example.com/transport.localPeer"
+      },
+      {
+        "repo": "transport",
+        "kind": "type",
         "qualified_name": "example.com/transport/generated/go/proto.Envelope"
       },
       {
         "repo": "transport",
         "kind": "type",
         "qualified_name": "example.com/transport/generated/go/proto.Envelope"
+      },
+      {
+        "repo": "transport",
+        "kind": "type",
+        "qualified_name": "example.com/transport/generated/go/proto.Envelope_Image"
+      },
+      {
+        "repo": "transport",
+        "kind": "type",
+        "qualified_name": "example.com/transport/generated/go/proto.Envelope_Receipt"
+      },
+      {
+        "repo": "transport",
+        "kind": "type",
+        "qualified_name": "example.com/transport/generated/go/proto.Envelope_Text"
+      },
+      {
+        "repo": "transport",
+        "kind": "type",
+        "qualified_name": "example.com/transport/generated/go/proto.Envelope_Unused"
       },
       {
         "repo": "transport",
@@ -422,22 +630,32 @@
       {
         "repo": "transport",
         "kind": "variable",
-        "qualified_name": "TransportClient.receive.packet@9"
+        "qualified_name": "TransportClient.ambiguous_send.channel@11"
       },
       {
         "repo": "transport",
         "kind": "variable",
-        "qualified_name": "example.com/transport.ReceiveEnvelope.packet@21"
+        "qualified_name": "TransportClient.receive.message@18"
       },
       {
         "repo": "transport",
         "kind": "variable",
-        "qualified_name": "example.com/transport.ReceiveEnvelope.payload@22"
+        "qualified_name": "TransportClient.receive.packet@17"
       },
       {
         "repo": "transport",
         "kind": "variable",
-        "qualified_name": "example.com/transport.SendEnvelope.payload@16"
+        "qualified_name": "example.com/transport.ReceiveEnvelope.packet@30"
+      },
+      {
+        "repo": "transport",
+        "kind": "variable",
+        "qualified_name": "example.com/transport.ReceiveEnvelope.payload@31"
+      },
+      {
+        "repo": "transport",
+        "kind": "variable",
+        "qualified_name": "example.com/transport.SendEnvelope.payload@25"
       }
     ],
     "edges": [
@@ -474,11 +692,29 @@
         "to": {
           "repo": "transport",
           "kind": "method",
+          "qualified_name": "TransportClient.ambiguous_send"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 10,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "class",
+          "qualified_name": "TransportClient"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
           "qualified_name": "TransportClient.receive"
         },
         "source": {
           "path": "client.gd",
-          "line": 8,
+          "line": 16,
           "column": 1
         }
       },
@@ -533,11 +769,57 @@
         },
         "source": {
           "path": "client.gd",
-          "line": 6,
+          "line": 8,
           "column": 2
         },
         "properties": {
           "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope.Image"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.image"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-go",
+          "generator_version": "v1.36.11"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope.Receipt"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.receipt"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-go",
+          "generator_version": "v1.36.11"
         }
       },
       {
@@ -551,6 +833,29 @@
           "repo": "transport",
           "kind": "field",
           "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-go",
+          "generator_version": "v1.36.11"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope.Unused"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.unused"
         },
         "source": {
           "path": "buf.gen.yaml",
@@ -865,7 +1170,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 20,
+          "line": 29,
           "column": 1
         }
       },
@@ -880,6 +1185,24 @@
           "repo": "transport",
           "kind": "function",
           "qualified_name": "example.com/transport.SendEnvelope"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 24,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "transport.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.sameNameOnly"
         },
         "source": {
           "path": "transport.go",
@@ -901,8 +1224,62 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 11,
+          "line": 20,
           "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "transport.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "example.com/transport.localPeer.SendBytes"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 14,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "transport.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "example.com/transport.localMessage"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 12,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "transport.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "example.com/transport.localPeer"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 11,
+          "column": 6
         }
       },
       {
@@ -985,7 +1362,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 23,
+          "line": 32,
           "column": 6
         },
         "properties": {
@@ -1007,7 +1384,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 21,
+          "line": 30,
           "column": 12
         },
         "properties": {
@@ -1029,7 +1406,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 22,
+          "line": 31,
           "column": 13
         },
         "properties": {
@@ -1051,7 +1428,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 24,
+          "line": 33,
           "column": 6
         },
         "properties": {
@@ -1072,7 +1449,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 20,
+          "line": 29,
           "column": 22
         }
       },
@@ -1090,7 +1467,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 20,
+          "line": 29,
           "column": 40
         }
       },
@@ -1104,11 +1481,11 @@
         "to": {
           "repo": "transport",
           "kind": "variable",
-          "qualified_name": "example.com/transport.ReceiveEnvelope.packet@21"
+          "qualified_name": "example.com/transport.ReceiveEnvelope.packet@30"
         },
         "source": {
           "path": "transport.go",
-          "line": 21,
+          "line": 30,
           "column": 2
         }
       },
@@ -1122,11 +1499,11 @@
         "to": {
           "repo": "transport",
           "kind": "variable",
-          "qualified_name": "example.com/transport.ReceiveEnvelope.payload@22"
+          "qualified_name": "example.com/transport.ReceiveEnvelope.payload@31"
         },
         "source": {
           "path": "transport.go",
-          "line": 22,
+          "line": 31,
           "column": 2
         }
       },
@@ -1144,7 +1521,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 24,
+          "line": 33,
           "column": 6
         },
         "properties": {
@@ -1167,11 +1544,11 @@
         "to": {
           "repo": "transport",
           "kind": "transport_operation",
-          "qualified_name": "transport.go:22:13:github.com/codecat/go-enet.Packet.GetData:receive"
+          "qualified_name": "transport.go:31:13:github.com/codecat/go-enet.Packet.GetData:receive"
         },
         "source": {
           "path": "transport.go",
-          "line": 22,
+          "line": 31,
           "column": 13
         },
         "properties": {
@@ -1194,7 +1571,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 16,
+          "line": 25,
           "column": 16
         },
         "properties": {
@@ -1215,7 +1592,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 17,
+          "line": 26,
           "column": 2
         },
         "properties": {
@@ -1236,7 +1613,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 15,
+          "line": 24,
           "column": 35
         }
       },
@@ -1254,7 +1631,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 15,
+          "line": 24,
           "column": 19
         }
       },
@@ -1268,11 +1645,11 @@
         "to": {
           "repo": "transport",
           "kind": "variable",
-          "qualified_name": "example.com/transport.SendEnvelope.payload@16"
+          "qualified_name": "example.com/transport.SendEnvelope.payload@25"
         },
         "source": {
           "path": "transport.go",
-          "line": 16,
+          "line": 25,
           "column": 2
         }
       },
@@ -1290,7 +1667,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 16,
+          "line": 25,
           "column": 16
         },
         "properties": {
@@ -1313,16 +1690,73 @@
         "to": {
           "repo": "transport",
           "kind": "transport_operation",
-          "qualified_name": "transport.go:17:2:github.com/codecat/go-enet.Peer.SendBytes:send"
+          "qualified_name": "transport.go:26:2:github.com/codecat/go-enet.Peer.SendBytes:send"
         },
         "source": {
           "path": "transport.go",
-          "line": 17,
+          "line": 26,
           "column": 2
         },
         "properties": {
           "proof": "go/types",
           "protocol": "enet"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.sameNameOnly"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "example.com/transport.localPeer.SendBytes"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 17,
+          "column": 6
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.sameNameOnly"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.sameNameOnly.message"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 15,
+          "column": 36
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.sameNameOnly"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.sameNameOnly.peer"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 15,
+          "column": 19
         }
       },
       {
@@ -1340,7 +1774,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 12,
+          "line": 21,
           "column": 6
         },
         "properties": {
@@ -1361,7 +1795,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 11,
+          "line": 20,
           "column": 27
         }
       },
@@ -1379,7 +1813,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 11,
+          "line": 20,
           "column": 11
         }
       },
@@ -1393,11 +1827,11 @@
         "to": {
           "repo": "transport",
           "kind": "transport_operation",
-          "qualified_name": "transport.go:12:6:github.com/codecat/go-enet.Peer.SendBytes:send"
+          "qualified_name": "transport.go:21:6:github.com/codecat/go-enet.Peer.SendBytes:send"
         },
         "source": {
           "path": "transport.go",
-          "line": 12,
+          "line": 21,
           "column": 6
         },
         "properties": {
@@ -1558,6 +1992,52 @@
         "from": {
           "repo": "transport",
           "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.get_image"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.image"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.get_receipt"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.receipt"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
           "qualified_name": "AcmeV1EnvelopeEnvelope.get_text"
         },
         "relation": "generated_from",
@@ -1565,6 +2045,121 @@
           "repo": "transport",
           "kind": "field",
           "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.get_unused"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.unused"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.has_image"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.image"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.has_receipt"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.receipt"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.has_text"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.has_unused"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.unused"
         },
         "source": {
           "path": "buf.gen.yaml",
@@ -1604,6 +2199,52 @@
         "from": {
           "repo": "transport",
           "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.set_image"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.image"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.set_receipt"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.receipt"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
           "qualified_name": "AcmeV1EnvelopeEnvelope.set_text"
         },
         "relation": "generated_from",
@@ -1627,6 +2268,29 @@
         "from": {
           "repo": "transport",
           "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.set_unused"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.unused"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
           "qualified_name": "AcmeV1EnvelopeEnvelope.to_bytes"
         },
         "relation": "generated_from",
@@ -1650,6 +2314,164 @@
         "from": {
           "repo": "transport",
           "kind": "method",
+          "qualified_name": "TransportClient.ambiguous_send"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "ENetPacketPeer.send",
+          "external": true
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 14,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.ambiguous_send"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.to_bytes"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 14,
+          "column": 21
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.ambiguous_send"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "TransportClient.ambiguous_send.alternate"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 10,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.ambiguous_send"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "TransportClient.ambiguous_send.message"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 10,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.ambiguous_send"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "TransportClient.ambiguous_send.peer"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 10,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.ambiguous_send"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "TransportClient.ambiguous_send.channel@11"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 11,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.ambiguous_send"
+        },
+        "relation": "encodes",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 14,
+          "column": 21
+        },
+        "properties": {
+          "api": "AcmeV1EnvelopeEnvelope.to_bytes",
+          "binding": "AcmeV1EnvelopeEnvelope.to_bytes",
+          "binding_id": "n:645ccbab4180fd136427",
+          "evidence": "gdscript_scope",
+          "form": "to_bytes",
+          "protocol": "protobuf",
+          "static_type": "AcmeV1EnvelopeEnvelope"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.ambiguous_send"
+        },
+        "relation": "sends",
+        "to": {
+          "repo": "transport",
+          "kind": "transport_operation",
+          "qualified_name": "client.gd:14:2:ENetPacketPeer.send:send"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 14,
+          "column": 2
+        },
+        "properties": {
+          "proof": "gdscript_scope",
+          "protocol": "enet"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
           "qualified_name": "TransportClient.receive"
         },
         "relation": "calls",
@@ -1661,8 +2483,46 @@
         },
         "source": {
           "path": "client.gd",
-          "line": 9,
+          "line": 17,
           "column": 15
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.receive"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "print",
+          "external": true
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 19,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.receive"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "print",
+          "external": true
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 20,
+          "column": 2
         }
       },
       {
@@ -1679,8 +2539,44 @@
         },
         "source": {
           "path": "client.gd",
-          "line": 10,
-          "column": 9
+          "line": 18,
+          "column": 16
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.receive"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.get_receipt"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 20,
+          "column": 8
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.receive"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.get_text"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 19,
+          "column": 8
         }
       },
       {
@@ -1697,7 +2593,7 @@
         },
         "source": {
           "path": "client.gd",
-          "line": 8,
+          "line": 16,
           "column": 1
         }
       },
@@ -1711,11 +2607,29 @@
         "to": {
           "repo": "transport",
           "kind": "variable",
-          "qualified_name": "TransportClient.receive.packet@9"
+          "qualified_name": "TransportClient.receive.message@18"
         },
         "source": {
           "path": "client.gd",
-          "line": 9,
+          "line": 18,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.receive"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "TransportClient.receive.packet@17"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 17,
           "column": 2
         }
       },
@@ -1733,8 +2647,8 @@
         },
         "source": {
           "path": "client.gd",
-          "line": 10,
-          "column": 9
+          "line": 18,
+          "column": 16
         },
         "properties": {
           "api": "AcmeV1EnvelopeEnvelope.from_bytes",
@@ -1752,15 +2666,69 @@
           "kind": "method",
           "qualified_name": "TransportClient.receive"
         },
+        "relation": "reads",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.receipt"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 20,
+          "column": 8
+        },
+        "properties": {
+          "api": "AcmeV1EnvelopeEnvelope.get_receipt",
+          "binding": "AcmeV1EnvelopeEnvelope.get_receipt",
+          "binding_id": "n:e5f1ba48169471574411",
+          "evidence": "gdscript_scope",
+          "form": "get",
+          "protocol": "protobuf",
+          "static_type": "AcmeV1EnvelopeEnvelope"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.receive"
+        },
+        "relation": "reads",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 19,
+          "column": 8
+        },
+        "properties": {
+          "api": "AcmeV1EnvelopeEnvelope.get_text",
+          "binding": "AcmeV1EnvelopeEnvelope.get_text",
+          "binding_id": "n:1016ea4bd7eb6a08e855",
+          "evidence": "gdscript_scope",
+          "form": "get",
+          "protocol": "protobuf",
+          "static_type": "AcmeV1EnvelopeEnvelope"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.receive"
+        },
         "relation": "receives",
         "to": {
           "repo": "transport",
           "kind": "transport_operation",
-          "qualified_name": "client.gd:9:15:ENetPacketPeer.get_packet:receive"
+          "qualified_name": "client.gd:17:15:ENetPacketPeer.get_packet:receive"
         },
         "source": {
           "path": "client.gd",
-          "line": 9,
+          "line": 17,
           "column": 15
         },
         "properties": {
@@ -1783,6 +2751,61 @@
         },
         "source": {
           "path": "client.gd",
+          "line": 8,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.send"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "PackedByteArray",
+          "external": true
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 7,
+          "column": 20
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.send"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.set_image"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 7,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.send"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.set_text"
+        },
+        "source": {
+          "path": "client.gd",
           "line": 6,
           "column": 2
         }
@@ -1801,7 +2824,7 @@
         },
         "source": {
           "path": "client.gd",
-          "line": 6,
+          "line": 8,
           "column": 30
         }
       },
@@ -1855,7 +2878,7 @@
         },
         "source": {
           "path": "client.gd",
-          "line": 6,
+          "line": 8,
           "column": 30
         },
         "properties": {
@@ -1878,7 +2901,56 @@
         "to": {
           "repo": "transport",
           "kind": "transport_operation",
-          "qualified_name": "client.gd:6:2:ENetPacketPeer.send:send"
+          "qualified_name": "client.gd:8:2:ENetPacketPeer.send:send"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 8,
+          "column": 2
+        },
+        "properties": {
+          "proof": "gdscript_scope",
+          "protocol": "enet"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.send"
+        },
+        "relation": "writes",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.image"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 7,
+          "column": 2
+        },
+        "properties": {
+          "api": "AcmeV1EnvelopeEnvelope.set_image",
+          "binding": "AcmeV1EnvelopeEnvelope.set_image",
+          "binding_id": "n:dfdc80877c8d3ba3fa58",
+          "evidence": "gdscript_scope",
+          "form": "set",
+          "protocol": "protobuf",
+          "static_type": "AcmeV1EnvelopeEnvelope"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.send"
+        },
+        "relation": "writes",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
         },
         "source": {
           "path": "client.gd",
@@ -1886,8 +2958,85 @@
           "column": 2
         },
         "properties": {
-          "proof": "gdscript_scope",
-          "protocol": "enet"
+          "api": "AcmeV1EnvelopeEnvelope.set_text",
+          "binding": "AcmeV1EnvelopeEnvelope.set_text",
+          "binding_id": "n:335fdfe625d9004297f3",
+          "evidence": "gdscript_scope",
+          "form": "set",
+          "protocol": "protobuf",
+          "static_type": "AcmeV1EnvelopeEnvelope"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "example.com/transport.localPeer.SendBytes"
+        },
+        "relation": "returns_error",
+        "to": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "builtin.error",
+          "external": true
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 14,
+          "column": 47
+        },
+        "properties": {
+          "evidence": "go/types",
+          "form": "signature",
+          "resolution": "go/types",
+          "result_position": "0",
+          "type": "builtin.error"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope.GetImage"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.image"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-go",
+          "generator_version": "v1.36.11"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope.GetReceipt"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.receipt"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-go",
+          "generator_version": "v1.36.11"
         }
       },
       {
@@ -1901,6 +3050,29 @@
           "repo": "transport",
           "kind": "field",
           "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-go",
+          "generator_version": "v1.36.11"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope.GetUnused"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.unused"
         },
         "source": {
           "path": "buf.gen.yaml",
@@ -2019,17 +3191,39 @@
         "from": {
           "repo": "transport",
           "kind": "parameter",
+          "qualified_name": "TransportClient.ambiguous_send.message"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "ENetPacketPeer.send",
+          "external": true
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 14,
+          "column": 2
+        },
+        "properties": {
+          "argument": "1"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "parameter",
           "qualified_name": "TransportClient.receive.peer"
         },
         "relation": "assigns",
         "to": {
           "repo": "transport",
           "kind": "variable",
-          "qualified_name": "TransportClient.receive.packet@9"
+          "qualified_name": "TransportClient.receive.packet@17"
         },
         "source": {
           "path": "client.gd",
-          "line": 9,
+          "line": 17,
           "column": 2
         }
       },
@@ -2048,7 +3242,7 @@
         },
         "source": {
           "path": "client.gd",
-          "line": 6,
+          "line": 8,
           "column": 2
         },
         "properties": {
@@ -2065,11 +3259,11 @@
         "to": {
           "repo": "transport",
           "kind": "variable",
-          "qualified_name": "example.com/transport.ReceiveEnvelope.packet@21"
+          "qualified_name": "example.com/transport.ReceiveEnvelope.packet@30"
         },
         "source": {
           "path": "transport.go",
-          "line": 21,
+          "line": 30,
           "column": 2
         }
       },
@@ -2088,7 +3282,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 24,
+          "line": 33,
           "column": 6
         },
         "properties": {
@@ -2105,11 +3299,11 @@
         "to": {
           "repo": "transport",
           "kind": "variable",
-          "qualified_name": "example.com/transport.SendEnvelope.payload@16"
+          "qualified_name": "example.com/transport.SendEnvelope.payload@25"
         },
         "source": {
           "path": "transport.go",
-          "line": 16,
+          "line": 25,
           "column": 2
         }
       },
@@ -2128,7 +3322,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 16,
+          "line": 25,
           "column": 16
         },
         "properties": {
@@ -2149,8 +3343,29 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 17,
+          "line": 26,
           "column": 2
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.sameNameOnly.message"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "example.com/transport.localPeer.SendBytes"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 17,
+          "column": 6
         },
         "properties": {
           "argument": "0"
@@ -2171,7 +3386,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 12,
+          "line": 21,
           "column": 6
         },
         "properties": {
@@ -2398,7 +3613,7 @@
         "from": {
           "repo": "transport",
           "kind": "transport_operation",
-          "qualified_name": "client.gd:6:2:ENetPacketPeer.send:send"
+          "qualified_name": "client.gd:14:2:ENetPacketPeer.send:send"
         },
         "relation": "carries",
         "to": {
@@ -2408,7 +3623,7 @@
         },
         "source": {
           "path": "client.gd",
-          "line": 6,
+          "line": 14,
           "column": 2
         },
         "properties": {
@@ -2422,7 +3637,7 @@
         "from": {
           "repo": "transport",
           "kind": "transport_operation",
-          "qualified_name": "client.gd:9:15:ENetPacketPeer.get_packet:receive"
+          "qualified_name": "client.gd:17:15:ENetPacketPeer.get_packet:receive"
         },
         "relation": "carries",
         "to": {
@@ -2432,8 +3647,8 @@
         },
         "source": {
           "path": "client.gd",
-          "line": 10,
-          "column": 9
+          "line": 18,
+          "column": 16
         },
         "properties": {
           "binding": "AcmeV1EnvelopeEnvelope.from_bytes",
@@ -2446,7 +3661,31 @@
         "from": {
           "repo": "transport",
           "kind": "transport_operation",
-          "qualified_name": "transport.go:17:2:github.com/codecat/go-enet.Peer.SendBytes:send"
+          "qualified_name": "client.gd:8:2:ENetPacketPeer.send:send"
+        },
+        "relation": "carries",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 8,
+          "column": 2
+        },
+        "properties": {
+          "binding": "AcmeV1EnvelopeEnvelope.to_bytes",
+          "payload_position": "1",
+          "proof": "gdscript_scope",
+          "protocol": "enet"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "transport_operation",
+          "qualified_name": "transport.go:26:2:github.com/codecat/go-enet.Peer.SendBytes:send"
         },
         "relation": "carries",
         "to": {
@@ -2456,7 +3695,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 17,
+          "line": 26,
           "column": 2
         },
         "properties": {
@@ -2471,7 +3710,7 @@
         "from": {
           "repo": "transport",
           "kind": "transport_operation",
-          "qualified_name": "transport.go:22:13:github.com/codecat/go-enet.Packet.GetData:receive"
+          "qualified_name": "transport.go:31:13:github.com/codecat/go-enet.Packet.GetData:receive"
         },
         "relation": "carries",
         "to": {
@@ -2481,7 +3720,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 22,
+          "line": 31,
           "column": 13
         },
         "properties": {
@@ -2501,12 +3740,84 @@
         "to": {
           "repo": "transport",
           "kind": "field",
+          "qualified_name": "acme.v1.Envelope.image"
+        },
+        "source": {
+          "path": "proto/envelope.proto",
+          "line": 7,
+          "column": 5
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.receipt"
+        },
+        "source": {
+          "path": "proto/envelope.proto",
+          "line": 9,
+          "column": 5
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
           "qualified_name": "acme.v1.Envelope.text"
         },
         "source": {
           "path": "proto/envelope.proto",
-          "line": 4,
-          "column": 20
+          "line": 6,
+          "column": 5
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.unused"
+        },
+        "source": {
+          "path": "proto/envelope.proto",
+          "line": 8,
+          "column": 5
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "example.com/transport.localMessage"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "example.com/transport.localMessage.Text"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 12,
+          "column": 27
         }
       },
       {
@@ -2542,30 +3853,177 @@
         "to": {
           "repo": "transport",
           "kind": "field",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope.Image"
+        },
+        "source": {
+          "path": "generated/go/proto/envelope.pb.go",
+          "line": 7,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope.Receipt"
+        },
+        "source": {
+          "path": "generated/go/proto/envelope.pb.go",
+          "line": 9,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
           "qualified_name": "example.com/transport/generated/go/proto.Envelope.Text"
         },
         "source": {
           "path": "generated/go/proto/envelope.pb.go",
-          "line": 5,
-          "column": 23
+          "line": 6,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope.Unused"
+        },
+        "source": {
+          "path": "generated/go/proto/envelope.pb.go",
+          "line": 8,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope_Image"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.image"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-go",
+          "generator_version": "v1.36.11"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope_Receipt"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.receipt"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-go",
+          "generator_version": "v1.36.11"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope_Text"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-go",
+          "generator_version": "v1.36.11"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope_Unused"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.unused"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-go",
+          "generator_version": "v1.36.11"
         }
       },
       {
         "from": {
           "repo": "transport",
           "kind": "variable",
-          "qualified_name": "TransportClient.receive.packet@9"
+          "qualified_name": "TransportClient.ambiguous_send.channel@11"
         },
         "relation": "passes",
         "to": {
           "repo": "transport",
-          "kind": "method",
-          "qualified_name": "AcmeV1EnvelopeEnvelope.from_bytes"
+          "kind": "external",
+          "qualified_name": "ENetPacketPeer.send",
+          "external": true
         },
         "source": {
           "path": "client.gd",
-          "line": 10,
-          "column": 9
+          "line": 14,
+          "column": 2
         },
         "properties": {
           "argument": "0"
@@ -2575,7 +4033,51 @@
         "from": {
           "repo": "transport",
           "kind": "variable",
-          "qualified_name": "TransportClient.receive.packet@9"
+          "qualified_name": "TransportClient.receive.message@18"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "print",
+          "external": true
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 19,
+          "column": 2
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "TransportClient.receive.message@18"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "print",
+          "external": true
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 20,
+          "column": 2
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "TransportClient.receive.message@18"
         },
         "relation": "returns",
         "to": {
@@ -2585,7 +4087,7 @@
         },
         "source": {
           "path": "client.gd",
-          "line": 10,
+          "line": 21,
           "column": 2
         }
       },
@@ -2593,17 +4095,17 @@
         "from": {
           "repo": "transport",
           "kind": "variable",
-          "qualified_name": "example.com/transport.ReceiveEnvelope.packet@21"
+          "qualified_name": "TransportClient.receive.packet@17"
         },
         "relation": "assigns",
         "to": {
           "repo": "transport",
           "kind": "variable",
-          "qualified_name": "example.com/transport.ReceiveEnvelope.payload@22"
+          "qualified_name": "TransportClient.receive.message@18"
         },
         "source": {
-          "path": "transport.go",
-          "line": 22,
+          "path": "client.gd",
+          "line": 18,
           "column": 2
         }
       },
@@ -2611,7 +4113,46 @@
         "from": {
           "repo": "transport",
           "kind": "variable",
-          "qualified_name": "example.com/transport.ReceiveEnvelope.payload@22"
+          "qualified_name": "TransportClient.receive.packet@17"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.from_bytes"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 18,
+          "column": 16
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "example.com/transport.ReceiveEnvelope.packet@30"
+        },
+        "relation": "assigns",
+        "to": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "example.com/transport.ReceiveEnvelope.payload@31"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 31,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "example.com/transport.ReceiveEnvelope.payload@31"
         },
         "relation": "passes",
         "to": {
@@ -2622,7 +4163,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 24,
+          "line": 33,
           "column": 6
         },
         "properties": {
@@ -2633,7 +4174,7 @@
         "from": {
           "repo": "transport",
           "kind": "variable",
-          "qualified_name": "example.com/transport.SendEnvelope.payload@16"
+          "qualified_name": "example.com/transport.SendEnvelope.payload@25"
         },
         "relation": "passes",
         "to": {
@@ -2643,7 +4184,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 17,
+          "line": 26,
           "column": 2
         },
         "properties": {
@@ -2663,6 +4204,301 @@
         "path": "third_party/protobuf/proto/proto.go",
         "level": "warning",
         "message_contains": "Go semantic package omitted source; using syntax evidence"
+      }
+    ],
+    "forbidden_paths": [
+      {
+        "from": "example.com/transport.sameNameOnly",
+        "to": "acme.v1.Envelope",
+        "direction": "outgoing",
+        "relations": [
+          "writes",
+          "encodes",
+          "sends",
+          "carries"
+        ]
+      }
+    ],
+    "message_flows": [
+      {
+        "id": "envelope-end-to-end",
+        "selector": "acme.v1.Envelope",
+        "options": {
+          "repository": "transport",
+          "direction": "both",
+          "limit": 100
+        },
+        "result": {
+          "message": {
+            "repo": "transport",
+            "kind": "type",
+            "qualified_name": "acme.v1.Envelope"
+          },
+          "status": "unknown",
+          "bindings": [
+            "e:968eafebb1d2966bb1a1",
+            "e:d23932ae852de7dff61b",
+            "e:d77763dd4c7901e36ee8",
+            "e:f8d63a2a8366ef0ec17c",
+            "e:fb42e539c7ae55e131e2"
+          ],
+          "members": [
+            {
+              "field": {
+                "repo": "transport",
+                "kind": "field",
+                "qualified_name": "acme.v1.Envelope.image"
+              },
+              "oneof": "payload",
+              "status": "missing_evidence",
+              "producers": [
+                "e:48c2fb6ae9cc6d779a96"
+              ],
+              "consumers": [],
+              "gaps": [
+                "produced_without_consumer"
+              ]
+            },
+            {
+              "field": {
+                "repo": "transport",
+                "kind": "field",
+                "qualified_name": "acme.v1.Envelope.receipt"
+              },
+              "oneof": "payload",
+              "status": "missing_evidence",
+              "producers": [],
+              "consumers": [
+                "e:a79a94865d7aafda25f7"
+              ],
+              "gaps": [
+                "consumed_without_producer"
+              ]
+            },
+            {
+              "field": {
+                "repo": "transport",
+                "kind": "field",
+                "qualified_name": "acme.v1.Envelope.text"
+              },
+              "oneof": "payload",
+              "status": "resolved",
+              "producers": [
+                "e:fc65b62f392ccb3bcbfc"
+              ],
+              "consumers": [
+                "e:9e4b64c9f8388294a4a6"
+              ],
+              "gaps": []
+            },
+            {
+              "field": {
+                "repo": "transport",
+                "kind": "field",
+                "qualified_name": "acme.v1.Envelope.unused"
+              },
+              "oneof": "payload",
+              "status": "missing_evidence",
+              "producers": [],
+              "consumers": [],
+              "gaps": [
+                "unused_message_member"
+              ]
+            }
+          ],
+          "encoders": [
+            "e:27afc20aaf357dff5507",
+            "e:2f0172be4bedf24ea14c",
+            "e:c009777144fa79ee2ce1"
+          ],
+          "decoders": [
+            "e:27dc01ec9b0ee5ba33ae",
+            "e:90395274d72bbe518e44"
+          ],
+          "sends": [
+            {
+              "operation": {
+                "repo": "transport",
+                "kind": "transport_operation",
+                "qualified_name": "client.gd:8:2:ENetPacketPeer.send:send"
+              },
+              "status": "resolved",
+              "channel": "3",
+              "reliability": "reliable",
+              "sources": [
+                "e:5c6cf3a922516b4f71bf"
+              ]
+            },
+            {
+              "operation": {
+                "repo": "transport",
+                "kind": "transport_operation",
+                "qualified_name": "transport.go:26:2:github.com/codecat/go-enet.Peer.SendBytes:send"
+              },
+              "status": "resolved",
+              "channel": "3",
+              "reliability": "reliable",
+              "sources": [
+                "e:4a3aacd435b3ee20c5d9"
+              ]
+            },
+            {
+              "operation": {
+                "repo": "transport",
+                "kind": "transport_operation",
+                "qualified_name": "client.gd:14:2:ENetPacketPeer.send:send"
+              },
+              "status": "unknown",
+              "reliability": "reliable",
+              "sources": [
+                "e:970f2711a9fca28f7259"
+              ]
+            }
+          ],
+          "receives": [
+            {
+              "operation": {
+                "repo": "transport",
+                "kind": "transport_operation",
+                "qualified_name": "transport.go:31:13:github.com/codecat/go-enet.Packet.GetData:receive"
+              },
+              "status": "unknown",
+              "channel": "event.GetChannelID()",
+              "reliability": "unknown",
+              "sources": [
+                "e:692d0eac571a92b8445c"
+              ]
+            },
+            {
+              "operation": {
+                "repo": "transport",
+                "kind": "transport_operation",
+                "qualified_name": "client.gd:17:15:ENetPacketPeer.get_packet:receive"
+              },
+              "status": "unknown",
+              "reliability": "unknown",
+              "sources": [
+                "e:da4972b759e786179f70"
+              ]
+            }
+          ],
+          "gaps": [],
+          "unknown_evidence": [
+            "e:03f16735c49dd2ae45bc",
+            "e:6c4bd598921c30373f86",
+            "e:f735c4d6d9da3717ef7b"
+          ],
+          "uncertainties": [
+            "dynamic_transport",
+            "dynamic_transport",
+            "dynamic_transport"
+          ],
+          "truncated": false
+        }
+      }
+    ],
+    "message_coverage": [
+      {
+        "id": "acme-v1-coverage",
+        "options": {
+          "repository": "transport",
+          "package": "acme.v1",
+          "direction": "both",
+          "limit": 100
+        },
+        "result": {
+          "messages": [
+            {
+              "message": {
+                "repo": "transport",
+                "kind": "type",
+                "qualified_name": "acme.v1.Envelope"
+              },
+              "status": "unknown",
+              "gaps": [
+                "consumed_without_producer",
+                "produced_without_consumer",
+                "unused_message_member"
+              ],
+              "unknown_evidence": [
+                "e:03f16735c49dd2ae45bc",
+                "e:6c4bd598921c30373f86",
+                "e:f735c4d6d9da3717ef7b"
+              ],
+              "uncertainties": [
+                "dynamic_transport",
+                "dynamic_transport",
+                "dynamic_transport"
+              ],
+              "members": [
+                {
+                  "field": {
+                    "repo": "transport",
+                    "kind": "field",
+                    "qualified_name": "acme.v1.Envelope.image"
+                  },
+                  "oneof": "payload",
+                  "status": "missing_evidence",
+                  "producers": [
+                    "e:48c2fb6ae9cc6d779a96"
+                  ],
+                  "consumers": [],
+                  "gaps": [
+                    "produced_without_consumer"
+                  ]
+                },
+                {
+                  "field": {
+                    "repo": "transport",
+                    "kind": "field",
+                    "qualified_name": "acme.v1.Envelope.receipt"
+                  },
+                  "oneof": "payload",
+                  "status": "missing_evidence",
+                  "producers": [],
+                  "consumers": [
+                    "e:a79a94865d7aafda25f7"
+                  ],
+                  "gaps": [
+                    "consumed_without_producer"
+                  ]
+                },
+                {
+                  "field": {
+                    "repo": "transport",
+                    "kind": "field",
+                    "qualified_name": "acme.v1.Envelope.text"
+                  },
+                  "oneof": "payload",
+                  "status": "resolved",
+                  "producers": [
+                    "e:fc65b62f392ccb3bcbfc"
+                  ],
+                  "consumers": [
+                    "e:9e4b64c9f8388294a4a6"
+                  ],
+                  "gaps": []
+                },
+                {
+                  "field": {
+                    "repo": "transport",
+                    "kind": "field",
+                    "qualified_name": "acme.v1.Envelope.unused"
+                  },
+                  "oneof": "payload",
+                  "status": "missing_evidence",
+                  "producers": [],
+                  "consumers": [],
+                  "gaps": [
+                    "unused_message_member"
+                  ]
+                }
+              ],
+              "truncated": false
+            }
+          ],
+          "truncated": false
+        }
       }
     ]
   }

@@ -12,9 +12,10 @@ import (
 	"strings"
 
 	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/query"
 )
 
-const ManifestSchemaVersion = 1
+const ManifestSchemaVersion = 2
 
 type Manifest struct {
 	SchemaVersion int              `json:"schema_version"`
@@ -29,13 +30,78 @@ type RepositorySpec struct {
 }
 
 type Expectations struct {
-	Nodes          []NodeRef       `json:"nodes"`
-	Edges          []EdgeRef       `json:"edges"`
-	Diagnostics    []DiagnosticRef `json:"diagnostics,omitempty"`
-	Queries        []QuerySpec     `json:"queries,omitempty"`
-	Ambiguities    []AmbiguitySpec `json:"ambiguities,omitempty"`
-	ForbiddenEdges []EdgePattern   `json:"forbidden_edges,omitempty"`
-	ForbiddenPaths []PathPattern   `json:"forbidden_paths,omitempty"`
+	Nodes           []NodeRef             `json:"nodes"`
+	Edges           []EdgeRef             `json:"edges"`
+	Diagnostics     []DiagnosticRef       `json:"diagnostics,omitempty"`
+	Queries         []QuerySpec           `json:"queries,omitempty"`
+	Ambiguities     []AmbiguitySpec       `json:"ambiguities,omitempty"`
+	ForbiddenEdges  []EdgePattern         `json:"forbidden_edges,omitempty"`
+	ForbiddenPaths  []PathPattern         `json:"forbidden_paths,omitempty"`
+	MessageFlows    []MessageFlowSpec     `json:"message_flows,omitempty"`
+	MessageCoverage []MessageCoverageSpec `json:"message_coverage,omitempty"`
+}
+
+// MessageFlowSpec is a schema-versioned golden task query. The compact result
+// records stable semantic identities and evidence IDs instead of duplicating
+// every presentation field returned by the service.
+type MessageFlowSpec struct {
+	ID       string                   `json:"id"`
+	Selector string                   `json:"selector"`
+	Options  query.MessageFlowOptions `json:"options,omitempty"`
+	Result   MessageFlowResult        `json:"result"`
+}
+
+type MessageFlowResult struct {
+	Message         NodeRef                  `json:"message"`
+	Status          query.CoverageStatus     `json:"status"`
+	Bindings        []string                 `json:"bindings"`
+	Members         []MessageMemberResult    `json:"members"`
+	Encoders        []string                 `json:"encoders"`
+	Decoders        []string                 `json:"decoders"`
+	Sends           []MessageTransportResult `json:"sends"`
+	Receives        []MessageTransportResult `json:"receives"`
+	Gaps            []string                 `json:"gaps"`
+	UnknownEvidence []string                 `json:"unknown_evidence"`
+	Uncertainties   []string                 `json:"uncertainties"`
+	Truncated       bool                     `json:"truncated"`
+}
+
+type MessageMemberResult struct {
+	Field     NodeRef              `json:"field"`
+	Oneof     string               `json:"oneof,omitempty"`
+	Status    query.CoverageStatus `json:"status"`
+	Producers []string             `json:"producers"`
+	Consumers []string             `json:"consumers"`
+	Gaps      []string             `json:"gaps"`
+}
+
+type MessageTransportResult struct {
+	Operation   NodeRef              `json:"operation"`
+	Status      query.CoverageStatus `json:"status"`
+	Channel     string               `json:"channel,omitempty"`
+	Reliability string               `json:"reliability,omitempty"`
+	Sources     []string             `json:"sources"`
+}
+
+type MessageCoverageSpec struct {
+	ID      string                       `json:"id"`
+	Options query.MessageCoverageOptions `json:"options,omitempty"`
+	Result  MessageCoverageResult        `json:"result"`
+}
+
+type MessageCoverageResult struct {
+	Messages  []MessageCoverageItem `json:"messages"`
+	Truncated bool                  `json:"truncated"`
+}
+
+type MessageCoverageItem struct {
+	Message         NodeRef               `json:"message"`
+	Status          query.CoverageStatus  `json:"status"`
+	Gaps            []string              `json:"gaps"`
+	UnknownEvidence []string              `json:"unknown_evidence"`
+	Uncertainties   []string              `json:"uncertainties"`
+	Members         []MessageMemberResult `json:"members"`
+	Truncated       bool                  `json:"truncated"`
 }
 
 type DiagnosticRef struct {
@@ -310,6 +376,49 @@ func validateManifest(manifest Manifest) error {
 			}
 		}
 	}
+	for _, task := range manifest.Expect.MessageFlows {
+		if task.ID == "" || queryIDs[task.ID] {
+			return fmt.Errorf("task query ids must be non-empty and unique: %q", task.ID)
+		}
+		queryIDs[task.ID] = true
+		if strings.TrimSpace(task.Selector) == "" {
+			return fmt.Errorf("message flow %q selector is required", task.ID)
+		}
+		if err := validateMessageFlowOptions(task.Options.Repository, task.Options.Direction, task.Options.Limit, repositories); err != nil {
+			return fmt.Errorf("message flow %q: %w", task.ID, err)
+		}
+		if err := validateMessageFlowResult(task.Result, repositories); err != nil {
+			return fmt.Errorf("message flow %q: %w", task.ID, err)
+		}
+	}
+	for _, task := range manifest.Expect.MessageCoverage {
+		if task.ID == "" || queryIDs[task.ID] {
+			return fmt.Errorf("task query ids must be non-empty and unique: %q", task.ID)
+		}
+		queryIDs[task.ID] = true
+		if err := validateMessageFlowOptions(task.Options.Repository, task.Options.Direction, task.Options.Limit, repositories); err != nil {
+			return fmt.Errorf("message coverage %q: %w", task.ID, err)
+		}
+		if task.Options.Status != "" && !validCoverageStatus(task.Options.Status) {
+			return fmt.Errorf("message coverage %q has unknown status %q", task.ID, task.Options.Status)
+		}
+		for _, item := range task.Result.Messages {
+			if err := validateNodeRef(item.Message, repositories); err != nil {
+				return fmt.Errorf("message coverage %q: %w", task.ID, err)
+			}
+			if !validCoverageStatus(item.Status) {
+				return fmt.Errorf("message coverage %q has unknown result status %q", task.ID, item.Status)
+			}
+			for _, member := range item.Members {
+				if err := validateNodeRef(member.Field, repositories); err != nil {
+					return fmt.Errorf("message coverage %q: %w", task.ID, err)
+				}
+				if !validCoverageStatus(member.Status) {
+					return fmt.Errorf("message coverage %q has unknown member status %q", task.ID, member.Status)
+				}
+			}
+		}
+	}
 	for _, forbidden := range manifest.Expect.ForbiddenPaths {
 		if err := validatePath(forbidden.From, forbidden.To, forbidden.Direction, forbidden.Relations); err != nil {
 			return fmt.Errorf("forbidden path: %w", err)
@@ -326,6 +435,49 @@ func validateManifest(manifest Manifest) error {
 		}
 	}
 	return nil
+}
+
+func validateMessageFlowOptions(repository string, direction query.Direction, limit int, repositories map[string]bool) error {
+	if repository != "" && !repositories[repository] {
+		return fmt.Errorf("unknown repository %q", repository)
+	}
+	if direction != "" && direction != query.Incoming && direction != query.Outgoing && direction != query.Both {
+		return fmt.Errorf("unknown direction %q", direction)
+	}
+	if limit < 0 || limit > query.MaxCatalogLimit {
+		return fmt.Errorf("limit must be between 1 and %d when set", query.MaxCatalogLimit)
+	}
+	return nil
+}
+
+func validateMessageFlowResult(result MessageFlowResult, repositories map[string]bool) error {
+	if err := validateNodeRef(result.Message, repositories); err != nil {
+		return err
+	}
+	if !validCoverageStatus(result.Status) {
+		return fmt.Errorf("unknown result status %q", result.Status)
+	}
+	for _, member := range result.Members {
+		if err := validateNodeRef(member.Field, repositories); err != nil {
+			return err
+		}
+		if !validCoverageStatus(member.Status) {
+			return fmt.Errorf("unknown member status %q", member.Status)
+		}
+	}
+	for _, transport := range append(append([]MessageTransportResult{}, result.Sends...), result.Receives...) {
+		if err := validateNodeRef(transport.Operation, repositories); err != nil {
+			return err
+		}
+		if !validCoverageStatus(transport.Status) {
+			return fmt.Errorf("unknown transport status %q", transport.Status)
+		}
+	}
+	return nil
+}
+
+func validCoverageStatus(status query.CoverageStatus) bool {
+	return status == query.CoverageResolved || status == query.CoverageMissingEvidence || status == query.CoverageUnknown
 }
 
 var safeIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)

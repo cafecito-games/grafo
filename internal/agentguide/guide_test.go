@@ -12,6 +12,7 @@ func TestTextCoversRequiredRouting(t *testing.T) {
 	for _, fragment := range []string{
 		"get_index_status", "find_symbols", "get_callers", "get_callees",
 		"find_path", "get_neighbors", "get_blast_radius", "find_reusable_code",
+		"get_message_flow", "list_message_coverage",
 		"upstream", "downstream", "truncated", "native", "grafo index .",
 	} {
 		if !strings.Contains(text, fragment) {

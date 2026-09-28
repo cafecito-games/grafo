@@ -7,7 +7,7 @@ import (
 
 func TestLoadManifestRejectsUnknownFieldsBeforeIndexing(t *testing.T) {
 	_, err := LoadManifest("case/manifest.json", strings.NewReader(`{
-  "schema_version": 1,
+  "schema_version": 2,
   "case_id": "sample",
   "repositories": [{"id": "app", "path": "repos/app"}],
   "expect": {"nodes": [], "edges": []},
@@ -20,7 +20,7 @@ func TestLoadManifestRejectsUnknownFieldsBeforeIndexing(t *testing.T) {
 
 func TestLoadManifestRejectsDuplicateKeysBeforeIndexing(t *testing.T) {
 	_, err := LoadManifest("case/manifest.json", strings.NewReader(`{
-  "schema_version": 1,
+  "schema_version": 2,
   "case_id": "first",
   "case_id": "second",
   "repositories": [{"id": "app", "path": "repos/app"}],
@@ -35,12 +35,12 @@ func TestLoadManifestValidatesSchemaKindsAndRelations(t *testing.T) {
 	tests := []struct {
 		name, replace, want string
 	}{
-		{name: "schema", replace: `"schema_version": 2`, want: "unsupported schema_version 2"},
+		{name: "schema", replace: `"schema_version": 3`, want: "unsupported schema_version 3"},
 		{name: "kind", replace: `"kind": "mystery"`, want: `unknown node kind "mystery"`},
 		{name: "relation", replace: `"relation": "guesses"`, want: `unknown edge relation "guesses"`},
 	}
 	base := `{
-  "schema_version": 1,
+  "schema_version": 2,
   "case_id": "sample",
   "repositories": [{"id": "app", "path": "repos/app"}],
   "expect": {
@@ -53,7 +53,7 @@ func TestLoadManifestValidatesSchemaKindsAndRelations(t *testing.T) {
 			input := base
 			switch test.name {
 			case "schema":
-				input = strings.Replace(input, `"schema_version": 1`, test.replace, 1)
+				input = strings.Replace(input, `"schema_version": 2`, test.replace, 1)
 			case "kind":
 				input = strings.Replace(input, `"kind": "function"`, test.replace, 1)
 			case "relation":
@@ -68,7 +68,7 @@ func TestLoadManifestValidatesSchemaKindsAndRelations(t *testing.T) {
 }
 
 func TestValidateManifestsRejectsDuplicateCaseIDs(t *testing.T) {
-	manifest := Manifest{SchemaVersion: 1, CaseID: "duplicate", Repositories: []RepositorySpec{{ID: "app", Path: "repos/app"}}}
+	manifest := Manifest{SchemaVersion: 2, CaseID: "duplicate", Repositories: []RepositorySpec{{ID: "app", Path: "repos/app"}}}
 	err := ValidateManifests([]LoadedManifest{{Path: "a/manifest.json", Manifest: manifest}, {Path: "b/manifest.json", Manifest: manifest}})
 	if err == nil || !strings.Contains(err.Error(), `duplicate case_id "duplicate"`) || !strings.Contains(err.Error(), "a/manifest.json") || !strings.Contains(err.Error(), "b/manifest.json") {
 		t.Fatalf("expected duplicate case error with both paths, got %v", err)
@@ -85,7 +85,7 @@ func TestLoadManifestRejectsUnsafeAndDuplicateRepositories(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			input := `{"schema_version":1,"case_id":"sample","repositories":` + test.repositories + `,"expect":{"nodes":[],"edges":[]}}`
+			input := `{"schema_version":2,"case_id":"sample","repositories":` + test.repositories + `,"expect":{"nodes":[],"edges":[]}}`
 			_, err := LoadManifest("manifest.json", strings.NewReader(input))
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("expected %q, got %v", test.want, err)
@@ -96,7 +96,7 @@ func TestLoadManifestRejectsUnsafeAndDuplicateRepositories(t *testing.T) {
 
 func TestSnapshotsTreatNullAndEmptyCollectionsEqually(t *testing.T) {
 	manifest, err := LoadManifest("manifest.json", strings.NewReader(`{
-  "schema_version": 1,
+  "schema_version": 2,
   "case_id": "queryless",
   "repositories": [{"id": "app", "path": "repos/app"}],
   "expect": {"nodes": null, "edges": null}

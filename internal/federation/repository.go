@@ -308,7 +308,12 @@ func (r *Repository) MatchNodes(ctx context.Context, request graph.NodeMatchQuer
 	byID := map[string]graph.Node{}
 	complete := true
 	for _, item := range r.members {
-		group, err := item.repository.MatchNodes(ctx, request)
+		if request.Repository != "" && request.Repository != item.project.Name {
+			continue
+		}
+		memberRequest := request
+		memberRequest.Repository = ""
+		group, err := item.repository.MatchNodes(ctx, memberRequest)
 		if err != nil {
 			return graph.NodeMatchGroup{}, err
 		}

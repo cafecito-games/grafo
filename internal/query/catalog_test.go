@@ -650,6 +650,9 @@ func (c *catalogRepository) MatchNodes(_ context.Context, request graph.NodeMatc
 		for _, external := range []bool{false, true} {
 			group := graph.NodeMatchGroup{Level: level, External: external}
 			for _, node := range c.nodes {
+				if request.Repository != "" && c.owners[node.ID] != request.Repository {
+					continue
+				}
 				if request.Kind != "" && node.Kind != request.Kind {
 					continue
 				}

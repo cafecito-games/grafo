@@ -23,9 +23,11 @@ import (
 )
 
 type Snapshot struct {
-	Nodes   []NodeRef   `json:"nodes"`
-	Edges   []EdgeRef   `json:"edges"`
-	Queries []QuerySpec `json:"queries,omitempty"`
+	Nodes           []NodeRef             `json:"nodes"`
+	Edges           []EdgeRef             `json:"edges"`
+	Queries         []QuerySpec           `json:"queries,omitempty"`
+	MessageFlows    []MessageFlowSpec     `json:"message_flows,omitempty"`
+	MessageCoverage []MessageCoverageSpec `json:"message_coverage,omitempty"`
 }
 
 type caseResult struct {
@@ -54,6 +56,8 @@ func RunCorpus(ctx context.Context, root string, update bool) error {
 			manifest.Expect.Nodes = result.snapshot.Nodes
 			manifest.Expect.Edges = result.snapshot.Edges
 			manifest.Expect.Queries = result.snapshot.Queries
+			manifest.Expect.MessageFlows = result.snapshot.MessageFlows
+			manifest.Expect.MessageCoverage = result.snapshot.MessageCoverage
 			if err := writeManifestAtomic(result.loaded.Path, manifest); err != nil {
 				return err
 			}
@@ -130,7 +134,8 @@ func runCase(ctx context.Context, loaded LoadedManifest, update bool) (Snapshot,
 		return Snapshot{}, err
 	}
 	if !update {
-		expected := Snapshot{Nodes: loaded.Manifest.Expect.Nodes, Edges: loaded.Manifest.Expect.Edges, Queries: loaded.Manifest.Expect.Queries}
+		expected := Snapshot{Nodes: loaded.Manifest.Expect.Nodes, Edges: loaded.Manifest.Expect.Edges, Queries: loaded.Manifest.Expect.Queries,
+			MessageFlows: loaded.Manifest.Expect.MessageFlows, MessageCoverage: loaded.Manifest.Expect.MessageCoverage}
 		if err := compareSnapshots("committed manifest", expected, first); err != nil {
 			return Snapshot{}, err
 		}
@@ -278,6 +283,20 @@ func evaluateWorkspace(ctx context.Context, projects []indexer.Project, roots []
 		return Snapshot{}, err
 	}
 	snapshot.Queries = queries
+	topologyRepository, ok := repository.(graph.TopologyRepository)
+	if (len(expected.MessageFlows) > 0 || len(expected.MessageCoverage) > 0) && !ok {
+		return Snapshot{}, fmt.Errorf("repository does not support bounded message-flow task queries")
+	}
+	if ok {
+		snapshot.MessageFlows, err = evaluateMessageFlows(ctx, topologyRepository, origins, expected.MessageFlows)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		snapshot.MessageCoverage, err = evaluateMessageCoverage(ctx, topologyRepository, origins, expected.MessageCoverage)
+		if err != nil {
+			return Snapshot{}, err
+		}
+	}
 	if err := evaluateAmbiguities(ctx, repository, origins, expected.Ambiguities); err != nil {
 		return Snapshot{}, err
 	}
@@ -396,6 +415,107 @@ func evaluateQueries(ctx context.Context, repository graph.QueryRepository, orig
 	return result, nil
 }
 
+func evaluateMessageFlows(ctx context.Context, repository graph.TopologyRepository, origins map[string]map[string]bool, specifications []MessageFlowSpec) ([]MessageFlowSpec, error) {
+	service := query.NewMessageFlow(repository)
+	result := make([]MessageFlowSpec, 0, len(specifications))
+	for _, specification := range specifications {
+		flow, err := service.Flow(ctx, specification.Selector, specification.Options)
+		if err != nil {
+			return nil, fmt.Errorf("message flow %q (%s): %w", specification.ID, specification.Selector, err)
+		}
+		actual := specification
+		actual.Result = summarizeMessageFlow(flow, origins)
+		result = append(result, actual)
+	}
+	return result, nil
+}
+
+func evaluateMessageCoverage(ctx context.Context, repository graph.TopologyRepository, origins map[string]map[string]bool, specifications []MessageCoverageSpec) ([]MessageCoverageSpec, error) {
+	service := query.NewMessageFlow(repository)
+	result := make([]MessageCoverageSpec, 0, len(specifications))
+	for _, specification := range specifications {
+		coverage, err := service.Coverage(ctx, specification.Options)
+		if err != nil {
+			return nil, fmt.Errorf("message coverage %q: %w", specification.ID, err)
+		}
+		actual := specification
+		actual.Result = MessageCoverageResult{Messages: []MessageCoverageItem{}, Truncated: coverage.Truncated}
+		for _, item := range coverage.Messages {
+			actual.Result.Messages = append(actual.Result.Messages, MessageCoverageItem{Message: resourceNodeRef(item.Message, origins), Status: item.Status,
+				Gaps: gapNames(item.Gaps), UnknownEvidence: evidenceIDs(item.UnknownEvidence), Uncertainties: uncertaintyReasons(item.Uncertainties),
+				Members: summarizeMembers(item.Members, origins), Truncated: item.Truncated})
+		}
+		result = append(result, actual)
+	}
+	return result, nil
+}
+
+func summarizeMessageFlow(flow query.MessageFlow, origins map[string]map[string]bool) MessageFlowResult {
+	result := MessageFlowResult{Message: resourceNodeRef(flow.Message, origins), Status: flow.Status, Bindings: evidenceIDs(flow.Bindings),
+		Members: summarizeMembers(flow.Members, origins), Encoders: evidenceIDs(flow.Encoders), Decoders: evidenceIDs(flow.Decoders),
+		Sends: []MessageTransportResult{}, Receives: []MessageTransportResult{}, Gaps: gapNames(flow.Gaps),
+		UnknownEvidence: evidenceIDs(flow.UnknownEvidence), Truncated: flow.Truncated}
+	result.Uncertainties = uncertaintyReasons(flow.Uncertainties)
+	for _, item := range flow.Sends {
+		result.Sends = append(result.Sends, summarizeTransport(item, origins))
+	}
+	for _, item := range flow.Receives {
+		result.Receives = append(result.Receives, summarizeTransport(item, origins))
+	}
+	return result
+}
+
+func summarizeMembers(items []query.MessageMemberFlow, origins map[string]map[string]bool) []MessageMemberResult {
+	result := make([]MessageMemberResult, 0, len(items))
+	for _, item := range items {
+		result = append(result, MessageMemberResult{Field: resourceNodeRef(item.Field, origins), Oneof: item.Oneof, Status: item.Status,
+			Producers: evidenceIDs(item.Producers), Consumers: evidenceIDs(item.Consumers), Gaps: gapNames(item.Gaps)})
+	}
+	return result
+}
+
+func summarizeTransport(item query.TransportFlow, origins map[string]map[string]bool) MessageTransportResult {
+	return MessageTransportResult{Operation: resourceNodeRef(item.Evidence.Node, origins), Status: item.Status,
+		Channel: item.Channel, Reliability: item.Reliability, Sources: evidenceIDs(item.Sources)}
+}
+
+func resourceNodeRef(resource query.Resource, origins map[string]map[string]bool) NodeRef {
+	ref := NodeRef{Repo: resource.Repository, Kind: resource.Kind, QualifiedName: resource.QualifiedName, External: resource.Unresolved}
+	if ref.Repo == "" {
+		if repositories := origins[resource.ID]; len(repositories) == 1 {
+			for repository := range repositories {
+				ref.Repo = repository
+			}
+		}
+	}
+	return ref
+}
+
+func evidenceIDs(items []query.FlowEvidence) []string {
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		result = append(result, item.EdgeID)
+	}
+	sort.Strings(result)
+	return result
+}
+func gapNames(items []query.CoverageGap) []string {
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		result = append(result, item.Category)
+	}
+	sort.Strings(result)
+	return result
+}
+func uncertaintyReasons(items []query.FlowUncertainty) []string {
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		result = append(result, item.Reason)
+	}
+	sort.Strings(result)
+	return result
+}
+
 func evaluateAmbiguities(ctx context.Context, repository graph.QueryRepository, origins map[string]map[string]bool, specifications []AmbiguitySpec) error {
 	service := query.NewService(repository)
 	for _, specification := range specifications {
@@ -481,6 +601,12 @@ func compareSnapshots(label string, expected, actual Snapshot) error {
 	}
 	if !equalSlices(expected.Queries, actual.Queries) {
 		return focusedSliceDiff(label+" queries", expected.Queries, actual.Queries)
+	}
+	if !equalSlices(expected.MessageFlows, actual.MessageFlows) {
+		return focusedSliceDiff(label+" message flows", expected.MessageFlows, actual.MessageFlows)
+	}
+	if !equalSlices(expected.MessageCoverage, actual.MessageCoverage) {
+		return focusedSliceDiff(label+" message coverage", expected.MessageCoverage, actual.MessageCoverage)
 	}
 	return nil
 }

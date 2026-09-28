@@ -46,9 +46,10 @@ func (l NodeMatchLevel) Stronger(other NodeMatchLevel) bool { return l.Rank() < 
 // the returned node list, never the reported totals, so a caller can always
 // tell that a list was truncated.
 type NodeMatchQuery struct {
-	Selector string   `json:"selector"`
-	Kind     NodeKind `json:"kind,omitempty"`
-	Limit    int      `json:"limit,omitempty"`
+	Selector   string   `json:"selector"`
+	Kind       NodeKind `json:"kind,omitempty"`
+	Repository string   `json:"repository,omitempty"`
+	Limit      int      `json:"limit,omitempty"`
 }
 
 // memberKinds are the node kinds a parser uses for a sub-part of a declaration:
