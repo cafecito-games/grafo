@@ -638,6 +638,10 @@ func candidateAllowed(relation graph.EdgeKind, node graph.Node) bool {
 			(kind == graph.KindField && node.Language == "protobuf")
 	case graph.EdgeEncodes, graph.EdgeDecodes:
 		return kind == graph.KindType && node.Language == "protobuf"
+	case graph.EdgeSends, graph.EdgeReceives:
+		return kind == graph.KindTransportOperation
+	case graph.EdgeCarries:
+		return kind == graph.KindType && node.Language == "protobuf"
 	case graph.EdgeReferences:
 		return kind == graph.KindConfigKey || kind == graph.KindTable || kind == graph.KindView ||
 			kind == graph.KindGodotAutoload || kind == graph.KindGodotScene ||

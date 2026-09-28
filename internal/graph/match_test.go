@@ -56,6 +56,11 @@ func TestAllowsResolutionKindCoversRestrictedEdges(t *testing.T) {
 		{graph.EdgeEncodes, graph.KindType, true},
 		{graph.EdgeEncodes, graph.KindField, false},
 		{graph.EdgeDecodes, graph.KindType, true},
+		{graph.EdgeSends, graph.KindTransportOperation, true},
+		{graph.EdgeSends, graph.KindFunction, false},
+		{graph.EdgeReceives, graph.KindTransportOperation, true},
+		{graph.EdgeCarries, graph.KindType, true},
+		{graph.EdgeCarries, graph.KindField, false},
 		{graph.EdgeReads, graph.KindField, false},
 		{graph.EdgeReferences, graph.KindGodotSceneNode, true},
 		{graph.EdgeReferences, graph.KindModule, false},
@@ -144,6 +149,9 @@ func TestIsDeclarationMemberClassifiesTheWholeVocabulary(t *testing.T) {
 		// ("jump") and add_to_group("enemies") carry the name and nothing else.
 		graph.KindGodotInputAction: false,
 		graph.KindGodotNodeGroup:   false,
+		// A transport operation is a stable callsite declaration referenced by
+		// sends/receives and carries relations, not a member of its callable.
+		graph.KindTransportOperation: false,
 	}
 
 	for _, kind := range graph.NodeKinds() {

@@ -56,6 +56,211 @@ func take_damage(amount: int) -> int:
 	assertHasFactKind(t, result.Facts, graph.EdgeSubscribes)
 }
 
+func TestParserExtractsENetTransportEvidence(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, ".gitignore", "generated/\n")
+	writeFile(t, root, "buf.yaml", "version: v2\nmodules:\n  - path: proto\n")
+	writeFile(t, root, "buf.gen.yaml", `version: v2
+plugins:
+  - local: protoc-gen-gdscript
+    out: generated
+`)
+	writeFile(t, root, "proto/envelope.proto", `syntax = "proto3";
+package acme.v1;
+message Envelope { string text = 1; }
+`)
+	content := []byte(`class_name TransportClient
+
+const GAMEPLAY_CHANNEL = 3
+
+class Lookalike:
+	func send(_channel: int, _payload: PackedByteArray, _flags: int) -> void:
+		pass
+
+func send_message(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope) -> void:
+	peer.send(GAMEPLAY_CHANNEL, message.to_bytes(), ENetPacketPeer.FLAG_RELIABLE)
+
+func relay(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope) -> void:
+	send_message(peer, message)
+
+func conflicting(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope, unknown: PackedByteArray) -> void:
+	peer.send(1, message.to_bytes(), ENetPacketPeer.FLAG_RELIABLE)
+	peer.send(2, unknown, ENetPacketPeer.FLAG_UNSEQUENCED)
+
+func deep1(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope) -> void:
+	send_message(peer, message)
+func deep2(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope) -> void:
+	deep1(peer, message)
+func deep3(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope) -> void:
+	deep2(peer, message)
+func deep4(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope) -> void:
+	deep3(peer, message)
+func deep5(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope) -> void:
+	deep4(peer, message)
+func deep6(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope) -> void:
+	deep5(peer, message)
+func deep7(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope) -> void:
+	deep6(peer, message)
+func deep8(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope) -> void:
+	deep7(peer, message)
+func deep9(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope) -> void:
+	deep8(peer, message)
+
+func use_transport(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope, channel: int, flags: int, unknown: PackedByteArray) -> void:
+	relay(peer, message)
+	conflicting(peer, message, unknown)
+	deep9(peer, message)
+	peer.send(channel, unknown, flags)
+	var packet = peer.get_packet()
+	var decoded = AcmeV1EnvelopeEnvelope.from_bytes(packet)
+	decoded.set_text("received")
+
+func ordinary(value: Lookalike, payload: PackedByteArray) -> void:
+	value.send(3, payload, ENetPacketPeer.FLAG_RELIABLE)
+
+func connection_transport(connection: ENetConnection, message: AcmeV1EnvelopeEnvelope) -> void:
+	connection.broadcast(4, message.to_bytes(), 0)
+	connection.service()
+
+func uncertain_payload(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope, unknown: PackedByteArray, cond: bool) -> void:
+	var payload = message.to_bytes()
+	if cond:
+		payload = unknown
+	peer.send(3, payload, ENetPacketPeer.FLAG_RELIABLE)
+
+func agreed_payload(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope, cond: bool) -> void:
+	var payload
+	if cond:
+		payload = message.to_bytes()
+	else:
+		payload = message.to_bytes()
+	peer.send(3, payload, ENetPacketPeer.FLAG_RELIABLE)
+`)
+	writeFile(t, root, "transport.gd", string(content))
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "transport.gd", Content: content, Repository: "protobuf-transport", RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	useID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "TransportClient.use_transport").ID
+	send := assertGDTransportOperation(t, result, useID, graph.EdgeSends, "send", "ENetPacketPeer.send")
+	if send.Properties["channel"] != "3" || send.Properties["channel_status"] != "proven" ||
+		send.Properties["reliability"] != "reliable" || send.Properties["payload_status"] != "proven" ||
+		send.Properties["wrapper_depth"] != "2" {
+		t.Fatalf("wrapped send evidence = %#v", send.Properties)
+	}
+	assertGDTransportCarries(t, result.Facts, send.ID, "acme.v1.Envelope")
+	receive := assertGDTransportOperation(t, result, useID, graph.EdgeReceives, "receive", "ENetPacketPeer.get_packet")
+	assertGDTransportCarries(t, result.Facts, receive.ID, "acme.v1.Envelope")
+
+	unknown := false
+	for _, node := range result.Nodes {
+		if node.Kind == graph.KindTransportOperation && node.Properties["direction"] == "send" &&
+			node.Properties["channel_status"] == "unknown" && node.Properties["payload_status"] == "unknown" &&
+			node.Properties["reliability"] == "unknown" {
+			unknown = true
+		}
+	}
+	if !unknown {
+		t.Fatalf("dynamic transport evidence missing: %#v", result.Nodes)
+	}
+	ambiguous := false
+	unreliable := false
+	for _, node := range result.Nodes {
+		if node.Kind == graph.KindTransportOperation && node.Properties["channel"] == "2" && node.Properties["reliability"] == "unreliable" {
+			unreliable = true
+		}
+		if node.Kind == graph.KindTransportOperation && node.Properties["direction"] == "send" &&
+			node.Properties["channel_status"] == "ambiguous" && node.Properties["payload_status"] == "ambiguous" {
+			ambiguous = true
+			for _, fact := range result.Facts {
+				if fact.FromID == node.ID && fact.Kind == graph.EdgeCarries {
+					t.Fatalf("ambiguous wrapper payload produced carries edge: %#v", fact)
+				}
+			}
+		}
+	}
+	if !ambiguous {
+		t.Fatalf("conflicting wrapper evidence was not preserved as ambiguous: %#v", result.Nodes)
+	}
+	if !unreliable {
+		t.Fatalf("exact GDScript unreliable flags were not normalized: %#v", result.Nodes)
+	}
+	truncated := false
+	nodesByID := map[string]graph.Node{}
+	for _, node := range result.Nodes {
+		nodesByID[node.ID] = node
+	}
+	for _, fact := range result.Facts {
+		node := nodesByID[fact.TargetID]
+		if fact.FromID == useID && fact.Kind == graph.EdgeSends && node.Properties["channel_status"] == "truncated" &&
+			node.Properties["payload_status"] == "truncated" {
+			truncated = true
+		}
+	}
+	if !truncated {
+		t.Fatalf("bounded GDScript wrapper evidence did not surface truncation: %#v", result.Nodes)
+	}
+	ordinaryID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "TransportClient.ordinary").ID
+	connectionID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "TransportClient.connection_transport").ID
+	broadcast := assertGDTransportOperation(t, result, connectionID, graph.EdgeSends, "send", "ENetConnection.broadcast")
+	if broadcast.Properties["channel"] != "4" || broadcast.Properties["reliability"] != "unreliable" {
+		t.Fatalf("connection broadcast evidence = %#v", broadcast.Properties)
+	}
+	assertGDTransportCarries(t, result.Facts, broadcast.ID, "acme.v1.Envelope")
+	assertGDTransportOperation(t, result, connectionID, graph.EdgeReceives, "receive", "ENetConnection.service")
+	uncertainID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "TransportClient.uncertain_payload").ID
+	agreedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "TransportClient.agreed_payload").ID
+	agreed := assertGDTransportOperation(t, result, agreedID, graph.EdgeSends, "send", "ENetPacketPeer.send")
+	assertGDTransportCarries(t, result.Facts, agreed.ID, "acme.v1.Envelope")
+	for _, fact := range result.Facts {
+		if fact.FromID == ordinaryID && (fact.Kind == graph.EdgeSends || fact.Kind == graph.EdgeReceives) {
+			t.Fatalf("same-name non-ENet API produced transport fact: %#v", fact)
+		}
+		if fact.FromID == uncertainID && fact.Kind == graph.EdgeSends {
+			for _, carried := range result.Facts {
+				if carried.FromID == fact.TargetID && carried.Kind == graph.EdgeCarries {
+					t.Fatalf("branch-dependent payload produced carries edge: %#v", carried)
+				}
+			}
+		}
+	}
+}
+
+func assertGDTransportOperation(t *testing.T, result graph.ParseResult, fromID string, relation graph.EdgeKind, direction, api string) graph.Node {
+	t.Helper()
+	nodes := map[string]graph.Node{}
+	for _, node := range result.Nodes {
+		nodes[node.ID] = node
+	}
+	var matched graph.Node
+	for _, fact := range result.Facts {
+		node := nodes[fact.TargetID]
+		if fact.FromID == fromID && fact.Kind == relation && node.Kind == graph.KindTransportOperation &&
+			node.Properties["direction"] == direction && node.Properties["api"] == api {
+			if matched.ID == "" || node.Properties["payload_status"] == "proven" {
+				matched = node
+			}
+		}
+	}
+	if matched.ID != "" {
+		return matched
+	}
+	t.Fatalf("missing %s %s operation for %q: nodes=%#v facts=%#v diagnostics=%#v", direction, api, fromID, result.Nodes, result.Facts, result.Diagnostics)
+	return graph.Node{}
+}
+
+func assertGDTransportCarries(t *testing.T, facts []graph.Fact, operationID, target string) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.FromID == operationID && fact.Kind == graph.EdgeCarries && fact.Target == target && fact.TargetID != "" {
+			return
+		}
+	}
+	t.Fatalf("operation %q does not carry %q: %#v", operationID, target, facts)
+}
+
 func TestParserSuppressesCorroboratedTrackedGDScriptBinding(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "buf.gen.yaml", `version: v2

@@ -1,0 +1,2600 @@
+{
+  "schema_version": 1,
+  "case_id": "enet-transport",
+  "repositories": [
+    {
+      "id": "transport",
+      "path": "repos/transport"
+    }
+  ],
+  "expect": {
+    "nodes": [
+      {
+        "repo": "transport",
+        "kind": "class",
+        "qualified_name": "AcmeV1EnvelopeEnvelope"
+      },
+      {
+        "repo": "transport",
+        "kind": "class",
+        "qualified_name": "TransportClient"
+      },
+      {
+        "repo": "transport",
+        "kind": "config_key",
+        "qualified_name": "config:buf.yaml:modules"
+      },
+      {
+        "repo": "transport",
+        "kind": "config_key",
+        "qualified_name": "config:buf.yaml:version"
+      },
+      {
+        "repo": "transport",
+        "kind": "config_key",
+        "qualified_name": "config:project.godot:application/config/name"
+      },
+      {
+        "repo": "transport",
+        "kind": "config_key",
+        "qualified_name": "config:project.godot:config_version"
+      },
+      {
+        "repo": "transport",
+        "kind": "external",
+        "qualified_name": "ENetPacketPeer.get_packet",
+        "external": true
+      },
+      {
+        "repo": "transport",
+        "kind": "external",
+        "qualified_name": "ENetPacketPeer.send",
+        "external": true
+      },
+      {
+        "repo": "transport",
+        "kind": "external",
+        "qualified_name": "github.com/codecat/go-enet.Event.GetChannelID",
+        "external": true
+      },
+      {
+        "repo": "transport",
+        "kind": "external",
+        "qualified_name": "github.com/codecat/go-enet.Event.GetPacket",
+        "external": true
+      },
+      {
+        "repo": "transport",
+        "kind": "external",
+        "qualified_name": "github.com/codecat/go-enet.Packet.GetData",
+        "external": true
+      },
+      {
+        "repo": "transport",
+        "kind": "external",
+        "qualified_name": "github.com/codecat/go-enet.Peer.SendBytes",
+        "external": true
+      },
+      {
+        "repo": "transport",
+        "kind": "external",
+        "qualified_name": "google.golang.org/protobuf/proto.Marshal",
+        "external": true
+      },
+      {
+        "repo": "transport",
+        "kind": "external",
+        "qualified_name": "google.golang.org/protobuf/proto.Unmarshal",
+        "external": true
+      },
+      {
+        "repo": "transport",
+        "kind": "field",
+        "qualified_name": "TransportClient.GAMEPLAY_CHANNEL"
+      },
+      {
+        "repo": "transport",
+        "kind": "field",
+        "qualified_name": "acme.v1.Envelope.text"
+      },
+      {
+        "repo": "transport",
+        "kind": "field",
+        "qualified_name": "example.com/transport/generated/go/proto.Envelope.Text"
+      },
+      {
+        "repo": "transport",
+        "kind": "file",
+        "qualified_name": "buf.gen.yaml"
+      },
+      {
+        "repo": "transport",
+        "kind": "file",
+        "qualified_name": "buf.yaml"
+      },
+      {
+        "repo": "transport",
+        "kind": "file",
+        "qualified_name": "client.gd"
+      },
+      {
+        "repo": "transport",
+        "kind": "file",
+        "qualified_name": "go.mod"
+      },
+      {
+        "repo": "transport",
+        "kind": "file",
+        "qualified_name": "project.godot"
+      },
+      {
+        "repo": "transport",
+        "kind": "file",
+        "qualified_name": "proto/envelope.proto"
+      },
+      {
+        "repo": "transport",
+        "kind": "file",
+        "qualified_name": "third_party/enet/enet.go"
+      },
+      {
+        "repo": "transport",
+        "kind": "file",
+        "qualified_name": "third_party/enet/go.mod"
+      },
+      {
+        "repo": "transport",
+        "kind": "file",
+        "qualified_name": "third_party/protobuf/go.mod"
+      },
+      {
+        "repo": "transport",
+        "kind": "file",
+        "qualified_name": "third_party/protobuf/proto/proto.go"
+      },
+      {
+        "repo": "transport",
+        "kind": "file",
+        "qualified_name": "transport.go"
+      },
+      {
+        "repo": "transport",
+        "kind": "function",
+        "qualified_name": "example.com/transport.ReceiveEnvelope"
+      },
+      {
+        "repo": "transport",
+        "kind": "function",
+        "qualified_name": "example.com/transport.SendEnvelope"
+      },
+      {
+        "repo": "transport",
+        "kind": "function",
+        "qualified_name": "example.com/transport.send"
+      },
+      {
+        "repo": "transport",
+        "kind": "function",
+        "qualified_name": "example.com/transport/third_party/protobuf/proto.Marshal"
+      },
+      {
+        "repo": "transport",
+        "kind": "function",
+        "qualified_name": "example.com/transport/third_party/protobuf/proto.Unmarshal"
+      },
+      {
+        "repo": "transport",
+        "kind": "interface",
+        "qualified_name": "example.com/transport/third_party/enet.Event"
+      },
+      {
+        "repo": "transport",
+        "kind": "interface",
+        "qualified_name": "example.com/transport/third_party/enet.Packet"
+      },
+      {
+        "repo": "transport",
+        "kind": "interface",
+        "qualified_name": "example.com/transport/third_party/enet.Peer"
+      },
+      {
+        "repo": "transport",
+        "kind": "interface",
+        "qualified_name": "example.com/transport/third_party/protobuf/proto.Message"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "AcmeV1EnvelopeEnvelope.from_bytes"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "AcmeV1EnvelopeEnvelope.get_text"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "AcmeV1EnvelopeEnvelope.new"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "AcmeV1EnvelopeEnvelope.set_text"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "AcmeV1EnvelopeEnvelope.to_bytes"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "TransportClient.receive"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "TransportClient.send"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "example.com/transport/generated/go/proto.Envelope.GetText"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "example.com/transport/third_party/enet.Event.GetChannelID"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "example.com/transport/third_party/enet.Event.GetPacket"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "example.com/transport/third_party/enet.Packet.GetData"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "example.com/transport/third_party/enet.Peer.SendBytes"
+      },
+      {
+        "repo": "transport",
+        "kind": "module",
+        "qualified_name": "client"
+      },
+      {
+        "repo": "transport",
+        "kind": "module",
+        "qualified_name": "example.com/transport"
+      },
+      {
+        "repo": "transport",
+        "kind": "module",
+        "qualified_name": "example.com/transport/generated/go/proto",
+        "external": true
+      },
+      {
+        "repo": "transport",
+        "kind": "module",
+        "qualified_name": "github.com/codecat/go-enet"
+      },
+      {
+        "repo": "transport",
+        "kind": "module",
+        "qualified_name": "google.golang.org/protobuf"
+      },
+      {
+        "repo": "transport",
+        "kind": "module",
+        "qualified_name": "google.golang.org/protobuf/proto",
+        "external": true
+      },
+      {
+        "repo": "transport",
+        "kind": "module",
+        "qualified_name": "project"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
+        "qualified_name": "TransportClient.receive.peer"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
+        "qualified_name": "TransportClient.send.message"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
+        "qualified_name": "TransportClient.send.peer"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
+        "qualified_name": "example.com/transport.ReceiveEnvelope.event"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
+        "qualified_name": "example.com/transport.ReceiveEnvelope.message"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
+        "qualified_name": "example.com/transport.SendEnvelope.message"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
+        "qualified_name": "example.com/transport.SendEnvelope.peer"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
+        "qualified_name": "example.com/transport.send.payload"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
+        "qualified_name": "example.com/transport.send.peer"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
+        "qualified_name": "example.com/transport/third_party/protobuf/proto.Marshal.value"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
+        "qualified_name": "example.com/transport/third_party/protobuf/proto.Unmarshal.data"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
+        "qualified_name": "example.com/transport/third_party/protobuf/proto.Unmarshal.value"
+      },
+      {
+        "repo": "transport",
+        "kind": "repository",
+        "qualified_name": "transport"
+      },
+      {
+        "repo": "transport",
+        "kind": "transport_operation",
+        "qualified_name": "client.gd:6:2:ENetPacketPeer.send:send"
+      },
+      {
+        "repo": "transport",
+        "kind": "transport_operation",
+        "qualified_name": "client.gd:9:15:ENetPacketPeer.get_packet:receive"
+      },
+      {
+        "repo": "transport",
+        "kind": "transport_operation",
+        "qualified_name": "transport.go:12:6:github.com/codecat/go-enet.Peer.SendBytes:send"
+      },
+      {
+        "repo": "transport",
+        "kind": "transport_operation",
+        "qualified_name": "transport.go:17:2:github.com/codecat/go-enet.Peer.SendBytes:send"
+      },
+      {
+        "repo": "transport",
+        "kind": "transport_operation",
+        "qualified_name": "transport.go:22:13:github.com/codecat/go-enet.Packet.GetData:receive"
+      },
+      {
+        "repo": "transport",
+        "kind": "type",
+        "qualified_name": "acme.v1.Envelope"
+      },
+      {
+        "repo": "transport",
+        "kind": "type",
+        "qualified_name": "example.com/transport/generated/go/proto.Envelope"
+      },
+      {
+        "repo": "transport",
+        "kind": "type",
+        "qualified_name": "example.com/transport/third_party/enet.PacketFlags"
+      },
+      {
+        "repo": "transport",
+        "kind": "variable",
+        "qualified_name": "TransportClient.receive.packet@9"
+      },
+      {
+        "repo": "transport",
+        "kind": "variable",
+        "qualified_name": "example.com/transport.ReceiveEnvelope.packet@21"
+      },
+      {
+        "repo": "transport",
+        "kind": "variable",
+        "qualified_name": "example.com/transport.ReceiveEnvelope.payload@22"
+      },
+      {
+        "repo": "transport",
+        "kind": "variable",
+        "qualified_name": "example.com/transport.SendEnvelope.payload@16"
+      }
+    ],
+    "edges": [
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "class",
+          "qualified_name": "AcmeV1EnvelopeEnvelope"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "class",
+          "qualified_name": "TransportClient"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.receive"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 8,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "class",
+          "qualified_name": "TransportClient"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.send"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 5,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "class",
+          "qualified_name": "TransportClient"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "TransportClient.GAMEPLAY_CHANNEL"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 3,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "TransportClient.GAMEPLAY_CHANNEL"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "ENetPacketPeer.send",
+          "external": true
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 6,
+          "column": 2
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope.Text"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-go",
+          "generator_version": "v1.36.11"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "buf.yaml"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "transport",
+          "kind": "config_key",
+          "qualified_name": "config:buf.yaml:modules"
+        },
+        "source": {
+          "path": "buf.yaml",
+          "line": 2,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "buf.yaml"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "transport",
+          "kind": "config_key",
+          "qualified_name": "config:buf.yaml:version"
+        },
+        "source": {
+          "path": "buf.yaml",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "client.gd"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "module",
+          "qualified_name": "client"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "go.mod"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "module",
+          "qualified_name": "example.com/transport"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "project.godot"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "module",
+          "qualified_name": "project"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "proto/envelope.proto"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "proto/envelope.proto",
+          "line": 4,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "third_party/enet/enet.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "example.com/transport/third_party/enet.Event"
+        },
+        "source": {
+          "path": "third_party/enet/enet.go",
+          "line": 8,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "third_party/enet/enet.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "example.com/transport/third_party/enet.Packet"
+        },
+        "source": {
+          "path": "third_party/enet/enet.go",
+          "line": 7,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "third_party/enet/enet.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "example.com/transport/third_party/enet.Peer"
+        },
+        "source": {
+          "path": "third_party/enet/enet.go",
+          "line": 12,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "third_party/enet/enet.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "example.com/transport/third_party/enet.PacketFlags"
+        },
+        "source": {
+          "path": "third_party/enet/enet.go",
+          "line": 3,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "third_party/enet/go.mod"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "module",
+          "qualified_name": "github.com/codecat/go-enet"
+        },
+        "source": {
+          "path": "third_party/enet/go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "third_party/protobuf/go.mod"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "module",
+          "qualified_name": "google.golang.org/protobuf"
+        },
+        "source": {
+          "path": "third_party/protobuf/go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "third_party/protobuf/proto/proto.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport/third_party/protobuf/proto.Marshal"
+        },
+        "source": {
+          "path": "third_party/protobuf/proto/proto.go",
+          "line": 5,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "third_party/protobuf/proto/proto.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport/third_party/protobuf/proto.Unmarshal"
+        },
+        "source": {
+          "path": "third_party/protobuf/proto/proto.go",
+          "line": 6,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "third_party/protobuf/proto/proto.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "example.com/transport/third_party/protobuf/proto.Message"
+        },
+        "source": {
+          "path": "third_party/protobuf/proto/proto.go",
+          "line": 3,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "transport.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.ReceiveEnvelope"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 20,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "transport.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.SendEnvelope"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 15,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "transport.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.send"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 11,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "transport.go"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "transport",
+          "kind": "module",
+          "qualified_name": "example.com/transport/generated/go/proto",
+          "external": true
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 5,
+          "column": 2
+        },
+        "properties": {
+          "alias": "generated"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "transport.go"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "transport",
+          "kind": "module",
+          "qualified_name": "github.com/codecat/go-enet"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 4,
+          "column": 2
+        },
+        "properties": {
+          "alias": "enet"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "transport.go"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "transport",
+          "kind": "module",
+          "qualified_name": "google.golang.org/protobuf/proto",
+          "external": true
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 6,
+          "column": 2
+        },
+        "properties": {
+          "alias": "wire"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.ReceiveEnvelope"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "github.com/codecat/go-enet.Event.GetChannelID",
+          "external": true
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 23,
+          "column": 6
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.ReceiveEnvelope"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "github.com/codecat/go-enet.Event.GetPacket",
+          "external": true
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 21,
+          "column": 12
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.ReceiveEnvelope"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "github.com/codecat/go-enet.Packet.GetData",
+          "external": true
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 22,
+          "column": 13
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.ReceiveEnvelope"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "google.golang.org/protobuf/proto.Unmarshal",
+          "external": true
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 24,
+          "column": 6
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.ReceiveEnvelope"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.ReceiveEnvelope.event"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 20,
+          "column": 22
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.ReceiveEnvelope"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.ReceiveEnvelope.message"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 20,
+          "column": 40
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.ReceiveEnvelope"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "example.com/transport.ReceiveEnvelope.packet@21"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 21,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.ReceiveEnvelope"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "example.com/transport.ReceiveEnvelope.payload@22"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 22,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.ReceiveEnvelope"
+        },
+        "relation": "decodes",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 24,
+          "column": 6
+        },
+        "properties": {
+          "api": "google.golang.org/protobuf/proto.Unmarshal",
+          "binding": "example.com/transport/generated/go/proto.Envelope",
+          "binding_id": "n:7861ef6de56741497831",
+          "evidence": "go/types",
+          "form": "unmarshal",
+          "protocol": "protobuf",
+          "static_type": "*example.com/transport/generated/go/proto.Envelope"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.ReceiveEnvelope"
+        },
+        "relation": "receives",
+        "to": {
+          "repo": "transport",
+          "kind": "transport_operation",
+          "qualified_name": "transport.go:22:13:github.com/codecat/go-enet.Packet.GetData:receive"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 22,
+          "column": 13
+        },
+        "properties": {
+          "proof": "go/types",
+          "protocol": "enet"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.SendEnvelope"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "google.golang.org/protobuf/proto.Marshal",
+          "external": true
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 16,
+          "column": 16
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.SendEnvelope"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.send"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 17,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.SendEnvelope"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.SendEnvelope.message"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 15,
+          "column": 35
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.SendEnvelope"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.SendEnvelope.peer"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 15,
+          "column": 19
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.SendEnvelope"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "example.com/transport.SendEnvelope.payload@16"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 16,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.SendEnvelope"
+        },
+        "relation": "encodes",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 16,
+          "column": 16
+        },
+        "properties": {
+          "api": "google.golang.org/protobuf/proto.Marshal",
+          "binding": "example.com/transport/generated/go/proto.Envelope",
+          "binding_id": "n:7861ef6de56741497831",
+          "evidence": "go/types",
+          "form": "marshal",
+          "protocol": "protobuf",
+          "static_type": "*example.com/transport/generated/go/proto.Envelope"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.SendEnvelope"
+        },
+        "relation": "sends",
+        "to": {
+          "repo": "transport",
+          "kind": "transport_operation",
+          "qualified_name": "transport.go:17:2:github.com/codecat/go-enet.Peer.SendBytes:send"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 17,
+          "column": 2
+        },
+        "properties": {
+          "proof": "go/types",
+          "protocol": "enet"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.send"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "github.com/codecat/go-enet.Peer.SendBytes",
+          "external": true
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 12,
+          "column": 6
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.send"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.send.payload"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 11,
+          "column": 27
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.send"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.send.peer"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 11,
+          "column": 11
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.send"
+        },
+        "relation": "sends",
+        "to": {
+          "repo": "transport",
+          "kind": "transport_operation",
+          "qualified_name": "transport.go:12:6:github.com/codecat/go-enet.Peer.SendBytes:send"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 12,
+          "column": 6
+        },
+        "properties": {
+          "proof": "go/types",
+          "protocol": "enet"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport/third_party/protobuf/proto.Marshal"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport/third_party/protobuf/proto.Marshal.value"
+        },
+        "source": {
+          "path": "third_party/protobuf/proto/proto.go",
+          "line": 5,
+          "column": 14
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport/third_party/protobuf/proto.Unmarshal"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport/third_party/protobuf/proto.Unmarshal.data"
+        },
+        "source": {
+          "path": "third_party/protobuf/proto/proto.go",
+          "line": 6,
+          "column": 16
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport/third_party/protobuf/proto.Unmarshal"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport/third_party/protobuf/proto.Unmarshal.value"
+        },
+        "source": {
+          "path": "third_party/protobuf/proto/proto.go",
+          "line": 6,
+          "column": 29
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "example.com/transport/third_party/enet.Event"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "example.com/transport/third_party/enet.Event.GetChannelID"
+        },
+        "source": {
+          "path": "third_party/enet/enet.go",
+          "line": 10,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "example.com/transport/third_party/enet.Event"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "example.com/transport/third_party/enet.Event.GetPacket"
+        },
+        "source": {
+          "path": "third_party/enet/enet.go",
+          "line": 9,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "example.com/transport/third_party/enet.Packet"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "example.com/transport/third_party/enet.Packet.GetData"
+        },
+        "source": {
+          "path": "third_party/enet/enet.go",
+          "line": 7,
+          "column": 25
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "example.com/transport/third_party/enet.Peer"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "example.com/transport/third_party/enet.Peer.SendBytes"
+        },
+        "source": {
+          "path": "third_party/enet/enet.go",
+          "line": 13,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.from_bytes"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.get_text"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.new"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.set_text"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.to_bytes"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.receive"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "ENetPacketPeer.get_packet",
+          "external": true
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 9,
+          "column": 15
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.receive"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.from_bytes"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 10,
+          "column": 9
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.receive"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "TransportClient.receive.peer"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 8,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.receive"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "TransportClient.receive.packet@9"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 9,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.receive"
+        },
+        "relation": "decodes",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 10,
+          "column": 9
+        },
+        "properties": {
+          "api": "AcmeV1EnvelopeEnvelope.from_bytes",
+          "binding": "AcmeV1EnvelopeEnvelope.from_bytes",
+          "binding_id": "n:2f0330ef4e677314fdeb",
+          "evidence": "gdscript_scope",
+          "form": "from_bytes",
+          "protocol": "protobuf",
+          "static_type": "AcmeV1EnvelopeEnvelope"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.receive"
+        },
+        "relation": "receives",
+        "to": {
+          "repo": "transport",
+          "kind": "transport_operation",
+          "qualified_name": "client.gd:9:15:ENetPacketPeer.get_packet:receive"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 9,
+          "column": 15
+        },
+        "properties": {
+          "proof": "gdscript_scope",
+          "protocol": "enet"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.send"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "ENetPacketPeer.send",
+          "external": true
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 6,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.send"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.to_bytes"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 6,
+          "column": 30
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.send"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "TransportClient.send.message"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 5,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.send"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "TransportClient.send.peer"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 5,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.send"
+        },
+        "relation": "encodes",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 6,
+          "column": 30
+        },
+        "properties": {
+          "api": "AcmeV1EnvelopeEnvelope.to_bytes",
+          "binding": "AcmeV1EnvelopeEnvelope.to_bytes",
+          "binding_id": "n:645ccbab4180fd136427",
+          "evidence": "gdscript_scope",
+          "form": "to_bytes",
+          "protocol": "protobuf",
+          "static_type": "AcmeV1EnvelopeEnvelope"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.send"
+        },
+        "relation": "sends",
+        "to": {
+          "repo": "transport",
+          "kind": "transport_operation",
+          "qualified_name": "client.gd:6:2:ENetPacketPeer.send:send"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 6,
+          "column": 2
+        },
+        "properties": {
+          "proof": "gdscript_scope",
+          "protocol": "enet"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope.GetText"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-go",
+          "generator_version": "v1.36.11"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "module",
+          "qualified_name": "client"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "class",
+          "qualified_name": "TransportClient"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "module",
+          "qualified_name": "example.com/transport"
+        },
+        "relation": "depends_on",
+        "to": {
+          "repo": "transport",
+          "kind": "module",
+          "qualified_name": "github.com/codecat/go-enet"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 6,
+          "column": 2
+        },
+        "properties": {
+          "ecosystem": "go",
+          "replacement": "./third_party/enet",
+          "scope": "runtime",
+          "version": "v0.0.0"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "module",
+          "qualified_name": "example.com/transport"
+        },
+        "relation": "depends_on",
+        "to": {
+          "repo": "transport",
+          "kind": "module",
+          "qualified_name": "google.golang.org/protobuf"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 7,
+          "column": 2
+        },
+        "properties": {
+          "ecosystem": "go",
+          "replacement": "./third_party/protobuf",
+          "scope": "runtime",
+          "version": "v0.0.0"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "module",
+          "qualified_name": "project"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "transport",
+          "kind": "config_key",
+          "qualified_name": "config:project.godot:application/config/name"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 4,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "module",
+          "qualified_name": "project"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "transport",
+          "kind": "config_key",
+          "qualified_name": "config:project.godot:config_version"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "TransportClient.receive.peer"
+        },
+        "relation": "assigns",
+        "to": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "TransportClient.receive.packet@9"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 9,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "TransportClient.send.message"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "ENetPacketPeer.send",
+          "external": true
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 6,
+          "column": 2
+        },
+        "properties": {
+          "argument": "1"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.ReceiveEnvelope.event"
+        },
+        "relation": "assigns",
+        "to": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "example.com/transport.ReceiveEnvelope.packet@21"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 21,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.ReceiveEnvelope.message"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "google.golang.org/protobuf/proto.Unmarshal",
+          "external": true
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 24,
+          "column": 6
+        },
+        "properties": {
+          "argument": "1"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.SendEnvelope.message"
+        },
+        "relation": "assigns",
+        "to": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "example.com/transport.SendEnvelope.payload@16"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 16,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.SendEnvelope.message"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "google.golang.org/protobuf/proto.Marshal",
+          "external": true
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 16,
+          "column": 16
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.SendEnvelope.peer"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.send"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 17,
+          "column": 2
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.send.payload"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "github.com/codecat/go-enet.Peer.SendBytes",
+          "external": true
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 12,
+          "column": 6
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "repository",
+          "qualified_name": "transport"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "buf.gen.yaml"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "repository",
+          "qualified_name": "transport"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "buf.yaml"
+        },
+        "source": {
+          "path": "buf.yaml",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "repository",
+          "qualified_name": "transport"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "client.gd"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "repository",
+          "qualified_name": "transport"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "go.mod"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "repository",
+          "qualified_name": "transport"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "project.godot"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "repository",
+          "qualified_name": "transport"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "proto/envelope.proto"
+        },
+        "source": {
+          "path": "proto/envelope.proto",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "repository",
+          "qualified_name": "transport"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "third_party/enet/enet.go"
+        },
+        "source": {
+          "path": "third_party/enet/enet.go",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "repository",
+          "qualified_name": "transport"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "third_party/enet/go.mod"
+        },
+        "source": {
+          "path": "third_party/enet/go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "repository",
+          "qualified_name": "transport"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "third_party/protobuf/go.mod"
+        },
+        "source": {
+          "path": "third_party/protobuf/go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "repository",
+          "qualified_name": "transport"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "third_party/protobuf/proto/proto.go"
+        },
+        "source": {
+          "path": "third_party/protobuf/proto/proto.go",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "repository",
+          "qualified_name": "transport"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "transport.go"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "transport_operation",
+          "qualified_name": "client.gd:6:2:ENetPacketPeer.send:send"
+        },
+        "relation": "carries",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 6,
+          "column": 2
+        },
+        "properties": {
+          "binding": "AcmeV1EnvelopeEnvelope.to_bytes",
+          "payload_position": "1",
+          "proof": "gdscript_scope",
+          "protocol": "enet"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "transport_operation",
+          "qualified_name": "client.gd:9:15:ENetPacketPeer.get_packet:receive"
+        },
+        "relation": "carries",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 10,
+          "column": 9
+        },
+        "properties": {
+          "binding": "AcmeV1EnvelopeEnvelope.from_bytes",
+          "payload_position": "-1",
+          "proof": "gdscript_scope",
+          "protocol": "enet"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "transport_operation",
+          "qualified_name": "transport.go:17:2:github.com/codecat/go-enet.Peer.SendBytes:send"
+        },
+        "relation": "carries",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 17,
+          "column": 2
+        },
+        "properties": {
+          "binding": "example.com/transport/generated/go/proto.Envelope",
+          "payload_position": "0",
+          "proof": "go/types",
+          "protocol": "enet",
+          "wrapper_depth": "1"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "transport_operation",
+          "qualified_name": "transport.go:22:13:github.com/codecat/go-enet.Packet.GetData:receive"
+        },
+        "relation": "carries",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 22,
+          "column": 13
+        },
+        "properties": {
+          "binding": "example.com/transport/generated/go/proto.Envelope",
+          "payload_position": "-1",
+          "proof": "go/types",
+          "protocol": "enet"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "proto/envelope.proto",
+          "line": 4,
+          "column": 20
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-go",
+          "generator_version": "v1.36.11"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "TransportClient.receive.packet@9"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.from_bytes"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 10,
+          "column": 9
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "TransportClient.receive.packet@9"
+        },
+        "relation": "returns",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "TransportClient.receive"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 10,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "example.com/transport.ReceiveEnvelope.packet@21"
+        },
+        "relation": "assigns",
+        "to": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "example.com/transport.ReceiveEnvelope.payload@22"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 22,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "example.com/transport.ReceiveEnvelope.payload@22"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "google.golang.org/protobuf/proto.Unmarshal",
+          "external": true
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 24,
+          "column": 6
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "example.com/transport.SendEnvelope.payload@16"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.send"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 17,
+          "column": 2
+        },
+        "properties": {
+          "argument": "1"
+        }
+      }
+    ],
+    "diagnostics": [
+      {
+        "repo": "transport",
+        "path": "third_party/enet/enet.go",
+        "level": "warning",
+        "message_contains": "Go semantic package omitted source; using syntax evidence"
+      },
+      {
+        "repo": "transport",
+        "path": "third_party/protobuf/proto/proto.go",
+        "level": "warning",
+        "message_contains": "Go semantic package omitted source; using syntax evidence"
+      }
+    ]
+  }
+}

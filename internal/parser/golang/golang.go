@@ -17,6 +17,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/httpmodel"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	"github.com/cafecito-games/grafo/internal/parser/protobufbinding"
+	transportapi "github.com/cafecito-games/grafo/internal/parser/transport"
 )
 
 type Parser struct {
@@ -210,6 +211,7 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 	if haveBindingRegistry {
 		emitProtocolUses(b, semantic, bindingRegistry)
 	}
+	emitTransportUses(b, semantic, bindingRegistry, haveBindingRegistry)
 	return b.Finish(), nil
 }
 
@@ -351,6 +353,49 @@ func emitProtocolUses(b *parserapi.Builder, semantic SemanticView, registry prot
 		}
 		b.AddFact(fromID, use.Kind, projection.CanonicalID, projection.Canonical,
 			projection.CanonicalKind, use.Location, properties)
+	}
+}
+
+func emitTransportUses(b *parserapi.Builder, semantic SemanticView, registry protobufbinding.Registry, haveRegistry bool) {
+	path := filepath.ToSlash(filepath.Clean(filepath.FromSlash(b.Input.Path)))
+	path = strings.TrimPrefix(path, "./")
+	if haveRegistry && registry.ConfiguredOutput(path, "go") {
+		return
+	}
+	sources := map[string]string{"": b.FileID()}
+	for _, node := range b.Result.Nodes {
+		if node.Kind == graph.KindFunction || node.Kind == graph.KindMethod {
+			sources[node.QualifiedName] = node.ID
+		}
+	}
+	projections := indexProtocolProjections(registry)
+	for _, use := range semantic.TransportUses {
+		fromID := sources[use.Function]
+		if fromID == "" {
+			fromID = b.FileID()
+		}
+		payloadStatus := use.PayloadStatus
+		messageID, message := "", ""
+		if use.PayloadBinding != "" && haveRegistry {
+			projection, count := resolveProtocolProjection(projections, use.PayloadBinding)
+			switch {
+			case count > 1:
+				payloadStatus = "ambiguous"
+				b.Diagnostic(use.Location.Line, "warning", "ambiguous Protobuf binding for ENet payload: "+use.PayloadBinding)
+			case count == 1 && projection.CanonicalKind == graph.KindType && projection.Properties["projection"] == "message":
+				payloadStatus, messageID, message = "proven", projection.CanonicalID, projection.Canonical
+			default:
+				payloadStatus = "unknown"
+			}
+		} else if use.PayloadBinding != "" {
+			payloadStatus = "unknown"
+		}
+		transportapi.Emit(b, fromID, transportapi.Operation{
+			Spec: use.Spec, Channel: use.Channel, ChannelStatus: use.ChannelStatus,
+			Reliability: use.Reliability, PayloadStatus: payloadStatus, Proof: "go/types",
+			WrapperDepth: use.WrapperDepth, Location: use.Location,
+			MessageID: messageID, Message: message, Binding: use.PayloadBinding,
+		})
 	}
 }
 

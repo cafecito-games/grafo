@@ -1,0 +1,4 @@
+syntax = "proto3";
+package acme.v1;
+option go_package = "example.com/transport/generated/go/proto;generated";
+message Envelope { string text = 1; }

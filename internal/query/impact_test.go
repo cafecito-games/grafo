@@ -530,7 +530,7 @@ func TestImpactRelationSetsAreShared(t *testing.T) {
 	}
 	required := []graph.EdgeKind{graph.EdgeCalls, graph.EdgeHandledBy, graph.EdgeUsesMiddleware, graph.EdgeImports, graph.EdgeExtends,
 		graph.EdgeImplements, graph.EdgeEmbeds, graph.EdgeReferences, graph.EdgeReads, graph.EdgeWrites,
-		graph.EdgeEncodes, graph.EdgeDecodes,
+		graph.EdgeEncodes, graph.EdgeDecodes, graph.EdgeSends, graph.EdgeReceives, graph.EdgeCarries,
 		graph.EdgeAssigns, graph.EdgeReturns, graph.EdgePasses, graph.EdgeRequests, graph.EdgeDependsOn}
 	present := map[graph.EdgeKind]bool{}
 	for _, relation := range upstream {

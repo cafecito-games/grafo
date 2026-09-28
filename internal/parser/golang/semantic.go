@@ -22,6 +22,7 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	"github.com/cafecito-games/grafo/internal/parser/transport"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/tools/go/packages"
 )
@@ -75,6 +76,21 @@ type SemanticProtocolUse struct {
 	Location   graph.Location
 }
 
+// SemanticTransportUse is compact go/types-backed evidence for one exact ENet
+// operation. PayloadBinding is a generated Go message identity when bounded
+// data flow proves it; canonicalization remains the parser registry's job.
+type SemanticTransportUse struct {
+	Function       string
+	Spec           transport.Spec
+	Channel        string
+	ChannelStatus  string
+	Reliability    string
+	PayloadStatus  string
+	PayloadBinding string
+	WrapperDepth   int
+	Location       graph.Location
+}
+
 type SemanticImplementation struct {
 	Concrete  string
 	Interface string
@@ -121,6 +137,7 @@ type SemanticView struct {
 	BuildContext      string
 	Calls             map[int]SemanticCall
 	ProtocolUses      []SemanticProtocolUse
+	TransportUses     []SemanticTransportUse
 	Implementations   []SemanticImplementation
 	Functions         map[string]SemanticFunction
 	ErrorDeclarations []SemanticErrorDeclaration
@@ -296,6 +313,7 @@ func cloneSemanticView(view SemanticView) SemanticView {
 	}
 	copyView.Implementations = append([]SemanticImplementation(nil), view.Implementations...)
 	copyView.ProtocolUses = append([]SemanticProtocolUse(nil), view.ProtocolUses...)
+	copyView.TransportUses = append([]SemanticTransportUse(nil), view.TransportUses...)
 	copyView.Functions = make(map[string]SemanticFunction, len(view.Functions))
 	for name, function := range view.Functions {
 		function.ErrorResults = append([]SemanticErrorResult(nil), function.ErrorResults...)
@@ -432,6 +450,7 @@ func collectPackageViews(root, buildContext string, pkg *packages.Package, views
 	}
 	if len(pkg.Errors) == 0 {
 		collectChiPackageViews(root, pkg, views)
+		collectTransportPackageViews(root, pkg, views)
 	}
 	collectPackageDiagnostics(root, pkg, views, buildContext)
 }

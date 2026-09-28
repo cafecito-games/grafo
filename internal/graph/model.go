@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const SchemaVersion = 8
+const SchemaVersion = 9
 
 type NodeKind string
 
@@ -57,6 +57,11 @@ const (
 	// and edge instead of by matching a key-name prefix.
 	KindGodotInputAction NodeKind = "godot_input_action"
 	KindGodotNodeGroup   NodeKind = "godot_node_group"
+
+	// A transport operation is one evidence-backed send or receive callsite.
+	// It is deliberately not a channel or peer node: equal channel values do
+	// not establish communication between two endpoints.
+	KindTransportOperation NodeKind = "transport_operation"
 )
 
 // nodeKinds is the closed node vocabulary, in declaration order. It backs
@@ -69,6 +74,7 @@ var nodeKinds = []NodeKind{
 	KindEvent, KindDocSection, KindExternal,
 	KindGodotScene, KindGodotResource, KindGodotSceneNode, KindGodotAutoload,
 	KindGodotInputAction, KindGodotNodeGroup,
+	KindTransportOperation,
 }
 
 // NodeKinds returns the node vocabulary. Callers must not mutate the result.
@@ -122,8 +128,14 @@ const (
 	// encodes and decodes connect application code to a language-neutral
 	// protocol declaration. Field-level protocol access continues to use the
 	// shared reads and writes relations, distinguished by edge properties.
-	EdgeEncodes   EdgeKind = "encodes"
-	EdgeDecodes   EdgeKind = "decodes"
+	EdgeEncodes EdgeKind = "encodes"
+	EdgeDecodes EdgeKind = "decodes"
+	// sends and receives connect application code to a stable transport
+	// operation callsite. carries connects that operation to a canonical
+	// protocol message only when payload provenance proves the relationship.
+	EdgeSends     EdgeKind = "sends"
+	EdgeReceives  EdgeKind = "receives"
+	EdgeCarries   EdgeKind = "carries"
 	EdgeHasField  EdgeKind = "has_field"
 	EdgeAssigns   EdgeKind = "assigns"
 	EdgeReturns   EdgeKind = "returns"
