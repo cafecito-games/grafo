@@ -1251,78 +1251,102 @@ func TestPackageSemanticLoaderExtractsENetTransportEvidence(t *testing.T) {
 go 1.26
 
 require (
-	github.com/codecat/go-enet v0.0.0
+	github.com/cafecito-games/goenet v0.0.0
 	google.golang.org/protobuf v0.0.0
 )
-replace github.com/codecat/go-enet => ./third_party/enet
+replace github.com/cafecito-games/goenet => ./third_party/goenet
 replace google.golang.org/protobuf => ./third_party/protobuf
 `)
-	writeFile(t, filepath.Join(root, "third_party", "enet", "go.mod"), "module github.com/codecat/go-enet\n\ngo 1.26\n")
-	writeFile(t, filepath.Join(root, "third_party", "enet", "enet.go"), `package enet
-type PacketFlags uint32
+	writeFile(t, filepath.Join(root, "third_party", "goenet", "go.mod"), "module github.com/cafecito-games/goenet\n\ngo 1.26\n")
+	writeFile(t, filepath.Join(root, "third_party", "goenet", "pkg", "goenet.go"), `package goenet
+type PacketFlag uint32
 const (
-	PacketFlagReliable PacketFlags = 1
-	PacketFlagUnsequenced PacketFlags = 2
+	PacketFlagReliable PacketFlag = 1
+	PacketFlagUnsequenced PacketFlag = 2
 )
-type Packet interface { GetData() []byte }
-type Event interface { GetPacket() Packet; GetChannelID() uint8 }
-type Peer interface {
-	SendBytes([]byte, uint8, PacketFlags) error
-	SendString(string, uint8, PacketFlags) error
-	SendPacket(Packet, uint8) error
+type Packet struct {
+	Data []byte
+	Flags PacketFlag
+}
+type Peer struct{}
+func (p *Peer) Send(channelID uint8, packet *Packet) error { return nil }
+type Host struct{}
+func (h *Host) Broadcast(channelID uint8, packet *Packet) error { return nil }
+type EventType uint8
+type Event struct {
+	Type EventType
+	Peer *Peer
+	ChannelID uint8
+	Data uint32
+	Packet *Packet
 }
 `)
 	content := []byte(`package app
 import (
-	enet "github.com/codecat/go-enet"
+	goenet "github.com/cafecito-games/goenet/pkg"
 	generated "example.com/app/gen"
 	wire "google.golang.org/protobuf/proto"
 )
 const gameplayChannel = 3
-func send(peer enet.Peer, payload []byte) { _ = peer.SendBytes(payload, gameplayChannel, enet.PacketFlagReliable) }
-func relay(peer enet.Peer, payload []byte) { send(peer, payload) }
-func conflicting(peer enet.Peer, left, right []byte) {
-	_ = peer.SendBytes(left, 1, enet.PacketFlagReliable)
-	_ = peer.SendBytes(right, 2, enet.PacketFlagUnsequenced)
+func send(peer *goenet.Peer, payload []byte) {
+	_ = peer.Send(gameplayChannel, &goenet.Packet{Data: payload, Flags: goenet.PacketFlagReliable})
 }
-func multiConflict(peer enet.Peer, left, right []byte, leftText, rightText string) {
-	_ = peer.SendBytes(left, 1, enet.PacketFlagReliable)
-	_ = peer.SendBytes(right, 2, enet.PacketFlagUnsequenced)
-	_ = peer.SendString(leftText, 3, enet.PacketFlagReliable)
-	_ = peer.SendString(rightText, 4, enet.PacketFlagUnsequenced)
+func relay(peer *goenet.Peer, payload []byte) { send(peer, payload) }
+func SendViaBoundPacket(peer *goenet.Peer, input *generated.Envelope) {
+	payload, _ := wire.Marshal(input)
+	packet := &goenet.Packet{Data: payload, Flags: goenet.PacketFlagReliable}
+	_ = peer.Send(gameplayChannel, packet)
 }
-func UseMultiConflict(peer enet.Peer, left, right []byte, leftText, rightText string) {
-	multiConflict(peer, left, right, leftText, rightText)
+func sendPacket(peer *goenet.Peer, packet *goenet.Packet) {
+	_ = peer.Send(gameplayChannel, packet)
 }
-func cycleA(peer enet.Peer, payload []byte) { cycleB(peer, payload) }
-func cycleB(peer enet.Peer, payload []byte) { cycleA(peer, payload) }
-func deep1(peer enet.Peer, payload []byte) { send(peer, payload) }
-func deep2(peer enet.Peer, payload []byte) { deep1(peer, payload) }
-func deep3(peer enet.Peer, payload []byte) { deep2(peer, payload) }
-func deep4(peer enet.Peer, payload []byte) { deep3(peer, payload) }
-func deep5(peer enet.Peer, payload []byte) { deep4(peer, payload) }
-func deep6(peer enet.Peer, payload []byte) { deep5(peer, payload) }
-func deep7(peer enet.Peer, payload []byte) { deep6(peer, payload) }
-func deep8(peer enet.Peer, payload []byte) { deep7(peer, payload) }
-func deep9(peer enet.Peer, payload []byte) { deep8(peer, payload) }
-func UseTransport(peer enet.Peer, event enet.Event, input *generated.Envelope, channel uint8, flags enet.PacketFlags, unknown []byte) {
+func SendViaPacketParameter(peer *goenet.Peer, input *generated.Envelope) {
+	payload, _ := wire.Marshal(input)
+	sendPacket(peer, &goenet.Packet{Data: payload, Flags: goenet.PacketFlagReliable})
+}
+func conflicting(peer *goenet.Peer, left, right []byte) {
+	_ = peer.Send(1, &goenet.Packet{Data: left, Flags: goenet.PacketFlagReliable})
+	_ = peer.Send(2, &goenet.Packet{Data: right, Flags: goenet.PacketFlagUnsequenced})
+}
+func multiConflict(peer *goenet.Peer, host *goenet.Host, left, right []byte) {
+	_ = peer.Send(1, &goenet.Packet{Data: left, Flags: goenet.PacketFlagReliable})
+	_ = peer.Send(2, &goenet.Packet{Data: right, Flags: goenet.PacketFlagUnsequenced})
+	_ = host.Broadcast(3, &goenet.Packet{Data: left, Flags: goenet.PacketFlagReliable})
+	_ = host.Broadcast(4, &goenet.Packet{Data: right, Flags: goenet.PacketFlagUnsequenced})
+}
+func UseMultiConflict(peer *goenet.Peer, host *goenet.Host, left, right []byte) {
+	multiConflict(peer, host, left, right)
+}
+func cycleA(peer *goenet.Peer, payload []byte) { cycleB(peer, payload) }
+func cycleB(peer *goenet.Peer, payload []byte) { cycleA(peer, payload) }
+func deep1(peer *goenet.Peer, payload []byte) { send(peer, payload) }
+func deep2(peer *goenet.Peer, payload []byte) { deep1(peer, payload) }
+func deep3(peer *goenet.Peer, payload []byte) { deep2(peer, payload) }
+func deep4(peer *goenet.Peer, payload []byte) { deep3(peer, payload) }
+func deep5(peer *goenet.Peer, payload []byte) { deep4(peer, payload) }
+func deep6(peer *goenet.Peer, payload []byte) { deep5(peer, payload) }
+func deep7(peer *goenet.Peer, payload []byte) { deep6(peer, payload) }
+func deep8(peer *goenet.Peer, payload []byte) { deep7(peer, payload) }
+func deep9(peer *goenet.Peer, payload []byte) { deep8(peer, payload) }
+func UseTransport(peer *goenet.Peer, event goenet.Event, input *generated.Envelope, channel uint8, dynamic *goenet.Packet, unknown []byte) {
 	payload, _ := wire.Marshal(input)
 	relay(peer, payload)
 	deep9(peer, payload)
 	conflicting(peer, payload, unknown)
-	_ = peer.SendBytes(unknown, channel, flags)
-	packet := event.GetPacket()
-	received := packet.GetData()
-	_ = event.GetChannelID()
+	_ = peer.Send(channel, dynamic)
+	received := event.Packet.Data
+	_ = event.ChannelID
 	_ = wire.Unmarshal(received, input)
 }
 type Lookalike struct{}
-func (Lookalike) SendBytes(payload []byte, channel uint8, flags enet.PacketFlags) error { return nil }
-func OrdinaryCall(value Lookalike, payload []byte) { _ = value.SendBytes(payload, 3, enet.PacketFlagReliable) }
-func UncertainTransport(peer enet.Peer, input *generated.Envelope, unknown []byte, condition bool) {
+func (Lookalike) Send(channelID uint8, packet *goenet.Packet) error { return nil }
+func OrdinaryCall(value Lookalike, payload []byte) {
+	_ = value.Send(3, &goenet.Packet{Data: payload, Flags: goenet.PacketFlagReliable})
+}
+func UncertainTransport(peer *goenet.Peer, input *generated.Envelope, unknown []byte, condition bool) {
 	payload, _ := wire.Marshal(input)
 	if condition { payload = unknown }
-	_ = peer.SendBytes(payload, 3, enet.PacketFlagReliable)
+	_ = peer.Send(3, &goenet.Packet{Data: payload, Flags: goenet.PacketFlagReliable})
 }
 `)
 	writeFile(t, filepath.Join(root, "transport.go"), string(content))
@@ -1334,18 +1358,35 @@ func UncertainTransport(peer enet.Peer, input *generated.Envelope, unknown []byt
 		t.Fatal(err)
 	}
 	useID := nodeIDByQualified(t, result.Nodes, "example.com/app.UseTransport")
-	send := assertTransportOperation(t, result, useID, graph.EdgeSends, "send", "github.com/codecat/go-enet.Peer.SendBytes")
+	send := assertTransportOperation(t, result, useID, graph.EdgeSends, "send", "github.com/cafecito-games/goenet/pkg.Peer.Send")
 	if send.Properties["channel"] != "3" || send.Properties["channel_status"] != "proven" ||
 		send.Properties["reliability"] != "reliable" || send.Properties["payload_status"] != "proven" ||
 		send.Properties["wrapper_depth"] != "2" {
 		t.Fatalf("wrapped send evidence = %#v", send.Properties)
 	}
 	assertTransportCarries(t, result.Facts, send.ID, "acme.v1.Envelope")
-	receive := assertTransportOperation(t, result, useID, graph.EdgeReceives, "receive", "github.com/codecat/go-enet.Packet.GetData")
+	receive := assertTransportOperation(t, result, useID, graph.EdgeReceives, "receive", "github.com/cafecito-games/goenet/pkg.Event.Packet.Data")
 	if receive.Properties["channel_status"] != "symbolic" || receive.Properties["payload_status"] != "proven" {
 		t.Fatalf("receive evidence = %#v", receive.Properties)
 	}
 	assertTransportCarries(t, result.Facts, receive.ID, "acme.v1.Envelope")
+
+	boundID := nodeIDByQualified(t, result.Nodes, "example.com/app.SendViaBoundPacket")
+	bound := assertTransportOperation(t, result, boundID, graph.EdgeSends, "send", "github.com/cafecito-games/goenet/pkg.Peer.Send")
+	if bound.Properties["channel"] != "3" || bound.Properties["channel_status"] != "proven" ||
+		bound.Properties["reliability"] != "reliable" || bound.Properties["payload_status"] != "proven" {
+		t.Fatalf("locally bound packet evidence = %#v", bound.Properties)
+	}
+	assertTransportCarries(t, result.Facts, bound.ID, "acme.v1.Envelope")
+
+	parameterID := nodeIDByQualified(t, result.Nodes, "example.com/app.SendViaPacketParameter")
+	viaParameter := assertTransportOperation(t, result, parameterID, graph.EdgeSends, "send", "github.com/cafecito-games/goenet/pkg.Peer.Send")
+	if viaParameter.Properties["channel"] != "3" || viaParameter.Properties["channel_status"] != "proven" ||
+		viaParameter.Properties["reliability"] != "reliable" || viaParameter.Properties["payload_status"] != "proven" ||
+		viaParameter.Properties["wrapper_depth"] != "1" {
+		t.Fatalf("packet parameter wrapper evidence = %#v", viaParameter.Properties)
+	}
+	assertTransportCarries(t, result.Facts, viaParameter.ID, "acme.v1.Envelope")
 
 	unknownOperation := false
 	for _, node := range result.Nodes {
@@ -1387,9 +1428,9 @@ func UncertainTransport(peer enet.Peer, input *generated.Envelope, unknown []byt
 		}
 	}
 	wantConflictDiagnostics := []string{
-		"conflicting ENet wrapper summaries for github.com/codecat/go-enet.Peer.SendBytes; transport evidence marked ambiguous",
-		"conflicting ENet wrapper summaries for github.com/codecat/go-enet.Peer.SendString; transport evidence marked ambiguous",
-		"conflicting ENet wrapper summaries for github.com/codecat/go-enet.Peer.SendBytes; transport evidence marked ambiguous",
+		"conflicting ENet wrapper summaries for github.com/cafecito-games/goenet/pkg.Host.Broadcast; transport evidence marked ambiguous",
+		"conflicting ENet wrapper summaries for github.com/cafecito-games/goenet/pkg.Peer.Send; transport evidence marked ambiguous",
+		"conflicting ENet wrapper summaries for github.com/cafecito-games/goenet/pkg.Peer.Send; transport evidence marked ambiguous",
 	}
 	if !reflect.DeepEqual(conflictDiagnostics, wantConflictDiagnostics) {
 		t.Fatalf("multi-API conflict diagnostics = %#v, want %#v", conflictDiagnostics, wantConflictDiagnostics)

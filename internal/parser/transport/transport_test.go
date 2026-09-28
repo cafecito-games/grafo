@@ -27,8 +27,9 @@ func TestEmitDeclaresStableOperationAndCanonicalPayload(t *testing.T) {
 	b := parserapi.NewBuilder(input, "go")
 	loc := graph.Location{Path: input.Path, Line: 12, Column: 3, EndLine: 12}
 	operationID := transport.Emit(b, "function", transport.Operation{
-		Spec: transport.Spec{Protocol: "enet", API: "github.com/codecat/go-enet.Peer.SendBytes",
-			Direction: transport.Send, ChannelPosition: 1, PayloadPosition: 0, ReliabilityPosition: 2},
+		Spec: transport.Spec{Protocol: "enet", API: "github.com/cafecito-games/goenet/pkg.Peer.Send",
+			Direction: transport.Send, ChannelPosition: 0, PayloadPosition: 1, ReliabilityPosition: 1,
+			PayloadField: "Data", ReliabilityField: "Flags"},
 		Channel: "3", ChannelStatus: "proven", Reliability: "reliable",
 		PayloadStatus: "proven", Proof: "go/types", WrapperDepth: 1, Location: loc,
 		MessageID: "message-id", Message: "acme.v1.Envelope", Binding: "example.com/gen.Envelope",
@@ -48,8 +49,15 @@ func TestEmitDeclaresStableOperationAndCanonicalPayload(t *testing.T) {
 		operation.Properties["wrapper_depth"] != "1" {
 		t.Fatalf("operation evidence = %#v", operation)
 	}
+	if operation.Properties["payload_field"] != "Data" || operation.Properties["reliability_field"] != "Flags" {
+		t.Fatalf("struct field evidence = %#v", operation.Properties)
+	}
+	if _, ok := operation.Properties["channel_field"]; ok {
+		t.Fatalf("positional channel declared a field path: %#v", operation.Properties)
+	}
 	assertFact(t, result.Facts, "function", graph.EdgeSends, operationID)
 	assertFact(t, result.Facts, operationID, graph.EdgeCarries, "message-id")
+	assertFactProperty(t, result.Facts, operationID, graph.EdgeCarries, "payload_field", "Data")
 
 	b2 := parserapi.NewBuilder(input, "go")
 	unknownID := transport.Emit(b2, "function", transport.Operation{
@@ -74,4 +82,17 @@ func assertFact(t *testing.T, facts []graph.Fact, from string, kind graph.EdgeKi
 		}
 	}
 	t.Fatalf("missing %s fact from %q to %q: %#v", kind, from, targetID, facts)
+}
+
+func assertFactProperty(t *testing.T, facts []graph.Fact, fromID string, kind graph.EdgeKind, key, want string) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.FromID == fromID && fact.Kind == kind {
+			if fact.Properties[key] != want {
+				t.Fatalf("fact %s property %q = %q, want %q", kind, key, fact.Properties[key], want)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing %s fact from %q: %#v", kind, fromID, facts)
 }
