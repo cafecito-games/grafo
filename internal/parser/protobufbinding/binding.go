@@ -25,7 +25,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const adapterVersion = "1"
+const adapterVersion = "2"
 
 type Projection struct {
 	Node          graph.Node
@@ -643,11 +643,7 @@ func goProjection(input parserapi.Input, d declaration, pkg, generator, version,
 }
 
 func gdscriptProjection(input parserapi.Input, d declaration, declarations []declaration, generator, version, configPath string) ([]Projection, string) {
-	path := schemaTypePath(d)
-	className := gdCamel(d.pkg) + gdCamel(strings.TrimSuffix(filepath.Base(d.file), filepath.Ext(d.file)))
-	for _, part := range path {
-		className += gdCamel(part)
-	}
+	className := gdscriptClassName(d)
 	if d.kind == graph.KindType {
 		if d.form == "enum" {
 			return []Projection{
@@ -657,19 +653,22 @@ func gdscriptProjection(input parserapi.Input, d declaration, declarations []dec
 		}
 		return []Projection{
 			projection(input, graph.KindClass, className, d.id, d.canonical, graph.KindType, "gdscript", generator, version, configPath, map[string]string{"projection": d.form}),
-			projection(input, graph.KindMethod, className+".new", d.id, d.canonical, graph.KindType, "gdscript", generator, version, configPath, map[string]string{"projection": "constructor"}),
+			projection(input, graph.KindMethod, className+".new", d.id, d.canonical, graph.KindType, "gdscript", generator, version, configPath, map[string]string{"projection": "constructor", "returns": className}),
+			projection(input, graph.KindMethod, className+".to_bytes", d.id, d.canonical, graph.KindType, "gdscript", generator, version, configPath, map[string]string{"projection": "codec", "codec": "to_bytes"}),
+			projection(input, graph.KindMethod, className+".from_bytes", d.id, d.canonical, graph.KindType, "gdscript", generator, version, configPath, map[string]string{"projection": "codec", "codec": "from_bytes", "returns": className}),
 		}, className
 	}
 	ownerCanonical := strings.TrimSuffix(d.canonical, "."+d.name)
-	ownerPath := schemaTypePath(declaration{canonical: ownerCanonical, pkg: d.pkg})
-	ownerClass := gdCamel(d.pkg) + gdCamel(strings.TrimSuffix(filepath.Base(d.file), filepath.Ext(d.file)))
-	for _, part := range ownerPath {
-		ownerClass += gdCamel(part)
-	}
+	ownerClass := gdscriptClassName(declaration{canonical: ownerCanonical, pkg: d.pkg, file: d.file})
 	if d.form == "enum_value" {
 		return []Projection{projection(input, graph.KindField, ownerClass+"."+graph.SimpleName(ownerCanonical)+"."+d.name, d.id, d.canonical, graph.KindField, "gdscript", generator, version, configPath, map[string]string{"projection": "enum_value"})}, ownerClass
 	}
-	get := projection(input, graph.KindMethod, ownerClass+".get_"+d.name, d.id, d.canonical, graph.KindField, "gdscript", generator, version, configPath, map[string]string{"projection": "accessor", "accessor": "get"})
+	accessorProperties := map[string]string{"projection": "accessor", "accessor": "get"}
+	if returned, ok := declarationForType(declarations, d.pkg, d.properties["type"]); ok && returned.form == "message" &&
+		d.properties["cardinality"] != "repeated" && d.properties["cardinality"] != "map" {
+		accessorProperties["returns"] = gdscriptClassName(returned)
+	}
+	get := projection(input, graph.KindMethod, ownerClass+".get_"+d.name, d.id, d.canonical, graph.KindField, "gdscript", generator, version, configPath, accessorProperties)
 	result := []Projection{get}
 	switch {
 	case d.properties["cardinality"] == "repeated" || d.properties["cardinality"] == "map":
@@ -680,11 +679,40 @@ func gdscriptProjection(input parserapi.Input, d declaration, declarations []dec
 			projection(input, graph.KindMethod, ownerClass+".has_"+d.name, d.id, d.canonical, graph.KindField, "gdscript", generator, version, configPath, map[string]string{"projection": "accessor", "accessor": "has"}),
 		)
 	case declarationForm(declarations, d.pkg, d.properties["type"]) == "message":
-		result = append(result, projection(input, graph.KindMethod, ownerClass+".new_"+d.name, d.id, d.canonical, graph.KindField, "gdscript", generator, version, configPath, map[string]string{"projection": "accessor", "accessor": "new"}))
+		properties := map[string]string{"projection": "accessor", "accessor": "new"}
+		if returned, ok := declarationForType(declarations, d.pkg, d.properties["type"]); ok {
+			properties["returns"] = gdscriptClassName(returned)
+		}
+		result = append(result, projection(input, graph.KindMethod, ownerClass+".new_"+d.name, d.id, d.canonical, graph.KindField, "gdscript", generator, version, configPath, properties))
 	default:
 		result = append(result, projection(input, graph.KindMethod, ownerClass+".set_"+d.name, d.id, d.canonical, graph.KindField, "gdscript", generator, version, configPath, map[string]string{"projection": "accessor", "accessor": "set"}))
 	}
 	return result, ownerClass
+}
+
+func gdscriptClassName(d declaration) string {
+	className := gdCamel(d.pkg) + gdCamel(strings.TrimSuffix(filepath.Base(d.file), filepath.Ext(d.file)))
+	for _, part := range schemaTypePath(d) {
+		className += gdCamel(part)
+	}
+	return className
+}
+
+func declarationForType(declarations []declaration, pkg, typeName string) (declaration, bool) {
+	typeName = strings.TrimPrefix(strings.TrimSpace(typeName), ".")
+	candidates := map[string]bool{typeName: true}
+	if pkg != "" && !strings.HasPrefix(typeName, pkg+".") {
+		candidates[pkg+"."+typeName] = true
+	}
+	var found declaration
+	count := 0
+	for _, candidate := range declarations {
+		if candidates[candidate.canonical] && candidate.kind == graph.KindType {
+			found = candidate
+			count++
+		}
+	}
+	return found, count == 1
 }
 
 func declarationForm(declarations []declaration, pkg, canonical string) string {
