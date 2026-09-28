@@ -109,6 +109,9 @@ type scope struct {
 	classBody bool
 	symbols   map[string]string
 	types     map[string]string
+	// fields retains class-member types separately from shadowable locals and
+	// parameters so self.<field> always resolves the field declaration.
+	fields map[string]string
 	// locked marks declarations whose explicit annotation controls their type.
 	// In particular, a Variant must not become a generated message merely
 	// because its initializer happens to be one.
@@ -285,7 +288,7 @@ func (e *extractor) extract(file *gdast.File) {
 	classID := e.b.Declare(moduleID, graph.Node{Kind: graph.KindClass, Name: className,
 		QualifiedName: qualified, Location: loc, Properties: properties})
 	root := scope{currentID: classID, parentID: classID, container: qualified, receiver: qualified,
-		classID: classID, classBody: true, symbols: map[string]string{}, types: map[string]string{}, locked: map[string]bool{}, signals: map[string]signalRef{}}
+		classID: classID, classBody: true, symbols: map[string]string{}, types: map[string]string{}, fields: map[string]string{}, locked: map[string]bool{}, signals: map[string]signalRef{}}
 	root.types[className] = qualified
 	// The base class is recorded before anything is walked, because a method body
 	// earlier in the file may already call through a receiver typed by it.
@@ -317,6 +320,7 @@ func (e *extractor) prepareClass(statements []gdast.Statement, current scope) {
 			current.symbols[node.Name] = graph.NodeID(graph.KindField, qualified, e.input.RepoID, e.input.Path)
 			if resolved := e.resolveType(node.Type, current); resolved != "" {
 				current.types[node.Name] = resolved
+				current.fields[node.Name] = resolved
 			}
 			current.locked[node.Name] = node.Type != ""
 		case *gdast.SignalDeclaration:
@@ -343,6 +347,7 @@ func (e *extractor) prepareClass(statements []gdast.Statement, current scope) {
 		if node, ok := statement.(*gdast.VariableDeclaration); ok && node.Type == "" && current.types[node.Name] == "" {
 			if inferred := e.inferExpressionType(node.Value, current); inferred != "" {
 				current.types[node.Name] = inferred
+				current.fields[node.Name] = inferred
 			}
 		}
 	}
@@ -469,7 +474,7 @@ func (e *extractor) parseFunction(node *gdast.FunctionDeclaration, current scope
 	id := e.b.Declare(current.parentID, graph.Node{Kind: graph.KindMethod, Name: node.Name,
 		QualifiedName: qualified, Location: e.location(node), Properties: properties})
 	functionScope := scope{currentID: id, parentID: id, container: qualified, receiver: current.receiver,
-		classID: current.classID, symbols: cloneMap(current.symbols), types: cloneMap(current.types), locked: cloneBoolMap(current.locked), signals: cloneSignals(current.signals)}
+		classID: current.classID, symbols: cloneMap(current.symbols), types: cloneMap(current.types), fields: cloneMap(current.fields), locked: cloneBoolMap(current.locked), signals: cloneSignals(current.signals)}
 	for _, parameter := range node.Parameters {
 		parameterProperties := map[string]string{}
 		if parameter.Type != "" {
@@ -495,7 +500,7 @@ func (e *extractor) parseClass(node *gdast.ClassDeclaration, current scope) {
 		e.b.AddFact(id, graph.EdgeExtends, "", e.resolveType(node.Extends, current), graph.KindClass, e.location(node), nil)
 	}
 	inner := scope{currentID: id, parentID: id, container: qualified, receiver: qualified, classID: id,
-		classBody: true, symbols: map[string]string{}, types: cloneMap(current.types), locked: cloneBoolMap(current.locked), signals: map[string]signalRef{}}
+		classBody: true, symbols: map[string]string{}, types: cloneMap(current.types), fields: map[string]string{}, locked: cloneBoolMap(current.locked), signals: map[string]signalRef{}}
 	inner.types[node.Name] = qualified
 	e.prepareClass(node.Body, inner)
 	e.walkStatements(node.Body, inner)
@@ -537,9 +542,15 @@ func (e *extractor) parseVariable(node *gdast.VariableDeclaration, current scope
 	current.locked[node.Name] = node.Type != ""
 	if resolved := e.resolveType(node.Type, current); resolved != "" {
 		current.types[node.Name] = resolved
+		if current.classBody {
+			current.fields[node.Name] = resolved
+		}
 	} else if node.Type == "" {
 		if inferred := e.inferExpressionType(node.Value, current); inferred != "" {
 			current.types[node.Name] = inferred
+			if current.classBody {
+				current.fields[node.Name] = inferred
+			}
 		}
 	}
 	for _, sourceID := range e.referencedVariables(node.Value, current) {
@@ -758,6 +769,11 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 
 func (e *extractor) addProtobufUse(node *gdast.CallExpression, callee, fromID string, current scope, loc graph.Location) {
 	if !e.protobufEnabled || callee == "" {
+		return
+	}
+	// A locally declared override is application behavior even when its class
+	// extends a generated message. Only inherited generated APIs canonicalize.
+	if e.localCall(node.Callee, current) {
 		return
 	}
 	apiCallee := e.protobufCallee(callee, current)
@@ -1205,7 +1221,7 @@ func (e *extractor) inferExpressionType(expression gdast.Expression, current sco
 	}
 	callee := e.resolveCallee(call.Callee, current)
 	apiCallee := e.protobufCallee(callee, current)
-	if !e.untypedLocalReceiver(call.Callee, current) && !e.protobufAmbiguous[apiCallee] {
+	if !e.localCall(call.Callee, current) && !e.untypedLocalReceiver(call.Callee, current) && !e.protobufAmbiguous[apiCallee] {
 		if api, exists := e.protobufAPIs[apiCallee]; exists && api.returns != "" {
 			return api.returns
 		}
@@ -1280,7 +1296,7 @@ func (e *extractor) resolveExpression(expression gdast.Expression, current scope
 		return e.resolveType(node.Name, current)
 	case *gdast.MemberExpression:
 		if object, ok := node.Object.(*gdast.Identifier); ok && object.Name == "self" {
-			if resolved := current.types[node.Property]; resolved != "" {
+			if resolved := current.fields[node.Property]; resolved != "" {
 				return resolved
 			}
 		}
@@ -1399,6 +1415,7 @@ func cloneBoolMap(source map[string]bool) map[string]bool {
 func cloneFlowScope(current scope) scope {
 	current.symbols = cloneMap(current.symbols)
 	current.types = cloneMap(current.types)
+	current.fields = cloneMap(current.fields)
 	current.locked = cloneBoolMap(current.locked)
 	return current
 }
