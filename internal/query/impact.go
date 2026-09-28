@@ -49,6 +49,7 @@ const federatedProperty = "federated"
 var impactRelations = []graph.EdgeKind{
 	graph.EdgeCalls,
 	graph.EdgeHandledBy,
+	graph.EdgeUsesMiddleware,
 	graph.EdgeImports,
 	graph.EdgeExtends,
 	graph.EdgeImplements,

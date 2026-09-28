@@ -21,6 +21,13 @@ func TestTopologyCommandsExposeEndpointsRequestsHandlersAndServices(t *testing.T
 	if endpoints.Endpoints[0].Location.Path != "server.go" {
 		t.Fatalf("endpoint command lost source evidence: %#v", endpoints.Endpoints[0])
 	}
+	if len(endpoints.Endpoints[0].Middleware) != 1 ||
+		endpoints.Endpoints[0].Middleware[0].Node.QualifiedName != "example.com/topology.Authenticate" {
+		t.Fatalf("endpoint command lost middleware evidence: %#v", endpoints.Endpoints[0])
+	}
+	if output := run(t, "endpoints", "--repo", root, "--method", "GET", "--route", "/orders"); !strings.Contains(output, "middleware") || !strings.Contains(output, "example.com/topology.Authenticate") {
+		t.Fatalf("human endpoint output lost middleware evidence: %s", output)
+	}
 
 	var requests query.OutboundRequestList
 	runJSON(t, &requests, "outbound-requests", "--repo", root, "--method", "GET", "--json")
@@ -111,16 +118,51 @@ func TestTopologyRefusesAMixedFreshnessFederation(t *testing.T) {
 func topologyFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/topology\n\ngo 1.26\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(`module example.com/topology
+
+go 1.26
+
+require github.com/go-chi/chi/v5 v5.0.0
+
+replace github.com/go-chi/chi/v5 => ./third_party/chi
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "third_party", "chi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "third_party", "chi", "go.mod"),
+		[]byte("module github.com/go-chi/chi/v5\n\ngo 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "third_party", "chi", "chi.go"), []byte(`package chi
+import "net/http"
+type Router interface {
+	http.Handler
+	Use(...func(http.Handler) http.Handler)
+	Get(string, http.HandlerFunc)
+}
+type Mux struct{}
+func NewRouter() *Mux { return &Mux{} }
+func (*Mux) ServeHTTP(http.ResponseWriter, *http.Request) {}
+func (*Mux) Use(...func(http.Handler) http.Handler) {}
+func (*Mux) Get(string, http.HandlerFunc) {}
+`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	source := `package topology
 
-import "net/http"
+import (
+	"net/http"
+	"github.com/go-chi/chi/v5"
+)
 
-func Handler() {}
+func Authenticate(next http.Handler) http.Handler { return next }
+func Handler(http.ResponseWriter, *http.Request) {}
 
 func Routes() {
+	router := chi.NewRouter()
+	router.Use(Authenticate)
 	router.Get("/orders", Handler)
 }
 

@@ -51,11 +51,16 @@ var guidanceRegistry = []clientGuidance{
 		}},
 		claudeHooks{},
 	}},
-	// Codex reads global instructions from ~/.codex/AGENTS.md.
+	// Codex discovers personal skills from ~/.agents/skills. Keep the retired
+	// ~/.codex/AGENTS.md artifact as a best-effort cleanup step so upgrades remove
+	// the managed block written by guidance format 2 without following symlinks.
 	{client: "codex", artifacts: []guidanceArtifact{
-		instructionBlock{resolve: func(reader Reader) (string, error) {
-			return homePath(reader, ".codex", "AGENTS.md")
+		skillFile{resolve: func(reader Reader) (string, error) {
+			return homePath(reader, ".agents", "skills", agentguide.Name, "SKILL.md")
 		}},
+		retiredInstructionBlock{instructionBlock{resolve: func(reader Reader) (string, error) {
+			return homePath(reader, ".codex", "AGENTS.md")
+		}}},
 	}},
 	// Gemini CLI reads its global context file from ~/.gemini/GEMINI.md.
 	{client: "gemini", artifacts: []guidanceArtifact{
@@ -428,7 +433,11 @@ func (b instructionBlock) planUninstall(reader Reader, display, path string, own
 		return plan{}, fmt.Errorf("%s instructions %s: %w", display, path, err)
 	}
 	if change == agentguide.Unchanged {
-		return plan{change: changeUnchanged, detail: "grafo guidance block is not installed"}, nil
+		return plan{
+			change:      changeUnchanged,
+			detail:      "grafo guidance block is not installed",
+			dropReceipt: own.provesPath(path),
+		}, nil
 	}
 	// The file is deleted only when Grafo's own receipt claims it and nothing but
 	// the managed block remained; otherwise the emptied file is left in place.
@@ -441,6 +450,42 @@ func (b instructionBlock) planUninstall(reader Reader, display, path string, own
 		write:       &fileWrite{path: path, data: []byte(remaining), perm: state.perm},
 		dropReceipt: true,
 	}, nil
+}
+
+// retiredInstructionBlock removes the Codex managed block used before Codex
+// documented personal skills. Cleanup is deliberately best-effort: an unsafe or
+// malformed legacy target must not prevent the new isolated skill from being
+// installed, and it is never followed when the leaf is a symlink.
+type retiredInstructionBlock struct{ instructionBlock }
+
+func (retiredInstructionBlock) kind() string { return KindInstructions }
+
+func (retiredInstructionBlock) optIn() bool { return false }
+
+func (b retiredInstructionBlock) path(reader Reader) (string, error) {
+	return b.instructionBlock.path(reader)
+}
+
+func (b retiredInstructionBlock) planInstall(reader Reader, display, path, _ string, own ownership) (plan, error) {
+	return b.planCleanup(reader, display, path, own)
+}
+
+func (b retiredInstructionBlock) planUninstall(reader Reader, display, path string, own ownership) (plan, error) {
+	return b.planCleanup(reader, display, path, own)
+}
+
+func (b retiredInstructionBlock) planCleanup(reader Reader, display, path string, own ownership) (plan, error) {
+	cleanup, err := b.instructionBlock.planUninstall(reader, display, path, own)
+	if err != nil {
+		return plan{
+			change: changeSkipped,
+			detail: "left the retired Codex guidance target unchanged: " + err.Error(),
+		}, nil
+	}
+	if cleanup.change == changeRemoved {
+		cleanup.detail = "removed the retired Codex guidance block; guidance now uses a personal skill"
+	}
+	return cleanup, nil
 }
 
 // ---------------------------------------------------------------------------

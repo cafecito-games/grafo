@@ -110,11 +110,15 @@ const (
 	EdgeDefines     EdgeKind = "defines"
 	EdgeExposes     EdgeKind = "exposes"
 	EdgeHandledBy   EdgeKind = "handled_by"
-	EdgePublishes   EdgeKind = "publishes"
-	EdgeSubscribes  EdgeKind = "subscribes"
-	EdgeReferences  EdgeKind = "references"
-	EdgeReads       EdgeKind = "reads"
-	EdgeWrites      EdgeKind = "writes"
+	// uses_middleware connects an endpoint to one callable in its effective
+	// outer-to-inner middleware chain. Order and framework form are edge
+	// evidence, keeping the relation language-neutral.
+	EdgeUsesMiddleware EdgeKind = "uses_middleware"
+	EdgePublishes      EdgeKind = "publishes"
+	EdgeSubscribes     EdgeKind = "subscribes"
+	EdgeReferences     EdgeKind = "references"
+	EdgeReads          EdgeKind = "reads"
+	EdgeWrites         EdgeKind = "writes"
 	// encodes and decodes connect application code to a language-neutral
 	// protocol declaration. Field-level protocol access continues to use the
 	// shared reads and writes relations, distinguished by edge properties.

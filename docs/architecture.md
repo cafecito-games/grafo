@@ -369,8 +369,10 @@ Agent guidance is a second artifact kind on the same seam. `internal/agentguide`
 owns one embedded playbook, one format version, and the exact begin/end markers
 that make an installed copy provably Grafo-owned; it renders either an isolated
 skill file or a delimited managed block and never touches bytes outside its
-markers. `internal/agentinstall` declares, per client, which documented
-user-scoped surfaces exist, refuses targets that are symlinks, non-regular,
+markers. Claude Code and Codex receive isolated personal skills; Codex upgrades
+also remove the retired managed block from `~/.codex/AGENTS.md` when that direct
+target is safe to mutate. `internal/agentinstall` declares, per client, which
+documented user-scoped surfaces exist, refuses targets that are symlinks, non-regular,
 world-writable, or outside the user configuration roots, and treats a conflicting
 or unowned file as a reported conflict rather than something to repair. Advisory
 hooks are opt-in, capability-gated to a client whose hook API is documented, and
@@ -536,6 +538,15 @@ service identity. Asynchronous links pair publisher and subscriber
 evidence for the same event without persisting a derived relationship.
 Federation retains its edge marker, and cross-repository evidence also marks
 template-compatible HTTP links as federated.
+
+Go/Chi composition is resolved once in the compact package semantic view using
+go/types API identity. The analyzer expands package-local router helpers and
+constructors with a bounded recursion guard, applies `Use`, `With`, `Group`,
+`Route`, and `Mount` scope rules, and emits only the final mounted endpoint at
+the leaf registration location. Dynamic prefixes and ambiguous or cyclic
+helpers remain diagnosed boundaries rather than root-relative guesses.
+Persisted `uses_middleware` edges are the sole query authority for the ordered
+effective middleware chain; topology queries do not reconstruct router syntax.
 
 ## Persistence
 

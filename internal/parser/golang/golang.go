@@ -206,6 +206,7 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 			}
 		}
 	}
+	emitChiEndpoints(b, semantic)
 	if haveBindingRegistry {
 		emitProtocolUses(b, semantic, bindingRegistry)
 	}
@@ -652,6 +653,7 @@ func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input,
 		return
 	}
 	loc := location(input.Path, fset, call.Pos(), call.End())
+	callOffset := fset.Position(call.Lparen).Offset
 	if callee == "os.Getenv" || callee == "os.LookupEnv" {
 		if key, ok := stringArgument(call.Args, 0); ok {
 			b.AddFact(fromID, graph.EdgeReadsConfig, "", key, graph.KindConfigKey, loc, nil)
@@ -675,7 +677,10 @@ func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input,
 			return
 		}
 	}
-	if isHTTPMethod(method) && len(call.Args) > 1 {
+	if semantic.ChiEndpointCalls[callOffset] {
+		return
+	}
+	if isHTTPMethod(method) && len(call.Args) > 1 && !semantic.NonChiHTTPCalls[callOffset] {
 		if route, ok := stringArgument(call.Args, 0); ok {
 			if strings.HasPrefix(route, "/") {
 				endpointID := addEndpoint(b, loc, strings.ToUpper(method), route)
@@ -700,6 +705,36 @@ func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input,
 		properties = map[string]string{"resolution": "go/types"}
 	}
 	b.AddFact(fromID, graph.EdgeCalls, "", callee, "", loc, properties)
+}
+
+func emitChiEndpoints(b *parserapi.Builder, semantic SemanticView) {
+	for _, endpoint := range semantic.ChiEndpoints {
+		endpointID := addEndpoint(b, endpoint.Location, endpoint.Method, endpoint.Route)
+		properties := map[string]string{"resolution": "go/types", "evidence": "go/types", "framework": "chi"}
+		if endpoint.Conditional {
+			properties["conditional"] = "true"
+		}
+		exposerID := graph.NodeID(endpoint.FunctionKind, endpoint.Function, b.Input.RepoID, b.Input.Path)
+		b.AddFact(exposerID, graph.EdgeExposes, endpointID, "", "", endpoint.Location, cloneStringMap(properties))
+		handlerProperties := cloneStringMap(properties)
+		if endpoint.Unresolved {
+			handlerProperties["unresolved"] = "true"
+		}
+		b.AddFact(endpointID, graph.EdgeHandledBy, "", endpoint.Handler, endpoint.HandlerKind,
+			endpoint.Location, handlerProperties)
+		for order, middleware := range endpoint.Middleware {
+			middlewareProperties := cloneStringMap(properties)
+			middlewareProperties["form"] = middleware.Form
+			middlewareProperties["order"] = strconv.Itoa(order)
+			middlewareProperties["call_site"] = fmt.Sprintf("%s:%d:%d", middleware.Location.Path,
+				middleware.Location.Line, middleware.Location.Column)
+			if middleware.Unresolved {
+				middlewareProperties["unresolved"] = "true"
+			}
+			b.AddFact(endpointID, graph.EdgeUsesMiddleware, "", middleware.Target, middleware.TargetKind,
+				middleware.Location, middlewareProperties)
+		}
+	}
 }
 
 func resolvedGoCallee(call *goast.CallExpr, fset *token.FileSet, pkg string, imports map[string]string, semantic SemanticView, receiverVariable, receiverQualified string, types map[string]string) (string, bool, bool) {

@@ -627,7 +627,7 @@ func matchingExternalNodes(ctx context.Context, repository graph.Repository, tar
 func candidateAllowed(relation graph.EdgeKind, node graph.Node) bool {
 	kind := node.Kind
 	switch relation {
-	case graph.EdgeCalls, graph.EdgePasses, graph.EdgeHandledBy:
+	case graph.EdgeCalls, graph.EdgePasses, graph.EdgeHandledBy, graph.EdgeUsesMiddleware:
 		return kind == graph.KindFunction || kind == graph.KindMethod
 	case graph.EdgeRequests:
 		return kind == graph.KindEndpoint
