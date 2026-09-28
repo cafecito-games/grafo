@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/federation"
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
+	branchindexes "github.com/cafecito-games/grafo/internal/indexes"
 	"github.com/cafecito-games/grafo/internal/mcpserver"
 	parserdefaults "github.com/cafecito-games/grafo/internal/parser/defaults"
 	"github.com/cafecito-games/grafo/internal/query"
@@ -97,6 +99,8 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		runErr = a.guidance(ctx, parsed)
 	case "index":
 		runErr = a.index(ctx, parsed)
+	case "indexes":
+		runErr = a.indexes(ctx, parsed)
 	case "watch":
 		runErr = a.watch(ctx, parsed)
 	case "service":
@@ -394,6 +398,131 @@ func (a *App) index(ctx context.Context, args parsedArguments) error {
 		return err
 	}
 	return a.printIndexReport(report, args.flags["json"])
+}
+
+func (a *App) indexes(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) == 0 {
+		return fmt.Errorf("usage: grafo indexes list|prune [path]")
+	}
+	subcommand := args.positionals[0]
+	root, err := optionalPath(args.positionals[1:])
+	if err != nil {
+		return fmt.Errorf("usage: grafo indexes %s [path]: %w", subcommand, err)
+	}
+	switch subcommand {
+	case "list":
+		if err := rejectUnsupportedIndexOptions(args, map[string]bool{"json": true}, nil); err != nil {
+			return err
+		}
+		inventory, err := branchindexes.List(ctx, root)
+		if err != nil {
+			return err
+		}
+		return a.printIndexInventory(inventory, args.flags["json"])
+	case "prune":
+		if err := rejectUnsupportedIndexOptions(args,
+			map[string]bool{"json": true, "dry-run": true, "yes": true},
+			map[string]bool{"older-than": true, "keep": true}); err != nil {
+			return err
+		}
+		policy, err := indexPrunePolicy(args)
+		if err != nil {
+			return err
+		}
+		report, pruneErr := branchindexes.Prune(ctx, root, policy)
+		if err := a.printIndexPruneReport(report, args.flags["json"]); err != nil {
+			return err
+		}
+		return pruneErr
+	default:
+		return fmt.Errorf("usage: grafo indexes list|prune [path]")
+	}
+}
+
+func indexPrunePolicy(args parsedArguments) (branchindexes.Policy, error) {
+	policy := branchindexes.Policy{DryRun: args.flags["dry-run"], Confirm: args.flags["yes"]}
+	if raw, present := args.values["older-than"]; present {
+		value, err := time.ParseDuration(raw)
+		if err != nil {
+			return policy, fmt.Errorf("--older-than must be a duration such as 720h")
+		}
+		if value < 0 {
+			return policy, fmt.Errorf("--older-than must not be negative")
+		}
+		policy.OlderThan = &value
+	}
+	if raw, present := args.values["keep"]; present {
+		value, err := strconv.Atoi(raw)
+		if err != nil {
+			return policy, fmt.Errorf("--keep must be a non-negative integer")
+		}
+		if value < 0 {
+			return policy, fmt.Errorf("--keep must not be negative")
+		}
+		policy.Keep = &value
+	}
+	if policy.OlderThan == nil && policy.Keep == nil {
+		return policy, fmt.Errorf("at least one of --older-than or --keep is required")
+	}
+	if !policy.DryRun && !policy.Confirm {
+		return policy, fmt.Errorf("pruning requires --yes (or use --dry-run)")
+	}
+	return policy, nil
+}
+
+func rejectUnsupportedIndexOptions(args parsedArguments, allowedFlags, allowedValues map[string]bool) error {
+	var unsupported []string
+	for name, enabled := range args.flags {
+		if enabled && !allowedFlags[name] {
+			unsupported = append(unsupported, "--"+name)
+		}
+	}
+	for name := range args.values {
+		if !allowedValues[name] {
+			unsupported = append(unsupported, "--"+name)
+		}
+	}
+	if len(unsupported) == 0 {
+		return nil
+	}
+	sort.Strings(unsupported)
+	return fmt.Errorf("%s is not supported by grafo indexes %s", strings.Join(unsupported, ", "), args.positionals[0])
+}
+
+func (a *App) printIndexInventory(inventory branchindexes.Inventory, asJSON bool) error {
+	if asJSON {
+		return writeJSON(a.stdout, inventory)
+	}
+	a.println("CURRENT\tBRANCH\tCOMMIT\tINDEXED_AT\tREPOSITORY_ID\tROOT\tCOMPATIBILITY\tDATABASE\tWAL\tSHM\tTOTAL\tFILENAME\tPATH")
+	for _, candidate := range inventory.Indexes {
+		current := ""
+		if candidate.Current {
+			current = "*"
+		}
+		a.printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%s\t%s\n",
+			current, candidate.Branch, candidate.Commit, candidate.IndexedAt,
+			candidate.RepositoryID, candidate.Root, candidate.Compatibility,
+			candidate.Sizes.Database, candidate.Sizes.WAL, candidate.Sizes.SHM, candidate.Sizes.Total,
+			candidate.Filename, candidate.Path)
+		if candidate.Diagnostic != "" {
+			a.printf("  diagnostic: %s\n", candidate.Diagnostic)
+		}
+	}
+	a.printf("totals database=%d wal=%d shm=%d total=%d\n",
+		inventory.Totals.Database, inventory.Totals.WAL, inventory.Totals.SHM, inventory.Totals.Total)
+	return nil
+}
+
+func (a *App) printIndexPruneReport(report branchindexes.PruneReport, asJSON bool) error {
+	if asJSON {
+		return writeJSON(a.stdout, report)
+	}
+	for _, result := range report.Results {
+		a.printf("%s\t%s\t%s\t%s\n", result.Status, result.Index.Branch, result.Index.Filename, result.Reason)
+	}
+	a.printf("reclaimed database=%d wal=%d shm=%d total=%d\n",
+		report.Reclaimed.Database, report.Reclaimed.WAL, report.Reclaimed.SHM, report.Reclaimed.Total)
+	return nil
 }
 
 func (a *App) watch(ctx context.Context, args parsedArguments) error {
@@ -2347,7 +2476,7 @@ var valueOptions = map[string]bool{
 	"kind": true, "name": true, "state-dir": true, "lines": true, "concurrency": true,
 	"filter": true, "method": true, "route": true, "event": true, "component": true,
 	"package": true, "message": true, "oneof": true, "status": true,
-	"progress": true, "older-than": true, "max-bytes": true,
+	"progress": true, "older-than": true, "max-bytes": true, "keep": true,
 }
 
 // pathPrefixCommands is the adapter boundary for the one globally parsed
@@ -2494,6 +2623,8 @@ Usage:
   grafo uninstall [client...] [--client a,b] [--all] [--dry-run] [--json]
   grafo guidance [--repo path] [--hook pre-search|pre-edit]
   grafo index [path] [--force] [--json]
+  grafo indexes list [path] [--json]
+  grafo indexes prune [path] [--older-than duration] [--keep n] [--dry-run] [--yes] [--json]
   grafo watch [path] [--interval 1s]
   grafo service add [path] [--interval 10s] [--paused] [--json]
   grafo service remove [path]
@@ -2559,6 +2690,11 @@ accept --kind to restrict resolution to one node kind, so a selector shared by a
 function and its own parameter resolves without guessing. Active branch indexes are
 refreshed incrementally before queries and never substituted across branches.
 Test reports are bounded structural call/reference evidence, not runtime coverage.
+
+'grafo indexes list' inventories the physical database, WAL, and SHM footprint
+of every branch index for one repository. 'indexes prune' requires a retention
+selector and either '--dry-run' or '--yes'; the current index and any index whose
+identity, timestamp, compatibility, or lock cannot be verified are protected.
 
 'grafo install --list' only detects clients and never writes; '--dry-run'
 reports every file and command a real run would touch. 'grafo install' also installs
