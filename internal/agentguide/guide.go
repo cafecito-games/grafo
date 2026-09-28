@@ -1,6 +1,7 @@
-// Package agentguide owns Grafo's canonical agent guidance: one embedded
-// tool-routing playbook, one format version, and the exact markers that make an
-// installed copy provably Grafo-owned.
+// Package agentguide owns Grafo's canonical agent guidance: the embedded
+// structural tool-routing and repository-setup playbooks, their independent
+// format versions, and the exact markers that make installed copies provably
+// Grafo-owned.
 //
 // The package renders the same canonical text into the two surfaces installers
 // need — an isolated Grafo-owned skill file and a delimited managed block inside
@@ -20,13 +21,27 @@ import (
 // stale, so `grafo install` replaces older Grafo-owned content exactly.
 const Version = "3"
 
+// SetupVersion is the repository-setup skill format version. It is independent
+// from Version because either installed skill may evolve without making the
+// other stale.
+const SetupVersion = "1"
+
 // Name is the stable identity Grafo installs guidance under.
 const Name = "grafo"
+
+// SetupName is the stable identity of the installed repository onboarding skill.
+const SetupName = "grafo-setup"
 
 // Description is the one-line summary clients show when listing skills.
 const Description = "Route structural code questions through Grafo's semantic graph: " +
 	"confirm the branch is indexed, resolve symbols before searching text, find reusable " +
 	"code before adding code, and run bidirectional impact before a behaviour-changing edit."
+
+// SetupDescription tells skill-capable clients when to invoke the repository
+// onboarding workflow.
+const SetupDescription = "Set up or improve Grafo for a repository: inspect project boundaries, " +
+	"transports, serialization, HTTP wrappers, SQL, and test conventions; update only supported " +
+	"grafo.yaml settings; index the project; and verify graph coverage without inventing configuration."
 
 // BeginMarker and EndMarker delimit the managed block. They are matched exactly;
 // ownership is never inferred from a substring of the guidance body itself.
@@ -37,6 +52,9 @@ const (
 
 //go:embed guide.md
 var canonical string
+
+//go:embed setup.md
+var setupCanonical string
 
 // versionComment is the in-body provenance line. It is part of the digested
 // content, so a version bump changes every digest.
@@ -61,13 +79,31 @@ func Text() string {
 // emitted as a double-quoted scalar. An unquoted value makes the frontmatter
 // unparseable and the skill undiscoverable.
 func Skill() string {
+	return renderSkill(Name, Description, Text())
+}
+
+// SetupSkill renders the isolated Grafo-owned repository-setup skill file.
+func SetupSkill() string {
+	return renderSkill(SetupName, SetupDescription, setupText())
+}
+
+func renderSkill(name, description, text string) string {
 	var builder strings.Builder
 	builder.WriteString("---\n")
-	builder.WriteString("name: " + Name + "\n")
-	builder.WriteString("description: " + quoteYAML(Description) + "\n")
+	builder.WriteString("name: " + name + "\n")
+	builder.WriteString("description: " + quoteYAML(description) + "\n")
 	builder.WriteString("---\n\n")
-	builder.WriteString(Text())
+	builder.WriteString(text)
 	return builder.String()
+}
+
+func setupText() string {
+	body := strings.TrimRight(setupCanonical, "\n")
+	return body + "\n\n" + setupVersionComment() + "\n"
+}
+
+func setupVersionComment() string {
+	return fmt.Sprintf("<!-- grafo-setup version %s; managed by `grafo install`; edits are replaced -->", SetupVersion)
 }
 
 // quoteYAML renders a value as a YAML double-quoted scalar, which accepts any
@@ -202,8 +238,17 @@ func Owns(document string) bool {
 	return strings.Contains(document, ownershipMarker)
 }
 
+// OwnsSetup reports whether a document carries the setup skill's ownership
+// marker, for any setup format version.
+func OwnsSetup(document string) bool {
+	return strings.Contains(document, SetupMarker)
+}
+
 // ownershipMarker is the stable prefix of the in-body provenance line.
 const ownershipMarker = "<!-- grafo-guidance version "
+
+// SetupMarker is recorded in install receipts for the repository-setup skill.
+const SetupMarker = "<!-- grafo-setup version "
 
 // Digest labels the SHA-256 of installed content so a receipt can prove that an
 // artifact is still exactly what Grafo wrote.

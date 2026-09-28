@@ -13,8 +13,10 @@ import (
 
 const (
 	claudeSkill    = linuxHome + "/.claude/skills/grafo/SKILL.md"
+	claudeSetup    = linuxHome + "/.claude/skills/grafo-setup/SKILL.md"
 	claudeSettings = linuxHome + "/.claude/settings.json"
 	codexSkill     = linuxHome + "/.agents/skills/grafo/SKILL.md"
+	codexSetup     = linuxHome + "/.agents/skills/grafo-setup/SKILL.md"
 	codexAgents    = linuxHome + "/.codex/AGENTS.md"
 	geminiConfig   = linuxHome + "/.gemini/settings.json"
 	geminiGuide    = linuxHome + "/.gemini/GEMINI.md"
@@ -64,6 +66,13 @@ func TestInstallWritesPersonalSkillsAndMigratesManagedBlock(t *testing.T) {
 	if !strings.Contains(environment.files[claudeSkill], "get_blast_radius") {
 		t.Error("installed skill does not mention impact analysis")
 	}
+	setup := findAction(t, actions, "claude", KindSetupSkill)
+	if setup.Target != claudeSetup || setup.Change != changeInstalled {
+		t.Fatalf("setup skill action = %#v", setup)
+	}
+	if got := environment.files[claudeSetup]; got != agentguide.SetupSkill() {
+		t.Fatalf("setup skill file = %q", got)
+	}
 
 	codex := findAction(t, actions, "codex", KindSkill)
 	if codex.Target != codexSkill || codex.Change != changeInstalled {
@@ -71,6 +80,13 @@ func TestInstallWritesPersonalSkillsAndMigratesManagedBlock(t *testing.T) {
 	}
 	if got := environment.files[codexSkill]; got != agentguide.Skill() {
 		t.Fatalf("codex skill file = %q", got)
+	}
+	codexSetupAction := findAction(t, actions, "codex", KindSetupSkill)
+	if codexSetupAction.Target != codexSetup || codexSetupAction.Change != changeInstalled {
+		t.Fatalf("codex setup skill action = %#v", codexSetupAction)
+	}
+	if got := environment.files[codexSetup]; got != agentguide.SetupSkill() {
+		t.Fatalf("codex setup skill file = %q", got)
 	}
 	legacy := findAction(t, actions, "codex", KindInstructions)
 	if legacy.Target != codexAgents || legacy.Change != changeRemoved {
@@ -84,6 +100,10 @@ func TestInstallWritesPersonalSkillsAndMigratesManagedBlock(t *testing.T) {
 	}
 	if !slicesContainsPath(environment.mkdirs, linuxHome+"/.agents/skills/grafo") {
 		t.Fatalf("mkdirs = %v", environment.mkdirs)
+	}
+	if !slicesContainsPath(environment.mkdirs, linuxHome+"/.claude/skills/grafo-setup") ||
+		!slicesContainsPath(environment.mkdirs, linuxHome+"/.agents/skills/grafo-setup") {
+		t.Fatalf("setup skill directories missing from mkdirs = %v", environment.mkdirs)
 	}
 }
 
@@ -196,6 +216,9 @@ func TestDryRunReportsGuidanceWithoutWriting(t *testing.T) {
 	if _, exists := environment.files[codexSkill]; exists {
 		t.Fatal("dry run created the Codex skill file")
 	}
+	if _, exists := environment.files[claudeSetup]; exists {
+		t.Fatal("dry run created the setup skill file")
+	}
 	if _, exists := environment.files[receiptLedger]; exists {
 		t.Fatal("dry run wrote a receipt")
 	}
@@ -221,6 +244,9 @@ func TestMCPOnlySkipsGuidance(t *testing.T) {
 	}
 	if _, exists := environment.files[codexSkill]; exists {
 		t.Fatal("--mcp-only installed the Codex skill file")
+	}
+	if _, exists := environment.files[claudeSetup]; exists {
+		t.Fatal("--mcp-only installed the setup skill file")
 	}
 	if _, exists := environment.files[codexAgents]; exists {
 		t.Fatal("--mcp-only created an instruction file")
@@ -250,19 +276,31 @@ func TestRefreshUpdatesOnlyExistingArtifacts(t *testing.T) {
 	if _, exists := environment.files[codexSkill]; exists {
 		t.Fatal("refresh created the Codex skill file")
 	}
+	if setup := findAction(t, actions, "claude", KindSetupSkill); setup.Change != changeSkipped {
+		t.Fatalf("refresh installed a missing setup skill: %#v", setup)
+	}
 }
 
 func TestInstallRefusesForeignSkillFile(t *testing.T) {
-	environment := guidanceEnvironment()
-	environment.files[claudeSkill] = "---\nname: grafo\n---\n\nhand-written guidance\n"
-	before := environment.files[claudeSkill]
-
-	_, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"claude"}})
-	if err == nil || !strings.Contains(err.Error(), "no Grafo ownership marker") {
-		t.Fatalf("error = %v", err)
+	cases := []struct {
+		name, path, contents string
+	}{
+		{name: "structural guidance", path: claudeSkill, contents: "---\nname: grafo\n---\n\nhand-written guidance\n"},
+		{name: "repository setup", path: claudeSetup, contents: "---\nname: grafo-setup\n---\n\nhand-written setup\n"},
 	}
-	if environment.files[claudeSkill] != before {
-		t.Fatal("the foreign skill file was modified")
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			environment := guidanceEnvironment()
+			environment.files[test.path] = test.contents
+
+			_, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"claude"}})
+			if err == nil || !strings.Contains(err.Error(), "no Grafo ownership marker") {
+				t.Fatalf("error = %v", err)
+			}
+			if environment.files[test.path] != test.contents {
+				t.Fatal("the foreign skill file was modified")
+			}
+		})
 	}
 }
 
@@ -426,11 +464,23 @@ func TestUninstallRemovesGuidanceAndKeepsUserContent(t *testing.T) {
 	if _, exists := environment.files[claudeSkill]; exists {
 		t.Fatal("the skill file survived uninstall")
 	}
+	if got := findAction(t, actions, "claude", KindSetupSkill); got.Change != changeRemoved {
+		t.Fatalf("setup skill action = %#v", got)
+	}
+	if _, exists := environment.files[claudeSetup]; exists {
+		t.Fatal("the setup skill file survived uninstall")
+	}
 	if got := findAction(t, actions, "codex", KindSkill); got.Change != changeRemoved {
 		t.Fatalf("codex skill action = %#v", got)
 	}
 	if _, exists := environment.files[codexSkill]; exists {
 		t.Fatal("the Codex skill file survived uninstall")
+	}
+	if got := findAction(t, actions, "codex", KindSetupSkill); got.Change != changeRemoved {
+		t.Fatalf("codex setup skill action = %#v", got)
+	}
+	if _, exists := environment.files[codexSetup]; exists {
+		t.Fatal("the Codex setup skill file survived uninstall")
 	}
 
 	// Replay: a second uninstall changes nothing.
@@ -720,6 +770,22 @@ func TestReceiptsRecordOwnershipAfterMutation(t *testing.T) {
 	if !found {
 		t.Fatalf("no skill receipt recorded: %#v", receipts)
 	}
+	setupFound := false
+	for _, receipt := range receipts {
+		if receipt.Client != "claude" || receipt.Kind != KindSetupSkill {
+			continue
+		}
+		setupFound = true
+		if receipt.Target != claudeSetup || receipt.Digest != agentguide.Digest(agentguide.SetupSkill()) {
+			t.Errorf("setup receipt does not prove the installed skill: %#v", receipt)
+		}
+		if receipt.Guidance != agentguide.SetupVersion || receipt.Marker != agentguide.SetupMarker {
+			t.Errorf("setup receipt has the wrong provenance: %#v", receipt)
+		}
+	}
+	if !setupFound {
+		t.Fatalf("no setup-skill receipt recorded: %#v", receipts)
+	}
 
 	if _, err = Uninstall(context.Background(), environment, Options{}); err != nil {
 		t.Fatal(err)
@@ -729,7 +795,7 @@ func TestReceiptsRecordOwnershipAfterMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, receipt := range receipts {
-		if receipt.Client == "claude" && receipt.Kind == KindSkill {
+		if receipt.Client == "claude" && (receipt.Kind == KindSkill || receipt.Kind == KindSetupSkill) {
 			t.Fatalf("uninstall kept a receipt: %#v", receipt)
 		}
 	}
@@ -794,6 +860,14 @@ func TestGuidanceRegistryCoversOnlySupportedClients(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("guidance registry names unsupported client %q", entry.client)
+		}
+		kinds := map[string]bool{}
+		for _, artifact := range entry.artifacts {
+			if kinds[artifact.kind()] {
+				t.Errorf("client %q repeats artifact kind %q, which would collide in the receipt ledger",
+					entry.client, artifact.kind())
+			}
+			kinds[artifact.kind()] = true
 		}
 	}
 }
@@ -893,7 +967,7 @@ func TestUninstallRemovesGuidanceWhenClientExecutableIsGone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, kind := range []string{KindSkill, KindHooks} {
+	for _, kind := range []string{KindSkill, KindSetupSkill, KindHooks} {
 		if got := findAction(t, actions, "claude", kind); got.Change != changeRemoved {
 			t.Errorf("claude %s action = %#v", kind, got)
 		}
@@ -909,6 +983,12 @@ func TestUninstallRemovesGuidanceWhenClientExecutableIsGone(t *testing.T) {
 	}
 	if _, exists := environment.files[codexSkill]; exists {
 		t.Error("the orphaned Codex skill survived")
+	}
+	if _, exists := environment.files[claudeSetup]; exists {
+		t.Error("the orphaned setup skill survived")
+	}
+	if _, exists := environment.files[codexSetup]; exists {
+		t.Error("the orphaned Codex setup skill survived")
 	}
 	receipts, err := Receipts(environment)
 	if err != nil {
