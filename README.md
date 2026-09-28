@@ -534,6 +534,33 @@ language source files are not reparsed.
 
 ## Endpoint and service topology
 
+Godot 4 `HTTPRequest.request` calls are indexed only when the receiver is
+typed or inferred as `HTTPRequest`. Projects can declare additional exact
+GDScript wrapper signatures in `grafo.yaml` without teaching Grafo
+application-specific class names:
+
+```yaml
+http:
+  request_apis:
+    - language: gdscript
+      symbol: AuthAPI.request_json
+      method_argument: 0
+      url_argument: 1
+```
+
+Argument positions are zero-based; `route_argument` is accepted as an
+equivalent spelling of `url_argument`. Each entry must use `gdscript`, an exact
+qualified symbol, and distinct non-negative positions. Duplicate symbols,
+unknown fields, unsupported languages, and conflicting positions fail indexing
+before any durable graph mutation. Editing or removing this section invalidates
+otherwise unchanged GDScript files so stale request facts are reconciled.
+
+The extractor accepts Godot's symbolic `HTTPClient.METHOD_*` constants and
+bounded, fully known string literals, constants, assignments, concatenations,
+and `%` formatting. Raw numeric methods and dynamic routes produce no request
+edge. Query strings and fragments remain evidence while the shared HTTP model
+owns canonical endpoint identity.
+
 Endpoint queries turn HTTP and event wiring into task-shaped results while
 keeping the graph evidence authoritative:
 

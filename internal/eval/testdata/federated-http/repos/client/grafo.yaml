@@ -1,0 +1,6 @@
+http:
+  request_apis:
+    - language: gdscript
+      symbol: AuthAPI.request_json
+      method_argument: 0
+      url_argument: 1

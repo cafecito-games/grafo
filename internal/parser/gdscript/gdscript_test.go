@@ -57,6 +57,167 @@ func take_damage(amount: int) -> int:
 	assertHasFactKind(t, result.Facts, graph.EdgeSubscribes)
 }
 
+func TestParserExtractsTypedAndConfiguredHTTPRequests(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "grafo.yaml", `http:
+  request_apis:
+    - language: gdscript
+      symbol: AuthAPI.request_json
+      method_argument: 0
+      url_argument: 1
+    - language: gdscript
+      symbol: HTTPRequest.request
+      method_argument: 2
+      route_argument: 0
+`)
+	content := []byte(`class_name Client
+
+const API_ROOT = "https://api.example.test"
+const USERS = "/users/"
+
+func send(auth: AuthAPI, request: HTTPRequest, other, dynamic_path: String) -> void:
+	var user_id = "42"
+	var route = API_ROOT + USERS
+	route += "%s" % user_id
+	route += "?expand=true"
+	request.request(route, [], HTTPClient.METHOD_GET)
+	var inferred = HTTPRequest.new()
+	inferred.request("/orders", [], HTTPClient.METHOD_POST, "{}")
+	request.request("/default")
+	auth.request_json(HTTPClient.METHOD_PUT, "/profiles/%s?view=full" % "me")
+	other.request("/forbidden-untyped", [], HTTPClient.METHOD_GET)
+	request.request("/forbidden-numeric", [], 2)
+	request.request(42, [], HTTPClient.METHOD_GET)
+	request.request(dynamic_path, [], HTTPClient.METHOD_GET)
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "client.gd", Content: content, Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := map[string][]graph.Fact{}
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeRequests {
+			requests[fact.Target] = append(requests[fact.Target], fact)
+		}
+	}
+	for _, target := range []string{
+		"GET https://api.example.test/users/42",
+		"POST /orders",
+		"GET /default",
+		"PUT /profiles/me",
+	} {
+		if len(requests[target]) != 1 {
+			t.Fatalf("request %q count = %d; facts = %#v", target, len(requests[target]), result.Facts)
+		}
+	}
+	get := requests["GET https://api.example.test/users/42"][0]
+	if get.Properties["http_method"] != "GET" || get.Properties["http_route"] != "/users/42" ||
+		get.Properties["http_query"] != "expand=true" || get.Properties["http_authority"] != "api.example.test" ||
+		get.Properties["http_signature"] != "builtin,configured" || get.Properties["http_api"] != "HTTPRequest.request" ||
+		get.Properties["http_route_expression"] != "route" || get.Properties["http_method_expression"] != "HTTPClient.METHOD_GET" {
+		t.Fatalf("typed request evidence = %#v", get.Properties)
+	}
+	configured := requests["PUT /profiles/me"][0]
+	if configured.Properties["http_signature"] != "configured" || configured.Properties["http_api"] != "AuthAPI.request_json" ||
+		configured.Properties["http_config"] != "grafo.yaml:3" || configured.Properties["http_raw_route"] != "/profiles/me?view=full" {
+		t.Fatalf("configured request evidence = %#v", configured.Properties)
+	}
+	for target := range requests {
+		if strings.Contains(target, "forbidden") {
+			t.Fatalf("unsupported HTTP call emitted request %q: %#v", target, requests[target])
+		}
+	}
+}
+
+func TestParserMapsOnlySymbolicGodotHTTPMethods(t *testing.T) {
+	content := []byte(`extends Node
+
+const DEFAULT_METHOD = HTTPClient.METHOD_HEAD
+
+func send(request: HTTPRequest) -> void:
+	request.request("/get", [], HTTPClient.METHOD_GET)
+	request.request("/head", [], HTTPClient.METHOD_HEAD)
+	request.request("/post", [], HTTPClient.METHOD_POST)
+	request.request("/put", [], HTTPClient.METHOD_PUT)
+	request.request("/patch", [], HTTPClient.METHOD_PATCH)
+	request.request("/delete", [], HTTPClient.METHOD_DELETE)
+	request.request("/options", [], HTTPClient.METHOD_OPTIONS)
+	request.request("/connect", [], HTTPClient.METHOD_CONNECT)
+	request.request("/trace", [], HTTPClient.METHOD_TRACE)
+	request.request("/constant", [], DEFAULT_METHOD)
+	request.request("/numeric", [], 0)
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "client.gd", Content: content, Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"GET /get": true, "HEAD /head": true, "POST /post": true, "PUT /put": true,
+		"PATCH /patch": true, "DELETE /delete": true, "OPTIONS /options": true, "CONNECT /connect": true, "TRACE /trace": true,
+		"HEAD /constant": true}
+	for _, fact := range result.Facts {
+		if fact.Kind != graph.EdgeRequests {
+			continue
+		}
+		if !want[fact.Target] {
+			t.Fatalf("unexpected request fact %#v", fact)
+		}
+		delete(want, fact.Target)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing method mappings: %#v", want)
+	}
+}
+
+func TestParserDoesNotTreatLocallyDeclaredRequestAsGodotHTTP(t *testing.T) {
+	content := []byte(`class_name HTTPRequest
+
+func request(_url: String, _headers: Array, _method: int) -> void:
+	pass
+
+func send() -> void:
+	request("/not-http", [], HTTPClient.METHOD_GET)
+	self.request("/also-not-http", [], HTTPClient.METHOD_POST)
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "lookalike.gd", Content: content, Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeRequests {
+			t.Fatalf("locally declared request emitted HTTP evidence: %#v", fact)
+		}
+	}
+}
+
+func TestHTTPSemanticKeyAndDependencyTrackOnlyHTTPConfiguration(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "grafo.yaml", "components:\n  - name: client\n    roots: [client]\n")
+	parser := gdscriptparser.New()
+	input := parserapi.Input{Root: root, Path: "client/main.gd", Content: []byte("extends Node\n")}
+	first, err := parser.SemanticKey(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, root, "grafo.yaml", "components:\n  - name: other\n    roots: [other]\nhttp:\n  request_apis:\n    - language: gdscript\n      symbol: AuthAPI.send\n      method_argument: 0\n      url_argument: 1\n")
+	second, err := parser.SemanticKey(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("HTTP config edit did not change semantic key: %q", first)
+	}
+	dependencies := parser.SemanticDependencies()
+	if len(dependencies) != 1 || dependencies[0] != "grafo.yaml" {
+		t.Fatalf("semantic dependencies = %#v", dependencies)
+	}
+}
+
 func TestParserExtractsENetTransportEvidence(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, ".gitignore", "generated/\n")

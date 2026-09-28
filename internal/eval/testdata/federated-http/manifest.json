@@ -15,6 +15,41 @@
     "nodes": [
       {
         "repo": "client",
+        "kind": "class",
+        "qualified_name": "GodotClient"
+      },
+      {
+        "repo": "client",
+        "kind": "config_key",
+        "qualified_name": "config:grafo.yaml:http"
+      },
+      {
+        "repo": "client",
+        "kind": "config_key",
+        "qualified_name": "config:grafo.yaml:http.request_apis"
+      },
+      {
+        "repo": "client",
+        "kind": "config_key",
+        "qualified_name": "config:grafo.yaml:http.request_apis.method_argument"
+      },
+      {
+        "repo": "client",
+        "kind": "config_key",
+        "qualified_name": "config:grafo.yaml:http.request_apis.symbol"
+      },
+      {
+        "repo": "client",
+        "kind": "config_key",
+        "qualified_name": "config:grafo.yaml:http.request_apis.url_argument"
+      },
+      {
+        "repo": "client",
+        "kind": "config_key",
+        "qualified_name": "config:project.godot:config_version"
+      },
+      {
+        "repo": "client",
         "kind": "endpoint",
         "qualified_name": "GET /ambiguous/{_}",
         "external": true
@@ -29,6 +64,12 @@
         "repo": "client",
         "kind": "endpoint",
         "qualified_name": "GET https://api.example.test/health",
+        "external": true
+      },
+      {
+        "repo": "client",
+        "kind": "external",
+        "qualified_name": "AuthAPI.request_json",
         "external": true
       },
       {
@@ -64,6 +105,11 @@
       {
         "repo": "client",
         "kind": "field",
+        "qualified_name": "GodotClient.CHARGE_ROOT"
+      },
+      {
+        "repo": "client",
+        "kind": "field",
         "qualified_name": "example.com/client.API.baseURL"
       },
       {
@@ -75,6 +121,21 @@
         "repo": "client",
         "kind": "file",
         "qualified_name": "go.mod"
+      },
+      {
+        "repo": "client",
+        "kind": "file",
+        "qualified_name": "godot_client.gd"
+      },
+      {
+        "repo": "client",
+        "kind": "file",
+        "qualified_name": "grafo.yaml"
+      },
+      {
+        "repo": "client",
+        "kind": "file",
+        "qualified_name": "project.godot"
       },
       {
         "repo": "client",
@@ -115,6 +176,11 @@
       {
         "repo": "client",
         "kind": "method",
+        "qualified_name": "GodotClient.call"
+      },
+      {
+        "repo": "client",
+        "kind": "method",
         "qualified_name": "example.com/client.API.UnknownAuthority"
       },
       {
@@ -137,6 +203,11 @@
       {
         "repo": "client",
         "kind": "module",
+        "qualified_name": "godot_client"
+      },
+      {
+        "repo": "client",
+        "kind": "module",
         "qualified_name": "net/http",
         "external": true
       },
@@ -145,6 +216,16 @@
         "kind": "module",
         "qualified_name": "net/url",
         "external": true
+      },
+      {
+        "repo": "client",
+        "kind": "module",
+        "qualified_name": "project"
+      },
+      {
+        "repo": "client",
+        "kind": "parameter",
+        "qualified_name": "GodotClient.call.api"
       },
       {
         "repo": "client",
@@ -185,6 +266,16 @@
         "repo": "client",
         "kind": "type",
         "qualified_name": "example.com/client.API"
+      },
+      {
+        "repo": "client",
+        "kind": "variable",
+        "qualified_name": "GodotClient.call.charge_id@6"
+      },
+      {
+        "repo": "client",
+        "kind": "variable",
+        "qualified_name": "GodotClient.call.route@7"
       },
       {
         "repo": "client",
@@ -268,6 +359,60 @@
       }
     ],
     "edges": [
+      {
+        "from": {
+          "repo": "client",
+          "kind": "class",
+          "qualified_name": "GodotClient"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "method",
+          "qualified_name": "GodotClient.call"
+        },
+        "source": {
+          "path": "godot_client.gd",
+          "line": 5,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "class",
+          "qualified_name": "GodotClient"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "client",
+          "kind": "field",
+          "qualified_name": "GodotClient.CHARGE_ROOT"
+        },
+        "source": {
+          "path": "godot_client.gd",
+          "line": 3,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "field",
+          "qualified_name": "GodotClient.CHARGE_ROOT"
+        },
+        "relation": "assigns",
+        "to": {
+          "repo": "client",
+          "kind": "variable",
+          "qualified_name": "GodotClient.call.route@7"
+        },
+        "source": {
+          "path": "godot_client.gd",
+          "line": 7,
+          "column": 2
+        }
+      },
       {
         "from": {
           "repo": "client",
@@ -492,6 +637,132 @@
         },
         "source": {
           "path": "go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "godot_client.gd"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "module",
+          "qualified_name": "godot_client"
+        },
+        "source": {
+          "path": "godot_client.gd",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "grafo.yaml"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "client",
+          "kind": "config_key",
+          "qualified_name": "config:grafo.yaml:http.request_apis.method_argument"
+        },
+        "source": {
+          "path": "grafo.yaml",
+          "line": 5,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "grafo.yaml"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "client",
+          "kind": "config_key",
+          "qualified_name": "config:grafo.yaml:http.request_apis.symbol"
+        },
+        "source": {
+          "path": "grafo.yaml",
+          "line": 4,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "grafo.yaml"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "client",
+          "kind": "config_key",
+          "qualified_name": "config:grafo.yaml:http.request_apis.url_argument"
+        },
+        "source": {
+          "path": "grafo.yaml",
+          "line": 6,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "grafo.yaml"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "client",
+          "kind": "config_key",
+          "qualified_name": "config:grafo.yaml:http.request_apis"
+        },
+        "source": {
+          "path": "grafo.yaml",
+          "line": 2,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "grafo.yaml"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "client",
+          "kind": "config_key",
+          "qualified_name": "config:grafo.yaml:http"
+        },
+        "source": {
+          "path": "grafo.yaml",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "project.godot"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "module",
+          "qualified_name": "project"
+        },
+        "source": {
+          "path": "project.godot",
           "line": 1,
           "column": 1
         }
@@ -1110,6 +1381,112 @@
         "from": {
           "repo": "client",
           "kind": "method",
+          "qualified_name": "GodotClient.call"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "AuthAPI.request_json",
+          "external": true
+        },
+        "source": {
+          "path": "godot_client.gd",
+          "line": 8,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "method",
+          "qualified_name": "GodotClient.call"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "GodotClient.call.api"
+        },
+        "source": {
+          "path": "godot_client.gd",
+          "line": 5,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "method",
+          "qualified_name": "GodotClient.call"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "variable",
+          "qualified_name": "GodotClient.call.charge_id@6"
+        },
+        "source": {
+          "path": "godot_client.gd",
+          "line": 6,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "method",
+          "qualified_name": "GodotClient.call"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "variable",
+          "qualified_name": "GodotClient.call.route@7"
+        },
+        "source": {
+          "path": "godot_client.gd",
+          "line": 7,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "method",
+          "qualified_name": "GodotClient.call"
+        },
+        "relation": "requests",
+        "to": {
+          "repo": "server",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
+        },
+        "source": {
+          "path": "godot_client.gd",
+          "line": 8,
+          "column": 2
+        },
+        "properties": {
+          "evidence": "gdscript_scope",
+          "federated": "true",
+          "http_api": "AuthAPI.request_json",
+          "http_config": "grafo.yaml:3",
+          "http_method": "GET",
+          "http_method_expression": "HTTPClient.METHOD_GET",
+          "http_query": "view=full",
+          "http_raw_method": "GET",
+          "http_raw_route": "/charge/{requestID}?view=full",
+          "http_route": "/charge/{_}",
+          "http_route_expression": "route",
+          "http_signature": "configured",
+          "http_source": "call"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "method",
           "qualified_name": "example.com/client.API.UnknownAuthority"
         },
         "relation": "calls",
@@ -1198,6 +1575,42 @@
           "federated": "true",
           "scope": "runtime",
           "version": "v0.0.0"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "module",
+          "qualified_name": "godot_client"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "class",
+          "qualified_name": "GodotClient"
+        },
+        "source": {
+          "path": "godot_client.gd",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "module",
+          "qualified_name": "project"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "client",
+          "kind": "config_key",
+          "qualified_name": "config:project.godot:config_version"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 1,
+          "column": 1
         }
       },
       {
@@ -1530,6 +1943,60 @@
       {
         "from": {
           "repo": "client",
+          "kind": "repository",
+          "qualified_name": "client"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "godot_client.gd"
+        },
+        "source": {
+          "path": "godot_client.gd",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "repository",
+          "qualified_name": "client"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "grafo.yaml"
+        },
+        "source": {
+          "path": "grafo.yaml",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "repository",
+          "qualified_name": "client"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "project.godot"
+        },
+        "source": {
+          "path": "project.godot",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
           "kind": "type",
           "qualified_name": "example.com/client.API"
         },
@@ -1543,6 +2010,46 @@
           "path": "client.go",
           "line": 24,
           "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "variable",
+          "qualified_name": "GodotClient.call.charge_id@6"
+        },
+        "relation": "assigns",
+        "to": {
+          "repo": "client",
+          "kind": "variable",
+          "qualified_name": "GodotClient.call.route@7"
+        },
+        "source": {
+          "path": "godot_client.gd",
+          "line": 7,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "variable",
+          "qualified_name": "GodotClient.call.route@7"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "AuthAPI.request_json",
+          "external": true
+        },
+        "source": {
+          "path": "godot_client.gd",
+          "line": 8,
+          "column": 2
+        },
+        "properties": {
+          "argument": "1"
         }
       },
       {
@@ -1948,6 +2455,86 @@
       }
     ],
     "queries": [
+      {
+        "id": "godot-client-to-go-handler",
+        "from": "GodotClient.call",
+        "to": "example.com/server.Handler",
+        "direction": "outgoing",
+        "relations": [
+          "requests",
+          "handled_by"
+        ],
+        "nodes": [
+          {
+            "repo": "client",
+            "kind": "method",
+            "qualified_name": "GodotClient.call"
+          },
+          {
+            "repo": "server",
+            "kind": "endpoint",
+            "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
+          },
+          {
+            "repo": "server",
+            "kind": "function",
+            "qualified_name": "example.com/server.Handler"
+          }
+        ],
+        "edges": [
+          {
+            "from": {
+              "repo": "client",
+              "kind": "method",
+              "qualified_name": "GodotClient.call"
+            },
+            "relation": "requests",
+            "to": {
+              "repo": "server",
+              "kind": "endpoint",
+              "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
+            },
+            "source": {
+              "path": "godot_client.gd",
+              "line": 8,
+              "column": 2
+            },
+            "properties": {
+              "evidence": "gdscript_scope",
+              "federated": "true",
+              "http_api": "AuthAPI.request_json",
+              "http_config": "grafo.yaml:3",
+              "http_method": "GET",
+              "http_method_expression": "HTTPClient.METHOD_GET",
+              "http_query": "view=full",
+              "http_raw_method": "GET",
+              "http_raw_route": "/charge/{requestID}?view=full",
+              "http_route": "/charge/{_}",
+              "http_route_expression": "route",
+              "http_signature": "configured",
+              "http_source": "call"
+            }
+          },
+          {
+            "from": {
+              "repo": "server",
+              "kind": "endpoint",
+              "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
+            },
+            "relation": "handled_by",
+            "to": {
+              "repo": "server",
+              "kind": "function",
+              "qualified_name": "example.com/server.Handler"
+            },
+            "source": {
+              "path": "server.go",
+              "line": 9,
+              "column": 2
+            }
+          }
+        ]
+      },
       {
         "id": "client-to-server-handler",
         "from": "example.com/client.Call",
