@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -135,6 +136,38 @@ func agreed_payload(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope, cond:
 	else:
 		payload = message.to_bytes()
 	peer.send(3, payload, ENetPacketPeer.FLAG_RELIABLE)
+
+func default_wrapper(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope = null) -> void:
+	peer.send(5, message.to_bytes(), ENetPacketPeer.FLAG_RELIABLE)
+
+func omitted_default(peer: ENetPacketPeer, unrelated: AcmeV1EnvelopeEnvelope) -> void:
+	default_wrapper(peer)
+
+func shadowed_evidence(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope, items: Array) -> void:
+	var payload = message.to_bytes()
+	var packet = peer.get_packet()
+	for payload in items:
+		peer.send(6, payload, ENetPacketPeer.FLAG_RELIABLE)
+	var callback = func(packet):
+		AcmeV1EnvelopeEnvelope.from_bytes(packet)
+	callback.call(PackedByteArray())
+
+func shadowed_channel(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope, GAMEPLAY_CHANNEL) -> void:
+	peer.send(GAMEPLAY_CHANNEL, message.to_bytes(), ENetPacketPeer.FLAG_RELIABLE)
+
+func loop_shadow_wrapper(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope, items: Array) -> void:
+	for GAMEPLAY_CHANNEL in items:
+		peer.send(GAMEPLAY_CHANNEL, message.to_bytes(), ENetPacketPeer.FLAG_RELIABLE)
+
+func use_loop_shadow(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope, items: Array) -> void:
+	loop_shadow_wrapper(peer, message, items)
+
+func multi_api(peer: ENetPacketPeer, connection: ENetConnection, message: AcmeV1EnvelopeEnvelope) -> void:
+	peer.send(10, message.to_bytes(), ENetPacketPeer.FLAG_RELIABLE)
+	connection.broadcast(11, message.to_bytes(), ENetPacketPeer.FLAG_RELIABLE)
+
+func use_multi(peer: ENetPacketPeer, connection: ENetConnection, message: AcmeV1EnvelopeEnvelope) -> void:
+	multi_api(peer, connection, message)
 `)
 	writeFile(t, root, "transport.gd", string(content))
 	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
@@ -214,6 +247,40 @@ func agreed_payload(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope, cond:
 	agreedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "TransportClient.agreed_payload").ID
 	agreed := assertGDTransportOperation(t, result, agreedID, graph.EdgeSends, "send", "ENetPacketPeer.send")
 	assertGDTransportCarries(t, result.Facts, agreed.ID, "acme.v1.Envelope")
+	omittedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "TransportClient.omitted_default").ID
+	omitted := assertGDTransportOperation(t, result, omittedID, graph.EdgeSends, "send", "ENetPacketPeer.send")
+	assertGDTransportDoesNotCarry(t, result.Facts, omitted.ID)
+	shadowedEvidenceID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "TransportClient.shadowed_evidence").ID
+	shadowedSend := assertGDTransportOperation(t, result, shadowedEvidenceID, graph.EdgeSends, "send", "ENetPacketPeer.send")
+	assertGDTransportDoesNotCarry(t, result.Facts, shadowedSend.ID)
+	shadowedReceive := assertGDTransportOperation(t, result, shadowedEvidenceID, graph.EdgeReceives, "receive", "ENetPacketPeer.get_packet")
+	assertGDTransportDoesNotCarry(t, result.Facts, shadowedReceive.ID)
+	shadowedChannelID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "TransportClient.shadowed_channel").ID
+	shadowedChannel := assertGDTransportOperation(t, result, shadowedChannelID, graph.EdgeSends, "send", "ENetPacketPeer.send")
+	if shadowedChannel.Properties["channel_status"] != "unknown" || shadowedChannel.Properties["channel"] != "" {
+		t.Fatalf("shadowed class constant retained transport evidence: %#v", shadowedChannel.Properties)
+	}
+	useLoopShadowID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "TransportClient.use_loop_shadow").ID
+	loopShadow := assertGDTransportOperation(t, result, useLoopShadowID, graph.EdgeSends, "send", "ENetPacketPeer.send")
+	if loopShadow.Properties["channel_status"] != "unknown" || loopShadow.Properties["channel"] != "" {
+		t.Fatalf("loop-shadowed class constant retained wrapper evidence: %#v", loopShadow.Properties)
+	}
+	useMultiID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "TransportClient.use_multi").ID
+	assertGDTransportOperation(t, result, useMultiID, graph.EdgeSends, "send", "ENetPacketPeer.send")
+	assertGDTransportOperation(t, result, useMultiID, graph.EdgeSends, "send", "ENetConnection.broadcast")
+	wantSignature := gdTransportFactSignature(result, useMultiID)
+	for iteration := 0; iteration < 32; iteration++ {
+		repeated, parseErr := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+			Root: root, Path: "transport.gd", Content: content, Repository: "protobuf-transport", RepoID: "repo",
+		})
+		if parseErr != nil {
+			t.Fatal(parseErr)
+		}
+		repeatedID := findQualifiedNode(t, repeated.Nodes, graph.KindMethod, "TransportClient.use_multi").ID
+		if got := gdTransportFactSignature(repeated, repeatedID); got != wantSignature {
+			t.Fatalf("multi-API wrapper fact IDs are nondeterministic: want %q, got %q", wantSignature, got)
+		}
+	}
 	for _, fact := range result.Facts {
 		if fact.FromID == ordinaryID && (fact.Kind == graph.EdgeSends || fact.Kind == graph.EdgeReceives) {
 			t.Fatalf("same-name non-ENet API produced transport fact: %#v", fact)
@@ -259,6 +326,31 @@ func assertGDTransportCarries(t *testing.T, facts []graph.Fact, operationID, tar
 		}
 	}
 	t.Fatalf("operation %q does not carry %q: %#v", operationID, target, facts)
+}
+
+func assertGDTransportDoesNotCarry(t *testing.T, facts []graph.Fact, operationID string) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.FromID == operationID && fact.Kind == graph.EdgeCarries {
+			t.Fatalf("unproven transport operation produced carries edge: %#v", fact)
+		}
+	}
+}
+
+func gdTransportFactSignature(result graph.ParseResult, fromID string) string {
+	nodes := map[string]graph.Node{}
+	for _, node := range result.Nodes {
+		nodes[node.ID] = node
+	}
+	var facts []string
+	for _, fact := range result.Facts {
+		node := nodes[fact.TargetID]
+		if fact.FromID == fromID && fact.Kind == graph.EdgeSends && node.Kind == graph.KindTransportOperation {
+			facts = append(facts, node.Properties["api"]+"="+fact.ID)
+		}
+	}
+	sort.Strings(facts)
+	return strings.Join(facts, ",")
 }
 
 func TestParserSuppressesCorroboratedTrackedGDScriptBinding(t *testing.T) {

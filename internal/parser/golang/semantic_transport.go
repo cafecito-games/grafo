@@ -154,7 +154,13 @@ func collectTransportPackageViews(root string, pkg *packages.Package, views map[
 				key := instantiated.spec.API + "\x00" + string(instantiated.spec.Direction)
 				grouped[key] = append(grouped[key], instantiated)
 			}
-			for _, alternatives := range grouped {
+			groupKeys := make([]string, 0, len(grouped))
+			for key := range grouped {
+				groupKeys = append(groupKeys, key)
+			}
+			sort.Strings(groupKeys)
+			for _, key := range groupKeys {
+				alternatives := grouped[key]
 				merged, conflict := mergeTransportTemplates(alternatives)
 				uses = append(uses, semanticTransportUse(function.name, merged, call.location))
 				if conflict {

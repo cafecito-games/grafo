@@ -590,6 +590,7 @@ func (e *extractor) parseFunction(node *gdast.FunctionDeclaration, current scope
 		functionScope.symbols[parameter.Name] = parameterID
 		functionScope.locked[parameter.Name] = parameter.Type != ""
 		delete(functionScope.types, parameter.Name)
+		clearLocalTransportEvidence(parameter.Name, functionScope)
 		if resolved := e.resolveType(parameter.Type, current); resolved != "" {
 			functionScope.types[parameter.Name] = resolved
 		}
@@ -648,9 +649,14 @@ func (e *extractor) parseVariable(node *gdast.VariableDeclaration, current scope
 	} else {
 		id = e.b.Declare(current.currentID, graphNode)
 	}
+	constant, constantStatus := e.transportConstant(node.Value, current)
 	current.symbols[node.Name] = id
 	current.locked[node.Name] = node.Type != ""
 	delete(current.types, node.Name)
+	clearLocalTransportEvidence(node.Name, current)
+	if node.Constant && constantStatus == "proven" {
+		current.transportConstants[node.Name] = constant
+	}
 	if current.classBody {
 		current.fieldSymbols[node.Name] = id
 		current.fieldLocked[node.Name] = node.Type != ""
@@ -694,6 +700,7 @@ func (e *extractor) declareLocal(name, typeName string, loc graph.Location, curr
 	current.symbols[name] = id
 	current.locked[name] = typeName != ""
 	delete(current.types, name)
+	clearLocalTransportEvidence(name, current)
 	if resolved := e.resolveType(typeName, current); resolved != "" {
 		current.types[name] = resolved
 	}

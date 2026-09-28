@@ -70,14 +70,40 @@ func (e *extractor) prepareTransportSummaries(statements []gdast.Statement, curr
 		parameters := map[string]int{}
 		for index, parameter := range declaration.Parameters {
 			parameters[parameter.Name] = index
+			functionScope.symbols[parameter.Name] = "parameter:" + qualified + ":" + parameter.Name
 			delete(functionScope.types, parameter.Name)
+			clearLocalTransportEvidence(parameter.Name, functionScope)
 			if resolved := e.resolveType(parameter.Type, current); resolved != "" {
 				functionScope.types[parameter.Name] = resolved
 			}
 		}
+		shadowSummaryName := func(name string) {
+			if name == "" {
+				return
+			}
+			functionScope.symbols[name] = "local:" + qualified + ":" + name
+			clearLocalTransportEvidence(name, functionScope)
+		}
+		for _, bodyStatement := range declaration.Body {
+			gdast.Inspect(bodyStatement, func(node gdast.Node) bool {
+				switch value := node.(type) {
+				case *gdast.LambdaExpression, *gdast.FunctionDeclaration, *gdast.ClassDeclaration:
+					return false
+				case *gdast.VariableDeclaration:
+					shadowSummaryName(value.Name)
+				case *gdast.ForStatement:
+					shadowSummaryName(value.Variable)
+				}
+				return true
+			})
+		}
 		plan := &functionPlan{parameters: parameters, scope: functionScope}
 		for _, bodyStatement := range declaration.Body {
 			gdast.Inspect(bodyStatement, func(node gdast.Node) bool {
+				switch node.(type) {
+				case *gdast.LambdaExpression, *gdast.FunctionDeclaration, *gdast.ClassDeclaration:
+					return false
+				}
 				call, ok := node.(*gdast.CallExpression)
 				if !ok {
 					return true
@@ -144,7 +170,13 @@ func (e *extractor) addTransportUse(node *gdast.CallExpression, callee, fromID s
 		key := instantiated.spec.API + "\x00" + string(instantiated.spec.Direction)
 		grouped[key] = append(grouped[key], instantiated)
 	}
-	for _, alternatives := range grouped {
+	groupKeys := make([]string, 0, len(grouped))
+	for key := range grouped {
+		groupKeys = append(groupKeys, key)
+	}
+	sort.Strings(groupKeys)
+	for _, key := range groupKeys {
+		alternatives := grouped[key]
 		merged, conflict := mergeGDTransportTemplates(alternatives)
 		e.emitGDTransport(node, merged, fromID, current, loc)
 		if conflict {
@@ -427,8 +459,11 @@ func (e *extractor) instantiateGDTransport(template gdTransportTemplate, argumen
 }
 
 func (e *extractor) instantiateGDTransportValue(value gdTransportValue, arguments []gdast.Expression, current scope, parameters map[string]int, payload bool) gdTransportValue {
-	if value.parameter < 0 || value.parameter >= len(arguments) {
+	if value.parameter < 0 {
 		return value
+	}
+	if value.parameter >= len(arguments) {
+		return gdTransportValue{parameter: -1, status: "unknown", encoded: value.encoded}
 	}
 	result := e.gdTransportValue(arguments[value.parameter], current, parameters, payload)
 	result.encoded = value.encoded
@@ -439,6 +474,12 @@ func (e *extractor) instantiateGDTransportValue(value gdTransportValue, argument
 		}
 	}
 	return result
+}
+
+func clearLocalTransportEvidence(name string, current scope) {
+	delete(current.transportConstants, name)
+	delete(current.transportPayloads, name)
+	delete(current.transportReceives, name)
 }
 
 func (e *extractor) addGDTransportSummary(function string, summary gdTransportTemplate) bool {
