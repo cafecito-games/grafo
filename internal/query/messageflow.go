@@ -145,6 +145,22 @@ func NewMessageFlow(repository graph.TopologyRepository) *MessageFlowService {
 }
 
 func (s *MessageFlowService) Flow(ctx context.Context, selector string, options MessageFlowOptions) (MessageFlow, error) {
+	if _, err := messageFlowLimit(options.Limit); err != nil {
+		return MessageFlow{}, err
+	}
+	if options.Direction != "" && options.Direction != Both && options.Direction != Incoming && options.Direction != Outgoing {
+		return MessageFlow{}, fmt.Errorf("unknown message-flow direction %q", options.Direction)
+	}
+	components, truncated, err := s.componentIndex(ctx, "")
+	if err != nil {
+		return MessageFlow{}, err
+	}
+	return s.flow(ctx, selector, options, components, truncated)
+}
+
+func (s *MessageFlowService) flow(ctx context.Context, selector string, options MessageFlowOptions,
+	components map[string]componentIdentity, componentsTruncated bool,
+) (MessageFlow, error) {
 	limit, err := messageFlowLimit(options.Limit)
 	if err != nil {
 		return MessageFlow{}, err
@@ -156,10 +172,6 @@ func (s *MessageFlowService) Flow(ctx context.Context, selector string, options 
 		return MessageFlow{}, fmt.Errorf("unknown message-flow direction %q", options.Direction)
 	}
 	scoped, err := s.resolveMessage(ctx, selector, options.Repository)
-	if err != nil {
-		return MessageFlow{}, err
-	}
-	components, componentsTruncated, err := s.componentIndex(ctx, "")
 	if err != nil {
 		return MessageFlow{}, err
 	}
@@ -328,11 +340,16 @@ func (s *MessageFlowService) Coverage(ctx context.Context, options MessageCovera
 	if len(nodes) > MaxCatalogLimit {
 		nodes = nodes[:MaxCatalogLimit]
 	}
+	components, componentsTruncated, err := s.componentIndex(ctx, "")
+	if err != nil {
+		return MessageCoverageList{}, err
+	}
 	for _, scoped := range nodes {
 		if scoped.Node.Properties["declaration"] != "message" || !messageNameMatches(scoped.Node, options.Package, options.Message) {
 			continue
 		}
-		flow, err := s.Flow(ctx, scoped.Node.ID, MessageFlowOptions{Repository: scoped.Repository, Component: options.Component, Direction: options.Direction, Limit: limit})
+		flow, err := s.flow(ctx, scoped.Node.ID, MessageFlowOptions{Repository: scoped.Repository, Component: options.Component, Direction: options.Direction, Limit: limit},
+			components, componentsTruncated)
 		if err != nil {
 			return MessageCoverageList{}, err
 		}
