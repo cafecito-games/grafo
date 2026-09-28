@@ -12,6 +12,12 @@ type Packet struct {
 	Flags PacketFlag
 }
 
+// PeerSender is the outbound send capability of a Peer, exported so consumers
+// narrowing Peer behind a local interface can embed it rather than redeclare Send.
+type PeerSender interface {
+	Send(channelID uint8, packet *Packet) error
+}
+
 type Peer struct{}
 
 func (p *Peer) Send(channelID uint8, packet *Packet) error { return nil }

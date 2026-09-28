@@ -71,6 +71,18 @@
       {
         "repo": "transport",
         "kind": "external",
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.PeerSender.Send",
+        "external": true
+      },
+      {
+        "repo": "transport",
+        "kind": "external",
+        "qualified_name": "goenet.PeerSender",
+        "external": true
+      },
+      {
+        "repo": "transport",
+        "kind": "external",
         "qualified_name": "google.golang.org/protobuf/proto.Marshal",
         "external": true
       },
@@ -289,12 +301,22 @@
       {
         "repo": "transport",
         "kind": "function",
+        "qualified_name": "example.com/transport.SendEnvelopeViaGamePeer"
+      },
+      {
+        "repo": "transport",
+        "kind": "function",
         "qualified_name": "example.com/transport.sameNameOnly"
       },
       {
         "repo": "transport",
         "kind": "function",
         "qualified_name": "example.com/transport.send"
+      },
+      {
+        "repo": "transport",
+        "kind": "function",
+        "qualified_name": "example.com/transport.sendViaGamePeer"
       },
       {
         "repo": "transport",
@@ -311,6 +333,16 @@
         "kind": "interface",
         "qualified_name": "builtin.error",
         "external": true
+      },
+      {
+        "repo": "transport",
+        "kind": "interface",
+        "qualified_name": "example.com/transport.GamePeer"
+      },
+      {
+        "repo": "transport",
+        "kind": "interface",
+        "qualified_name": "example.com/transport/third_party/goenet/pkg.PeerSender"
       },
       {
         "repo": "transport",
@@ -435,6 +467,16 @@
       {
         "repo": "transport",
         "kind": "method",
+        "qualified_name": "example.com/transport.GamePeer.Close"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "example.com/transport.GamePeer.Send"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
         "qualified_name": "example.com/transport.localPeer.Send"
       },
       {
@@ -471,6 +513,11 @@
         "repo": "transport",
         "kind": "method",
         "qualified_name": "example.com/transport/third_party/goenet/pkg.Peer.Send"
+      },
+      {
+        "repo": "transport",
+        "kind": "method",
+        "qualified_name": "example.com/transport/third_party/goenet/pkg.PeerSender.Send"
       },
       {
         "repo": "transport",
@@ -583,6 +630,16 @@
       {
         "repo": "transport",
         "kind": "parameter",
+        "qualified_name": "example.com/transport.SendEnvelopeViaGamePeer.message"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
+        "qualified_name": "example.com/transport.SendEnvelopeViaGamePeer.peer"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
         "qualified_name": "example.com/transport.sameNameOnly.message"
       },
       {
@@ -599,6 +656,16 @@
         "repo": "transport",
         "kind": "parameter",
         "qualified_name": "example.com/transport.send.peer"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
+        "qualified_name": "example.com/transport.sendViaGamePeer.payload"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
+        "qualified_name": "example.com/transport.sendViaGamePeer.peer"
       },
       {
         "repo": "transport",
@@ -663,17 +730,27 @@
       {
         "repo": "transport",
         "kind": "transport_operation",
-        "qualified_name": "transport.go:26:2:github.com/cafecito-games/goenet/pkg.Peer.Send:send"
+        "qualified_name": "transport.go:32:6:github.com/cafecito-games/goenet/pkg.PeerSender.Send:send"
       },
       {
         "repo": "transport",
         "kind": "transport_operation",
-        "qualified_name": "transport.go:34:13:github.com/cafecito-games/goenet/pkg.Event.Packet.Data:receive"
+        "qualified_name": "transport.go:37:2:github.com/cafecito-games/goenet/pkg.PeerSender.Send:send"
       },
       {
         "repo": "transport",
         "kind": "transport_operation",
-        "qualified_name": "transport.go:40:2:github.com/cafecito-games/goenet/pkg.Event.Packet.Data:receive"
+        "qualified_name": "transport.go:42:2:github.com/cafecito-games/goenet/pkg.Peer.Send:send"
+      },
+      {
+        "repo": "transport",
+        "kind": "transport_operation",
+        "qualified_name": "transport.go:50:13:github.com/cafecito-games/goenet/pkg.Event.Packet.Data:receive"
+      },
+      {
+        "repo": "transport",
+        "kind": "transport_operation",
+        "qualified_name": "transport.go:56:2:github.com/cafecito-games/goenet/pkg.Event.Packet.Data:receive"
       },
       {
         "repo": "transport",
@@ -783,12 +860,17 @@
       {
         "repo": "transport",
         "kind": "variable",
-        "qualified_name": "example.com/transport.ReceiveEnvelope.payload@34"
+        "qualified_name": "example.com/transport.ReceiveEnvelope.payload@50"
       },
       {
         "repo": "transport",
         "kind": "variable",
-        "qualified_name": "example.com/transport.SendEnvelope.payload@25"
+        "qualified_name": "example.com/transport.SendEnvelope.payload@41"
+      },
+      {
+        "repo": "transport",
+        "kind": "variable",
+        "qualified_name": "example.com/transport.SendEnvelopeViaGamePeer.payload@36"
       }
     ],
     "edges": [
@@ -1236,12 +1318,30 @@
         "relation": "declares",
         "to": {
           "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "example.com/transport/third_party/goenet/pkg.PeerSender"
+        },
+        "source": {
+          "path": "third_party/goenet/pkg/goenet.go",
+          "line": 17,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "third_party/goenet/pkg/goenet.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
           "kind": "method",
           "qualified_name": "example.com/transport/third_party/goenet/pkg.Host.Broadcast"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
-          "line": 21,
+          "line": 27,
           "column": 1
         }
       },
@@ -1259,7 +1359,7 @@
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
-          "line": 17,
+          "line": 23,
           "column": 1
         }
       },
@@ -1277,7 +1377,7 @@
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
-          "line": 25,
+          "line": 31,
           "column": 6
         }
       },
@@ -1295,7 +1395,7 @@
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
-          "line": 23,
+          "line": 29,
           "column": 6
         }
       },
@@ -1313,7 +1413,7 @@
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
-          "line": 19,
+          "line": 25,
           "column": 6
         }
       },
@@ -1367,7 +1467,7 @@
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
-          "line": 15,
+          "line": 21,
           "column": 6
         }
       },
@@ -1457,7 +1557,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 39,
+          "line": 55,
           "column": 1
         }
       },
@@ -1475,7 +1575,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 29,
+          "line": 45,
           "column": 1
         }
       },
@@ -1493,7 +1593,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 33,
+          "line": 49,
           "column": 1
         }
       },
@@ -1511,7 +1611,25 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 24,
+          "line": 40,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "transport.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.SendEnvelopeViaGamePeer"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 35,
           "column": 1
         }
       },
@@ -1549,6 +1667,42 @@
           "path": "transport.go",
           "line": 20,
           "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "transport.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.sendViaGamePeer"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 31,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "transport.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "example.com/transport.GamePeer"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 26,
+          "column": 6
         }
       },
       {
@@ -1685,7 +1839,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 40,
+          "line": 56,
           "column": 2
         },
         "properties": {
@@ -1706,7 +1860,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 39,
+          "line": 55,
           "column": 23
         }
       },
@@ -1724,7 +1878,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 39,
+          "line": 55,
           "column": 43
         }
       },
@@ -1738,11 +1892,11 @@
         "to": {
           "repo": "transport",
           "kind": "transport_operation",
-          "qualified_name": "transport.go:40:2:github.com/cafecito-games/goenet/pkg.Event.Packet.Data:receive"
+          "qualified_name": "transport.go:56:2:github.com/cafecito-games/goenet/pkg.Event.Packet.Data:receive"
         },
         "source": {
           "path": "transport.go",
-          "line": 40,
+          "line": 56,
           "column": 2
         },
         "properties": {
@@ -1765,7 +1919,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 30,
+          "line": 46,
           "column": 9
         },
         "properties": {
@@ -1786,7 +1940,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 29,
+          "line": 45,
           "column": 17
         }
       },
@@ -1804,7 +1958,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 30,
+          "line": 46,
           "column": 9
         },
         "properties": {
@@ -1832,7 +1986,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 36,
+          "line": 52,
           "column": 6
         },
         "properties": {
@@ -1853,7 +2007,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 33,
+          "line": 49,
           "column": 22
         }
       },
@@ -1871,7 +2025,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 33,
+          "line": 49,
           "column": 42
         }
       },
@@ -1885,11 +2039,11 @@
         "to": {
           "repo": "transport",
           "kind": "variable",
-          "qualified_name": "example.com/transport.ReceiveEnvelope.payload@34"
+          "qualified_name": "example.com/transport.ReceiveEnvelope.payload@50"
         },
         "source": {
           "path": "transport.go",
-          "line": 34,
+          "line": 50,
           "column": 2
         }
       },
@@ -1907,7 +2061,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 36,
+          "line": 52,
           "column": 6
         },
         "properties": {
@@ -1930,11 +2084,11 @@
         "to": {
           "repo": "transport",
           "kind": "transport_operation",
-          "qualified_name": "transport.go:34:13:github.com/cafecito-games/goenet/pkg.Event.Packet.Data:receive"
+          "qualified_name": "transport.go:50:13:github.com/cafecito-games/goenet/pkg.Event.Packet.Data:receive"
         },
         "source": {
           "path": "transport.go",
-          "line": 34,
+          "line": 50,
           "column": 13
         },
         "properties": {
@@ -1957,7 +2111,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 25,
+          "line": 41,
           "column": 16
         },
         "properties": {
@@ -1978,7 +2132,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 26,
+          "line": 42,
           "column": 2
         },
         "properties": {
@@ -1999,7 +2153,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 24,
+          "line": 40,
           "column": 38
         }
       },
@@ -2017,7 +2171,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 24,
+          "line": 40,
           "column": 19
         }
       },
@@ -2031,11 +2185,11 @@
         "to": {
           "repo": "transport",
           "kind": "variable",
-          "qualified_name": "example.com/transport.SendEnvelope.payload@25"
+          "qualified_name": "example.com/transport.SendEnvelope.payload@41"
         },
         "source": {
           "path": "transport.go",
-          "line": 25,
+          "line": 41,
           "column": 2
         }
       },
@@ -2053,7 +2207,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 25,
+          "line": 41,
           "column": 16
         },
         "properties": {
@@ -2076,11 +2230,157 @@
         "to": {
           "repo": "transport",
           "kind": "transport_operation",
-          "qualified_name": "transport.go:26:2:github.com/cafecito-games/goenet/pkg.Peer.Send:send"
+          "qualified_name": "transport.go:42:2:github.com/cafecito-games/goenet/pkg.Peer.Send:send"
         },
         "source": {
           "path": "transport.go",
-          "line": 26,
+          "line": 42,
+          "column": 2
+        },
+        "properties": {
+          "proof": "go/types",
+          "protocol": "enet"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.SendEnvelopeViaGamePeer"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "google.golang.org/protobuf/proto.Marshal",
+          "external": true
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 36,
+          "column": 16
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.SendEnvelopeViaGamePeer"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.sendViaGamePeer"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 37,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.SendEnvelopeViaGamePeer"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.SendEnvelopeViaGamePeer.message"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 35,
+          "column": 45
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.SendEnvelopeViaGamePeer"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.SendEnvelopeViaGamePeer.peer"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 35,
+          "column": 30
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.SendEnvelopeViaGamePeer"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "example.com/transport.SendEnvelopeViaGamePeer.payload@36"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 36,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.SendEnvelopeViaGamePeer"
+        },
+        "relation": "encodes",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 36,
+          "column": 16
+        },
+        "properties": {
+          "api": "google.golang.org/protobuf/proto.Marshal",
+          "binding": "example.com/transport/generated/go/proto.Envelope",
+          "binding_id": "n:7861ef6de56741497831",
+          "evidence": "go/types",
+          "form": "marshal",
+          "protocol": "protobuf",
+          "static_type": "*example.com/transport/generated/go/proto.Envelope"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.SendEnvelopeViaGamePeer"
+        },
+        "relation": "sends",
+        "to": {
+          "repo": "transport",
+          "kind": "transport_operation",
+          "qualified_name": "transport.go:37:2:github.com/cafecito-games/goenet/pkg.PeerSender.Send:send"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 37,
           "column": 2
         },
         "properties": {
@@ -2229,6 +2529,86 @@
         "from": {
           "repo": "transport",
           "kind": "function",
+          "qualified_name": "example.com/transport.sendViaGamePeer"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.PeerSender.Send",
+          "external": true
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 32,
+          "column": 6
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.sendViaGamePeer"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.sendViaGamePeer.payload"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 31,
+          "column": 37
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.sendViaGamePeer"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.sendViaGamePeer.peer"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 31,
+          "column": 22
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.sendViaGamePeer"
+        },
+        "relation": "sends",
+        "to": {
+          "repo": "transport",
+          "kind": "transport_operation",
+          "qualified_name": "transport.go:32:6:github.com/cafecito-games/goenet/pkg.PeerSender.Send:send"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 32,
+          "column": 6
+        },
+        "properties": {
+          "proof": "go/types",
+          "protocol": "enet"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
           "qualified_name": "example.com/transport/third_party/protobuf/proto.Marshal"
         },
         "relation": "declares",
@@ -2277,6 +2657,82 @@
           "path": "third_party/protobuf/proto/proto.go",
           "line": 6,
           "column": 29
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "example.com/transport.GamePeer"
+        },
+        "relation": "extends",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "goenet.PeerSender",
+          "external": true
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 28,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "example.com/transport.GamePeer"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "example.com/transport.GamePeer.Close"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 27,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "example.com/transport.GamePeer"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "example.com/transport.GamePeer.Send"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 26,
+          "column": 25
+        },
+        "properties": {
+          "promoted": "true"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "example.com/transport/third_party/goenet/pkg.PeerSender"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "example.com/transport/third_party/goenet/pkg.PeerSender.Send"
+        },
+        "source": {
+          "path": "third_party/goenet/pkg/goenet.go",
+          "line": 18,
+          "column": 2
         }
       },
       {
@@ -3400,6 +3856,59 @@
         "from": {
           "repo": "transport",
           "kind": "method",
+          "qualified_name": "example.com/transport.GamePeer.Close"
+        },
+        "relation": "returns_error",
+        "to": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "builtin.error",
+          "external": true
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 27,
+          "column": 10
+        },
+        "properties": {
+          "evidence": "go/types",
+          "form": "signature",
+          "resolution": "go/types",
+          "result_position": "0",
+          "type": "builtin.error"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "example.com/transport.GamePeer.Send"
+        },
+        "relation": "returns_error",
+        "to": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "builtin.error",
+          "external": true
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 26,
+          "column": 6
+        },
+        "properties": {
+          "evidence": "go/types",
+          "form": "signature",
+          "promoted": "true",
+          "resolution": "go/types",
+          "result_position": "0",
+          "type": "builtin.error"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
           "qualified_name": "example.com/transport.localPeer.Send"
         },
         "relation": "returns_error",
@@ -3551,7 +4060,7 @@
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
-          "line": 21,
+          "line": 27,
           "column": 26
         }
       },
@@ -3569,7 +4078,7 @@
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
-          "line": 21,
+          "line": 27,
           "column": 43
         }
       },
@@ -3587,7 +4096,7 @@
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
-          "line": 17,
+          "line": 23,
           "column": 21
         }
       },
@@ -3605,7 +4114,7 @@
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
-          "line": 17,
+          "line": 23,
           "column": 38
         }
       },
@@ -3787,7 +4296,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 40,
+          "line": 56,
           "column": 2
         },
         "properties": {
@@ -3808,7 +4317,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 40,
+          "line": 56,
           "column": 2
         },
         "properties": {
@@ -3830,7 +4339,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 30,
+          "line": 46,
           "column": 9
         },
         "properties": {
@@ -3847,11 +4356,11 @@
         "to": {
           "repo": "transport",
           "kind": "variable",
-          "qualified_name": "example.com/transport.ReceiveEnvelope.payload@34"
+          "qualified_name": "example.com/transport.ReceiveEnvelope.payload@50"
         },
         "source": {
           "path": "transport.go",
-          "line": 34,
+          "line": 50,
           "column": 2
         }
       },
@@ -3870,7 +4379,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 36,
+          "line": 52,
           "column": 6
         },
         "properties": {
@@ -3887,11 +4396,11 @@
         "to": {
           "repo": "transport",
           "kind": "variable",
-          "qualified_name": "example.com/transport.SendEnvelope.payload@25"
+          "qualified_name": "example.com/transport.SendEnvelope.payload@41"
         },
         "source": {
           "path": "transport.go",
-          "line": 25,
+          "line": 41,
           "column": 2
         }
       },
@@ -3910,7 +4419,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 25,
+          "line": 41,
           "column": 16
         },
         "properties": {
@@ -3931,7 +4440,68 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 26,
+          "line": 42,
+          "column": 2
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.SendEnvelopeViaGamePeer.message"
+        },
+        "relation": "assigns",
+        "to": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "example.com/transport.SendEnvelopeViaGamePeer.payload@36"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 36,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.SendEnvelopeViaGamePeer.message"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "google.golang.org/protobuf/proto.Marshal",
+          "external": true
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 36,
+          "column": 16
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.SendEnvelopeViaGamePeer.peer"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.sendViaGamePeer"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 37,
           "column": 2
         },
         "properties": {
@@ -3975,6 +4545,28 @@
         "source": {
           "path": "transport.go",
           "line": 21,
+          "column": 6
+        },
+        "properties": {
+          "argument": "1"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.sendViaGamePeer.payload"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "transport",
+          "kind": "external",
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.PeerSender.Send",
+          "external": true
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 32,
           "column": 6
         },
         "properties": {
@@ -4273,7 +4865,7 @@
         "from": {
           "repo": "transport",
           "kind": "transport_operation",
-          "qualified_name": "transport.go:26:2:github.com/cafecito-games/goenet/pkg.Peer.Send:send"
+          "qualified_name": "transport.go:37:2:github.com/cafecito-games/goenet/pkg.PeerSender.Send:send"
         },
         "relation": "carries",
         "to": {
@@ -4283,7 +4875,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 26,
+          "line": 37,
           "column": 2
         },
         "properties": {
@@ -4299,7 +4891,7 @@
         "from": {
           "repo": "transport",
           "kind": "transport_operation",
-          "qualified_name": "transport.go:34:13:github.com/cafecito-games/goenet/pkg.Event.Packet.Data:receive"
+          "qualified_name": "transport.go:42:2:github.com/cafecito-games/goenet/pkg.Peer.Send:send"
         },
         "relation": "carries",
         "to": {
@@ -4309,7 +4901,33 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 34,
+          "line": 42,
+          "column": 2
+        },
+        "properties": {
+          "binding": "example.com/transport/generated/go/proto.Envelope",
+          "payload_field": "Data",
+          "payload_position": "1",
+          "proof": "go/types",
+          "protocol": "enet",
+          "wrapper_depth": "1"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "transport_operation",
+          "qualified_name": "transport.go:50:13:github.com/cafecito-games/goenet/pkg.Event.Packet.Data:receive"
+        },
+        "relation": "carries",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 50,
           "column": 13
         },
         "properties": {
@@ -4324,7 +4942,7 @@
         "from": {
           "repo": "transport",
           "kind": "transport_operation",
-          "qualified_name": "transport.go:40:2:github.com/cafecito-games/goenet/pkg.Event.Packet.Data:receive"
+          "qualified_name": "transport.go:56:2:github.com/cafecito-games/goenet/pkg.Event.Packet.Data:receive"
         },
         "relation": "carries",
         "to": {
@@ -4334,7 +4952,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 40,
+          "line": 56,
           "column": 2
         },
         "properties": {
@@ -4696,7 +5314,7 @@
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
-          "line": 28,
+          "line": 34,
           "column": 2
         }
       },
@@ -4714,7 +5332,7 @@
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
-          "line": 29,
+          "line": 35,
           "column": 2
         }
       },
@@ -4732,7 +5350,7 @@
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
-          "line": 30,
+          "line": 36,
           "column": 2
         }
       },
@@ -4750,7 +5368,7 @@
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
-          "line": 27,
+          "line": 33,
           "column": 2
         }
       },
@@ -4768,7 +5386,7 @@
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
-          "line": 26,
+          "line": 32,
           "column": 2
         }
       },
@@ -4935,7 +5553,7 @@
         "from": {
           "repo": "transport",
           "kind": "variable",
-          "qualified_name": "example.com/transport.ReceiveEnvelope.payload@34"
+          "qualified_name": "example.com/transport.ReceiveEnvelope.payload@50"
         },
         "relation": "passes",
         "to": {
@@ -4946,7 +5564,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 36,
+          "line": 52,
           "column": 6
         },
         "properties": {
@@ -4957,7 +5575,7 @@
         "from": {
           "repo": "transport",
           "kind": "variable",
-          "qualified_name": "example.com/transport.SendEnvelope.payload@25"
+          "qualified_name": "example.com/transport.SendEnvelope.payload@41"
         },
         "relation": "passes",
         "to": {
@@ -4967,7 +5585,28 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 26,
+          "line": 42,
+          "column": 2
+        },
+        "properties": {
+          "argument": "1"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "variable",
+          "qualified_name": "example.com/transport.SendEnvelopeViaGamePeer.payload@36"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.sendViaGamePeer"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 37,
           "column": 2
         },
         "properties": {
@@ -5090,26 +5729,27 @@
             }
           ],
           "encoders": [
+            "e:22a9d334b7667c41e980",
             "e:2f0172be4bedf24ea14c",
-            "e:8def4ff53f42204ff552",
+            "e:942d38bb8d383f5b7365",
             "e:c009777144fa79ee2ce1"
           ],
           "decoders": [
             "e:27dc01ec9b0ee5ba33ae",
-            "e:99e5832280f8c1a6de98"
+            "e:98d88b66f9122e7e90e4"
           ],
           "sends": [
             {
               "operation": {
                 "repo": "transport",
                 "kind": "transport_operation",
-                "qualified_name": "transport.go:26:2:github.com/cafecito-games/goenet/pkg.Peer.Send:send"
+                "qualified_name": "transport.go:37:2:github.com/cafecito-games/goenet/pkg.PeerSender.Send:send"
               },
               "status": "resolved",
               "channel": "3",
               "reliability": "reliable",
               "sources": [
-                "e:c52a5ec388fd22bf483d"
+                "e:f52b7c39def49e6bddf6"
               ]
             },
             {
@@ -5123,6 +5763,19 @@
               "reliability": "reliable",
               "sources": [
                 "e:5c6cf3a922516b4f71bf"
+              ]
+            },
+            {
+              "operation": {
+                "repo": "transport",
+                "kind": "transport_operation",
+                "qualified_name": "transport.go:42:2:github.com/cafecito-games/goenet/pkg.Peer.Send:send"
+              },
+              "status": "resolved",
+              "channel": "3",
+              "reliability": "reliable",
+              "sources": [
+                "e:61d70b6e86e4657e760a"
               ]
             },
             {
@@ -5143,6 +5796,19 @@
               "operation": {
                 "repo": "transport",
                 "kind": "transport_operation",
+                "qualified_name": "transport.go:56:2:github.com/cafecito-games/goenet/pkg.Event.Packet.Data:receive"
+              },
+              "status": "unknown",
+              "channel": "event.ChannelID",
+              "reliability": "unknown",
+              "sources": [
+                "e:11c34b4ab8529076b037"
+              ]
+            },
+            {
+              "operation": {
+                "repo": "transport",
+                "kind": "transport_operation",
                 "qualified_name": "client.gd:17:15:ENetPacketPeer.get_packet:receive"
               },
               "status": "unknown",
@@ -5155,26 +5821,13 @@
               "operation": {
                 "repo": "transport",
                 "kind": "transport_operation",
-                "qualified_name": "transport.go:34:13:github.com/cafecito-games/goenet/pkg.Event.Packet.Data:receive"
+                "qualified_name": "transport.go:50:13:github.com/cafecito-games/goenet/pkg.Event.Packet.Data:receive"
               },
               "status": "unknown",
               "channel": "event.ChannelID",
               "reliability": "unknown",
               "sources": [
-                "e:9dac024010c7d512e72b"
-              ]
-            },
-            {
-              "operation": {
-                "repo": "transport",
-                "kind": "transport_operation",
-                "qualified_name": "transport.go:40:2:github.com/cafecito-games/goenet/pkg.Event.Packet.Data:receive"
-              },
-              "status": "unknown",
-              "channel": "event.ChannelID",
-              "reliability": "unknown",
-              "sources": [
-                "e:cadfc9a7f28d80e6f1ce"
+                "e:badc6912696e0806fd56"
               ]
             }
           ],
@@ -5194,18 +5847,18 @@
                 "kind": "function",
                 "qualified_name": "example.com/transport.ReceiveEnvelope"
               },
-              "evidence": "e:99e5832280f8c1a6de98",
+              "evidence": "e:98d88b66f9122e7e90e4",
               "callers": [
-                "e:2dc93fd2af4ecc5287e1"
+                "e:865a4670670ad90554ba"
               ]
             }
           ],
           "channel_mismatches": [],
           "gaps": [],
           "unknown_evidence": [
+            "e:3076b199a00c13e6dfca",
             "e:6c4bd598921c30373f86",
-            "e:86bc4f714f5f2ef1b3ec",
-            "e:f5b42a7bc57f5b644390",
+            "e:daae2c0aaf1aeedc203b",
             "e:f735c4d6d9da3717ef7b"
           ],
           "uncertainties": [
@@ -5255,7 +5908,7 @@
             }
           ],
           "encoders": [
-            "e:eca259fa8f104be3e264"
+            "e:5f94d1d8e51ca8fda15a"
           ],
           "decoders": [],
           "sends": [],
@@ -5353,8 +6006,9 @@
             }
           ],
           "encoders": [
+            "e:22a9d334b7667c41e980",
             "e:2f0172be4bedf24ea14c",
-            "e:8def4ff53f42204ff552",
+            "e:942d38bb8d383f5b7365",
             "e:c009777144fa79ee2ce1"
           ],
           "decoders": [],
@@ -5363,13 +6017,13 @@
               "operation": {
                 "repo": "transport",
                 "kind": "transport_operation",
-                "qualified_name": "transport.go:26:2:github.com/cafecito-games/goenet/pkg.Peer.Send:send"
+                "qualified_name": "transport.go:37:2:github.com/cafecito-games/goenet/pkg.PeerSender.Send:send"
               },
               "status": "resolved",
               "channel": "3",
               "reliability": "reliable",
               "sources": [
-                "e:c52a5ec388fd22bf483d"
+                "e:f52b7c39def49e6bddf6"
               ]
             },
             {
@@ -5383,6 +6037,19 @@
               "reliability": "reliable",
               "sources": [
                 "e:5c6cf3a922516b4f71bf"
+              ]
+            },
+            {
+              "operation": {
+                "repo": "transport",
+                "kind": "transport_operation",
+                "qualified_name": "transport.go:42:2:github.com/cafecito-games/goenet/pkg.Peer.Send:send"
+              },
+              "status": "resolved",
+              "channel": "3",
+              "reliability": "reliable",
+              "sources": [
+                "e:61d70b6e86e4657e760a"
               ]
             },
             {
@@ -5403,9 +6070,9 @@
           "channel_mismatches": [],
           "gaps": [],
           "unknown_evidence": [
+            "e:3076b199a00c13e6dfca",
             "e:6c4bd598921c30373f86",
-            "e:86bc4f714f5f2ef1b3ec",
-            "e:f5b42a7bc57f5b644390",
+            "e:daae2c0aaf1aeedc203b",
             "e:f735c4d6d9da3717ef7b"
           ],
           "uncertainties": [
@@ -5472,9 +6139,9 @@
                 "unused_message_member"
               ],
               "unknown_evidence": [
+                "e:3076b199a00c13e6dfca",
                 "e:6c4bd598921c30373f86",
-                "e:86bc4f714f5f2ef1b3ec",
-                "e:f5b42a7bc57f5b644390",
+                "e:daae2c0aaf1aeedc203b",
                 "e:f735c4d6d9da3717ef7b"
               ],
               "uncertainties": [
