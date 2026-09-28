@@ -45,6 +45,23 @@ func TestProtocolUsageFederationRequiresCanonicalProtobufDeclaration(t *testing.
 	}
 }
 
+func TestTransportFederationRequiresOperationAndCanonicalPayload(t *testing.T) {
+	for _, test := range []struct {
+		relation graph.EdgeKind
+		node     graph.Node
+		want     bool
+	}{
+		{graph.EdgeSends, graph.Node{Kind: graph.KindTransportOperation}, true},
+		{graph.EdgeReceives, graph.Node{Kind: graph.KindMethod}, false},
+		{graph.EdgeCarries, graph.Node{Kind: graph.KindType, Language: "protobuf"}, true},
+		{graph.EdgeCarries, graph.Node{Kind: graph.KindType, Language: "go"}, false},
+	} {
+		if got := candidateAllowed(test.relation, test.node); got != test.want {
+			t.Errorf("candidateAllowed(%s, %#v) = %v, want %v", test.relation, test.node, got, test.want)
+		}
+	}
+}
+
 func TestMiddlewareFederationRequiresCallableDeclaration(t *testing.T) {
 	for _, test := range []struct {
 		kind graph.NodeKind

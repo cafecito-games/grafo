@@ -1112,6 +1112,220 @@ func TestPackageSemanticLoaderExtractsCanonicalProtobufUsage(t *testing.T) {
 	}
 }
 
+func TestPackageSemanticLoaderExtractsENetTransportEvidence(t *testing.T) {
+	root := protobufUsageFixture(t)
+	writeFile(t, filepath.Join(root, "go.mod"), `module example.com/app
+
+go 1.26
+
+require (
+	github.com/codecat/go-enet v0.0.0
+	google.golang.org/protobuf v0.0.0
+)
+replace github.com/codecat/go-enet => ./third_party/enet
+replace google.golang.org/protobuf => ./third_party/protobuf
+`)
+	writeFile(t, filepath.Join(root, "third_party", "enet", "go.mod"), "module github.com/codecat/go-enet\n\ngo 1.26\n")
+	writeFile(t, filepath.Join(root, "third_party", "enet", "enet.go"), `package enet
+type PacketFlags uint32
+const (
+	PacketFlagReliable PacketFlags = 1
+	PacketFlagUnsequenced PacketFlags = 2
+)
+type Packet interface { GetData() []byte }
+type Event interface { GetPacket() Packet; GetChannelID() uint8 }
+type Peer interface {
+	SendBytes([]byte, uint8, PacketFlags) error
+	SendString(string, uint8, PacketFlags) error
+	SendPacket(Packet, uint8) error
+}
+`)
+	content := []byte(`package app
+import (
+	enet "github.com/codecat/go-enet"
+	generated "example.com/app/gen"
+	wire "google.golang.org/protobuf/proto"
+)
+const gameplayChannel = 3
+func send(peer enet.Peer, payload []byte) { _ = peer.SendBytes(payload, gameplayChannel, enet.PacketFlagReliable) }
+func relay(peer enet.Peer, payload []byte) { send(peer, payload) }
+func conflicting(peer enet.Peer, left, right []byte) {
+	_ = peer.SendBytes(left, 1, enet.PacketFlagReliable)
+	_ = peer.SendBytes(right, 2, enet.PacketFlagUnsequenced)
+}
+func multiConflict(peer enet.Peer, left, right []byte, leftText, rightText string) {
+	_ = peer.SendBytes(left, 1, enet.PacketFlagReliable)
+	_ = peer.SendBytes(right, 2, enet.PacketFlagUnsequenced)
+	_ = peer.SendString(leftText, 3, enet.PacketFlagReliable)
+	_ = peer.SendString(rightText, 4, enet.PacketFlagUnsequenced)
+}
+func UseMultiConflict(peer enet.Peer, left, right []byte, leftText, rightText string) {
+	multiConflict(peer, left, right, leftText, rightText)
+}
+func cycleA(peer enet.Peer, payload []byte) { cycleB(peer, payload) }
+func cycleB(peer enet.Peer, payload []byte) { cycleA(peer, payload) }
+func deep1(peer enet.Peer, payload []byte) { send(peer, payload) }
+func deep2(peer enet.Peer, payload []byte) { deep1(peer, payload) }
+func deep3(peer enet.Peer, payload []byte) { deep2(peer, payload) }
+func deep4(peer enet.Peer, payload []byte) { deep3(peer, payload) }
+func deep5(peer enet.Peer, payload []byte) { deep4(peer, payload) }
+func deep6(peer enet.Peer, payload []byte) { deep5(peer, payload) }
+func deep7(peer enet.Peer, payload []byte) { deep6(peer, payload) }
+func deep8(peer enet.Peer, payload []byte) { deep7(peer, payload) }
+func deep9(peer enet.Peer, payload []byte) { deep8(peer, payload) }
+func UseTransport(peer enet.Peer, event enet.Event, input *generated.Envelope, channel uint8, flags enet.PacketFlags, unknown []byte) {
+	payload, _ := wire.Marshal(input)
+	relay(peer, payload)
+	deep9(peer, payload)
+	conflicting(peer, payload, unknown)
+	_ = peer.SendBytes(unknown, channel, flags)
+	packet := event.GetPacket()
+	received := packet.GetData()
+	_ = event.GetChannelID()
+	_ = wire.Unmarshal(received, input)
+}
+type Lookalike struct{}
+func (Lookalike) SendBytes(payload []byte, channel uint8, flags enet.PacketFlags) error { return nil }
+func OrdinaryCall(value Lookalike, payload []byte) { _ = value.SendBytes(payload, 3, enet.PacketFlagReliable) }
+func UncertainTransport(peer enet.Peer, input *generated.Envelope, unknown []byte, condition bool) {
+	payload, _ := wire.Marshal(input)
+	if condition { payload = unknown }
+	_ = peer.SendBytes(payload, 3, enet.PacketFlagReliable)
+}
+`)
+	writeFile(t, filepath.Join(root, "transport.go"), string(content))
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "transport.go", Content: content, Repository: "protobuf-transport",
+		RepoID: "repo", GoModule: "example.com/app",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	useID := nodeIDByQualified(t, result.Nodes, "example.com/app.UseTransport")
+	send := assertTransportOperation(t, result, useID, graph.EdgeSends, "send", "github.com/codecat/go-enet.Peer.SendBytes")
+	if send.Properties["channel"] != "3" || send.Properties["channel_status"] != "proven" ||
+		send.Properties["reliability"] != "reliable" || send.Properties["payload_status"] != "proven" ||
+		send.Properties["wrapper_depth"] != "2" {
+		t.Fatalf("wrapped send evidence = %#v", send.Properties)
+	}
+	assertTransportCarries(t, result.Facts, send.ID, "acme.v1.Envelope")
+	receive := assertTransportOperation(t, result, useID, graph.EdgeReceives, "receive", "github.com/codecat/go-enet.Packet.GetData")
+	if receive.Properties["channel_status"] != "symbolic" || receive.Properties["payload_status"] != "proven" {
+		t.Fatalf("receive evidence = %#v", receive.Properties)
+	}
+	assertTransportCarries(t, result.Facts, receive.ID, "acme.v1.Envelope")
+
+	unknownOperation := false
+	for _, node := range result.Nodes {
+		if node.Kind == graph.KindTransportOperation && node.Properties["direction"] == "send" &&
+			node.Properties["channel_status"] == "unknown" && node.Properties["payload_status"] == "unknown" {
+			unknownOperation = true
+		}
+	}
+	if !unknownOperation {
+		t.Fatalf("dynamic transport evidence missing: %#v", result.Nodes)
+	}
+	ambiguousOperation := false
+	unreliableOperation := false
+	for _, node := range result.Nodes {
+		if node.Kind == graph.KindTransportOperation && node.Properties["channel"] == "2" && node.Properties["reliability"] == "unreliable" {
+			unreliableOperation = true
+		}
+		if node.Kind == graph.KindTransportOperation && node.Properties["direction"] == "send" &&
+			node.Properties["channel_status"] == "ambiguous" && node.Properties["payload_status"] == "ambiguous" &&
+			node.Properties["reliability"] == "unknown" {
+			ambiguousOperation = true
+			for _, fact := range result.Facts {
+				if fact.FromID == node.ID && fact.Kind == graph.EdgeCarries {
+					t.Fatalf("ambiguous wrapper payload produced carries edge: %#v", fact)
+				}
+			}
+		}
+	}
+	if !ambiguousOperation {
+		t.Fatalf("conflicting wrapper evidence was not preserved as ambiguous: %#v", result.Nodes)
+	}
+	if !unreliableOperation {
+		t.Fatalf("exact unreliable flags were not normalized: %#v", result.Nodes)
+	}
+	var conflictDiagnostics []string
+	for _, diagnostic := range result.Diagnostics {
+		if strings.Contains(diagnostic.Message, "conflicting ENet wrapper summaries for ") {
+			conflictDiagnostics = append(conflictDiagnostics, diagnostic.Message)
+		}
+	}
+	wantConflictDiagnostics := []string{
+		"conflicting ENet wrapper summaries for github.com/codecat/go-enet.Peer.SendBytes; transport evidence marked ambiguous",
+		"conflicting ENet wrapper summaries for github.com/codecat/go-enet.Peer.SendString; transport evidence marked ambiguous",
+		"conflicting ENet wrapper summaries for github.com/codecat/go-enet.Peer.SendBytes; transport evidence marked ambiguous",
+	}
+	if !reflect.DeepEqual(conflictDiagnostics, wantConflictDiagnostics) {
+		t.Fatalf("multi-API conflict diagnostics = %#v, want %#v", conflictDiagnostics, wantConflictDiagnostics)
+	}
+	truncatedOperation := false
+	nodesByID := map[string]graph.Node{}
+	for _, node := range result.Nodes {
+		nodesByID[node.ID] = node
+	}
+	for _, fact := range result.Facts {
+		node := nodesByID[fact.TargetID]
+		if fact.FromID == useID && fact.Kind == graph.EdgeSends && node.Properties["channel_status"] == "truncated" &&
+			node.Properties["payload_status"] == "truncated" {
+			truncatedOperation = true
+		}
+	}
+	if !truncatedOperation {
+		t.Fatalf("bounded wrapper evidence did not surface truncation: %#v", result.Nodes)
+	}
+	ordinaryID := nodeIDByQualified(t, result.Nodes, "example.com/app.OrdinaryCall")
+	uncertainID := nodeIDByQualified(t, result.Nodes, "example.com/app.UncertainTransport")
+	for _, fact := range result.Facts {
+		if fact.FromID == ordinaryID && (fact.Kind == graph.EdgeSends || fact.Kind == graph.EdgeReceives) {
+			t.Fatalf("same-name non-ENet API produced transport fact: %#v", fact)
+		}
+		if fact.FromID == uncertainID && fact.Kind == graph.EdgeSends {
+			for _, carried := range result.Facts {
+				if carried.FromID == fact.TargetID && carried.Kind == graph.EdgeCarries {
+					t.Fatalf("branch-dependent Go payload produced carries edge: %#v", carried)
+				}
+			}
+		}
+	}
+}
+
+func assertTransportOperation(t *testing.T, result graph.ParseResult, fromID string, relation graph.EdgeKind, direction, api string) graph.Node {
+	t.Helper()
+	nodes := map[string]graph.Node{}
+	for _, node := range result.Nodes {
+		nodes[node.ID] = node
+	}
+	var matched graph.Node
+	for _, fact := range result.Facts {
+		node := nodes[fact.TargetID]
+		if fact.FromID == fromID && fact.Kind == relation && node.Kind == graph.KindTransportOperation &&
+			node.Properties["direction"] == direction && node.Properties["api"] == api {
+			if matched.ID == "" || node.Properties["payload_status"] == "proven" {
+				matched = node
+			}
+		}
+	}
+	if matched.ID != "" {
+		return matched
+	}
+	t.Fatalf("missing %s %s operation for %q: nodes=%#v facts=%#v diagnostics=%#v", direction, api, fromID, result.Nodes, result.Facts, result.Diagnostics)
+	return graph.Node{}
+}
+
+func assertTransportCarries(t *testing.T, facts []graph.Fact, operationID, target string) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.FromID == operationID && fact.Kind == graph.EdgeCarries && fact.Target == target && fact.TargetID != "" {
+			return
+		}
+	}
+	t.Fatalf("operation %q does not carry %q: %#v", operationID, target, facts)
+}
+
 func TestPackageSemanticLoaderFailsClosedForIllTypedProtobufUsage(t *testing.T) {
 	root := protobufUsageFixture(t)
 	content := []byte(`package app

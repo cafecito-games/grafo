@@ -117,8 +117,12 @@ type scope struct {
 	// locked marks declarations whose explicit annotation controls their type.
 	// In particular, a Variant must not become a generated message merely
 	// because its initializer happens to be one.
-	locked  map[string]bool
-	signals map[string]signalRef
+	locked                 map[string]bool
+	signals                map[string]signalRef
+	transportConstants     map[string]string
+	transportPayloads      map[string]protobufAPI
+	transportFieldPayloads map[string]protobufAPI
+	transportReceives      map[string]string
 }
 
 type protobufAPI struct {
@@ -150,12 +154,13 @@ type extractor struct {
 	// the only inheritance evidence a single-file parser holds. It is what lets a
 	// receiver typed as a locally declared subclass of an input class still be
 	// recognized as one.
-	bases             map[string]string
-	protobufAPIs      map[string]protobufAPI
-	protobufAmbiguous map[string]bool
-	protobufTypes     map[string]bool
-	protobufEnabled   bool
-	protobufWarned    map[string]bool
+	bases              map[string]string
+	protobufAPIs       map[string]protobufAPI
+	protobufAmbiguous  map[string]bool
+	protobufTypes      map[string]bool
+	protobufEnabled    bool
+	protobufWarned     map[string]bool
+	transportSummaries map[string][]gdTransportTemplate
 }
 
 func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseResult, error) {
@@ -193,7 +198,8 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 		methods: map[string]string{}, autoloads: map[gdast.Node]bool{},
 		projectKnown: true, bases: map[string]string{}, protobufAPIs: protobufAPIs,
 		protobufAmbiguous: protobufAmbiguous, protobufTypes: protobufTypes,
-		protobufEnabled: protobufEnabled, protobufWarned: map[string]bool{}}
+		protobufEnabled: protobufEnabled, protobufWarned: map[string]bool{},
+		transportSummaries: map[string][]gdTransportTemplate{}}
 	project, projectErr := godotid.LoadProject(input.Root, input.Path)
 	if projectErr != nil {
 		// The owning project is unknown rather than absent, so res:// references
@@ -291,7 +297,9 @@ func (e *extractor) extract(file *gdast.File) {
 		QualifiedName: qualified, Location: loc, Properties: properties})
 	root := scope{currentID: classID, parentID: classID, container: qualified, receiver: qualified,
 		classID: classID, classBody: true, symbols: map[string]string{}, types: map[string]string{}, fields: map[string]string{},
-		fieldSymbols: map[string]string{}, fieldLocked: map[string]bool{}, locked: map[string]bool{}, signals: map[string]signalRef{}}
+		fieldSymbols: map[string]string{}, fieldLocked: map[string]bool{}, locked: map[string]bool{}, signals: map[string]signalRef{},
+		transportConstants: map[string]string{}, transportPayloads: map[string]protobufAPI{},
+		transportFieldPayloads: map[string]protobufAPI{}, transportReceives: map[string]string{}}
 	root.types[className] = qualified
 	base := fileBase(file.Statements)
 	// Register inner class names before resolving the file base, because a script
@@ -306,6 +314,7 @@ func (e *extractor) extract(file *gdast.File) {
 		e.bases[qualified] = base
 	}
 	e.prepareClassFields(file.Statements, root)
+	e.prepareTransportSummaries(file.Statements, root)
 	e.walkStatements(file.Statements, root)
 }
 
@@ -347,6 +356,11 @@ func (e *extractor) prepareClassSymbols(statements []gdast.Statement, current sc
 				current.fields[node.Name] = resolved
 			}
 			current.locked[node.Name] = node.Type != ""
+			if node.Constant {
+				if value, status := e.transportConstant(node.Value, current); status == "proven" {
+					current.transportConstants[node.Name] = value
+				}
+			}
 		case *gdast.SignalDeclaration:
 			qualified := qualify(current.container, node.Name)
 			ref := signalRef{id: graph.NodeID(graph.KindEvent, qualified, e.input.RepoID, e.input.Path), qualified: qualified}
@@ -434,31 +448,52 @@ func (e *extractor) walkStatement(statement gdast.Statement, current scope, anno
 		baseline.fieldSymbols = cloneMap(current.fieldSymbols)
 		baseline.fieldLocked = cloneBoolMap(current.fieldLocked)
 		baseline.locked = cloneBoolMap(current.locked)
+		baseline.transportConstants = cloneMap(current.transportConstants)
+		baseline.transportPayloads = cloneProtobufAPIMap(current.transportPayloads)
+		baseline.transportFieldPayloads = cloneProtobufAPIMap(current.transportFieldPayloads)
+		baseline.transportReceives = cloneMap(current.transportReceives)
 		var alternatives, fieldAlternatives []map[string]string
+		var payloadAlternatives, fieldPayloadAlternatives []map[string]protobufAPI
+		var receiveAlternatives []map[string]string
 		for _, branch := range node.Branches {
 			e.walkExpression(branch.Condition, current)
 			branchScope := cloneFlowScope(baseline)
 			e.walkStatements(branch.Body, branchScope)
 			alternatives = append(alternatives, branchScope.types)
 			fieldAlternatives = append(fieldAlternatives, branchScope.fields)
+			payloadAlternatives = append(payloadAlternatives, branchScope.transportPayloads)
+			fieldPayloadAlternatives = append(fieldPayloadAlternatives, branchScope.transportFieldPayloads)
+			receiveAlternatives = append(receiveAlternatives, branchScope.transportReceives)
 		}
 		if len(node.Else) == 0 {
 			alternatives = append(alternatives, baseline.types)
 			fieldAlternatives = append(fieldAlternatives, baseline.fields)
+			payloadAlternatives = append(payloadAlternatives, baseline.transportPayloads)
+			fieldPayloadAlternatives = append(fieldPayloadAlternatives, baseline.transportFieldPayloads)
+			receiveAlternatives = append(receiveAlternatives, baseline.transportReceives)
 		} else {
 			elseScope := cloneFlowScope(baseline)
 			e.walkStatements(node.Else, elseScope)
 			alternatives = append(alternatives, elseScope.types)
 			fieldAlternatives = append(fieldAlternatives, elseScope.fields)
+			payloadAlternatives = append(payloadAlternatives, elseScope.transportPayloads)
+			fieldPayloadAlternatives = append(fieldPayloadAlternatives, elseScope.transportFieldPayloads)
+			receiveAlternatives = append(receiveAlternatives, elseScope.transportReceives)
 		}
 		mergeFlowTypes(current, alternatives)
 		mergeFlowFields(current, fieldAlternatives)
+		mergeFlowPayloads(current.transportPayloads, payloadAlternatives)
+		mergeFlowPayloads(current.transportFieldPayloads, fieldPayloadAlternatives)
+		mergeFlowStrings(current.transportReceives, receiveAlternatives)
 	case *gdast.WhileStatement:
 		e.walkExpression(node.Condition, current)
 		bodyScope := cloneFlowScope(current)
 		e.walkStatements(node.Body, bodyScope)
 		mergeFlowTypes(current, []map[string]string{current.types, bodyScope.types})
 		mergeFlowFields(current, []map[string]string{current.fields, bodyScope.fields})
+		mergeFlowPayloads(current.transportPayloads, []map[string]protobufAPI{current.transportPayloads, bodyScope.transportPayloads})
+		mergeFlowPayloads(current.transportFieldPayloads, []map[string]protobufAPI{current.transportFieldPayloads, bodyScope.transportFieldPayloads})
+		mergeFlowStrings(current.transportReceives, []map[string]string{current.transportReceives, bodyScope.transportReceives})
 	case *gdast.ForStatement:
 		e.walkExpression(node.Iterable, current)
 		bodyScope := cloneFlowScope(current)
@@ -466,9 +501,14 @@ func (e *extractor) walkStatement(statement gdast.Statement, current scope, anno
 		e.walkStatements(node.Body, bodyScope)
 		mergeFlowTypes(current, []map[string]string{current.types, bodyScope.types})
 		mergeFlowFields(current, []map[string]string{current.fields, bodyScope.fields})
+		mergeFlowPayloads(current.transportPayloads, []map[string]protobufAPI{current.transportPayloads, bodyScope.transportPayloads})
+		mergeFlowPayloads(current.transportFieldPayloads, []map[string]protobufAPI{current.transportFieldPayloads, bodyScope.transportFieldPayloads})
+		mergeFlowStrings(current.transportReceives, []map[string]string{current.transportReceives, bodyScope.transportReceives})
 	case *gdast.MatchStatement:
 		e.walkExpression(node.Value, current)
 		var alternatives, fieldAlternatives []map[string]string
+		var payloadAlternatives, fieldPayloadAlternatives []map[string]protobufAPI
+		var receiveAlternatives []map[string]string
 		exhaustive := false
 		for _, matchCase := range node.Cases {
 			caseScope := cloneFlowScope(current)
@@ -482,15 +522,24 @@ func (e *extractor) walkStatement(statement gdast.Statement, current scope, anno
 			e.walkStatements(matchCase.Body, caseScope)
 			alternatives = append(alternatives, caseScope.types)
 			fieldAlternatives = append(fieldAlternatives, caseScope.fields)
+			payloadAlternatives = append(payloadAlternatives, caseScope.transportPayloads)
+			fieldPayloadAlternatives = append(fieldPayloadAlternatives, caseScope.transportFieldPayloads)
+			receiveAlternatives = append(receiveAlternatives, caseScope.transportReceives)
 		}
 		if !exhaustive {
 			// A non-exhaustive match may have no applicable arm. Keep the incoming
 			// state as an alternative rather than claiming branch-only evidence.
 			alternatives = append(alternatives, current.types)
 			fieldAlternatives = append(fieldAlternatives, current.fields)
+			payloadAlternatives = append(payloadAlternatives, current.transportPayloads)
+			fieldPayloadAlternatives = append(fieldPayloadAlternatives, current.transportFieldPayloads)
+			receiveAlternatives = append(receiveAlternatives, current.transportReceives)
 		}
 		mergeFlowTypes(current, alternatives)
 		mergeFlowFields(current, fieldAlternatives)
+		mergeFlowPayloads(current.transportPayloads, payloadAlternatives)
+		mergeFlowPayloads(current.transportFieldPayloads, fieldPayloadAlternatives)
+		mergeFlowStrings(current.transportReceives, receiveAlternatives)
 	}
 }
 
@@ -528,7 +577,9 @@ func (e *extractor) parseFunction(node *gdast.FunctionDeclaration, current scope
 		QualifiedName: qualified, Location: e.location(node), Properties: properties})
 	functionScope := scope{currentID: id, parentID: id, container: qualified, receiver: current.receiver,
 		classID: current.classID, symbols: cloneMap(current.symbols), types: cloneMap(current.types), fields: cloneMap(current.fields),
-		fieldSymbols: cloneMap(current.fieldSymbols), fieldLocked: cloneBoolMap(current.fieldLocked), locked: cloneBoolMap(current.locked), signals: cloneSignals(current.signals)}
+		fieldSymbols: cloneMap(current.fieldSymbols), fieldLocked: cloneBoolMap(current.fieldLocked), locked: cloneBoolMap(current.locked), signals: cloneSignals(current.signals),
+		transportConstants: cloneMap(current.transportConstants), transportPayloads: cloneProtobufAPIMap(current.transportPayloads),
+		transportFieldPayloads: cloneProtobufAPIMap(current.transportFieldPayloads), transportReceives: cloneMap(current.transportReceives)}
 	for _, parameter := range node.Parameters {
 		parameterProperties := map[string]string{}
 		if parameter.Type != "" {
@@ -539,6 +590,7 @@ func (e *extractor) parseFunction(node *gdast.FunctionDeclaration, current scope
 		functionScope.symbols[parameter.Name] = parameterID
 		functionScope.locked[parameter.Name] = parameter.Type != ""
 		delete(functionScope.types, parameter.Name)
+		clearLocalTransportEvidence(parameter.Name, functionScope)
 		if resolved := e.resolveType(parameter.Type, current); resolved != "" {
 			functionScope.types[parameter.Name] = resolved
 		}
@@ -556,9 +608,12 @@ func (e *extractor) parseClass(node *gdast.ClassDeclaration, current scope) {
 	}
 	inner := scope{currentID: id, parentID: id, container: qualified, receiver: qualified, classID: id,
 		classBody: true, symbols: map[string]string{}, types: cloneMap(current.types), fields: map[string]string{},
-		fieldSymbols: map[string]string{}, fieldLocked: map[string]bool{}, locked: cloneBoolMap(current.locked), signals: map[string]signalRef{}}
+		fieldSymbols: map[string]string{}, fieldLocked: map[string]bool{}, locked: cloneBoolMap(current.locked), signals: map[string]signalRef{},
+		transportConstants: cloneMap(current.transportConstants), transportPayloads: map[string]protobufAPI{},
+		transportFieldPayloads: map[string]protobufAPI{}, transportReceives: map[string]string{}}
 	inner.types[node.Name] = qualified
 	e.prepareClass(node.Body, inner)
+	e.prepareTransportSummaries(node.Body, inner)
 	e.walkStatements(node.Body, inner)
 }
 
@@ -594,13 +649,19 @@ func (e *extractor) parseVariable(node *gdast.VariableDeclaration, current scope
 	} else {
 		id = e.b.Declare(current.currentID, graphNode)
 	}
+	constant, constantStatus := e.transportConstant(node.Value, current)
 	current.symbols[node.Name] = id
 	current.locked[node.Name] = node.Type != ""
 	delete(current.types, node.Name)
+	clearLocalTransportEvidence(node.Name, current)
+	if node.Constant && constantStatus == "proven" {
+		current.transportConstants[node.Name] = constant
+	}
 	if current.classBody {
 		current.fieldSymbols[node.Name] = id
 		current.fieldLocked[node.Name] = node.Type != ""
 	}
+	e.bindTransportVariable(node.Name, node.Value, current, current.classBody)
 	if resolved := e.resolveType(node.Type, current); resolved != "" {
 		current.types[node.Name] = resolved
 		if current.classBody {
@@ -639,6 +700,7 @@ func (e *extractor) declareLocal(name, typeName string, loc graph.Location, curr
 	current.symbols[name] = id
 	current.locked[name] = typeName != ""
 	delete(current.types, name)
+	clearLocalTransportEvidence(name, current)
 	if resolved := e.resolveType(typeName, current); resolved != "" {
 		current.types[name] = resolved
 	}
@@ -669,6 +731,12 @@ func (e *extractor) parseAssignment(node *gdast.Assignment, current scope) {
 		}
 		if actualField && !current.fieldLocked[targetName] {
 			setInferredType(current.fields, targetName, inferred)
+		}
+		if actualField {
+			e.bindTransportVariable(targetName, node.Value, current, true)
+		}
+		if !selfField || !actualField {
+			e.bindTransportVariable(targetName, node.Value, current, false)
 		}
 	}
 	e.walkExpression(node.Target, current)
@@ -742,6 +810,10 @@ func (e *extractor) walkExpression(expression gdast.Expression, current scope) {
 		lambdaScope.fieldSymbols = cloneMap(current.fieldSymbols)
 		lambdaScope.fieldLocked = cloneBoolMap(current.fieldLocked)
 		lambdaScope.locked = cloneBoolMap(current.locked)
+		lambdaScope.transportConstants = cloneMap(current.transportConstants)
+		lambdaScope.transportPayloads = cloneProtobufAPIMap(current.transportPayloads)
+		lambdaScope.transportFieldPayloads = cloneProtobufAPIMap(current.transportFieldPayloads)
+		lambdaScope.transportReceives = cloneMap(current.transportReceives)
 		for _, parameter := range node.Parameters {
 			e.declareLocal(parameter.Name, parameter.Type, e.location(node), lambdaScope)
 		}
@@ -765,6 +837,7 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 	}
 	loc := e.location(node)
 	e.addProtobufUse(node, callee, fromID, current, loc)
+	e.addTransportUse(node, callee, fromID, current, loc)
 	if member, ok := node.Callee.(*gdast.MemberExpression); ok {
 		if object, ok := member.Object.(*gdast.Identifier); ok {
 			e.addAutoloadUse(object, object.Name, "autoload_call", member.Property, current)
@@ -1522,6 +1595,14 @@ func cloneBoolMap(source map[string]bool) map[string]bool {
 	return result
 }
 
+func cloneProtobufAPIMap(source map[string]protobufAPI) map[string]protobufAPI {
+	result := make(map[string]protobufAPI, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
+}
+
 func cloneFlowScope(current scope) scope {
 	current.symbols = cloneMap(current.symbols)
 	current.types = cloneMap(current.types)
@@ -1529,6 +1610,10 @@ func cloneFlowScope(current scope) scope {
 	current.fieldSymbols = cloneMap(current.fieldSymbols)
 	current.fieldLocked = cloneBoolMap(current.fieldLocked)
 	current.locked = cloneBoolMap(current.locked)
+	current.transportConstants = cloneMap(current.transportConstants)
+	current.transportPayloads = cloneProtobufAPIMap(current.transportPayloads)
+	current.transportFieldPayloads = cloneProtobufAPIMap(current.transportFieldPayloads)
+	current.transportReceives = cloneMap(current.transportReceives)
 	return current
 }
 
@@ -1589,6 +1674,49 @@ func mergeFlowFields(current scope, alternatives []map[string]string) {
 	}
 	for name, value := range merged {
 		current.fields[name] = value
+	}
+}
+
+func mergeFlowPayloads(destination map[string]protobufAPI, alternatives []map[string]protobufAPI) {
+	if len(alternatives) == 0 {
+		return
+	}
+	merged := cloneProtobufAPIMap(alternatives[0])
+	for name, value := range merged {
+		for _, alternative := range alternatives[1:] {
+			other, ok := alternative[name]
+			if !ok || other.targetID != value.targetID || other.symbol != value.symbol {
+				delete(merged, name)
+				break
+			}
+		}
+	}
+	for name := range destination {
+		delete(destination, name)
+	}
+	for name, value := range merged {
+		destination[name] = value
+	}
+}
+
+func mergeFlowStrings(destination map[string]string, alternatives []map[string]string) {
+	if len(alternatives) == 0 {
+		return
+	}
+	merged := cloneMap(alternatives[0])
+	for name, value := range merged {
+		for _, alternative := range alternatives[1:] {
+			if alternative[name] != value {
+				delete(merged, name)
+				break
+			}
+		}
+	}
+	for name := range destination {
+		delete(destination, name)
+	}
+	for name, value := range merged {
+		destination[name] = value
 	}
 }
 
