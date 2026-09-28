@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cafecito-games/grafo/internal/projectconfig"
 	"gopkg.in/yaml.v3"
 )
 
@@ -43,9 +44,14 @@ func TestSkillCarriesFrontmatter(t *testing.T) {
 func TestSetupSkillCoversRepositoryOnboarding(t *testing.T) {
 	skill := SetupSkill()
 	for _, fragment := range []string{
-		"name: grafo-setup", "grafo.yaml", "components:", "request_apis:",
+		"name: grafo-setup", "grafo.yaml", "components:", "adapters:",
 		"default_dialect:", "gdscript_bases:", "message-coverage", "message-flow",
-		"do not add transport or serialization keys",
+		"event.publish", "event.subscribe", "event.unsubscribe", "event.connection_test",
+		"http.request", "the `event` role", "`method` and `url`", "exact qualified symbol",
+		"baseline", "reindex",
+		"name, comment, or popularity is\n  never proof", "do not use wildcards",
+		"legacy `http.request_apis` compatibility alias", "same symbol through both forms",
+		"do not add transport or serialization keys", "not a wildcard plugin mechanism",
 		setupVersionComment(),
 	} {
 		if !strings.Contains(skill, fragment) {
@@ -60,6 +66,57 @@ func TestSetupSkillCoversRepositoryOnboarding(t *testing.T) {
 	}
 	if !strings.HasSuffix(skill, "\n") {
 		t.Fatal("setup skill does not end with a newline")
+	}
+}
+
+func TestStructuralGuidanceTreatsAdaptersAsAnUncertaintyBoundary(t *testing.T) {
+	text := Text()
+	for _, fragment := range []string{
+		"repository abstraction", "grafo.yaml", "adapters", "native source inspection",
+		"http.request_apis", "read-only", "grafo-setup", "reindex",
+	} {
+		if !strings.Contains(text, fragment) {
+			t.Errorf("structural guidance is missing %q", fragment)
+		}
+	}
+}
+
+func TestGuidanceVersionsAndMarkersAreIndependent(t *testing.T) {
+	if Version != "4" {
+		t.Fatalf("Version = %q, want 4", Version)
+	}
+	if SetupVersion != "2" {
+		t.Fatalf("SetupVersion = %q, want 2", SetupVersion)
+	}
+	if !strings.Contains(Skill(), versionComment()) || strings.Contains(Skill(), setupVersionComment()) {
+		t.Fatal("structural skill does not carry only its own version marker")
+	}
+	if !strings.Contains(SetupSkill(), setupVersionComment()) || strings.Contains(SetupSkill(), versionComment()) {
+		t.Fatal("setup skill does not carry only its own version marker")
+	}
+}
+
+func TestSetupAdapterExampleMatchesProjectConfiguration(t *testing.T) {
+	skill := SetupSkill()
+	const begin = "<!-- BEGIN adapter-example -->\n```yaml\n"
+	const end = "\n```\n<!-- END adapter-example -->"
+	_, after, ok := strings.Cut(skill, begin)
+	if !ok {
+		t.Fatal("setup skill is missing the adapter example marker")
+	}
+	example, _, ok := strings.Cut(after, end)
+	if !ok {
+		t.Fatal("setup skill has an unterminated adapter example")
+	}
+	config, err := projectconfig.Parse([]byte(example + "\n"))
+	if err != nil {
+		t.Fatalf("documented adapter example does not parse: %v\n%s", err, example)
+	}
+	if got := len(config.Adapters.Lookup("gdscript", "Signals.wire")); got != 1 {
+		t.Fatalf("documented event adapter effects = %d, want 1", got)
+	}
+	if got := len(config.Adapters.Lookup("gdscript", "API.fetch")); got != 1 {
+		t.Fatalf("documented HTTP adapter effects = %d, want 1", got)
 	}
 }
 
