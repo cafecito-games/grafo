@@ -1113,6 +1113,128 @@ func send(api: AuthAPI) -> void:
 	assertHTTPRequestSet(t, ctx, repository, nil)
 }
 
+func TestServiceReconcilesConfiguredGDScriptEventEffectsAndPreservesInvalidEdit(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	runGit(t, root, "init", "-b", "main")
+	write(t, filepath.Join(root, "project.godot"), "config_version=5\n")
+	write(t, filepath.Join(root, "source.gd"), `class_name Source extends Node
+signal tapped(value: int)
+signal candidate_selected(value: int)
+signal armed_changed(value: int)
+func publish(value: int) -> void:
+	tapped.emit(value)
+	candidate_selected.emit(value)
+	armed_changed.emit(value)
+`)
+	write(t, filepath.Join(root, "consumer.gd"), `class_name Consumer extends Node
+func wire(source: Source) -> void:
+	Signals.wire(source.tapped, _on_changed)
+	Signals.wire(source.candidate_selected, _on_changed)
+	Signals.wire(source.armed_changed, _on_changed)
+func _on_changed(_value: int) -> void:
+	pass
+`)
+	configured := `adapters:
+  - match: {language: gdscript, symbol: Signals.wire}
+    effects:
+      - kind: event.subscribe
+        roles: {event: {argument: 0}, handler: {argument: 1}}
+`
+	write(t, filepath.Join(root, "grafo.yaml"), configured)
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(gdscriptparser.New(), godotparser.New(), configparser.New()))
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []string{"Source.tapped", "Source.candidate_selected", "Source.armed_changed"} {
+		assertEventConsumption(t, ctx, repository, event, true)
+	}
+
+	write(t, filepath.Join(root, "grafo.yaml"), strings.Replace(configured, "event.subscribe", "event.unsubscribe", 1))
+	changed, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(changed.Updated, "consumer.gd") || !slices.Contains(changed.Updated, "grafo.yaml") {
+		t.Fatalf("adapter edit did not invalidate GDScript: %#v", changed)
+	}
+	for _, event := range []string{"Source.tapped", "Source.candidate_selected", "Source.armed_changed"} {
+		assertEventConsumption(t, ctx, repository, event, false)
+	}
+
+	before, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "grafo.yaml"), strings.Replace(configured, "argument: 1", "argument: -1", 1))
+	if _, err := service.Run(ctx, project, indexer.Options{}); err == nil || !strings.Contains(err.Error(), "non-negative") {
+		t.Fatalf("invalid adapter config error = %v", err)
+	}
+	after, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("invalid adapter edit mutated index:\nbefore=%#v\nafter=%#v", before, after)
+	}
+
+	write(t, filepath.Join(root, "grafo.yaml"), configured)
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []string{"Source.tapped", "Source.candidate_selected", "Source.armed_changed"} {
+		assertEventConsumption(t, ctx, repository, event, true)
+	}
+	if err := os.Remove(filepath.Join(root, "grafo.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []string{"Source.tapped", "Source.candidate_selected", "Source.armed_changed"} {
+		assertEventConsumption(t, ctx, repository, event, false)
+	}
+}
+
+func assertEventConsumption(t *testing.T, ctx context.Context, repository graph.CatalogRepository, qualified string, consumed bool) {
+	t.Helper()
+	events, err := query.NewCatalog(repository).Events(ctx, query.CatalogOptions{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events.Events {
+		if event.QualifiedName != qualified {
+			continue
+		}
+		got := len(event.Consumers) > 0 && len(event.Handlers) > 0
+		if got != consumed {
+			t.Fatalf("event %s consumed=%v, want %v: %#v", qualified, got, consumed, event)
+		}
+		orphans, err := query.NewCatalog(repository).OrphanedEvents(ctx, query.CatalogOptions{Limit: 100})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, orphan := range orphans.Events {
+			if orphan.Event.QualifiedName == qualified && consumed {
+				t.Fatalf("configured consumer left false orphan: %#v", orphan)
+			}
+		}
+		return
+	}
+	t.Fatalf("event %s not found: %#v", qualified, events)
+}
+
 func TestServiceReconcilesFirstClassTestsAcrossConfigInheritanceAndRenameEdits(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
