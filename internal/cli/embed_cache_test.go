@@ -105,6 +105,51 @@ func TestEmbedCachePruneValidatesBeforeOpeningWritableCache(t *testing.T) {
 	}
 }
 
+func TestEmbedCacheRejectsUnsupportedOptionsBeforePruning(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "embeddings.sqlite")
+	t.Setenv(embeddingcache.EnvPath, path)
+	var stdout, stderr bytes.Buffer
+	code := New(&stdout, &stderr).Run(ctx, []string{"embed-cache", "status", "--keep", "1"})
+	if code == 0 || !strings.Contains(stderr.String(), "--keep is not supported by grafo embed-cache status") {
+		t.Fatalf("status code=%d stderr=%q", code, stderr.String())
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("unsupported status option opened cache: %v", err)
+	}
+
+	store, err := embeddingcache.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := semantic.CacheKey{Model: "fixture", DocumentVersion: semantic.DocumentVersion, ContentHash: strings.Repeat("b", 64)}
+	if err := store.Store(ctx, []semantic.CacheEntry{{Key: key, Vector: []float32{1}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = New(&stdout, &stderr).Run(ctx, []string{"embed-cache", "prune", "--keep", "1", "--yes"})
+	if code == 0 || !strings.Contains(stderr.String(), "--keep is not supported by grafo embed-cache prune") {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	verify, err := embeddingcache.OpenReadOnly(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = verify.Close() }()
+	status, err := verify.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Rows != 1 {
+		t.Fatalf("unsupported option pruned cache: %#v", status)
+	}
+}
+
 func TestEmbedCacheStatusDoesNotCreateMissingCache(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "typo", "embeddings.sqlite")
 	t.Setenv(embeddingcache.EnvPath, path)

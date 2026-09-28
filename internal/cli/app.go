@@ -411,7 +411,7 @@ func (a *App) indexes(ctx context.Context, args parsedArguments) error {
 	}
 	switch subcommand {
 	case "list":
-		if err := rejectUnsupportedIndexOptions(args, map[string]bool{"json": true}, nil); err != nil {
+		if err := rejectUnsupportedOptions(args, "indexes "+subcommand, map[string]bool{"json": true}, nil); err != nil {
 			return err
 		}
 		inventory, err := branchindexes.List(ctx, root)
@@ -420,7 +420,7 @@ func (a *App) indexes(ctx context.Context, args parsedArguments) error {
 		}
 		return a.printIndexInventory(inventory, args.flags["json"])
 	case "prune":
-		if err := rejectUnsupportedIndexOptions(args,
+		if err := rejectUnsupportedOptions(args, "indexes "+subcommand,
 			map[string]bool{"json": true, "dry-run": true, "yes": true},
 			map[string]bool{"older-than": true, "keep": true}); err != nil {
 			return err
@@ -470,7 +470,7 @@ func indexPrunePolicy(args parsedArguments) (branchindexes.Policy, error) {
 	return policy, nil
 }
 
-func rejectUnsupportedIndexOptions(args parsedArguments, allowedFlags, allowedValues map[string]bool) error {
+func rejectUnsupportedOptions(args parsedArguments, command string, allowedFlags, allowedValues map[string]bool) error {
 	var unsupported []string
 	for name, enabled := range args.flags {
 		if enabled && !allowedFlags[name] {
@@ -486,7 +486,7 @@ func rejectUnsupportedIndexOptions(args parsedArguments, allowedFlags, allowedVa
 		return nil
 	}
 	sort.Strings(unsupported)
-	return fmt.Errorf("%s is not supported by grafo indexes %s", strings.Join(unsupported, ", "), args.positionals[0])
+	return fmt.Errorf("%s is not supported by grafo %s", strings.Join(unsupported, ", "), command)
 }
 
 func (a *App) printIndexInventory(inventory branchindexes.Inventory, asJSON bool) error {
@@ -858,6 +858,16 @@ func (a *App) embedCache(ctx context.Context, args parsedArguments) error {
 		return fmt.Errorf("usage: grafo embed-cache status [--json] | grafo embed-cache prune [--model name] [--older-than duration] [--max-bytes n] [--dry-run] [--yes] [--json]")
 	}
 	operation := args.positionals[0]
+	allowedFlags := map[string]bool{"json": true}
+	var allowedValues map[string]bool
+	if operation == "prune" {
+		allowedFlags["dry-run"] = true
+		allowedFlags["yes"] = true
+		allowedValues = map[string]bool{"model": true, "older-than": true, "max-bytes": true}
+	}
+	if err := rejectUnsupportedOptions(args, "embed-cache "+operation, allowedFlags, allowedValues); err != nil {
+		return err
+	}
 	path, err := embeddingcache.ResolvePath()
 	if err != nil {
 		return err
