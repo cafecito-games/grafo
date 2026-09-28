@@ -1012,6 +1012,11 @@ func childRoutes() chi.Router {
 func dynamicOnly(r chi.Router) { r.Get("/hidden", me) }
 func applyHelper(r chi.Router) { r.Use(audit) }
 func dynamicMethod(r chi.Router, method string) { r.MethodFunc(method, "/dynamic-method", me) }
+func identity(r chi.Router) chi.Router { return r }
+func rebindHelper(r chi.Router) {
+	r = chi.NewRouter()
+	r.Get("/orphan", me)
+}
 
 type server struct { router chi.Router }
 func (s *server) fieldRoute() { s.router.Get("/field", me) }
@@ -1024,6 +1029,14 @@ func Routes(dynamic string) chi.Router {
 	helperRouter.Get("/use", me)
 	r.Mount("/helper", helperRouter)
 	dynamicMethod(r, dynamic)
+	rebindHelper(r)
+	applyHelper(identity(r))
+	var fieldServer server
+	applyHelper(fieldServer.router)
+	if dynamic != "" {
+		applyHelper(r)
+	}
+	r.Get("/after-uncertain", me)
 	r.Route(api+"/auth", authRoutes)
 	r.Route("/one", authRoutes)
 	r.Route("/two", authRoutes)
@@ -1069,19 +1082,20 @@ func NotARouter() { unrelated{}.Get("/invented", login) }
 	}
 
 	wantMiddleware := map[string][]string{
-		"POST /v1/auth/login": {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
-		"POST /v1/auth/alias": {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
-		"GET /v1/auth/me":     {"example.com/app.outer", "example.com/app.authUse"},
-		"GET /v1/auth/plain":  {"example.com/app.outer", "example.com/app.authUse"},
-		"POST /one/login":     {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
-		"POST /two/login":     {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
-		"GET /admin/items":    {"example.com/app.outer", "example.com/app.adminUse", "example.com/app.childUse"},
-		"GET /child/items":    {"example.com/app.outer", "example.com/app.childUse"},
-		"GET /factory/items":  {"example.com/app.outer", "example.com/app.childUse"},
-		"PATCH /method":       {"example.com/app.outer"},
-		"ANY /any":            {"example.com/app.outer"},
-		"GET /conditional":    {"example.com/app.outer"},
-		"GET /helper/use":     {"example.com/app.outer", "example.com/app.audit"},
+		"POST /v1/auth/login":  {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
+		"POST /v1/auth/alias":  {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
+		"GET /v1/auth/me":      {"example.com/app.outer", "example.com/app.authUse"},
+		"GET /v1/auth/plain":   {"example.com/app.outer", "example.com/app.authUse"},
+		"POST /one/login":      {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
+		"POST /two/login":      {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
+		"GET /admin/items":     {"example.com/app.outer", "example.com/app.adminUse", "example.com/app.childUse"},
+		"GET /child/items":     {"example.com/app.outer", "example.com/app.childUse"},
+		"GET /factory/items":   {"example.com/app.outer", "example.com/app.childUse"},
+		"PATCH /method":        {"example.com/app.outer"},
+		"ANY /any":             {"example.com/app.outer"},
+		"GET /conditional":     {"example.com/app.outer"},
+		"GET /helper/use":      {"example.com/app.outer", "example.com/app.audit"},
+		"GET /after-uncertain": {"example.com/app.outer"},
 	}
 	endpoints := map[string]graph.Node{}
 	for _, node := range result.Nodes {
@@ -1122,22 +1136,26 @@ func NotARouter() { unrelated{}.Get("/invented", login) }
 			t.Fatalf("endpoint %s lost its exact handler %s", name, wantHandler)
 		}
 	}
-	for _, forbidden := range []string{"POST /login", "GET /me", "GET /items", "GET /hidden", "GET /invented", "GET /ambiguous"} {
+	for _, forbidden := range []string{"POST /login", "GET /me", "GET /items", "GET /hidden", "GET /invented", "GET /ambiguous", "GET /orphan"} {
 		if _, ok := endpoints[forbidden]; ok {
 			t.Fatalf("invented or uncomposed endpoint %q: %#v", forbidden, endpoints[forbidden])
 		}
 	}
 	foundDynamicDiagnostic, foundCycleDiagnostic, foundAmbiguousDiagnostic := false, false, false
 	foundDynamicMethodDiagnostic, foundRouterReceiverDiagnostic := false, false
+	foundArgumentDiagnostic, foundConditionalMutationDiagnostic := false, false
 	for _, diagnostic := range result.Diagnostics {
 		foundDynamicDiagnostic = foundDynamicDiagnostic || strings.Contains(diagnostic.Message, "dynamic Chi route prefix")
 		foundCycleDiagnostic = foundCycleDiagnostic || strings.Contains(diagnostic.Message, "recursive Chi router composition")
 		foundAmbiguousDiagnostic = foundAmbiguousDiagnostic || strings.Contains(diagnostic.Message, "ambiguous Chi router helper result")
 		foundDynamicMethodDiagnostic = foundDynamicMethodDiagnostic || strings.Contains(diagnostic.Message, "dynamic Chi endpoint method")
 		foundRouterReceiverDiagnostic = foundRouterReceiverDiagnostic || strings.Contains(diagnostic.Message, "Chi router receiver could not be proven")
+		foundArgumentDiagnostic = foundArgumentDiagnostic || strings.Contains(diagnostic.Message, "Chi router helper argument state could not be propagated")
+		foundConditionalMutationDiagnostic = foundConditionalMutationDiagnostic || strings.Contains(diagnostic.Message, "conditional Chi router state mutation")
 	}
 	if !foundDynamicDiagnostic || !foundCycleDiagnostic || !foundAmbiguousDiagnostic ||
-		!foundDynamicMethodDiagnostic || !foundRouterReceiverDiagnostic {
+		!foundDynamicMethodDiagnostic || !foundRouterReceiverDiagnostic || !foundArgumentDiagnostic ||
+		!foundConditionalMutationDiagnostic {
 		t.Fatalf("fail-closed Chi composition was not diagnosed: %#v", result.Diagnostics)
 	}
 	conditional := endpoints["GET /conditional"]
