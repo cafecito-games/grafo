@@ -1868,6 +1868,7 @@ class LocalEvent extends InputEventKey:
 
 var _gamepad: Gamepad
 var _local: LocalEvent
+var helper: Node
 
 func poll(typed: InputEvent, untyped) -> void:
 	if _gamepad.is_action("refused_known"):
@@ -1880,6 +1881,8 @@ func poll(typed: InputEvent, untyped) -> void:
 	if untyped.is_action("kept_untyped"):
 		pass
 	if _local.is_action("kept_local_subclass"):
+		pass
+	if self.helper.is_action_pressed("kept_self_field"):
 		pass
 `),
 	})
@@ -1896,7 +1899,10 @@ func poll(typed: InputEvent, untyped) -> void:
 			}
 		}
 	}
-	for _, action := range []string{"kept_typed", "kept_untyped", "kept_local_subclass"} {
+	// Member-expression field typing is intentionally not shared with the HTTP
+	// adapter. Keeping this receiver unknown preserves the established input
+	// boundary for cross-file Input subclasses the single-file parser cannot see.
+	for _, action := range []string{"kept_typed", "kept_untyped", "kept_local_subclass", "kept_self_field"} {
 		findFactWithTarget(t, result.Facts, graph.EdgeUsesInputAction,
 			"godot:input_action:client/project.godot:"+action)
 		assertHasFact(t, result.Facts, graph.EdgeReadsConfig, "input/"+action)
