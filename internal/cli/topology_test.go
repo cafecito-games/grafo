@@ -193,7 +193,25 @@ func componentTopologyFixture(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	write("go.mod", "module example.com/topology\n\ngo 1.26\n")
+	write("go.mod", `module example.com/topology
+
+go 1.26
+
+require github.com/go-chi/chi/v5 v5.0.0
+replace github.com/go-chi/chi/v5 => ./third_party/chi
+`)
+	write("third_party/chi/go.mod", "module github.com/go-chi/chi/v5\n\ngo 1.26\n")
+	write("third_party/chi/chi.go", `package chi
+import "net/http"
+type Router interface {
+	http.Handler
+	Get(string, http.HandlerFunc)
+}
+type Mux struct{}
+func NewRouter() *Mux { return &Mux{} }
+func (*Mux) ServeHTTP(http.ResponseWriter, *http.Request) {}
+func (*Mux) Get(string, http.HandlerFunc) {}
+`)
 	write("grafo.yaml", "components:\n  - name: client\n    roots: [client]\n  - name: server\n    roots: [server]\n")
 	write("client/client.go", `package client
 
@@ -205,9 +223,15 @@ func CallOrders() {
 `)
 	write("server/server.go", `package server
 
-func Handler() {}
+import (
+	"net/http"
+	"github.com/go-chi/chi/v5"
+)
+
+func Handler(http.ResponseWriter, *http.Request) {}
 
 func Routes() {
+	router := chi.NewRouter()
 	router.Get("/orders", Handler)
 }
 `)

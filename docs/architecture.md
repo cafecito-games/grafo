@@ -137,12 +137,20 @@ removes stale ownership without making unchanged source files enter a parser.
 Unmatched files retain their existing repository `contains` evidence.
 
 The Go semantic loader runs with module downloads and toolchain switching
-disabled. One bounded workspace load converts `types.Info` calls, selections,
-instances, and method sets into per-file evidence, then releases the toolchain
-syntax/type graphs. Its cache key includes source and module/workspace digests
-plus GOOS, GOARCH, CGO, tags/flags, workspace selection, and toolchain version.
-Type errors remain diagnostics while proven facts augment AST output; excluded
-build-tag files record the active context without emitting declarations.
+disabled. It builds a deterministic repository plan and serially loads each
+eligible nested module, converting `types.Info` calls, selections, instances,
+and method sets into per-file evidence before releasing each toolchain graph.
+An active `go.work` is authoritative: listed, repository-contained modules are
+loaded under its semantics and unlisted nested modules remain syntax-only.
+Without a workspace, every repository-visible `go.mod` is an independent load
+unit; ignored, vendored, and symlink-escaped roots are excluded. One failed
+unit produces module-scoped diagnostics without discarding healthy siblings.
+The cache key includes source and module/workspace discovery digests plus GOOS,
+GOARCH, CGO, tags/flags, workspace selection, vendor manifests, and toolchain
+version. Type errors remain diagnostics while locally proven facts augment AST
+output; excluded build-tag files record the active context without emitting
+declarations. HTTP verb spelling alone never establishes a server endpoint:
+Chi composition and outbound HTTP flows require their positive typed evidence.
 `implements` comparisons are bounded to interfaces declared in loaded workspace
 packages; dependency and standard-library interfaces remain external facts.
 

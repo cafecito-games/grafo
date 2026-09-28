@@ -88,9 +88,14 @@ type API struct { baseURL string }
 func (api *API) Unknown() { http.Get(api.baseURL + "/charge") }
 `)
 	write(t, filepath.Join(serverRoot, "go.mod"), "module example.com/server\n\ngo 1.26\n")
+	enableChi(t, serverRoot)
 	write(t, filepath.Join(serverRoot, "server.go"), `package server
-func Handler() {}
-func Routes() { router.Get("/charge", Handler) }
+import (
+	"net/http"
+	"github.com/go-chi/chi/v5"
+)
+func Handler(http.ResponseWriter, *http.Request) {}
+func Routes() { router := chi.NewRouter(); router.Get("/charge", Handler) }
 `)
 	index(t, ctx, clientRoot)
 	index(t, ctx, serverRoot)
@@ -182,15 +187,20 @@ func TestOpenReadOnlyFederatesCompatibleIndexesWithoutWriteCapabilities(t *testi
 	ctx := context.Background()
 	clientRoot := t.TempDir()
 	serverRoot := t.TempDir()
-	write(t, filepath.Join(clientRoot, "go.mod"), "module example.com/client\n")
+	write(t, filepath.Join(clientRoot, "go.mod"), "module example.com/client\n\ngo 1.26\n")
 	write(t, filepath.Join(clientRoot, "client.go"), `package client
 import "net/http"
 func Call() { http.Get("/charge") }
 `)
-	write(t, filepath.Join(serverRoot, "go.mod"), "module example.com/server\n")
+	write(t, filepath.Join(serverRoot, "go.mod"), "module example.com/server\n\ngo 1.26\n")
+	enableChi(t, serverRoot)
 	write(t, filepath.Join(serverRoot, "server.go"), `package server
-func Handler() {}
-func Routes() { router.Get("/charge", Handler) }
+import (
+	"net/http"
+	"github.com/go-chi/chi/v5"
+)
+func Handler(http.ResponseWriter, *http.Request) {}
+func Routes() { router := chi.NewRouter(); router.Get("/charge", Handler) }
 `)
 	index(t, ctx, clientRoot)
 	index(t, ctx, serverRoot)
@@ -389,4 +399,31 @@ func indexGodot(t *testing.T, ctx context.Context, root string) {
 	if err := repository.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func enableChi(t *testing.T, root string) {
+	t.Helper()
+	modulePath := filepath.Join(root, "go.mod")
+	content, err := os.ReadFile(modulePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, modulePath, string(content)+"\nrequire github.com/go-chi/chi/v5 v5.0.0\nreplace github.com/go-chi/chi/v5 => ./third_party/chi\n")
+	if err := os.MkdirAll(filepath.Join(root, "third_party", "chi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "third_party", "chi", "go.mod"), "module github.com/go-chi/chi/v5\n\ngo 1.26\n")
+	write(t, filepath.Join(root, "third_party", "chi", "chi.go"), `package chi
+import "net/http"
+type Router interface {
+	http.Handler
+	Get(string, http.HandlerFunc)
+	Post(string, http.HandlerFunc)
+}
+type Mux struct{}
+func NewRouter() *Mux { return &Mux{} }
+func (*Mux) ServeHTTP(http.ResponseWriter, *http.Request) {}
+func (*Mux) Get(string, http.HandlerFunc) {}
+func (*Mux) Post(string, http.HandlerFunc) {}
+`)
 }

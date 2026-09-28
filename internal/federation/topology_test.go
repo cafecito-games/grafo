@@ -23,6 +23,8 @@ func TestTopologyKeepsFederatedHTTPAmbiguityAndEventLinksExplicit(t *testing.T) 
 		write(t, filepath.Join(root, "go.mod"), "module example.com/"+name+"\n\ngo 1.26\n")
 		roots[name] = root
 	}
+	enableChi(t, roots["payments-a"])
+	enableChi(t, roots["payments-b"])
 	write(t, filepath.Join(roots["client"], "client.go"), `package client
 import "net/http"
 type Bus interface { Publish(string) }
@@ -33,17 +35,26 @@ func Call(bus Bus) {
 }
 `)
 	write(t, filepath.Join(roots["payments-a"], "server.go"), `package paymentsa
-func ChargeA() {}
-func Orders() {}
+import (
+	"net/http"
+	"github.com/go-chi/chi/v5"
+)
+func ChargeA(http.ResponseWriter, *http.Request) {}
+func Orders(http.ResponseWriter, *http.Request) {}
 func Routes() {
+	router := chi.NewRouter()
 	router.Post("/charge/{chargeID}", ChargeA)
 	router.Get("/charge/{chargeID}", ChargeA)
 	router.Get("/orders/{orderID}/", Orders)
 }
 `)
 	write(t, filepath.Join(roots["payments-b"], "server.go"), `package paymentsb
-func ChargeB() {}
-func Routes() { router.Post("/charge/{id}", ChargeB) }
+import (
+	"net/http"
+	"github.com/go-chi/chi/v5"
+)
+func ChargeB(http.ResponseWriter, *http.Request) {}
+func Routes() { router := chi.NewRouter(); router.Post("/charge/{id}", ChargeB) }
 `)
 	write(t, filepath.Join(roots["consumer"], "consumer.go"), `package consumer
 type Bus interface { Subscribe(string) }

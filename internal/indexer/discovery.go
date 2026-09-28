@@ -15,7 +15,7 @@ import (
 )
 
 var ignoredDirectories = map[string]bool{
-	".git": true, ".grafo": true, "node_modules": true, "vendor": true,
+	".git": true, ".grafo": true, ".worktrees": true, "node_modules": true, "vendor": true,
 	"dist": true, "build": true, "coverage": true, ".next": true, ".turbo": true,
 }
 

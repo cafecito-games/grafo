@@ -65,31 +65,7 @@
       {
         "repo": "transport",
         "kind": "external",
-        "qualified_name": "github.com/cafecito-games/goenet/pkg.Peer.Send",
-        "external": true
-      },
-      {
-        "repo": "transport",
-        "kind": "external",
-        "qualified_name": "github.com/cafecito-games/goenet/pkg.PeerSender.Send",
-        "external": true
-      },
-      {
-        "repo": "transport",
-        "kind": "external",
         "qualified_name": "goenet.PeerSender",
-        "external": true
-      },
-      {
-        "repo": "transport",
-        "kind": "external",
-        "qualified_name": "google.golang.org/protobuf/proto.Marshal",
-        "external": true
-      },
-      {
-        "repo": "transport",
-        "kind": "external",
-        "qualified_name": "google.golang.org/protobuf/proto.Unmarshal",
         "external": true
       },
       {
@@ -186,37 +162,37 @@
       {
         "repo": "transport",
         "kind": "field",
-        "qualified_name": "example.com/transport/third_party/goenet/pkg.Event.ChannelID"
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.Event.ChannelID"
       },
       {
         "repo": "transport",
         "kind": "field",
-        "qualified_name": "example.com/transport/third_party/goenet/pkg.Event.Data"
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.Event.Data"
       },
       {
         "repo": "transport",
         "kind": "field",
-        "qualified_name": "example.com/transport/third_party/goenet/pkg.Event.Packet"
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.Event.Packet"
       },
       {
         "repo": "transport",
         "kind": "field",
-        "qualified_name": "example.com/transport/third_party/goenet/pkg.Event.Peer"
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.Event.Peer"
       },
       {
         "repo": "transport",
         "kind": "field",
-        "qualified_name": "example.com/transport/third_party/goenet/pkg.Event.Type"
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.Event.Type"
       },
       {
         "repo": "transport",
         "kind": "field",
-        "qualified_name": "example.com/transport/third_party/goenet/pkg.Packet.Data"
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.Packet.Data"
       },
       {
         "repo": "transport",
         "kind": "field",
-        "qualified_name": "example.com/transport/third_party/goenet/pkg.Packet.Flags"
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.Packet.Flags"
       },
       {
         "repo": "transport",
@@ -321,12 +297,12 @@
       {
         "repo": "transport",
         "kind": "function",
-        "qualified_name": "example.com/transport/third_party/protobuf/proto.Marshal"
+        "qualified_name": "google.golang.org/protobuf/proto.Marshal"
       },
       {
         "repo": "transport",
         "kind": "function",
-        "qualified_name": "example.com/transport/third_party/protobuf/proto.Unmarshal"
+        "qualified_name": "google.golang.org/protobuf/proto.Unmarshal"
       },
       {
         "repo": "transport",
@@ -342,12 +318,12 @@
       {
         "repo": "transport",
         "kind": "interface",
-        "qualified_name": "example.com/transport/third_party/goenet/pkg.PeerSender"
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.PeerSender"
       },
       {
         "repo": "transport",
         "kind": "interface",
-        "qualified_name": "example.com/transport/third_party/protobuf/proto.Message"
+        "qualified_name": "google.golang.org/protobuf/proto.Message"
       },
       {
         "repo": "transport",
@@ -507,17 +483,17 @@
       {
         "repo": "transport",
         "kind": "method",
-        "qualified_name": "example.com/transport/third_party/goenet/pkg.Host.Broadcast"
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.Host.Broadcast"
       },
       {
         "repo": "transport",
         "kind": "method",
-        "qualified_name": "example.com/transport/third_party/goenet/pkg.Peer.Send"
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.Peer.Send"
       },
       {
         "repo": "transport",
         "kind": "method",
-        "qualified_name": "example.com/transport/third_party/goenet/pkg.PeerSender.Send"
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.PeerSender.Send"
       },
       {
         "repo": "transport",
@@ -670,37 +646,37 @@
       {
         "repo": "transport",
         "kind": "parameter",
-        "qualified_name": "example.com/transport/third_party/goenet/pkg.Host.Broadcast.channelID"
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.Host.Broadcast.channelID"
       },
       {
         "repo": "transport",
         "kind": "parameter",
-        "qualified_name": "example.com/transport/third_party/goenet/pkg.Host.Broadcast.packet"
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.Host.Broadcast.packet"
       },
       {
         "repo": "transport",
         "kind": "parameter",
-        "qualified_name": "example.com/transport/third_party/goenet/pkg.Peer.Send.channelID"
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.Peer.Send.channelID"
       },
       {
         "repo": "transport",
         "kind": "parameter",
-        "qualified_name": "example.com/transport/third_party/goenet/pkg.Peer.Send.packet"
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.Peer.Send.packet"
       },
       {
         "repo": "transport",
         "kind": "parameter",
-        "qualified_name": "example.com/transport/third_party/protobuf/proto.Marshal.value"
+        "qualified_name": "google.golang.org/protobuf/proto.Marshal.value"
       },
       {
         "repo": "transport",
         "kind": "parameter",
-        "qualified_name": "example.com/transport/third_party/protobuf/proto.Unmarshal.data"
+        "qualified_name": "google.golang.org/protobuf/proto.Unmarshal.data"
       },
       {
         "repo": "transport",
         "kind": "parameter",
-        "qualified_name": "example.com/transport/third_party/protobuf/proto.Unmarshal.value"
+        "qualified_name": "google.golang.org/protobuf/proto.Unmarshal.value"
       },
       {
         "repo": "transport",
@@ -815,32 +791,32 @@
       {
         "repo": "transport",
         "kind": "type",
-        "qualified_name": "example.com/transport/third_party/goenet/pkg.Event"
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.Event"
       },
       {
         "repo": "transport",
         "kind": "type",
-        "qualified_name": "example.com/transport/third_party/goenet/pkg.EventType"
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.EventType"
       },
       {
         "repo": "transport",
         "kind": "type",
-        "qualified_name": "example.com/transport/third_party/goenet/pkg.Host"
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.Host"
       },
       {
         "repo": "transport",
         "kind": "type",
-        "qualified_name": "example.com/transport/third_party/goenet/pkg.Packet"
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.Packet"
       },
       {
         "repo": "transport",
         "kind": "type",
-        "qualified_name": "example.com/transport/third_party/goenet/pkg.PacketFlag"
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.PacketFlag"
       },
       {
         "repo": "transport",
         "kind": "type",
-        "qualified_name": "example.com/transport/third_party/goenet/pkg.Peer"
+        "qualified_name": "github.com/cafecito-games/goenet/pkg.Peer"
       },
       {
         "repo": "transport",
@@ -1319,7 +1295,7 @@
         "to": {
           "repo": "transport",
           "kind": "interface",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.PeerSender"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.PeerSender"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
@@ -1337,7 +1313,7 @@
         "to": {
           "repo": "transport",
           "kind": "method",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Host.Broadcast"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Host.Broadcast"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
@@ -1355,7 +1331,7 @@
         "to": {
           "repo": "transport",
           "kind": "method",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Peer.Send"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Peer.Send"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
@@ -1373,7 +1349,7 @@
         "to": {
           "repo": "transport",
           "kind": "type",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Event"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Event"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
@@ -1391,7 +1367,7 @@
         "to": {
           "repo": "transport",
           "kind": "type",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.EventType"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.EventType"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
@@ -1409,7 +1385,7 @@
         "to": {
           "repo": "transport",
           "kind": "type",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Host"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Host"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
@@ -1427,7 +1403,7 @@
         "to": {
           "repo": "transport",
           "kind": "type",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Packet"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Packet"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
@@ -1445,7 +1421,7 @@
         "to": {
           "repo": "transport",
           "kind": "type",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.PacketFlag"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.PacketFlag"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
@@ -1463,7 +1439,7 @@
         "to": {
           "repo": "transport",
           "kind": "type",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Peer"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Peer"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
@@ -1499,7 +1475,7 @@
         "to": {
           "repo": "transport",
           "kind": "function",
-          "qualified_name": "example.com/transport/third_party/protobuf/proto.Marshal"
+          "qualified_name": "google.golang.org/protobuf/proto.Marshal"
         },
         "source": {
           "path": "third_party/protobuf/proto/proto.go",
@@ -1517,7 +1493,7 @@
         "to": {
           "repo": "transport",
           "kind": "function",
-          "qualified_name": "example.com/transport/third_party/protobuf/proto.Unmarshal"
+          "qualified_name": "google.golang.org/protobuf/proto.Unmarshal"
         },
         "source": {
           "path": "third_party/protobuf/proto/proto.go",
@@ -1535,7 +1511,7 @@
         "to": {
           "repo": "transport",
           "kind": "interface",
-          "qualified_name": "example.com/transport/third_party/protobuf/proto.Message"
+          "qualified_name": "google.golang.org/protobuf/proto.Message"
         },
         "source": {
           "path": "third_party/protobuf/proto/proto.go",
@@ -1913,9 +1889,8 @@
         "relation": "calls",
         "to": {
           "repo": "transport",
-          "kind": "external",
-          "qualified_name": "google.golang.org/protobuf/proto.Marshal",
-          "external": true
+          "kind": "function",
+          "qualified_name": "google.golang.org/protobuf/proto.Marshal"
         },
         "source": {
           "path": "transport.go",
@@ -1980,9 +1955,8 @@
         "relation": "calls",
         "to": {
           "repo": "transport",
-          "kind": "external",
-          "qualified_name": "google.golang.org/protobuf/proto.Unmarshal",
-          "external": true
+          "kind": "function",
+          "qualified_name": "google.golang.org/protobuf/proto.Unmarshal"
         },
         "source": {
           "path": "transport.go",
@@ -2105,14 +2079,13 @@
         "relation": "calls",
         "to": {
           "repo": "transport",
-          "kind": "external",
-          "qualified_name": "google.golang.org/protobuf/proto.Marshal",
-          "external": true
+          "kind": "function",
+          "qualified_name": "example.com/transport.send"
         },
         "source": {
           "path": "transport.go",
-          "line": 41,
-          "column": 16
+          "line": 42,
+          "column": 2
         },
         "properties": {
           "resolution": "go/types"
@@ -2128,12 +2101,12 @@
         "to": {
           "repo": "transport",
           "kind": "function",
-          "qualified_name": "example.com/transport.send"
+          "qualified_name": "google.golang.org/protobuf/proto.Marshal"
         },
         "source": {
           "path": "transport.go",
-          "line": 42,
-          "column": 2
+          "line": 41,
+          "column": 16
         },
         "properties": {
           "resolution": "go/types"
@@ -2251,14 +2224,13 @@
         "relation": "calls",
         "to": {
           "repo": "transport",
-          "kind": "external",
-          "qualified_name": "google.golang.org/protobuf/proto.Marshal",
-          "external": true
+          "kind": "function",
+          "qualified_name": "example.com/transport.sendViaGamePeer"
         },
         "source": {
           "path": "transport.go",
-          "line": 36,
-          "column": 16
+          "line": 37,
+          "column": 2
         },
         "properties": {
           "resolution": "go/types"
@@ -2274,12 +2246,12 @@
         "to": {
           "repo": "transport",
           "kind": "function",
-          "qualified_name": "example.com/transport.sendViaGamePeer"
+          "qualified_name": "google.golang.org/protobuf/proto.Marshal"
         },
         "source": {
           "path": "transport.go",
-          "line": 37,
-          "column": 2
+          "line": 36,
+          "column": 16
         },
         "properties": {
           "resolution": "go/types"
@@ -2454,9 +2426,8 @@
         "relation": "calls",
         "to": {
           "repo": "transport",
-          "kind": "external",
-          "qualified_name": "github.com/cafecito-games/goenet/pkg.Peer.Send",
-          "external": true
+          "kind": "method",
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Peer.Send"
         },
         "source": {
           "path": "transport.go",
@@ -2534,9 +2505,8 @@
         "relation": "calls",
         "to": {
           "repo": "transport",
-          "kind": "external",
-          "qualified_name": "github.com/cafecito-games/goenet/pkg.PeerSender.Send",
-          "external": true
+          "kind": "method",
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.PeerSender.Send"
         },
         "source": {
           "path": "transport.go",
@@ -2609,13 +2579,13 @@
         "from": {
           "repo": "transport",
           "kind": "function",
-          "qualified_name": "example.com/transport/third_party/protobuf/proto.Marshal"
+          "qualified_name": "google.golang.org/protobuf/proto.Marshal"
         },
         "relation": "declares",
         "to": {
           "repo": "transport",
           "kind": "parameter",
-          "qualified_name": "example.com/transport/third_party/protobuf/proto.Marshal.value"
+          "qualified_name": "google.golang.org/protobuf/proto.Marshal.value"
         },
         "source": {
           "path": "third_party/protobuf/proto/proto.go",
@@ -2627,13 +2597,39 @@
         "from": {
           "repo": "transport",
           "kind": "function",
-          "qualified_name": "example.com/transport/third_party/protobuf/proto.Unmarshal"
+          "qualified_name": "google.golang.org/protobuf/proto.Marshal"
+        },
+        "relation": "returns_error",
+        "to": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "builtin.error",
+          "external": true
+        },
+        "source": {
+          "path": "third_party/protobuf/proto/proto.go",
+          "line": 5,
+          "column": 38
+        },
+        "properties": {
+          "evidence": "go/types",
+          "form": "signature",
+          "resolution": "go/types",
+          "result_position": "1",
+          "type": "builtin.error"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "google.golang.org/protobuf/proto.Unmarshal"
         },
         "relation": "declares",
         "to": {
           "repo": "transport",
           "kind": "parameter",
-          "qualified_name": "example.com/transport/third_party/protobuf/proto.Unmarshal.data"
+          "qualified_name": "google.golang.org/protobuf/proto.Unmarshal.data"
         },
         "source": {
           "path": "third_party/protobuf/proto/proto.go",
@@ -2645,18 +2641,44 @@
         "from": {
           "repo": "transport",
           "kind": "function",
-          "qualified_name": "example.com/transport/third_party/protobuf/proto.Unmarshal"
+          "qualified_name": "google.golang.org/protobuf/proto.Unmarshal"
         },
         "relation": "declares",
         "to": {
           "repo": "transport",
           "kind": "parameter",
-          "qualified_name": "example.com/transport/third_party/protobuf/proto.Unmarshal.value"
+          "qualified_name": "google.golang.org/protobuf/proto.Unmarshal.value"
         },
         "source": {
           "path": "third_party/protobuf/proto/proto.go",
           "line": 6,
           "column": 29
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "google.golang.org/protobuf/proto.Unmarshal"
+        },
+        "relation": "returns_error",
+        "to": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "builtin.error",
+          "external": true
+        },
+        "source": {
+          "path": "third_party/protobuf/proto/proto.go",
+          "line": 6,
+          "column": 44
+        },
+        "properties": {
+          "evidence": "go/types",
+          "form": "signature",
+          "resolution": "go/types",
+          "result_position": "0",
+          "type": "builtin.error"
         }
       },
       {
@@ -2721,13 +2743,13 @@
         "from": {
           "repo": "transport",
           "kind": "interface",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.PeerSender"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.PeerSender"
         },
         "relation": "has_field",
         "to": {
           "repo": "transport",
           "kind": "method",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.PeerSender.Send"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.PeerSender.Send"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
@@ -4050,13 +4072,13 @@
         "from": {
           "repo": "transport",
           "kind": "method",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Host.Broadcast"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Host.Broadcast"
         },
         "relation": "declares",
         "to": {
           "repo": "transport",
           "kind": "parameter",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Host.Broadcast.channelID"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Host.Broadcast.channelID"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
@@ -4068,13 +4090,13 @@
         "from": {
           "repo": "transport",
           "kind": "method",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Host.Broadcast"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Host.Broadcast"
         },
         "relation": "declares",
         "to": {
           "repo": "transport",
           "kind": "parameter",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Host.Broadcast.packet"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Host.Broadcast.packet"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
@@ -4086,13 +4108,39 @@
         "from": {
           "repo": "transport",
           "kind": "method",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Peer.Send"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Host.Broadcast"
+        },
+        "relation": "returns_error",
+        "to": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "builtin.error",
+          "external": true
+        },
+        "source": {
+          "path": "third_party/goenet/pkg/goenet.go",
+          "line": 27,
+          "column": 59
+        },
+        "properties": {
+          "evidence": "go/types",
+          "form": "signature",
+          "resolution": "go/types",
+          "result_position": "0",
+          "type": "builtin.error"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Peer.Send"
         },
         "relation": "declares",
         "to": {
           "repo": "transport",
           "kind": "parameter",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Peer.Send.channelID"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Peer.Send.channelID"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
@@ -4104,18 +4152,70 @@
         "from": {
           "repo": "transport",
           "kind": "method",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Peer.Send"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Peer.Send"
         },
         "relation": "declares",
         "to": {
           "repo": "transport",
           "kind": "parameter",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Peer.Send.packet"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Peer.Send.packet"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
           "line": 23,
           "column": 38
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Peer.Send"
+        },
+        "relation": "returns_error",
+        "to": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "builtin.error",
+          "external": true
+        },
+        "source": {
+          "path": "third_party/goenet/pkg/goenet.go",
+          "line": 23,
+          "column": 54
+        },
+        "properties": {
+          "evidence": "go/types",
+          "form": "signature",
+          "resolution": "go/types",
+          "result_position": "0",
+          "type": "builtin.error"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "method",
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.PeerSender.Send"
+        },
+        "relation": "returns_error",
+        "to": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "builtin.error",
+          "external": true
+        },
+        "source": {
+          "path": "third_party/goenet/pkg/goenet.go",
+          "line": 18,
+          "column": 40
+        },
+        "properties": {
+          "evidence": "go/types",
+          "form": "signature",
+          "resolution": "go/types",
+          "result_position": "0",
+          "type": "builtin.error"
         }
       },
       {
@@ -4333,9 +4433,8 @@
         "relation": "passes",
         "to": {
           "repo": "transport",
-          "kind": "external",
-          "qualified_name": "google.golang.org/protobuf/proto.Marshal",
-          "external": true
+          "kind": "function",
+          "qualified_name": "google.golang.org/protobuf/proto.Marshal"
         },
         "source": {
           "path": "transport.go",
@@ -4373,9 +4472,8 @@
         "relation": "passes",
         "to": {
           "repo": "transport",
-          "kind": "external",
-          "qualified_name": "google.golang.org/protobuf/proto.Unmarshal",
-          "external": true
+          "kind": "function",
+          "qualified_name": "google.golang.org/protobuf/proto.Unmarshal"
         },
         "source": {
           "path": "transport.go",
@@ -4413,9 +4511,8 @@
         "relation": "passes",
         "to": {
           "repo": "transport",
-          "kind": "external",
-          "qualified_name": "google.golang.org/protobuf/proto.Marshal",
-          "external": true
+          "kind": "function",
+          "qualified_name": "google.golang.org/protobuf/proto.Marshal"
         },
         "source": {
           "path": "transport.go",
@@ -4474,9 +4571,8 @@
         "relation": "passes",
         "to": {
           "repo": "transport",
-          "kind": "external",
-          "qualified_name": "google.golang.org/protobuf/proto.Marshal",
-          "external": true
+          "kind": "function",
+          "qualified_name": "google.golang.org/protobuf/proto.Marshal"
         },
         "source": {
           "path": "transport.go",
@@ -4538,9 +4634,8 @@
         "relation": "passes",
         "to": {
           "repo": "transport",
-          "kind": "external",
-          "qualified_name": "github.com/cafecito-games/goenet/pkg.Peer.Send",
-          "external": true
+          "kind": "method",
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Peer.Send"
         },
         "source": {
           "path": "transport.go",
@@ -4560,9 +4655,8 @@
         "relation": "passes",
         "to": {
           "repo": "transport",
-          "kind": "external",
-          "qualified_name": "github.com/cafecito-games/goenet/pkg.PeerSender.Send",
-          "external": true
+          "kind": "method",
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.PeerSender.Send"
         },
         "source": {
           "path": "transport.go",
@@ -5304,13 +5398,13 @@
         "from": {
           "repo": "transport",
           "kind": "type",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Event"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Event"
         },
         "relation": "has_field",
         "to": {
           "repo": "transport",
           "kind": "field",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Event.ChannelID"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Event.ChannelID"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
@@ -5322,13 +5416,13 @@
         "from": {
           "repo": "transport",
           "kind": "type",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Event"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Event"
         },
         "relation": "has_field",
         "to": {
           "repo": "transport",
           "kind": "field",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Event.Data"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Event.Data"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
@@ -5340,13 +5434,13 @@
         "from": {
           "repo": "transport",
           "kind": "type",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Event"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Event"
         },
         "relation": "has_field",
         "to": {
           "repo": "transport",
           "kind": "field",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Event.Packet"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Event.Packet"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
@@ -5358,13 +5452,13 @@
         "from": {
           "repo": "transport",
           "kind": "type",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Event"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Event"
         },
         "relation": "has_field",
         "to": {
           "repo": "transport",
           "kind": "field",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Event.Peer"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Event.Peer"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
@@ -5376,13 +5470,13 @@
         "from": {
           "repo": "transport",
           "kind": "type",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Event"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Event"
         },
         "relation": "has_field",
         "to": {
           "repo": "transport",
           "kind": "field",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Event.Type"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Event.Type"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
@@ -5394,13 +5488,13 @@
         "from": {
           "repo": "transport",
           "kind": "type",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Packet"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Packet"
         },
         "relation": "has_field",
         "to": {
           "repo": "transport",
           "kind": "field",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Packet.Data"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Packet.Data"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
@@ -5412,18 +5506,39 @@
         "from": {
           "repo": "transport",
           "kind": "type",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Packet"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Packet"
         },
         "relation": "has_field",
         "to": {
           "repo": "transport",
           "kind": "field",
-          "qualified_name": "example.com/transport/third_party/goenet/pkg.Packet.Flags"
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Packet.Flags"
         },
         "source": {
           "path": "third_party/goenet/pkg/goenet.go",
           "line": 12,
           "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.Peer"
+        },
+        "relation": "implements",
+        "to": {
+          "repo": "transport",
+          "kind": "interface",
+          "qualified_name": "github.com/cafecito-games/goenet/pkg.PeerSender"
+        },
+        "source": {
+          "path": "third_party/goenet/pkg/goenet.go",
+          "line": 21,
+          "column": 6
+        },
+        "properties": {
+          "resolution": "go/types"
         }
       },
       {
@@ -5558,9 +5673,8 @@
         "relation": "passes",
         "to": {
           "repo": "transport",
-          "kind": "external",
-          "qualified_name": "google.golang.org/protobuf/proto.Unmarshal",
-          "external": true
+          "kind": "function",
+          "qualified_name": "google.golang.org/protobuf/proto.Unmarshal"
         },
         "source": {
           "path": "transport.go",
@@ -5612,20 +5726,6 @@
         "properties": {
           "argument": "1"
         }
-      }
-    ],
-    "diagnostics": [
-      {
-        "repo": "transport",
-        "path": "third_party/goenet/pkg/goenet.go",
-        "level": "warning",
-        "message_contains": "Go semantic package omitted source; using syntax evidence"
-      },
-      {
-        "repo": "transport",
-        "path": "third_party/protobuf/proto/proto.go",
-        "level": "warning",
-        "message_contains": "Go semantic package omitted source; using syntax evidence"
       }
     ],
     "forbidden_paths": [
