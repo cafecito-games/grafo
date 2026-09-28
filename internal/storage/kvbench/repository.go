@@ -386,6 +386,28 @@ func (r *Repository) reconcileBatch(ctx context.Context) (int, graph.WriteStats,
 				}
 				writes.Edges.Rows++
 				writes.Edges.Bytes += int64(len(encoded))
+				if edge.Kind != graph.EdgeCalls && edge.Kind != graph.EdgeReferences {
+					continue
+				}
+				sourceNode, sourceErr := getNode(tx, edge.FromID)
+				if sourceErr != nil {
+					return sourceErr
+				}
+				if sourceNode.Kind != graph.KindTest {
+					continue
+				}
+				targetNode, targetErr := getNode(tx, edge.ToID)
+				if targetErr != nil {
+					return targetErr
+				}
+				if testEdge, ok := graph.DirectTestEdge(sourceNode, targetNode, edge); ok {
+					testEncoded, err := putEdge(tx, testEdge)
+					if err != nil {
+						return err
+					}
+					writes.Edges.Rows++
+					writes.Edges.Bytes += int64(len(testEncoded))
+				}
 			}
 			if err := tx.delete(item.key); err != nil {
 				return err

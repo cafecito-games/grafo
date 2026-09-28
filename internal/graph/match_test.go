@@ -116,6 +116,7 @@ func TestIsDeclarationMemberClassifiesTheWholeVocabulary(t *testing.T) {
 		graph.KindModule:     false,
 		graph.KindFunction:   false,
 		graph.KindMethod:     false,
+		graph.KindTest:       false,
 		graph.KindType:       false,
 		graph.KindClass:      false,
 		graph.KindInterface:  false,

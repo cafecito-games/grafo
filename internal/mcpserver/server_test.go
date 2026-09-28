@@ -57,8 +57,8 @@ func TestServerListsAndCallsGraphTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Tools) != 24 {
-		t.Fatalf("expected 24 tools, got %d", len(listed.Tools))
+	if len(listed.Tools) != 26 {
+		t.Fatalf("expected 26 tools, got %d", len(listed.Tools))
 	}
 	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name: "find_symbols", Arguments: map[string]any{"query": "Checkout"},

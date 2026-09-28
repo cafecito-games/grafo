@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const SchemaVersion = 10
+const SchemaVersion = 11
 
 // Stable extraction producers identify the authority that created a fact.
 // Producer is deliberately separate from source language: one fact can point
@@ -31,6 +31,10 @@ const (
 	KindModule     NodeKind = "module"
 	KindFunction   NodeKind = "function"
 	KindMethod     NodeKind = "method"
+	// KindTest is a statically recognized test declaration. Subtype and
+	// framework details remain properties so one language-neutral kind covers
+	// Go tests, benchmarks, fuzz tests, examples, and Godot test methods.
+	KindTest       NodeKind = "test"
 	KindType       NodeKind = "type"
 	KindClass      NodeKind = "class"
 	KindInterface  NodeKind = "interface"
@@ -78,7 +82,7 @@ const (
 // ParseNodeKind so a caller-supplied kind filter is validated against the
 // vocabulary instead of silently matching nothing.
 var nodeKinds = []NodeKind{
-	KindRepository, KindComponent, KindFile, KindPackage, KindModule, KindFunction, KindMethod,
+	KindRepository, KindComponent, KindFile, KindPackage, KindModule, KindFunction, KindMethod, KindTest,
 	KindType, KindClass, KindInterface, KindField, KindVariable, KindParameter,
 	KindTable, KindView, KindColumn, KindIndex, KindConfigKey, KindEndpoint,
 	KindEvent, KindDocSection, KindExternal,
@@ -114,11 +118,14 @@ func ParseNodeKind(value string) (NodeKind, error) {
 type EdgeKind string
 
 const (
-	EdgeContains    EdgeKind = "contains"
-	EdgeDeclares    EdgeKind = "declares"
-	EdgeImports     EdgeKind = "imports"
-	EdgeExports     EdgeKind = "exports"
-	EdgeCalls       EdgeKind = "calls"
+	EdgeContains EdgeKind = "contains"
+	EdgeDeclares EdgeKind = "declares"
+	EdgeImports  EdgeKind = "imports"
+	EdgeExports  EdgeKind = "exports"
+	EdgeCalls    EdgeKind = "calls"
+	// EdgeTests is direct, uniquely resolved structural test evidence. Helper
+	// expansion stays query-time and never persists synthetic transitive edges.
+	EdgeTests       EdgeKind = "tests"
 	EdgeEmbeds      EdgeKind = "embeds"
 	EdgeExtends     EdgeKind = "extends"
 	EdgeImplements  EdgeKind = "implements"

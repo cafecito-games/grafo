@@ -364,6 +364,9 @@ are marked `federated` and retain their original evidence.
   propagation, wrapping, joining, handling, panic/recovery, deferred cleanup,
   embedding,
   `os.Getenv`/`LookupEnv`, `net/http` routes, and common publish/subscribe calls.
+  Go `Test*`, `Benchmark*`, `Fuzz*`, and `Example*` declarations in `_test.go`
+  files are first-class test nodes when their standard-library signatures are
+  valid; internal and external test-package identity is retained.
 - TypeScript and TSX modules, functions, classes, interfaces, methods,
   parameters, local variables, basic assignment/argument/return flow, imports,
   calls, inheritance, `process.env`, Express-style routes, and common
@@ -405,6 +408,9 @@ are marked `federated` and retain their original evidence.
   signal declarations, emissions, and connections. `$Node/Path`, `%UniqueName`,
   and literal `get_node`-family lookups reference matching scene nodes when the
   name is unambiguous.
+  GUT-style `test_*` methods are first-class tests only when their class
+  structurally extends `GutTest` or a validated configured base; lifecycle and
+  helper methods remain explicit support nodes.
 - Godot text scenes and resources (`.tscn`, `.tres`, and `.escn`) as first-class
   scenes, resources, and scene nodes, including subresources, properties,
   external resources, node paths, declarative signal connections, scene
@@ -427,6 +433,35 @@ are marked `federated` and retain their original evidence.
 - Deterministic symbol lookup, neighborhood traversal, shortest paths, callers,
   callees, failure-flow and blast-radius reports, multi-repository federation,
   and MCP access.
+
+## Structural test relationships
+
+Grafo persists a `tests` relationship only when a first-class test has a unique
+local `calls` or `references` edge to a production declaration. Bounded query
+expansion may cross methods or functions explicitly classified as test helpers
+or lifecycle hooks. External, ambiguous, and unsupported targets fail closed;
+cycles, depth exhaustion, and size exhaustion are reported as truncated.
+
+```sh
+grafo find-tests example.com/shop.Charge --json
+grafo test-coverage example.com/shop.TestCharge --json
+```
+
+The same operations are available through MCP as `find_tests` and
+`get_test_coverage`. They report structural source evidence, not runtime
+execution coverage.
+
+Godot projects can add exact test base names without weakening the built-in
+structural requirement:
+
+```yaml
+tests:
+  gdscript_bases: [SpecBase, addons.gut.CustomBase]
+```
+
+Invalid `tests` configuration emits a warning and uses only the built-in
+`GutTest` convention. Editing, fixing, or removing the section invalidates
+otherwise unchanged GDScript files so stale classifications are reconciled.
 
 Grafo combines syntactic extraction with Go toolchain type evidence for exact
 Go function and method dispatch, promotions, generic instantiations, and

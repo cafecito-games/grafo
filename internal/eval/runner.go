@@ -28,6 +28,7 @@ type Snapshot struct {
 	Queries         []QuerySpec           `json:"queries,omitempty"`
 	MessageFlows    []MessageFlowSpec     `json:"message_flows,omitempty"`
 	MessageCoverage []MessageCoverageSpec `json:"message_coverage,omitempty"`
+	TestCoverage    []TestCoverageSpec    `json:"test_coverage,omitempty"`
 }
 
 type caseResult struct {
@@ -58,6 +59,7 @@ func RunCorpus(ctx context.Context, root string, update bool) error {
 			manifest.Expect.Queries = result.snapshot.Queries
 			manifest.Expect.MessageFlows = result.snapshot.MessageFlows
 			manifest.Expect.MessageCoverage = result.snapshot.MessageCoverage
+			manifest.Expect.TestCoverage = result.snapshot.TestCoverage
 			if err := writeManifestAtomic(result.loaded.Path, manifest); err != nil {
 				return err
 			}
@@ -135,7 +137,8 @@ func runCase(ctx context.Context, loaded LoadedManifest, update bool) (Snapshot,
 	}
 	if !update {
 		expected := Snapshot{Nodes: loaded.Manifest.Expect.Nodes, Edges: loaded.Manifest.Expect.Edges, Queries: loaded.Manifest.Expect.Queries,
-			MessageFlows: loaded.Manifest.Expect.MessageFlows, MessageCoverage: loaded.Manifest.Expect.MessageCoverage}
+			MessageFlows: loaded.Manifest.Expect.MessageFlows, MessageCoverage: loaded.Manifest.Expect.MessageCoverage,
+			TestCoverage: loaded.Manifest.Expect.TestCoverage}
 		if err := compareSnapshots("committed manifest", expected, first); err != nil {
 			return Snapshot{}, err
 		}
@@ -283,6 +286,10 @@ func evaluateWorkspace(ctx context.Context, projects []indexer.Project, roots []
 		return Snapshot{}, err
 	}
 	snapshot.Queries = queries
+	snapshot.TestCoverage, err = evaluateTestCoverage(ctx, repository, origins, expected.TestCoverage)
+	if err != nil {
+		return Snapshot{}, err
+	}
 	topologyRepository, ok := repository.(graph.TopologyRepository)
 	if (len(expected.MessageFlows) > 0 || len(expected.MessageCoverage) > 0) && !ok {
 		return Snapshot{}, fmt.Errorf("repository does not support bounded message-flow task queries")
@@ -425,6 +432,43 @@ func evaluateMessageFlows(ctx context.Context, repository graph.TopologyReposito
 		}
 		actual := specification
 		actual.Result = summarizeMessageFlow(flow, origins)
+		result = append(result, actual)
+	}
+	return result, nil
+}
+
+func evaluateTestCoverage(ctx context.Context, repository graph.QueryRepository, origins map[string]map[string]bool, specifications []TestCoverageSpec) ([]TestCoverageSpec, error) {
+	service := query.NewService(repository)
+	result := make([]TestCoverageSpec, 0, len(specifications))
+	for _, specification := range specifications {
+		var report query.TestCoverageReport
+		var err error
+		switch specification.Direction {
+		case "find_tests":
+			report, err = service.FindTests(ctx, specification.Selector, specification.Options)
+		case "test_coverage":
+			report, err = service.TestCoverage(ctx, specification.Selector, specification.Options)
+		default:
+			err = fmt.Errorf("unknown direction %q", specification.Direction)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("test coverage %q (%s): %w", specification.ID, specification.Selector, err)
+		}
+		actual := specification
+		actual.Result = TestCoverageResult{Root: canonicalNode(report.Root, origins), Designation: report.Designation,
+			Matches: []TestCoverageMatchResult{}, Truncated: report.Truncated}
+		for _, match := range report.Matches {
+			item := TestCoverageMatchResult{Test: canonicalNode(match.Test, origins), Target: canonicalNode(match.Target, origins),
+				Direct: match.Direct, Depth: match.Depth, Path: make([]NodeRef, 0, len(match.Nodes)),
+				Relations: make([]graph.EdgeKind, 0, len(match.Edges))}
+			for _, node := range match.Nodes {
+				item.Path = append(item.Path, canonicalNode(node, origins))
+			}
+			for _, edge := range match.Edges {
+				item.Relations = append(item.Relations, edge.Kind)
+			}
+			actual.Result.Matches = append(actual.Result.Matches, item)
+		}
 		result = append(result, actual)
 	}
 	return result, nil
@@ -616,6 +660,9 @@ func compareSnapshots(label string, expected, actual Snapshot) error {
 	}
 	if !equalSlices(expected.MessageCoverage, actual.MessageCoverage) {
 		return focusedSliceDiff(label+" message coverage", expected.MessageCoverage, actual.MessageCoverage)
+	}
+	if !equalSlices(expected.TestCoverage, actual.TestCoverage) {
+		return focusedSliceDiff(label+" test coverage", expected.TestCoverage, actual.TestCoverage)
 	}
 	return nil
 }

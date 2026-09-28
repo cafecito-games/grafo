@@ -21,7 +21,7 @@ const workspaceOwner = "__workspace__"
 const workspaceSemanticKeysMeta = "parser_workspace_semantic_keys"
 const workspaceStateDigestMeta = "workspace_state_digest"
 const gitUntrackedPathsMeta = "git_untracked_paths"
-const SemanticIndexVersion = "28"
+const SemanticIndexVersion = "29"
 
 type Options struct {
 	Force        bool

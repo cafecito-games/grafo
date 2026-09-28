@@ -137,6 +137,10 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		runErr = a.messageFlow(ctx, parsed)
 	case "message-coverage", "list-message-coverage", "list_message_coverage":
 		runErr = a.messageCoverage(ctx, parsed)
+	case "find-tests", "find_tests":
+		runErr = a.testCoverage(ctx, parsed, true)
+	case "test-coverage", "get-test-coverage", "get_test_coverage":
+		runErr = a.testCoverage(ctx, parsed, false)
 	default:
 		if namespace, known := toolchainNamespaces[parsed.command]; known {
 			runErr = a.toolchainCommand(ctx, namespace, parsed)
@@ -778,6 +782,68 @@ func (a *App) path(ctx context.Context, args parsedArguments) error {
 		}
 		a.printf("%s [%s] %s\n", node.QualifiedName, node.Kind, formatLocation(node.Location))
 	}
+	return nil
+}
+
+func (a *App) testCoverage(ctx context.Context, args parsedArguments, find bool) error {
+	if len(args.positionals) != 1 {
+		if find {
+			return fmt.Errorf("usage: grafo find-tests <production-symbol-or-id> [--kind function] [--depth 8] [--limit 100] [--json]")
+		}
+		return fmt.Errorf("usage: grafo test-coverage <test-or-id> [--depth 8] [--limit 100] [--json]")
+	}
+	depth, err := intOption(args, "depth", query.DefaultTestCoverageDepth)
+	if err != nil {
+		return err
+	}
+	limit, err := intOption(args, "limit", query.DefaultTestCoverageLimit)
+	if err != nil {
+		return err
+	}
+	options := query.TestCoverageOptions{Depth: depth, Limit: limit}
+	if find {
+		options.Kind, err = nodeKindOption(args)
+		if err != nil {
+			return err
+		}
+	}
+	repository, _, closeRepository, err := openRead(ctx, args)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = closeRepository() }()
+	service := query.NewService(repository)
+	var report query.TestCoverageReport
+	if find {
+		report, err = service.FindTests(ctx, args.positionals[0], options)
+	} else {
+		report, err = service.TestCoverage(ctx, args.positionals[0], options)
+	}
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, report)
+	}
+	a.printf("%s [%s] · structural evidence only (not runtime coverage)\n", report.Root.QualifiedName, report.Root.Kind)
+	for _, match := range report.Matches {
+		label := "helper-expanded"
+		if match.Direct {
+			label = "direct"
+		}
+		if find {
+			a.printf("%s [%s] · %s · depth %d · %s\n", match.Test.QualifiedName, match.Test.Kind, label, match.Depth,
+				formatLocation(match.Test.Location))
+		} else {
+			a.printf("%s [%s] · %s · depth %d · %s\n", match.Target.QualifiedName, match.Target.Kind, label, match.Depth,
+				formatLocation(match.Target.Location))
+		}
+	}
+	a.printf("%d structural matches", len(report.Matches))
+	if report.Truncated {
+		a.print(" · truncated")
+	}
+	a.println()
 	return nil
 }
 
@@ -2114,6 +2180,8 @@ Usage:
                          [--direction incoming|outgoing|both] [--component name]
                          [--status resolved|missing_evidence|unknown] [--repo-name name]
                          [--limit 100] [--json]
+  grafo find-tests <production-symbol-or-id> [--kind function] [--depth 8] [--limit 100] [--json]
+  grafo test-coverage <test-or-id> [--depth 8] [--limit 100] [--json]
   grafo version
 
 Options may appear before or after positional arguments. All query commands
@@ -2121,6 +2189,7 @@ accept --repo or a comma-separated --repos list. Commands that take a selector
 accept --kind to restrict resolution to one node kind, so a selector shared by a
 function and its own parameter resolves without guessing. Active branch indexes are
 refreshed incrementally before queries and never substituted across branches.
+Test reports are bounded structural call/reference evidence, not runtime coverage.
 
 'grafo install --list' only detects clients and never writes; '--dry-run'
 reports every file and command a real run would touch. 'grafo install' also installs

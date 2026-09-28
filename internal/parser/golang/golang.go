@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	goast "go/ast"
+	"go/doc"
 	"go/parser"
 	"go/printer"
 	"go/token"
@@ -12,6 +13,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/httpmodel"
@@ -193,10 +196,11 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 			},
 		})
 	}
+	validExamples := validGoExamples(file)
 	for _, decl := range file.Decls {
 		switch node := decl.(type) {
 		case *goast.FuncDecl:
-			parseFunction(b, fset, input, packageName, imports, semantic, packageShadowedBuiltins, node)
+			parseFunction(b, fset, input, packageName, file.Name.Name, imports, semantic, packageShadowedBuiltins, validExamples, node)
 		case *goast.GenDecl:
 			if node.Tok == token.TYPE {
 				for _, spec := range node.Specs {
@@ -230,7 +234,7 @@ func packageQualified(input parserapi.Input, packageName string) string {
 	return dir
 }
 
-func parseFunction(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input, pkg string, imports map[string]string, semantic SemanticView, packageShadowedBuiltins map[string]bool, decl *goast.FuncDecl) {
+func parseFunction(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input, pkg, sourcePackage string, imports map[string]string, semantic SemanticView, packageShadowedBuiltins map[string]bool, validExamples map[string]bool, decl *goast.FuncDecl) {
 	kind := graph.KindFunction
 	qualified := pkg + "." + decl.Name.Name
 	owner := ""
@@ -248,6 +252,20 @@ func parseFunction(b *parserapi.Builder, fset *token.FileSet, input parserapi.In
 	loc := location(input.Path, fset, decl.Pos(), decl.End())
 	node := graph.Node{Kind: kind, Name: decl.Name.Name, QualifiedName: qualified,
 		Location: loc, Properties: map[string]string{"signature": render(fset, decl.Type)}}
+	if strings.HasSuffix(filepath.ToSlash(input.Path), "_test.go") {
+		testPackage := "internal"
+		if strings.HasSuffix(sourcePackage, "_test") {
+			testPackage = "external"
+		}
+		node.Properties["test_package"] = testPackage
+		if subtype, ok := goTestSubtype(decl, imports, validExamples); ok {
+			node.Kind = graph.KindTest
+			node.Properties["test_subtype"] = subtype
+			node.Properties["test_framework"] = "go"
+		} else {
+			node.Properties["test_role"] = "helper"
+		}
+	}
 	if function, ok := semantic.Functions[qualified]; ok && len(function.ErrorResults) > 0 {
 		positions := make([]string, 0, len(function.ErrorResults))
 		for _, result := range function.ErrorResults {
@@ -286,6 +304,73 @@ func parseFunction(b *parserapi.Builder, fset *token.FileSet, input parserapi.In
 		}
 	}
 }
+
+func goTestSubtype(decl *goast.FuncDecl, imports map[string]string, validExamples map[string]bool) (string, bool) {
+	if decl.Recv != nil || decl.Body == nil || decl.Type.TypeParams != nil && len(decl.Type.TypeParams.List) > 0 {
+		return "", false
+	}
+	name := decl.Name.Name
+	if validExamples[name] && emptyFieldList(decl.Type.Params) && emptyFieldList(decl.Type.Results) {
+		return "example", true
+	}
+	for _, candidate := range []struct {
+		prefix  string
+		arg     string
+		subtype string
+	}{
+		{prefix: "Test", arg: "T", subtype: "test"},
+		{prefix: "Benchmark", arg: "B", subtype: "benchmark"},
+		{prefix: "Fuzz", arg: "F", subtype: "fuzz"},
+	} {
+		if goTestName(name, candidate.prefix) && goTestParameter(decl.Type, imports, candidate.arg) {
+			return candidate.subtype, true
+		}
+	}
+	return "", false
+}
+
+func validGoExamples(file *goast.File) map[string]bool {
+	result := map[string]bool{}
+	for _, example := range doc.Examples(file) {
+		if example.Output != "" || example.EmptyOutput {
+			result["Example"+example.Name] = true
+		}
+	}
+	return result
+}
+
+func goTestName(name, prefix string) bool {
+	if !strings.HasPrefix(name, prefix) {
+		return false
+	}
+	if len(name) == len(prefix) {
+		return true
+	}
+	r, _ := utf8.DecodeRuneInString(name[len(prefix):])
+	return !unicode.IsLower(r)
+}
+
+func goTestParameter(function *goast.FuncType, imports map[string]string, expected string) bool {
+	if !emptyFieldList(function.Results) || function.Params == nil || len(function.Params.List) != 1 ||
+		len(function.Params.List[0].Names) > 1 {
+		return false
+	}
+	pointer, ok := function.Params.List[0].Type.(*goast.StarExpr)
+	if !ok {
+		return false
+	}
+	switch value := pointer.X.(type) {
+	case *goast.SelectorExpr:
+		alias, ok := value.X.(*goast.Ident)
+		return ok && value.Sel.Name == expected && imports[alias.Name] == "testing"
+	case *goast.Ident:
+		return value.Name == expected && imports["."] == "testing"
+	default:
+		return false
+	}
+}
+
+func emptyFieldList(fields *goast.FieldList) bool { return fields == nil || len(fields.List) == 0 }
 
 func emitProtocolUses(b *parserapi.Builder, semantic SemanticView, registry protobufbinding.Registry) {
 	path := filepath.ToSlash(filepath.Clean(filepath.FromSlash(b.Input.Path)))
