@@ -365,6 +365,29 @@ func TestMessageCoverageClassifiesCodecAndTransportPipelineGaps(t *testing.T) {
 	}
 }
 
+func TestMessageCoveragePathPrefixSelectsCanonicalDeclaration(t *testing.T) {
+	repository := newMessageFlowFixture()
+	message := repository.nodes["n:message"]
+	message.Location = graph.Location{Path: "proto/schema.proto", Line: 1}
+	repository.nodes[message.ID] = message
+	service := query.NewMessageFlow(repository)
+	result, err := service.Coverage(context.Background(), query.MessageCoverageOptions{
+		PathPrefixes: []string{"proto"}, Limit: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Messages) != 1 || result.Messages[0].Message.ID != "n:message" {
+		t.Fatalf("path-scoped coverage = %#v", result)
+	}
+	empty, err := service.Coverage(context.Background(), query.MessageCoverageOptions{
+		PathPrefixes: []string{"protocol"}, Limit: 10,
+	})
+	if err != nil || len(empty.Messages) != 0 || empty.Truncated {
+		t.Fatalf("segment no-match coverage = %#v, %v", empty, err)
+	}
+}
+
 func TestMessageFlowDowngradesUnsupportedAndUnresolvedBindings(t *testing.T) {
 	repository := newMessageFlowFixture()
 	for _, test := range []struct {
@@ -488,7 +511,7 @@ func newMessageFlowFixture() *catalogRepository {
 	edge("e:owns-server", "f:owns-server", "n:component-server", "n:file-server", graph.EdgeContains, nil)
 
 	add("transport", graph.Node{ID: "n:message", Kind: graph.KindType, Name: "Envelope", QualifiedName: "acme.v1.Envelope",
-		OwnerFile: "schema.proto", Properties: map[string]string{"declaration": "message"}})
+		OwnerFile: "schema.proto", Location: graph.Location{Path: "schema.proto", Line: 1}, Properties: map[string]string{"declaration": "message"}})
 	for _, field := range []graph.Node{
 		{ID: "n:text", Kind: graph.KindField, Name: "text", QualifiedName: "acme.v1.Envelope.text", OwnerFile: "schema.proto", Properties: map[string]string{"oneof": "payload"}},
 		{ID: "n:image", Kind: graph.KindField, Name: "image", QualifiedName: "acme.v1.Envelope.image", OwnerFile: "schema.proto", Properties: map[string]string{"oneof": "payload"}},

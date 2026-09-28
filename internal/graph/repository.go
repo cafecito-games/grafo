@@ -105,6 +105,9 @@ type NodeListQuery struct {
 	Kinds      []NodeKind
 	Name       string
 	Repository string
+	// PathPrefixes are normalized repository-relative segment prefixes. They
+	// filter canonical node locations before the per-kind Limit is applied.
+	PathPrefixes []string
 	// Visibility defaults to LocalNodes so a catalog never silently mixes
 	// declarations with unresolved external targets.
 	Visibility NodeVisibility
@@ -131,10 +134,11 @@ type NodeListRepository interface {
 // applying its bound. Package and Message are exact semantic filters rather
 // than post-enumeration presentation filters.
 type CanonicalMessageQuery struct {
-	Repository string
-	Package    string
-	Message    string
-	Limit      int
+	Repository   string
+	Package      string
+	Message      string
+	PathPrefixes []string
+	Limit        int
 }
 
 func (q CanonicalMessageQuery) Validate() error {

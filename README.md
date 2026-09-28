@@ -585,6 +585,33 @@ overlapping, or ambiguous component configuration before changing the durable
 index. Component edits rebuild only workspace ownership evidence, so unchanged
 language source files are not reparsed.
 
+## Repository source scope
+
+Repository owners can explicitly narrow indexed source membership in the root
+`grafo.yaml`:
+
+```yaml
+index:
+  include: ["cmd/**", "internal/**"]
+  exclude: ["internal/eval/testdata/**"]
+```
+
+Patterns are slash-based repository-relative globs with literal segments, `*`,
+`?`, and recursive `**` segments. An empty `include` means every otherwise
+eligible source, an empty `exclude` excludes nothing, and exclusion wins. The
+root `grafo.yaml` remains indexed as the control plane even when its own path
+does not match. Includes cannot re-enable built-in ignored paths or symlinks.
+Invalid, absolute, traversing, or backslash paths fail before index mutation.
+
+Changing the normalized scope forces full candidate discovery at the next
+index pass: narrowing removes stale file-owned graph evidence and broadening
+discovers files absent from the prior catalog. Repeating an unchanged scope
+retains normal incremental membership reuse. Index reports expose only the
+count of parser-supported candidates scoped out by configuration, not the
+excluded path list. Because scope is enforced before filesystem inspection,
+an excluded candidate is classified as scoped out rather than subsequently as
+a symlink, non-regular file, size skip, or read failure.
+
 ## Endpoint and service topology
 
 Godot 4 `HTTPRequest.request` calls are indexed only when the receiver is
@@ -679,6 +706,19 @@ each entry retains its form, order, and source call site.
 structured result; it never replaces the node and edge evidence. Explicit
 federation refreshes all member indexes before answering, so a failed refresh
 returns no mixed-freshness topology.
+
+Inventory commands accept repeatable or comma-separated `--path-prefix`; their
+MCP inputs use `path_prefixes`. The option is available on `data-resources`,
+`config-keys`, `events`, `orphaned-events`, `endpoints`, `outbound-requests`,
+`service-topology`, and `message-coverage`. Prefixes are validated
+repository-relative segment prefixes: `internal/app` includes descendants but
+not `internal/application`. They select canonical top-level subjects before
+limits while retaining complete bounded counterpart evidence. A topology link
+is selected when either non-external boundary is in scope. Federation applies
+the same relative prefixes independently to every member. Scalar selector
+commands and commands outside this list intentionally reject this filter before
+opening a repository; they never accept and silently ignore it. Source search
+keeps its pre-existing `--path-prefix` support.
 
 ## Protobuf message flow and coverage
 

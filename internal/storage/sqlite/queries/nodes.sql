@@ -84,6 +84,14 @@ WHERE kind = @kind
   AND external >= @min_external
   AND external <= @max_external
   AND (instr(name_folded, @name_fragment) > 0 OR instr(qualified_name_folded, @name_fragment) > 0)
+  AND (
+    @path_prefixes_json = '[]'
+    OR EXISTS (
+      SELECT 1 FROM json_each(@path_prefixes_json) AS prefix
+      WHERE nodes.path = prefix.value
+         OR substr(nodes.path, 1, length(prefix.value) + 1) = prefix.value || '/'
+    )
+  )
 ORDER BY qualified_name, id
 LIMIT @max_results;
 
@@ -100,6 +108,14 @@ WHERE kind = 'type'
       CAST(@message_name AS TEXT) = ''
       OR name = CAST(@message_name AS TEXT)
       OR qualified_name = CAST(@message_name AS TEXT)
+  )
+  AND (
+    @path_prefixes_json = '[]'
+    OR EXISTS (
+      SELECT 1 FROM json_each(@path_prefixes_json) AS prefix
+      WHERE nodes.path = prefix.value
+         OR substr(nodes.path, 1, length(prefix.value) + 1) = prefix.value || '/'
+    )
   )
 ORDER BY qualified_name, id
 LIMIT @max_results;

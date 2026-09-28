@@ -103,6 +103,61 @@ func TestEndpointMiddlewareEvidenceIsBounded(t *testing.T) {
 	}
 }
 
+func TestTopologyPathPrefixesSelectAnchorsAndRetainCounterparts(t *testing.T) {
+	repository := newTopologyFixture()
+	external := repository.nodes["n:external-missing"]
+	external.Location.Path = "external/missing.http"
+	repository.nodes[external.ID] = external
+	service := query.NewTopology(repository)
+	endpoints, err := service.Endpoints(context.Background(), query.TopologyOptions{PathPrefixes: []string{"routes.go"}, Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(endpoints.Endpoints) != 1 || endpoints.Endpoints[0].ID != "n:endpoint-orders" ||
+		len(endpoints.Endpoints[0].Handlers) != 1 || endpoints.Endpoints[0].Handlers[0].Location.Path != "routes.go" {
+		t.Fatalf("path-scoped endpoints lost complete evidence: %#v", endpoints)
+	}
+	requests, err := service.OutboundRequests(context.Background(), query.TopologyOptions{PathPrefixes: []string{"client.go"}, Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requests.Requests) != 3 {
+		t.Fatalf("source-scoped requests = %#v", requests)
+	}
+	empty, err := service.OutboundRequests(context.Background(), query.TopologyOptions{PathPrefixes: []string{"client"}, Limit: 20})
+	if err != nil || len(empty.Requests) != 0 || empty.Truncated {
+		t.Fatalf("segment no-match requests = %#v, %v", empty, err)
+	}
+	topology, err := service.ServiceTopology(context.Background(), query.TopologyOptions{PathPrefixes: []string{"routes.go"}, Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, link := range topology.Links {
+		if link.Name == "GET /orders" {
+			found = true
+			if len(link.SourceNodes) != 1 || len(link.TargetNodes) == 0 {
+				t.Fatalf("selected topology link lost opposite boundary: %#v", link)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("target-anchored topology link missing: %#v", topology)
+	}
+	externalOnly, err := service.ServiceTopology(context.Background(), query.TopologyOptions{
+		PathPrefixes: []string{"external/missing.http"}, Limit: 20,
+	})
+	if err != nil || len(externalOnly.Links) != 0 || len(externalOnly.Services) != 0 || externalOnly.Truncated {
+		t.Fatalf("external-only path created a scoped topology result: %#v, %v", externalOnly, err)
+	}
+	unmatched, err := service.ServiceTopology(context.Background(), query.TopologyOptions{
+		PathPrefixes: []string{"not-present"}, Limit: 1,
+	})
+	if err != nil || len(unmatched.Links) != 0 || len(unmatched.Services) != 0 || unmatched.Truncated {
+		t.Fatalf("out-of-scope truncation leaked into an empty topology: %#v, %v", unmatched, err)
+	}
+}
+
 func TestEndpointRepositoryFilterKeepsReferencedUnresolvedTargets(t *testing.T) {
 	repository := newTopologyFixture()
 	repository.add("orders", graph.Node{ID: "n:orders-delete-other", Kind: graph.KindFunction,

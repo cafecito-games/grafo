@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,6 +24,9 @@ const workspaceOwner = "__workspace__"
 const workspaceSemanticKeysMeta = "parser_workspace_semantic_keys"
 const workspaceStateDigestMeta = "workspace_state_digest"
 const gitUntrackedPathsMeta = "git_untracked_paths"
+const indexScopeDigestMeta = "index_scope_digest"
+const indexScopePendingMeta = "index_scope_pending"
+const indexScopeScopedOutMeta = "index_scope_scoped_out"
 const SemanticIndexVersion = indexversion.Semantic
 
 type Options struct {
@@ -75,11 +79,15 @@ type PhaseDurations struct {
 }
 
 type Report struct {
-	Project                      Project            `json:"project"`
-	Updated                      []string           `json:"updated"`
-	Unchanged                    int                `json:"unchanged"`
-	Removed                      []string           `json:"removed"`
-	Skipped                      []string           `json:"skipped,omitempty"`
+	Project   Project  `json:"project"`
+	Updated   []string `json:"updated"`
+	Unchanged int      `json:"unchanged"`
+	Removed   []string `json:"removed"`
+	Skipped   []string `json:"skipped,omitempty"`
+	// ScopedOut counts supported candidate paths rejected by configuration.
+	// Scope is intentionally evaluated before stat/symlink/read work, so a
+	// rejected candidate is classified here rather than as an unsafe/read skip.
+	ScopedOut                    int                `json:"scoped_out"`
 	Checked                      int                `json:"content_checked"`
 	Diagnostics                  []graph.Diagnostic `json:"diagnostics,omitempty"`
 	Counts                       graph.Counts       `json:"-"`
@@ -224,6 +232,22 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	if indexedCommit != "" && previousUntrackedRaw == "" {
 		previousUntrackedValid = false
 	}
+	indexedScopeDigest, err := s.repository.Meta(ctx, indexScopeDigestMeta)
+	if err != nil {
+		return report, fmt.Errorf("load index scope digest: %w", err)
+	}
+	scopeDigest := configuration.Index.SemanticKey()
+	scopeChanged := indexedScopeDigest != scopeDigest
+	indexedScopePending, err := s.repository.Meta(ctx, indexScopePendingMeta)
+	if err != nil {
+		return report, fmt.Errorf("load pending index scope: %w", err)
+	}
+	indexedScopedOutRaw, err := s.repository.Meta(ctx, indexScopeScopedOutMeta)
+	if err != nil {
+		return report, fmt.Errorf("load index scope excluded count: %w", err)
+	}
+	indexedScopedOut, scopedOutErr := strconv.Atoi(indexedScopedOutRaw)
+	indexedScopedOutValid := scopedOutErr == nil && indexedScopedOut >= 0
 	if err := progress.emit(ProgressMembership, ProgressStarted, "files", 0, 0, ""); err != nil {
 		return report, err
 	}
@@ -239,7 +263,8 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	reuseMembership := project.gitSnapshot != nil && indexedCommit != "" &&
 		project.gitSnapshot.Head == indexedCommit && project.gitSnapshot.MembershipStable &&
 		previousUntrackedValid && equalPaths(previousUntracked, project.gitSnapshot.Untracked) &&
-		!schemaChanged && previousDirtyValid && !options.Force && options.Boundary == nil
+		!scopeChanged && indexedScopePending == "" && indexedScopedOutValid && !schemaChanged &&
+		previousDirtyValid && !options.Force && options.Boundary == nil
 	var detectedChanges gitChanges
 	changesValid := false
 	var dirtyPaths []string
@@ -268,18 +293,22 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	}
 	discoveryStarted := time.Now()
 	membershipStarted := time.Now()
-	discovered, err := discoverFilesWithCatalog(ctx, project, s.parsers, known, reuseMembership)
+	discovered, err := discoverFilesWithCatalog(ctx, project, s.parsers, known, reuseMembership, configuration.Index)
 	report.Phases.MembershipNS += time.Since(membershipStarted).Nanoseconds()
 	report.Phases.DiscoveryNS += time.Since(discoveryStarted).Nanoseconds()
 	report.GitCommands += discovered.gitCommands
 	if err != nil {
 		return report, fmt.Errorf("discover source files: %w", err)
 	}
+	if reuseMembership {
+		discovered.scopedOut = indexedScopedOut
+	}
 	paths := discovered.paths
 	if err := progress.emit(ProgressDiscovery, ProgressCompleted, "files", len(paths), len(paths), ""); err != nil {
 		return report, err
 	}
 	report.Skipped = append(report.Skipped, discovered.skipped...)
+	report.ScopedOut = discovered.scopedOut
 	workspaceSemanticKeys, err := s.parsers.WorkspaceSemanticKeys(ctx, parserapi.Input{
 		Root: project.Root, Repository: project.Name, RepoID: project.ID, GoModule: project.GoModule,
 	})
@@ -315,6 +344,15 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		untrackedPaths = detectedChanges.untracked
 		if !options.Force && !schemaChanged && indexedCommit != "" && previousDirtyValid && previousUntrackedValid {
 			selected = selectChangedPaths(paths, known, detectedChanges.changed, previousDirty, s.parsers)
+			// grafo.yaml may intentionally be ignored by Git while remaining the
+			// authoritative control-plane input. Hash it on every selected pass so
+			// an ignore rule cannot make its indexed evidence stale.
+			for _, path := range paths {
+				if path == projectconfig.FileName {
+					selected[path] = true
+					break
+				}
+			}
 		}
 	}
 	if selected != nil && len(changedSemanticLanguages) > 0 {
@@ -326,6 +364,20 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	}
 	current := make(map[string]bool, len(paths))
 	graphDirtied := false
+	scopeMutationStarted := false
+	markScopeMutation := func() error {
+		if scopeMutationStarted {
+			return nil
+		}
+		// Publish a fail-reuse marker before the first durable graph mutation.
+		// A crash or boundary failure can then never pair an older committed
+		// scope digest with the partially-mutated file catalog.
+		if err := setMetaIfChanged(ctx, s.repository, indexScopePendingMeta, scopeDigest); err != nil {
+			return err
+		}
+		scopeMutationStarted = true
+		return nil
+	}
 	if err := progress.emit(ProgressReadHash, ProgressStarted, "files", 0, 0, ""); err != nil {
 		return report, err
 	}
@@ -417,6 +469,9 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		record := graph.FileRecord{Path: path, Hash: hash, Language: languageParser.Language(),
 			Size: info.Size(), ModifiedNS: info.ModTime().UnixNano(), IndexedAt: graph.NowUTC()}
 		persistenceStarted := time.Now()
+		if err := markScopeMutation(); err != nil {
+			return report, err
+		}
 		if err := s.repository.ReplaceFile(ctx, record, parsed); err != nil {
 			return report, fmt.Errorf("store %s: %w", path, err)
 		}
@@ -458,6 +513,9 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		!validDigest(indexedWorkspaceDigest) || indexedWorkspaceDigest != workspaceDigest
 	if replaceWorkspace {
 		persistenceStarted = time.Now()
+		if err := markScopeMutation(); err != nil {
+			return report, err
+		}
 		if err := s.repository.ReplaceOwner(ctx, workspaceOwner, workspace); err != nil {
 			return report, fmt.Errorf("store workspace: %w", err)
 		}
@@ -477,6 +535,9 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	sort.Strings(report.Removed)
 	if len(report.Removed) > 0 {
 		persistenceStarted = time.Now()
+		if err := markScopeMutation(); err != nil {
+			return report, err
+		}
 		if err := s.repository.RemoveFiles(ctx, report.Removed); err != nil {
 			return report, fmt.Errorf("remove deleted files: %w", err)
 		}
@@ -565,6 +626,20 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	// so it intentionally advances even when every graph and other metadata
 	// value is unchanged.
 	if err := s.repository.SetMeta(ctx, "indexed_at", graph.NowUTC()); err != nil {
+		return report, err
+	}
+	if err := setMetaIfChanged(ctx, s.repository, indexScopeScopedOutMeta, strconv.Itoa(discovered.scopedOut)); err != nil {
+		return report, err
+	}
+	// Publish the digest last: it is the reuse authority for both membership
+	// and the associated scoped-out count, after every other index metadata
+	// value for this run has been stored successfully.
+	if err := setMetaIfChanged(ctx, s.repository, indexScopeDigestMeta, scopeDigest); err != nil {
+		return report, err
+	}
+	// Clear the fail-reuse marker only after the committed digest and its
+	// associated catalog/count metadata are durable.
+	if err := setMetaIfChanged(ctx, s.repository, indexScopePendingMeta, ""); err != nil {
 		return report, err
 	}
 	if options.Boundary != nil {

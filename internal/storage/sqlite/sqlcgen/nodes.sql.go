@@ -300,18 +300,32 @@ WHERE kind = 'type'
       OR name = CAST(?2 AS TEXT)
       OR qualified_name = CAST(?2 AS TEXT)
   )
+  AND (
+    ?3 = '[]'
+    OR EXISTS (
+      SELECT 1 FROM json_each(?3) AS prefix
+      WHERE nodes.path = prefix.value
+         OR substr(nodes.path, 1, length(prefix.value) + 1) = prefix.value || '/'
+    )
+  )
 ORDER BY qualified_name, id
-LIMIT ?3
+LIMIT ?4
 `
 
 type ListCanonicalMessagesParams struct {
-	PackageName string `json:"package_name"`
-	MessageName string `json:"message_name"`
-	MaxResults  int64  `json:"max_results"`
+	PackageName      string      `json:"package_name"`
+	MessageName      string      `json:"message_name"`
+	PathPrefixesJson interface{} `json:"path_prefixes_json"`
+	MaxResults       int64       `json:"max_results"`
 }
 
 func (q *Queries) ListCanonicalMessages(ctx context.Context, arg ListCanonicalMessagesParams) ([]Node, error) {
-	rows, err := q.query(ctx, q.listCanonicalMessagesStmt, listCanonicalMessages, arg.PackageName, arg.MessageName, arg.MaxResults)
+	rows, err := q.query(ctx, q.listCanonicalMessagesStmt, listCanonicalMessages,
+		arg.PackageName,
+		arg.MessageName,
+		arg.PathPrefixesJson,
+		arg.MaxResults,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -409,16 +423,25 @@ WHERE kind = ?1
   AND external >= ?2
   AND external <= ?3
   AND (instr(name_folded, ?4) > 0 OR instr(qualified_name_folded, ?4) > 0)
+  AND (
+    ?5 = '[]'
+    OR EXISTS (
+      SELECT 1 FROM json_each(?5) AS prefix
+      WHERE nodes.path = prefix.value
+         OR substr(nodes.path, 1, length(prefix.value) + 1) = prefix.value || '/'
+    )
+  )
 ORDER BY qualified_name, id
-LIMIT ?5
+LIMIT ?6
 `
 
 type ListNodesByKindParams struct {
-	Kind         string `json:"kind"`
-	MinExternal  int64  `json:"min_external"`
-	MaxExternal  int64  `json:"max_external"`
-	NameFragment string `json:"name_fragment"`
-	MaxResults   int64  `json:"max_results"`
+	Kind             string      `json:"kind"`
+	MinExternal      int64       `json:"min_external"`
+	MaxExternal      int64       `json:"max_external"`
+	NameFragment     string      `json:"name_fragment"`
+	PathPrefixesJson interface{} `json:"path_prefixes_json"`
+	MaxResults       int64       `json:"max_results"`
 }
 
 func (q *Queries) ListNodesByKind(ctx context.Context, arg ListNodesByKindParams) ([]Node, error) {
@@ -427,6 +450,7 @@ func (q *Queries) ListNodesByKind(ctx context.Context, arg ListNodesByKindParams
 		arg.MinExternal,
 		arg.MaxExternal,
 		arg.NameFragment,
+		arg.PathPrefixesJson,
 		arg.MaxResults,
 	)
 	if err != nil {
