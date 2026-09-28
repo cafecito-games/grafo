@@ -2,6 +2,7 @@ package federation
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -435,6 +436,97 @@ func (r *Repository) EdgesTo(ctx context.Context, id string) ([]graph.Edge, erro
 	return uniqueEdges(result), nil
 }
 
+// RelationEdges merges bounded hydrated pages from every member, applies the
+// same cross-repository projection as traversal adjacency, then deduplicates
+// and enforces the global per-relation bound on final edge identities.
+func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEdgeQuery) (graph.RelationEdgePage, error) {
+	if err := request.Validate(); err != nil {
+		return graph.RelationEdgePage{}, err
+	}
+	items := []graph.HydratedRelationEdge{}
+	truncated := false
+	for _, member := range r.members {
+		page, err := memberRelationEdges(ctx, member.repository, request)
+		if err != nil {
+			return graph.RelationEdgePage{}, err
+		}
+		truncated = truncated || page.Truncated
+		items = append(items, page.Items...)
+	}
+
+	switch request.Direction {
+	case graph.OutgoingRelations:
+		projected := make([]graph.HydratedRelationEdge, 0, len(items))
+		for _, item := range items {
+			if !item.Counterpart.External {
+				projected = append(projected, item)
+				continue
+			}
+			candidates, err := r.exactCandidates(ctx, item.Counterpart, item.Edge.Kind)
+			if err != nil {
+				return graph.RelationEdgePage{}, err
+			}
+			if len(candidates) == 0 {
+				projected = append(projected, item)
+				continue
+			}
+			for _, candidate := range candidates {
+				projected = append(projected, graph.HydratedRelationEdge{
+					Edge: federatedEdge(item.Edge, candidate.ID), Counterpart: candidate,
+				})
+			}
+		}
+		items = projected
+	case graph.IncomingRelations:
+		target, found, err := r.preferLocalNode(ctx, request.SubjectID)
+		if err != nil {
+			return graph.RelationEdgePage{}, err
+		}
+		if found && !target.External {
+			relations := make([]graph.EdgeKind, 0, len(request.Relations))
+			seen := map[graph.EdgeKind]bool{}
+			for _, relation := range request.Relations {
+				if !seen[relation] && candidateAllowed(relation, target) {
+					seen[relation] = true
+					relations = append(relations, relation)
+				}
+			}
+			if len(relations) > 0 {
+				for _, member := range r.members {
+					external, err := matchingExternalNodes(ctx, member.repository, target)
+					if err != nil {
+						return graph.RelationEdgePage{}, err
+					}
+					for _, unresolved := range external {
+						page, err := memberRelationEdges(ctx, member.repository, graph.RelationEdgeQuery{
+							SubjectID: unresolved.ID, Direction: graph.IncomingRelations,
+							Relations: relations, Limit: request.Limit,
+						})
+						if err != nil {
+							return graph.RelationEdgePage{}, err
+						}
+						truncated = truncated || page.Truncated
+						for _, item := range page.Items {
+							item.Edge = federatedEdge(item.Edge, target.ID)
+							items = append(items, item)
+						}
+					}
+				}
+			}
+		}
+	}
+	return boundRelationEdges(items, request.Limit, truncated), nil
+}
+
+func memberRelationEdges(ctx context.Context, repository graph.Repository,
+	request graph.RelationEdgeQuery) (graph.RelationEdgePage, error) {
+	loader, ok := repository.(graph.RelationEdgeRepository)
+	if !ok {
+		return graph.RelationEdgePage{}, fmt.Errorf("repository does not support bounded relation edges")
+	}
+	return loader.RelationEdges(ctx, request)
+}
+
 func (r *Repository) Counts(ctx context.Context) (graph.Counts, error) {
 	result := graph.Counts{ByKind: map[string]int{}, ByEdge: map[string]int{}}
 	for _, item := range r.members {
@@ -504,6 +596,32 @@ func (r *Repository) exactCandidates(ctx context.Context, target graph.Node, rel
 		return result[i].ID < result[j].ID
 	})
 	return result, nil
+}
+
+func (r *Repository) preferLocalNode(ctx context.Context, id string) (graph.Node, bool, error) {
+	var fallback graph.Node
+	for _, item := range r.members {
+		node, err := item.repository.Node(ctx, id)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			return graph.Node{}, false, err
+		}
+		if !node.External {
+			return node, true, nil
+		}
+		fallback = node
+	}
+	return fallback, fallback.ID != "", nil
+}
+
+func matchingExternalNodes(ctx context.Context, repository graph.Repository, target graph.Node) ([]graph.Node, error) {
+	matcher, ok := repository.(graph.ExternalNodeRepository)
+	if !ok {
+		return nil, fmt.Errorf("repository does not support external node matching")
+	}
+	return matcher.ExternalNodesMatching(ctx, target)
 }
 
 func candidateAllowed(relation graph.EdgeKind, node graph.Node) bool {
@@ -580,6 +698,41 @@ func uniqueEdges(edges []graph.Edge) []graph.Edge {
 		return result[i].ID < result[j].ID
 	})
 	return result
+}
+
+func boundRelationEdges(items []graph.HydratedRelationEdge, limit int, truncated bool) graph.RelationEdgePage {
+	byID := map[string]graph.HydratedRelationEdge{}
+	for _, item := range items {
+		byID[item.Edge.ID] = item
+	}
+	unique := make([]graph.HydratedRelationEdge, 0, len(byID))
+	for _, item := range byID {
+		unique = append(unique, item)
+	}
+	sort.Slice(unique, func(i, j int) bool {
+		left, right := unique[i].Edge, unique[j].Edge
+		if left.Kind != right.Kind {
+			return left.Kind < right.Kind
+		}
+		if left.FromID != right.FromID {
+			return left.FromID < right.FromID
+		}
+		if left.ToID != right.ToID {
+			return left.ToID < right.ToID
+		}
+		return left.ID < right.ID
+	})
+	page := graph.RelationEdgePage{Items: []graph.HydratedRelationEdge{}, Truncated: truncated}
+	kept := map[graph.EdgeKind]int{}
+	for _, item := range unique {
+		if kept[item.Edge.Kind] >= limit {
+			page.Truncated = true
+			continue
+		}
+		kept[item.Edge.Kind]++
+		page.Items = append(page.Items, item)
+	}
+	return page
 }
 
 func matchRank(node graph.Node, term string) int {

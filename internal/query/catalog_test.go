@@ -365,6 +365,70 @@ func TestBoundedEvidenceNeverStarvesAnotherRelation(t *testing.T) {
 	}
 }
 
+func TestCatalogEvidenceUsesBoundedHydratedPort(t *testing.T) {
+	repository := newCatalogFixture()
+	usage, err := query.NewCatalog(repository).DataResourceUsage(context.Background(), "n:orders",
+		query.CatalogOptions{Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(usage.Readers) != 1 || len(usage.Writers) != 1 || len(usage.References) != 1 {
+		t.Fatalf("usage = %#v", usage)
+	}
+	if repository.relationEdgeCalls != 1 {
+		t.Fatalf("bounded relation calls = %d, want 1", repository.relationEdgeCalls)
+	}
+	if repository.legacyEdgeCalls != 0 {
+		t.Fatalf("catalog used legacy adjacency %d times", repository.legacyEdgeCalls)
+	}
+	if repository.nodeCalls != 1 {
+		t.Fatalf("Node calls = %d, want only the selector lookup", repository.nodeCalls)
+	}
+}
+
+func TestEveryCatalogEvidencePathAvoidsLegacyAdjacency(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*query.Catalog) error
+	}{
+		{name: "data usage", run: func(catalog *query.Catalog) error {
+			_, err := catalog.DataResourceUsage(context.Background(), "n:orders", query.CatalogOptions{Limit: 2})
+			return err
+		}},
+		{name: "config keys", run: func(catalog *query.Catalog) error {
+			_, err := catalog.ConfigKeys(context.Background(), query.CatalogOptions{Limit: 2})
+			return err
+		}},
+		{name: "events", run: func(catalog *query.Catalog) error {
+			_, err := catalog.Events(context.Background(), query.CatalogOptions{Limit: 2})
+			return err
+		}},
+		{name: "orphaned events", run: func(catalog *query.Catalog) error {
+			_, err := catalog.OrphanedEvents(context.Background(), query.CatalogOptions{Limit: 2})
+			return err
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repository := newCatalogFixture()
+			if err := test.run(query.NewCatalog(repository)); err != nil {
+				t.Fatal(err)
+			}
+			if repository.relationEdgeCalls == 0 || repository.legacyEdgeCalls != 0 {
+				t.Fatalf("bounded calls=%d legacy calls=%d", repository.relationEdgeCalls, repository.legacyEdgeCalls)
+			}
+		})
+	}
+}
+
+func TestCatalogReturnsRelationPortFailuresWithoutPartialEvidence(t *testing.T) {
+	repository := newCatalogFixture()
+	repository.relationEdgeErr = errors.New("relation read failed")
+	if _, err := query.NewCatalog(repository).Events(context.Background(), query.CatalogOptions{Limit: 2}); !errors.Is(err, repository.relationEdgeErr) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestTruncatedEvidenceNeverConfirmsAnOrphan(t *testing.T) {
 	repository := newCatalogFixture()
 	for index := 0; index < 3; index++ {
@@ -509,10 +573,14 @@ func newCatalogFixture() *catalogRepository {
 }
 
 type catalogRepository struct {
-	nodes        map[string]graph.Node
-	owners       map[string]string
-	edges        []graph.Edge
-	repositories []string
+	nodes             map[string]graph.Node
+	owners            map[string]string
+	edges             []graph.Edge
+	repositories      []string
+	nodeCalls         int
+	legacyEdgeCalls   int
+	relationEdgeCalls int
+	relationEdgeErr   error
 }
 
 func (c *catalogRepository) add(repository string, node graph.Node) {
@@ -627,6 +695,7 @@ func (c *catalogRepository) SearchNodes(_ context.Context, term string, limit in
 }
 
 func (c *catalogRepository) Node(_ context.Context, id string) (graph.Node, error) {
+	c.nodeCalls++
 	node, ok := c.nodes[id]
 	if !ok {
 		return graph.Node{}, errors.New("not found")
@@ -635,6 +704,7 @@ func (c *catalogRepository) Node(_ context.Context, id string) (graph.Node, erro
 }
 
 func (c *catalogRepository) EdgesFrom(_ context.Context, id string) ([]graph.Edge, error) {
+	c.legacyEdgeCalls++
 	var result []graph.Edge
 	for _, edge := range c.edges {
 		if edge.FromID == id {
@@ -645,6 +715,7 @@ func (c *catalogRepository) EdgesFrom(_ context.Context, id string) ([]graph.Edg
 }
 
 func (c *catalogRepository) EdgesTo(_ context.Context, id string) ([]graph.Edge, error) {
+	c.legacyEdgeCalls++
 	var result []graph.Edge
 	for _, edge := range c.edges {
 		if edge.ToID == id {
@@ -652,4 +723,58 @@ func (c *catalogRepository) EdgesTo(_ context.Context, id string) ([]graph.Edge,
 		}
 	}
 	return result, nil
+}
+
+func (c *catalogRepository) RelationEdges(_ context.Context, request graph.RelationEdgeQuery) (graph.RelationEdgePage, error) {
+	c.relationEdgeCalls++
+	if c.relationEdgeErr != nil {
+		return graph.RelationEdgePage{}, c.relationEdgeErr
+	}
+	if err := request.Validate(); err != nil {
+		return graph.RelationEdgePage{}, err
+	}
+	wanted := make(map[graph.EdgeKind]bool, len(request.Relations))
+	for _, relation := range request.Relations {
+		wanted[relation] = true
+	}
+	edges := append([]graph.Edge(nil), c.edges...)
+	sort.Slice(edges, func(i, j int) bool {
+		left, right := edges[i], edges[j]
+		if left.Kind != right.Kind {
+			return left.Kind < right.Kind
+		}
+		if left.FromID != right.FromID {
+			return left.FromID < right.FromID
+		}
+		if left.ToID != right.ToID {
+			return left.ToID < right.ToID
+		}
+		return left.ID < right.ID
+	})
+	page := graph.RelationEdgePage{Items: []graph.HydratedRelationEdge{}}
+	seen := map[string]bool{}
+	kept := map[graph.EdgeKind]int{}
+	for _, edge := range edges {
+		matches := request.Direction == graph.IncomingRelations && edge.ToID == request.SubjectID ||
+			request.Direction == graph.OutgoingRelations && edge.FromID == request.SubjectID
+		if !matches || !wanted[edge.Kind] || seen[edge.ID] {
+			continue
+		}
+		seen[edge.ID] = true
+		if kept[edge.Kind] >= request.Limit {
+			page.Truncated = true
+			continue
+		}
+		counterpartID := edge.FromID
+		if request.Direction == graph.OutgoingRelations {
+			counterpartID = edge.ToID
+		}
+		counterpart, ok := c.nodes[counterpartID]
+		if !ok {
+			return graph.RelationEdgePage{}, fmt.Errorf("edge %s counterpart %s not found", edge.ID, counterpartID)
+		}
+		kept[edge.Kind]++
+		page.Items = append(page.Items, graph.HydratedRelationEdge{Edge: edge, Counterpart: counterpart})
+	}
+	return page, nil
 }

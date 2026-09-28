@@ -2,6 +2,8 @@ package graph
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -73,6 +75,13 @@ type ExternalEdgeRepository interface {
 	ExternalEdgesTo(context.Context, Node) ([]Edge, error)
 }
 
+// ExternalNodeRepository enumerates unresolved boundary nodes that a declared
+// node can replace during federation. It returns exact name equivalence only;
+// relation evidence is still loaded exclusively through RelationEdgeRepository.
+type ExternalNodeRepository interface {
+	ExternalNodesMatching(context.Context, Node) ([]Node, error)
+}
+
 // NodeVisibility selects whether an enumeration returns locally declared
 // nodes, unresolved external nodes, or both.
 type NodeVisibility string
@@ -111,11 +120,78 @@ type NodeListRepository interface {
 	ListNodesByKind(context.Context, NodeListQuery) ([]ScopedNode, error)
 }
 
+// RelationDirection selects which side of a subject node a bounded catalog
+// evidence lookup follows.
+type RelationDirection string
+
+const (
+	IncomingRelations RelationDirection = "incoming"
+	OutgoingRelations RelationDirection = "outgoing"
+)
+
+// RelationEdgeQuery requests exact relations adjacent to one subject. Limit is
+// applied independently to each distinct relation.
+type RelationEdgeQuery struct {
+	SubjectID string
+	Direction RelationDirection
+	Relations []EdgeKind
+	Limit     int
+}
+
+func (q RelationEdgeQuery) Validate() error {
+	if strings.TrimSpace(q.SubjectID) == "" {
+		return fmt.Errorf("relation edge subject is required")
+	}
+	if q.Direction != IncomingRelations && q.Direction != OutgoingRelations {
+		return fmt.Errorf("unknown relation direction %q", q.Direction)
+	}
+	if len(q.Relations) == 0 {
+		return fmt.Errorf("at least one exact relation is required")
+	}
+	for _, relation := range q.Relations {
+		if relation == "" {
+			return fmt.Errorf("relation must not be empty")
+		}
+	}
+	if q.Limit <= 0 {
+		return fmt.Errorf("relation edge limit must be positive")
+	}
+	return nil
+}
+
+// HydratedRelationEdge pairs an edge with the node opposite the request's
+// subject. Adapters return the pair atomically so catalogs never perform an
+// N+1 node lookup or silently omit a missing counterpart.
+type HydratedRelationEdge struct {
+	Edge        Edge
+	Counterpart Node
+}
+
+// RelationEdgePage contains at most Limit edges per requested relation.
+type RelationEdgePage struct {
+	Items     []HydratedRelationEdge
+	Truncated bool
+}
+
+// RelationEdgeRepository is the bounded, relation-filtered evidence port used
+// by catalogs. Traversal continues to use QueryRepository adjacency methods.
+type RelationEdgeRepository interface {
+	RelationEdges(context.Context, RelationEdgeQuery) (RelationEdgePage, error)
+}
+
 // CatalogRepository is the read port the data, configuration, and event
 // catalogs depend on.
 type CatalogRepository interface {
-	QueryRepository
+	Node(context.Context, string) (Node, error)
 	NodeListRepository
+	RelationEdgeRepository
+}
+
+// TopologyRepository adds traversal adjacency to the bounded catalog port.
+// Catalog-only consumers do not inherit unbounded traversal methods.
+type TopologyRepository interface {
+	CatalogRepository
+	QueryRepository
 }
 
 // StatusRepository exposes only metadata and aggregate counts.

@@ -32,6 +32,17 @@ WHERE external = 1
 -- name: GetNode :one
 SELECT * FROM nodes WHERE id = ?;
 
+-- name: ListExternalNodesMatching :many
+SELECT * FROM nodes
+WHERE external = 1
+  AND (
+      qualified_name = @qualified_name
+      OR qualified_name = @name
+      OR name = @qualified_name
+      OR name = @name
+  )
+ORDER BY id;
+
 -- name: FindNodesExact :many
 SELECT nodes.id, nodes.kind, nodes.qualified_name
 FROM nodes INDEXED BY nodes_qualified_resolve

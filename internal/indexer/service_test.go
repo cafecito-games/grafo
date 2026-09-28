@@ -578,11 +578,11 @@ plugins:
 	assertBindingCanonical(t, ctx, repository, "After", false)
 }
 
-func assertProtocolTarget(t *testing.T, ctx context.Context, repository graph.CatalogRepository, from, target string, want bool) {
+func assertProtocolTarget(t *testing.T, ctx context.Context, repository graph.TopologyRepository, from, target string, want bool) {
 	assertProtocolRelation(t, ctx, repository, from, target, graph.EdgeReads, want)
 }
 
-func assertProtocolRelation(t *testing.T, ctx context.Context, repository graph.CatalogRepository, from, target string, relation graph.EdgeKind, want bool) {
+func assertProtocolRelation(t *testing.T, ctx context.Context, repository graph.TopologyRepository, from, target string, relation graph.EdgeKind, want bool) {
 	t.Helper()
 	result, err := query.NewService(repository).Neighborhood(ctx, from, "", 1, query.Outgoing, []graph.EdgeKind{relation}, 20)
 	if err != nil {

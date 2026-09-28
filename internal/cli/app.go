@@ -1339,12 +1339,12 @@ func openTopology(ctx context.Context, args parsedArguments) (*query.Topology, f
 	if err != nil {
 		return nil, nil, err
 	}
-	catalogRepository, ok := repository.(graph.CatalogRepository)
+	topologyRepository, ok := repository.(graph.TopologyRepository)
 	if !ok {
 		_ = closeRepository()
 		return nil, nil, errors.New("repository does not support topology queries")
 	}
-	return query.NewTopology(catalogRepository), closeRepository, nil
+	return query.NewTopology(topologyRepository), closeRepository, nil
 }
 
 func (a *App) endpoints(ctx context.Context, args parsedArguments) error {

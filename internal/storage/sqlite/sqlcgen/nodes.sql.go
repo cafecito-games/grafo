@@ -286,6 +286,61 @@ func (q *Queries) GetNode(ctx context.Context, id string) (Node, error) {
 	return i, err
 }
 
+const listExternalNodesMatching = `-- name: ListExternalNodesMatching :many
+SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, owner_file, external, name_folded, qualified_name_folded FROM nodes
+WHERE external = 1
+  AND (
+      qualified_name = ?1
+      OR qualified_name = ?2
+      OR name = ?1
+      OR name = ?2
+  )
+ORDER BY id
+`
+
+type ListExternalNodesMatchingParams struct {
+	QualifiedName string `json:"qualified_name"`
+	Name          string `json:"name"`
+}
+
+func (q *Queries) ListExternalNodesMatching(ctx context.Context, arg ListExternalNodesMatchingParams) ([]Node, error) {
+	rows, err := q.query(ctx, q.listExternalNodesMatchingStmt, listExternalNodesMatching, arg.QualifiedName, arg.Name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Node{}
+	for rows.Next() {
+		var i Node
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Name,
+			&i.QualifiedName,
+			&i.Language,
+			&i.Path,
+			&i.Line,
+			&i.ColumnNo,
+			&i.EndLine,
+			&i.Properties,
+			&i.OwnerFile,
+			&i.External,
+			&i.NameFolded,
+			&i.QualifiedNameFolded,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listNodesByKind = `-- name: ListNodesByKind :many
 SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, owner_file, external, name_folded, qualified_name_folded FROM nodes
 WHERE kind = ?1

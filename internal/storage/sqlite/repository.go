@@ -850,6 +850,20 @@ func (r *Repository) Node(ctx context.Context, id string) (graph.Node, error) {
 	return nodeFromRow(row), nil
 }
 
+func (r *Repository) ExternalNodesMatching(ctx context.Context, node graph.Node) ([]graph.Node, error) {
+	rows, err := r.queries.ListExternalNodesMatching(ctx, sqlcgen.ListExternalNodesMatchingParams{
+		QualifiedName: node.QualifiedName, Name: node.Name,
+	})
+	if err != nil {
+		return nil, err
+	}
+	result := make([]graph.Node, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, nodeFromRow(row))
+	}
+	return result, nil
+}
+
 func (r *Repository) EdgesFrom(ctx context.Context, id string) ([]graph.Edge, error) {
 	rows, err := r.queries.ListEdgesFrom(ctx, id)
 	if err != nil {
@@ -864,6 +878,83 @@ func (r *Repository) EdgesTo(ctx context.Context, id string) ([]graph.Edge, erro
 		return nil, err
 	}
 	return edgesFromRows(rows), nil
+}
+
+// RelationEdges loads at most Limit+1 rows for each exact relation and joins
+// the node opposite the subject in the same query. Catalog callers therefore
+// pay only for requested evidence and never perform per-edge node lookups.
+func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEdgeQuery) (graph.RelationEdgePage, error) {
+	if err := request.Validate(); err != nil {
+		return graph.RelationEdgePage{}, err
+	}
+	if request.Limit == int(^uint(0)>>1) {
+		return graph.RelationEdgePage{}, fmt.Errorf("relation edge limit is too large")
+	}
+	relations := make([]graph.EdgeKind, 0, len(request.Relations))
+	seenRelations := map[graph.EdgeKind]bool{}
+	for _, relation := range request.Relations {
+		if !seenRelations[relation] {
+			seenRelations[relation] = true
+			relations = append(relations, relation)
+		}
+	}
+	sort.Slice(relations, func(i, j int) bool { return relations[i] < relations[j] })
+	page := graph.RelationEdgePage{Items: []graph.HydratedRelationEdge{}}
+	seenEdges := map[string]bool{}
+	maxResults := int64(request.Limit) + 1
+	for _, relation := range relations {
+		items := []graph.HydratedRelationEdge{}
+		switch request.Direction {
+		case graph.IncomingRelations:
+			rows, err := r.queries.ListIncomingRelationEdges(ctx, sqlcgen.ListIncomingRelationEdgesParams{
+				SubjectID: request.SubjectID, Relation: string(relation), MaxResults: maxResults,
+			})
+			if err != nil {
+				return graph.RelationEdgePage{}, err
+			}
+			for _, row := range rows {
+				item, err := hydratedRelationEdge(row.EdgeID, row.EdgeFactID, row.EdgeFromID, row.EdgeToID,
+					row.EdgeKind, row.EdgePath, row.EdgeLine, row.EdgeColumnNo, row.EdgeEndLine, row.EdgeProperties,
+					row.CounterpartID, row.CounterpartKind, row.CounterpartName, row.CounterpartQualifiedName,
+					row.CounterpartLanguage, row.CounterpartPath, row.CounterpartLine, row.CounterpartColumnNo,
+					row.CounterpartEndLine, row.CounterpartProperties, row.CounterpartOwnerFile, row.CounterpartExternal)
+				if err != nil {
+					return graph.RelationEdgePage{}, err
+				}
+				items = append(items, item)
+			}
+		case graph.OutgoingRelations:
+			rows, err := r.queries.ListOutgoingRelationEdges(ctx, sqlcgen.ListOutgoingRelationEdgesParams{
+				SubjectID: request.SubjectID, Relation: string(relation), MaxResults: maxResults,
+			})
+			if err != nil {
+				return graph.RelationEdgePage{}, err
+			}
+			for _, row := range rows {
+				item, err := hydratedRelationEdge(row.EdgeID, row.EdgeFactID, row.EdgeFromID, row.EdgeToID,
+					row.EdgeKind, row.EdgePath, row.EdgeLine, row.EdgeColumnNo, row.EdgeEndLine, row.EdgeProperties,
+					row.CounterpartID, row.CounterpartKind, row.CounterpartName, row.CounterpartQualifiedName,
+					row.CounterpartLanguage, row.CounterpartPath, row.CounterpartLine, row.CounterpartColumnNo,
+					row.CounterpartEndLine, row.CounterpartProperties, row.CounterpartOwnerFile, row.CounterpartExternal)
+				if err != nil {
+					return graph.RelationEdgePage{}, err
+				}
+				items = append(items, item)
+			}
+		}
+		if len(items) > request.Limit {
+			page.Truncated = true
+			items = items[:request.Limit]
+		}
+		for _, item := range items {
+			if seenEdges[item.Edge.ID] {
+				continue
+			}
+			seenEdges[item.Edge.ID] = true
+			page.Items = append(page.Items, item)
+		}
+	}
+	return page, nil
 }
 
 func (r *Repository) ExternalEdgesTo(ctx context.Context, node graph.Node) ([]graph.Edge, error) {
@@ -972,4 +1063,47 @@ func edgesFromRows(rows []sqlcgen.Edge) []graph.Edge {
 			Properties: graph.UnmarshalProperties(e.Properties)})
 	}
 	return result
+}
+
+func hydratedRelationEdge(edgeID, factID, fromID, toID, kind, path string,
+	line, column, endLine int64, properties, counterpartID, counterpartKind, counterpartName,
+	counterpartQualifiedName, counterpartLanguage, counterpartPath string, counterpartLine,
+	counterpartColumn, counterpartEndLine int64, counterpartProperties, counterpartOwnerFile string,
+	counterpartExternal int64) (graph.HydratedRelationEdge, error) {
+	if counterpartID == "" {
+		return graph.HydratedRelationEdge{}, fmt.Errorf("edge %s has no counterpart node", edgeID)
+	}
+	edgeProperties, err := decodeRelationProperties("edge "+edgeID, properties)
+	if err != nil {
+		return graph.HydratedRelationEdge{}, err
+	}
+	nodeProperties, err := decodeRelationProperties("counterpart node "+counterpartID, counterpartProperties)
+	if err != nil {
+		return graph.HydratedRelationEdge{}, err
+	}
+	return graph.HydratedRelationEdge{
+		Edge: graph.Edge{ID: edgeID, FactID: factID, FromID: fromID, ToID: toID, Kind: graph.EdgeKind(kind),
+			Location:   graph.Location{Path: path, Line: int(line), Column: int(column), EndLine: int(endLine)},
+			Properties: edgeProperties},
+		Counterpart: graph.Node{ID: counterpartID, Kind: graph.NodeKind(counterpartKind), Name: counterpartName,
+			QualifiedName: counterpartQualifiedName, Language: counterpartLanguage,
+			Location: graph.Location{Path: counterpartPath, Line: int(counterpartLine),
+				Column: int(counterpartColumn), EndLine: int(counterpartEndLine)},
+			Properties: nodeProperties, OwnerFile: counterpartOwnerFile,
+			External: counterpartExternal != 0},
+	}, nil
+}
+
+func decodeRelationProperties(label, raw string) (map[string]string, error) {
+	if raw == "{}" {
+		return nil, nil
+	}
+	var properties map[string]string
+	if err := json.Unmarshal([]byte(raw), &properties); err != nil {
+		return nil, fmt.Errorf("decode %s properties: %w", label, err)
+	}
+	if len(properties) == 0 {
+		return nil, nil
+	}
+	return properties, nil
 }

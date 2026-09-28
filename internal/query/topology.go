@@ -166,11 +166,11 @@ type ServiceTopology struct {
 // Topology owns endpoint and service-boundary interpretation. Storage only
 // enumerates exact node kinds and graph adjacency.
 type Topology struct {
-	repository graph.CatalogRepository
+	repository graph.TopologyRepository
 	catalog    *Catalog
 }
 
-func NewTopology(repository graph.CatalogRepository) *Topology {
+func NewTopology(repository graph.TopologyRepository) *Topology {
 	return &Topology{repository: repository, catalog: NewCatalog(repository)}
 }
 
