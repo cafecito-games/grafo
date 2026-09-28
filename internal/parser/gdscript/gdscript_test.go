@@ -192,6 +192,8 @@ func TestParserRejectsAmbiguousProtobufGDScriptBindings(t *testing.T) {
 			t.Fatalf("ambiguous generated API produced protocol usage: %#v", fact)
 		}
 	}
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "value.set_text")
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "value.set_other")
 	for _, diagnostic := range result.Diagnostics {
 		if strings.Contains(diagnostic.Message, "ambiguous generated Protobuf GDScript API") {
 			return
