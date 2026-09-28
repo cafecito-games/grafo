@@ -1275,7 +1275,11 @@ func semanticWorkspaceKey(ctx context.Context, root string) (string, string, err
 	}
 	workspace := discoverGoWorkspace(root)
 	if workspace != "" && workspace != "off" {
-		for _, path := range []string{workspace, workspace + ".sum"} {
+		for _, path := range []string{
+			workspace,
+			workspace + ".sum",
+			filepath.Join(filepath.Dir(workspace), "vendor", "modules.txt"),
+		} {
 			content, readErr := os.ReadFile(path)
 			if readErr != nil {
 				continue

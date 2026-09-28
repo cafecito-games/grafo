@@ -1349,6 +1349,28 @@ func TestSemanticKeyTracksNestedModulePlanChanges(t *testing.T) {
 	}
 }
 
+func TestSemanticKeyTracksWorkspaceVendorManifestChanges(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.work"), "go 1.26\n\nuse ./service\n")
+	writeFile(t, filepath.Join(root, "service", "go.mod"), "module example.com/service\n\ngo 1.26\n")
+	manifest := filepath.Join(root, "vendor", "modules.txt")
+	writeFile(t, manifest, "# example.com/dependency v1.0.0\n")
+
+	parser := golangparser.New()
+	first, err := parser.SemanticKey(context.Background(), parserapi.Input{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, manifest, "# example.com/dependency v1.1.0\n")
+	second, err := parser.SemanticKey(context.Background(), parserapi.Input{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("workspace vendor manifest change did not invalidate semantic key: %q", first)
+	}
+}
+
 func TestSemanticModuleDiscoveryHonorsCancellation(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/canceled\n\ngo 1.26\n")
