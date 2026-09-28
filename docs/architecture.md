@@ -369,8 +369,10 @@ Agent guidance is a second artifact kind on the same seam. `internal/agentguide`
 owns one embedded playbook, one format version, and the exact begin/end markers
 that make an installed copy provably Grafo-owned; it renders either an isolated
 skill file or a delimited managed block and never touches bytes outside its
-markers. `internal/agentinstall` declares, per client, which documented
-user-scoped surfaces exist, refuses targets that are symlinks, non-regular,
+markers. Claude Code and Codex receive isolated personal skills; Codex upgrades
+also remove the retired managed block from `~/.codex/AGENTS.md` when that direct
+target is safe to mutate. `internal/agentinstall` declares, per client, which
+documented user-scoped surfaces exist, refuses targets that are symlinks, non-regular,
 world-writable, or outside the user configuration roots, and treats a conflicting
 or unowned file as a reported conflict rather than something to repair. Advisory
 hooks are opt-in, capability-gated to a client whose hook API is documented, and
