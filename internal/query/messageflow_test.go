@@ -190,17 +190,18 @@ func TestMessageCoverageClassifiesCodecAndTransportPipelineGaps(t *testing.T) {
 func TestMessageFlowDowngradesUnsupportedAndUnresolvedBindings(t *testing.T) {
 	repository := newMessageFlowFixture()
 	for _, test := range []struct {
-		id, name, reason string
-		external         bool
+		id, name, reason, generator string
+		external                    bool
 	}{
-		{id: "unsupported", name: "Unsupported", reason: "unsupported_generator"},
-		{id: "unresolved", name: "Unresolved", reason: "unresolved_binding", external: true},
+		{id: "unsupported", name: "Unsupported", reason: "unsupported_generator", generator: "mystery-generator"},
+		{id: "missing", name: "Missing", reason: "unsupported_generator"},
+		{id: "unresolved", name: "Unresolved", reason: "unresolved_binding", generator: "mystery-generator", external: true},
 	} {
 		messageID, bindingID := "n:"+test.id, "n:"+test.id+":binding"
 		repository.add("transport", graph.Node{ID: messageID, Kind: graph.KindType, Name: test.name,
 			QualifiedName: "unknown.v1." + test.name, Properties: map[string]string{"declaration": "message"}})
 		repository.add("transport", graph.Node{ID: bindingID, Kind: graph.KindType, Name: test.name,
-			QualifiedName: "generated." + test.name, External: test.external, Properties: map[string]string{"generator": "mystery-generator"}})
+			QualifiedName: "generated." + test.name, External: test.external, Properties: map[string]string{"generator": test.generator}})
 		addMessageFlowEdge(repository, "e:"+test.id+":binding", bindingID, messageID, graph.EdgeGeneratedFrom, nil)
 		flow, err := query.NewMessageFlow(repository).Flow(context.Background(), messageID, query.MessageFlowOptions{Limit: 20})
 		if err != nil {

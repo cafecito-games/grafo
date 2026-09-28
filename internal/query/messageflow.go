@@ -197,12 +197,15 @@ func (s *MessageFlowService) flow(ctx context.Context, selector string, options 
 	}
 	for _, binding := range flow.Bindings {
 		generator := binding.Node.Properties["generator"]
+		if generator == "" {
+			generator = binding.Properties["generator"]
+		}
 		if binding.Node.Unresolved {
 			flow.Uncertainties = append(flow.Uncertainties, FlowUncertainty{Reason: "unresolved_binding",
 				Message: "a binding projection remains unresolved", Evidence: []FlowEvidence{binding}})
-		} else if generator != "" && generator != "protoc-gen-go" && generator != "protoc-gen-gdscript" {
+		} else if generator != "protoc-gen-go" && generator != "protoc-gen-gdscript" {
 			flow.Uncertainties = append(flow.Uncertainties, FlowUncertainty{Reason: "unsupported_generator",
-				Message: "the binding generator has no message-flow adapter", Evidence: []FlowEvidence{binding}})
+				Message: "the binding generator is missing or has no message-flow adapter", Evidence: []FlowEvidence{binding}})
 		}
 	}
 	codecs, err := load(graph.IncomingRelations, graph.EdgeEncodes, graph.EdgeDecodes)
@@ -266,11 +269,17 @@ func (s *MessageFlowService) flow(ctx context.Context, selector string, options 
 	}
 	// Dynamic payload operations have no carries edge. They can only be
 	// associated with this message through the callable that encodes/decodes it.
+	seenCodecDirection := map[string]bool{}
 	for _, codec := range append(append([]FlowEvidence{}, flow.Encoders...), flow.Decoders...) {
 		relation := graph.EdgeSends
 		if codec.Relation == graph.EdgeDecodes {
 			relation = graph.EdgeReceives
 		}
+		key := codec.Node.ID + "\x00" + string(relation)
+		if seenCodecDirection[key] {
+			continue
+		}
+		seenCodecDirection[key] = true
 		page, err := s.repository.RelationEdges(ctx, graph.RelationEdgeQuery{SubjectID: codec.Node.ID, Direction: graph.OutgoingRelations,
 			Relations: []graph.EdgeKind{relation}, Limit: limit})
 		if err != nil {
