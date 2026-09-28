@@ -379,7 +379,7 @@ func (r *Repository) reconcileBatch(ctx context.Context, resolved *resolutionCac
 			for _, source := range sources {
 				for _, target := range targets {
 					edge := graph.Edge{ID: graph.EdgeID(fact.ID, target), FactID: fact.ID,
-						FromID: source, ToID: target, Kind: fact.Kind, Location: fact.Location,
+						FromID: source, ToID: target, Kind: fact.Kind, Producer: fact.Producer, Location: fact.Location,
 						Properties: fact.Properties}
 					if err := writer.addEdge(ctx, edgeParams(edge)); err != nil {
 						return err
@@ -923,7 +923,7 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 			}
 			for _, row := range rows {
 				item, err := hydratedRelationEdge(row.EdgeID, row.EdgeFactID, row.EdgeFromID, row.EdgeToID,
-					row.EdgeKind, row.EdgePath, row.EdgeLine, row.EdgeColumnNo, row.EdgeEndLine, row.EdgeProperties,
+					row.EdgeKind, row.EdgeProducer, row.EdgePath, row.EdgeLine, row.EdgeColumnNo, row.EdgeEndLine, row.EdgeProperties,
 					row.CounterpartID, row.CounterpartKind, row.CounterpartName, row.CounterpartQualifiedName,
 					row.CounterpartLanguage, row.CounterpartPath, row.CounterpartLine, row.CounterpartColumnNo,
 					row.CounterpartEndLine, row.CounterpartProperties, row.CounterpartOwnerFile, row.CounterpartExternal)
@@ -941,7 +941,7 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 			}
 			for _, row := range rows {
 				item, err := hydratedRelationEdge(row.EdgeID, row.EdgeFactID, row.EdgeFromID, row.EdgeToID,
-					row.EdgeKind, row.EdgePath, row.EdgeLine, row.EdgeColumnNo, row.EdgeEndLine, row.EdgeProperties,
+					row.EdgeKind, row.EdgeProducer, row.EdgePath, row.EdgeLine, row.EdgeColumnNo, row.EdgeEndLine, row.EdgeProperties,
 					row.CounterpartID, row.CounterpartKind, row.CounterpartName, row.CounterpartQualifiedName,
 					row.CounterpartLanguage, row.CounterpartPath, row.CounterpartLine, row.CounterpartColumnNo,
 					row.CounterpartEndLine, row.CounterpartProperties, row.CounterpartOwnerFile, row.CounterpartExternal)
@@ -1036,7 +1036,7 @@ func foldName(name string) string {
 
 func factParams(f graph.Fact) sqlcgen.UpsertFactParams {
 	return sqlcgen.UpsertFactParams{ID: f.ID, FromID: f.FromID, Source: f.Source,
-		SourceKind: string(f.SourceKind), Kind: string(f.Kind), TargetID: f.TargetID,
+		SourceKind: string(f.SourceKind), Kind: string(f.Kind), Producer: f.Producer, TargetID: f.TargetID,
 		Target: f.Target, TargetKind: string(f.TargetKind), Path: f.Location.Path, Line: int64(f.Location.Line),
 		ColumnNo: int64(f.Location.Column), EndLine: int64(f.Location.EndLine),
 		Properties: graph.MarshalProperties(f.Properties), OwnerFile: f.OwnerFile}
@@ -1044,7 +1044,7 @@ func factParams(f graph.Fact) sqlcgen.UpsertFactParams {
 
 func edgeParams(e graph.Edge) sqlcgen.InsertEdgeParams {
 	return sqlcgen.InsertEdgeParams{ID: e.ID, FactID: e.FactID, FromID: e.FromID, ToID: e.ToID,
-		Kind: string(e.Kind), Path: e.Location.Path, Line: int64(e.Location.Line),
+		Kind: string(e.Kind), Producer: e.Producer, Path: e.Location.Path, Line: int64(e.Location.Line),
 		ColumnNo: int64(e.Location.Column), EndLine: int64(e.Location.EndLine),
 		Properties: graph.MarshalProperties(e.Properties)}
 }
@@ -1057,7 +1057,7 @@ func nodeFromRow(n sqlcgen.Node) graph.Node {
 
 func factFromDirtyRow(f sqlcgen.ListDirtyFactBatchRow) graph.Fact {
 	return graph.Fact{ID: f.ID, FromID: f.FromID, Source: f.Source, SourceKind: graph.NodeKind(f.SourceKind),
-		Kind: graph.EdgeKind(f.Kind), TargetID: f.TargetID,
+		Kind: graph.EdgeKind(f.Kind), Producer: f.Producer, TargetID: f.TargetID,
 		Target: f.Target, TargetKind: graph.NodeKind(f.TargetKind),
 		Location:   graph.Location{Path: f.Path, Line: int(f.Line), Column: int(f.ColumnNo), EndLine: int(f.EndLine)},
 		Properties: graph.UnmarshalProperties(f.Properties), OwnerFile: f.OwnerFile}
@@ -1067,14 +1067,14 @@ func edgesFromRows(rows []sqlcgen.Edge) []graph.Edge {
 	result := make([]graph.Edge, 0, len(rows))
 	for _, e := range rows {
 		result = append(result, graph.Edge{ID: e.ID, FactID: e.FactID, FromID: e.FromID,
-			ToID: e.ToID, Kind: graph.EdgeKind(e.Kind),
+			ToID: e.ToID, Kind: graph.EdgeKind(e.Kind), Producer: e.Producer,
 			Location:   graph.Location{Path: e.Path, Line: int(e.Line), Column: int(e.ColumnNo), EndLine: int(e.EndLine)},
 			Properties: graph.UnmarshalProperties(e.Properties)})
 	}
 	return result
 }
 
-func hydratedRelationEdge(edgeID, factID, fromID, toID, kind, path string,
+func hydratedRelationEdge(edgeID, factID, fromID, toID, kind, producer, path string,
 	line, column, endLine int64, properties, counterpartID, counterpartKind, counterpartName,
 	counterpartQualifiedName, counterpartLanguage, counterpartPath string, counterpartLine,
 	counterpartColumn, counterpartEndLine int64, counterpartProperties, counterpartOwnerFile string,
@@ -1091,7 +1091,7 @@ func hydratedRelationEdge(edgeID, factID, fromID, toID, kind, path string,
 		return graph.HydratedRelationEdge{}, err
 	}
 	return graph.HydratedRelationEdge{
-		Edge: graph.Edge{ID: edgeID, FactID: factID, FromID: fromID, ToID: toID, Kind: graph.EdgeKind(kind),
+		Edge: graph.Edge{ID: edgeID, FactID: factID, FromID: fromID, ToID: toID, Kind: graph.EdgeKind(kind), Producer: producer,
 			Location:   graph.Location{Path: path, Line: int(line), Column: int(column), EndLine: int(endLine)},
 			Properties: edgeProperties},
 		Counterpart: graph.Node{ID: counterpartID, Kind: graph.NodeKind(counterpartKind), Name: counterpartName,

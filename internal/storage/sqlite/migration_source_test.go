@@ -22,7 +22,7 @@ func TestRepositoryMigratesLegacyExactSourceFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := provider.UpTo(ctx, 5); err != nil {
+	if _, err := provider.UpTo(ctx, 6); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.ExecContext(ctx, `
@@ -47,7 +47,7 @@ INSERT INTO dirty_owners(owner_file) VALUES ('legacy.go');`); err != nil {
 		t.Fatal(err)
 	}
 	edges, err := repository.EdgesFrom(ctx, "caller")
-	if err != nil || len(edges) != 1 || edges[0].ToID != "target" {
+	if err != nil || len(edges) != 1 || edges[0].ToID != "target" || edges[0].Producer != "" {
 		t.Fatalf("migrated legacy edge = %#v, err=%v", edges, err)
 	}
 }

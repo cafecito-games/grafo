@@ -19,7 +19,7 @@ import (
 
 const workspaceOwner = "__workspace__"
 const workspaceSemanticKeysMeta = "parser_workspace_semantic_keys"
-const SemanticIndexVersion = "27"
+const SemanticIndexVersion = "28"
 
 type Options struct {
 	Force       bool
@@ -248,10 +248,15 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		if parseErr != nil {
 			parsed.Diagnostics = append(parsed.Diagnostics, graph.Diagnostic{Path: path, Level: "error", Message: parseErr.Error()})
 		}
+		// The selected parser is the producer authority. Parser-returned facts are
+		// otherwise untrusted and cannot claim another extractor's identity.
+		for index := range parsed.Facts {
+			parsed.Facts[index].Producer = languageParser.Language()
+		}
 		fileID := graph.NodeID(graph.KindFile, project.ID+":"+path)
 		parsed.Facts = append(parsed.Facts, graph.Fact{
 			ID:     graph.FactID(path, project.ID, graph.EdgeContains, fileID, 1, 0),
-			FromID: project.ID, Kind: graph.EdgeContains, TargetID: fileID,
+			FromID: project.ID, Kind: graph.EdgeContains, Producer: graph.ProducerIndexer, TargetID: fileID,
 			Location: graph.Location{Path: path, Line: 1, Column: 1}, OwnerFile: path,
 		})
 		record := graph.FileRecord{Path: path, Hash: hash, Language: languageParser.Language(),

@@ -29,7 +29,7 @@ func NewWithBindingLoader(loader *protobufbinding.Loader) *Parser {
 	}
 	return &Parser{bindings: loader}
 }
-func (*Parser) Language() string { return "gdscript" }
+func (*Parser) Language() string { return graph.ProducerGDScript }
 
 func (*Parser) SemanticDependencies() []string { return []string{projectconfig.FileName} }
 

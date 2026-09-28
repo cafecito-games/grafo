@@ -22,7 +22,7 @@ import (
 type Parser struct{}
 
 func New() *Parser               { return &Parser{} }
-func (*Parser) Language() string { return "godot" }
+func (*Parser) Language() string { return graph.ProducerGodot }
 
 // WorkspaceSemanticKey fingerprints the repository-wide Godot facts that change
 // how an otherwise untouched Godot file extracts: where every project.godot

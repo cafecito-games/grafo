@@ -68,6 +68,89 @@ func TestRepositoryMigratesAndReconcilesFacts(t *testing.T) {
 	}
 }
 
+func TestRepositoryPreservesProducerAcrossRestartResolutionAndReplacement(t *testing.T) {
+	ctx := context.Background()
+	databasePath := filepath.Join(t.TempDir(), "graph.sqlite")
+	repository, err := sqlite.Open(ctx, databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := graph.Node{ID: "producer-source", Kind: graph.KindMethod, Name: "poll",
+		QualifiedName: "Player.poll", OwnerFile: "player.gd"}
+	target := graph.Node{ID: "producer-target", Kind: graph.KindGodotInputAction, Name: "jump",
+		QualifiedName: "godot:input_action:project.godot:jump", OwnerFile: "project.godot"}
+	fact := graph.Fact{ID: "producer-fact", FromID: source.ID, Kind: graph.EdgeUsesInputAction,
+		Producer: graph.ProducerGDScript, Target: target.QualifiedName, TargetKind: target.Kind,
+		OwnerFile: "player.gd"}
+	if err := repository.ReplaceOwner(ctx, "player.gd", graph.ParseResult{
+		Nodes: []graph.Node{source}, Facts: []graph.Fact{fact},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertSQLiteProducerEdge(t, ctx, repository, source.ID, graph.ProducerGDScript, true)
+
+	if err := repository.ReplaceOwner(ctx, "project.godot", graph.ParseResult{Nodes: []graph.Node{target}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertSQLiteProducerEdge(t, ctx, repository, source.ID, graph.ProducerGDScript, false)
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	repository, err = sqlite.Open(ctx, databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	assertSQLiteProducerEdge(t, ctx, repository, source.ID, graph.ProducerGDScript, false)
+
+	fact.Producer = graph.ProducerGodot
+	if err := repository.ReplaceOwner(ctx, "player.gd", graph.ParseResult{
+		Nodes: []graph.Node{source}, Facts: []graph.Fact{fact},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.ReplaceOwner(ctx, "project.godot", graph.ParseResult{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertSQLiteProducerEdge(t, ctx, repository, source.ID, graph.ProducerGodot, true)
+	if err := repository.ReplaceOwner(ctx, "project.godot", graph.ParseResult{Nodes: []graph.Node{target}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertSQLiteProducerEdge(t, ctx, repository, source.ID, graph.ProducerGodot, false)
+}
+
+func assertSQLiteProducerEdge(t *testing.T, ctx context.Context, repository *sqlite.Repository,
+	fromID, producer string, external bool) {
+	t.Helper()
+	edges, err := repository.EdgesFrom(ctx, fromID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edges) != 1 || edges[0].Producer != producer {
+		t.Fatalf("producer edges = %#v, want producer %q", edges, producer)
+	}
+	target, err := repository.Node(ctx, edges[0].ToID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.External != external {
+		t.Fatalf("target external = %v, want %v: %#v", target.External, external, target)
+	}
+}
+
 func TestRepositoryReconcilesMoreThanOneBatchAndTruncatesWAL(t *testing.T) {
 	ctx := context.Background()
 	databasePath := filepath.Join(t.TempDir(), "graph.sqlite")

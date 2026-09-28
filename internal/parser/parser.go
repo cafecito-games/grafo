@@ -182,7 +182,7 @@ func (b *Builder) addFact(sourceIdentity string, source graph.Fact, kind graph.E
 	b.seenFact[id] = true
 	b.Result.Facts = append(b.Result.Facts, graph.Fact{
 		ID: id, FromID: source.FromID, Source: source.Source, SourceKind: source.SourceKind,
-		Kind: kind, TargetID: targetID, Target: target,
+		Kind: kind, Producer: b.Language, TargetID: targetID, Target: target,
 		TargetKind: targetKind, Location: loc, Properties: properties, OwnerFile: b.Input.Path,
 	})
 }

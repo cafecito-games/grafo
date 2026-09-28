@@ -250,16 +250,16 @@ func godotInteractionEdge(kind graph.EdgeKind) bool {
 	}
 }
 
-// godotSignalForms are the connection forms only the Godot producers write, and
-// they are what proves a signal interaction is a Godot one.
+// godotSignalForms are the operation forms accepted after explicit producer
+// provenance has established that a Godot parser created the edge.
 //
 // Provenance has to be proved rather than assumed, because events and the
 // publishes, subscribes, and handled_by relations are shared vocabulary: the Go,
 // Python, TypeScript, Java, and Swift extractors all emit them. Classifying them
 // as Godot gameplay wiring on kind alone would answer a question about a Go
 // message bus with fabricated Godot interactions, which is worse than an empty
-// report. None of those producers sets any property on such a fact, so the form
-// this change introduced is unambiguous evidence that a Godot producer wrote it.
+// report. A matching form remains necessary operation evidence but is never a
+// substitute for Edge.Producer.
 var godotSignalForms = map[string]bool{
 	"emit":                   true,
 	"connect":                true,
@@ -279,6 +279,9 @@ var godotSignalForms = map[string]bool{
 // heuristic, which is what keeps a configuration key named "input/jump" out of
 // the action section while the action itself stays in.
 func godotInteractionCategory(edge graph.Edge, near, far graph.NodeKind) (GodotInteractionCategory, bool) {
+	if edge.Producer != graph.ProducerGDScript && edge.Producer != graph.ProducerGodot {
+		return "", false
+	}
 	switch edge.Kind {
 	case graph.EdgeUsesInputAction:
 		return GodotActionInteraction, true

@@ -15,8 +15,8 @@ DELETE FROM edges WHERE fact_id IN (SELECT id FROM facts WHERE owner_file = ?);
 
 -- name: InsertEdge :exec
 INSERT INTO edges(
-    id, fact_id, from_id, to_id, kind, path, line, column_no, end_line, properties
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    id, fact_id, from_id, to_id, kind, producer, path, line, column_no, end_line, properties
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: ListEdgesFrom :many
 SELECT * FROM edges WHERE from_id = ? ORDER BY kind, to_id, id;
@@ -31,6 +31,7 @@ SELECT
     edges.from_id AS edge_from_id,
     edges.to_id AS edge_to_id,
     edges.kind AS edge_kind,
+    edges.producer AS edge_producer,
     edges.path AS edge_path,
     edges.line AS edge_line,
     edges.column_no AS edge_column_no,
@@ -61,6 +62,7 @@ SELECT
     edges.from_id AS edge_from_id,
     edges.to_id AS edge_to_id,
     edges.kind AS edge_kind,
+    edges.producer AS edge_producer,
     edges.path AS edge_path,
     edges.line AS edge_line,
     edges.column_no AS edge_column_no,
