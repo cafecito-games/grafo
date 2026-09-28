@@ -328,6 +328,45 @@ func TestFreshnessReprobeDetectsIgnoredVendorSemanticInputs(t *testing.T) {
 	}
 }
 
+func TestFreshnessReprobeIgnoresRootModulesTxtInVendorNamedCheckout(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "vendor")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "init", "-b", "main")
+	files := map[string]string{
+		".gitignore": "modules.txt\n",
+		"go.mod":     "module example.invalid/app\n\ngo 1.26\n",
+		"main.go":    "package main\nfunc main() {}\n",
+	}
+	for path, content := range files {
+		if err := os.WriteFile(filepath.Join(root, path), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+	registry := parserapi.NewRegistry(golangparser.New())
+	first, err := indexer.ProbeFreshness(context.Background(), root, registry, indexer.FreshnessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "modules.txt"), []byte("not a vendored module manifest\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reprobe, err := indexer.ReprobeFreshness(context.Background(), first, registry, indexer.FreshnessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := indexer.ProbeFreshness(context.Background(), root, registry, indexer.FreshnessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Token.Equal(reprobe.Token) || !reprobe.Token.Equal(fresh.Token) {
+		t.Fatal("root-relative modules.txt classification disagrees between full and repeated probes")
+	}
+}
+
 func TestFreshnessProbeTracksBranchCommitStatusAndRemoteIdentity(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

@@ -1031,19 +1031,19 @@ func semanticWorkspaceKey(root string) (string, string, error) {
 		if err != nil || !info.Mode().IsRegular() {
 			return nil
 		}
-		name := entry.Name()
-		if filepath.Ext(name) != ".go" && name != "go.mod" && name != "go.sum" && name != "go.work" && name != "go.work.sum" && (name != "modules.txt" || filepath.Base(filepath.Dir(path)) != "vendor") {
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		relative = filepath.ToSlash(relative)
+		if !isGoSemanticInput(relative) {
 			return nil
 		}
 		content, err := os.ReadFile(path)
 		if err != nil {
 			return nil
 		}
-		relative, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		_, _ = digest.Write([]byte(filepath.ToSlash(relative)))
+		_, _ = digest.Write([]byte(relative))
 		_, _ = digest.Write([]byte{0})
 		_, _ = digest.Write(content)
 		_, _ = digest.Write([]byte{0})

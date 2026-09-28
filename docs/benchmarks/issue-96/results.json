@@ -4,7 +4,7 @@
   "compatibility_harness_sha256": "cc189e24d2c125ccab05539d0f79f8db7cbd1c633d3e07abc6656e7edfaaf2ef",
   "fixture": {
     "kind": "git archive of representative Grafo checkout",
-    "source_commit": "f7aa246a46f6e68462f794ee1175db5eaeb0df79",
+    "source_commit": "f7aa246e146b97ef163347cff42c9be54e87beca",
     "manifest_sha256": "2f31814697653297045df9bf0e12813508e12c82a7ff412ef008c48f5fb9af7f"
   },
   "environment": {

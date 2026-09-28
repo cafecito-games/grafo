@@ -5,7 +5,7 @@ Issue #96 compares the unconditional per-tool refresh at baseline
 corrected implementation head `f831ebb9914bde045740729a53fe5cf02188f2ae`.
 
 The representative fixture is one immutable `git archive` of benchmark-candidate
-head `f7aa246a46f6e68462f794ee1175db5eaeb0df79`. The corrected implementation was
+head `f7aa246e146b97ef163347cff42c9be54e87beca`. The corrected implementation was
 then measured against this unchanged corpus. Its sorted path-and-content manifest hashes to
 `2f31814697653297045df9bf0e12813508e12c82a7ff412ef008c48f5fb9af7f`.
 Both revisions received that exact tree, created a fresh Git repository, warmed
