@@ -898,6 +898,110 @@ func TestServiceRejectsInvalidComponentEditBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestServiceReconcilesGDScriptHTTPRequestConfigurationAndRejectsInvalidEditBeforeMutation(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	runGit(t, root, "init", "-b", "main")
+	write(t, filepath.Join(root, "project.godot"), "config_version=5\n")
+	write(t, filepath.Join(root, "client.gd"), `extends Node
+func send(api: AuthAPI) -> void:
+	api.first(HTTPClient.METHOD_GET, "/first")
+	api.second(HTTPClient.METHOD_POST, "/second")
+`)
+	write(t, filepath.Join(root, "grafo.yaml"), `http:
+  request_apis:
+    - language: gdscript
+      symbol: AuthAPI.first
+      method_argument: 0
+      url_argument: 1
+`)
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(gdscriptparser.New(), godotparser.New(), configparser.New()))
+	first, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHTTPRequestSet(t, ctx, repository, []string{"GET /first"})
+
+	write(t, filepath.Join(root, "grafo.yaml"), `http:
+  request_apis:
+    - language: gdscript
+      symbol: AuthAPI.second
+      method_argument: 0
+      route_argument: 1
+`)
+	changed, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(changed.Updated, "client.gd") || !slices.Contains(changed.Updated, "grafo.yaml") {
+		t.Fatalf("HTTP config edit did not invalidate GDScript: first=%#v changed=%#v", first.Updated, changed.Updated)
+	}
+	assertHTTPRequestSet(t, ctx, repository, []string{"POST /second"})
+
+	before, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "grafo.yaml"), `http:
+  request_apis:
+    - language: gdscript
+      symbol: AuthAPI.second
+      method_argument: -1
+      route_argument: 1
+`)
+	if _, err := service.Run(ctx, project, indexer.Options{}); err == nil || !strings.Contains(err.Error(), "method_argument") {
+		t.Fatalf("invalid HTTP config error = %v", err)
+	}
+	after, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("invalid HTTP config mutated index:\nbefore=%#v\nafter=%#v", before, after)
+	}
+	assertHTTPRequestSet(t, ctx, repository, []string{"POST /second"})
+
+	if err := os.Remove(filepath.Join(root, "grafo.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(removed.Updated, "client.gd") || !slices.Contains(removed.Removed, "grafo.yaml") {
+		t.Fatalf("HTTP config removal did not invalidate GDScript: %#v", removed)
+	}
+	assertHTTPRequestSet(t, ctx, repository, nil)
+}
+
+func assertHTTPRequestSet(t *testing.T, ctx context.Context, repository graph.TopologyRepository, want []string) {
+	t.Helper()
+	result, err := query.NewTopology(repository).OutboundRequests(ctx, query.TopologyOptions{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(result.Requests))
+	for _, request := range result.Requests {
+		got = append(got, request.Method+" "+request.Route)
+	}
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("HTTP requests = %v, want %v; result=%#v", got, want, result)
+	}
+}
+
 func TestServiceDoesNotPersistMembershipForFileLostAfterDiscovery(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

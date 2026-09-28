@@ -11,9 +11,11 @@ import (
 	"github.com/cafecito-games/gdparser"
 	gdast "github.com/cafecito-games/gdparser/ast"
 	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/httpmodel"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	"github.com/cafecito-games/grafo/internal/parser/godot/godotid"
 	"github.com/cafecito-games/grafo/internal/parser/protobufbinding"
+	"github.com/cafecito-games/grafo/internal/projectconfig"
 )
 
 // Parser extracts semantic graph nodes and relationships from Godot 4
@@ -29,19 +31,25 @@ func NewWithBindingLoader(loader *protobufbinding.Loader) *Parser {
 }
 func (*Parser) Language() string { return "gdscript" }
 
+func (*Parser) SemanticDependencies() []string { return []string{projectconfig.FileName} }
+
 func (*Parser) Supports(path string) bool {
 	return strings.EqualFold(filepath.Ext(path), ".gd")
 }
 
-// SemanticKey makes the owning Godot project's autoload vocabulary part of the
-// incremental cache key, so editing project.godot reparses scripts whose
-// autoload uses can now resolve differently.
+// SemanticKey makes the owning Godot project, configured HTTP adapters, and
+// generated binding vocabulary part of the incremental cache key.
 func (p *Parser) SemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
 	project, err := godotid.LoadProject(input.Root, input.Path)
 	if err != nil {
 		return "", err
 	}
-	key := "gdscript-godot-project-v1:" + project.SemanticKey()
+	key := "gdscript-semantic-v2:" + project.SemanticKey()
+	configuration, err := projectconfig.Load(input.Root)
+	if err != nil {
+		return "", err
+	}
+	key += ":" + configuration.HTTP.SemanticKey()
 	if p.bindings != nil {
 		bindingKey, bindingErr := p.bindings.SemanticKey(ctx, input)
 		if bindingErr != nil {
@@ -123,6 +131,8 @@ type scope struct {
 	transportPayloads      map[string]protobufAPI
 	transportFieldPayloads map[string]protobufAPI
 	transportReceives      map[string]string
+	values                 map[string]string
+	fieldValues            map[string]string
 }
 
 type protobufAPI struct {
@@ -161,10 +171,16 @@ type extractor struct {
 	protobufEnabled    bool
 	protobufWarned     map[string]bool
 	transportSummaries map[string][]gdTransportTemplate
+	requestAPIs        map[string]projectconfig.HTTPRequestAPI
+	httpWarned         map[string]bool
 }
 
 func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseResult, error) {
 	b := parserapi.NewBuilder(input, "gdscript")
+	configuration, err := projectconfig.Load(input.Root)
+	if err != nil {
+		return b.Finish(), err
+	}
 	registry := protobufbinding.Registry{}
 	protobufEnabled := true
 	if p.bindings != nil && input.Root != "" {
@@ -199,7 +215,13 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 		projectKnown: true, bases: map[string]string{}, protobufAPIs: protobufAPIs,
 		protobufAmbiguous: protobufAmbiguous, protobufTypes: protobufTypes,
 		protobufEnabled: protobufEnabled, protobufWarned: map[string]bool{},
-		transportSummaries: map[string][]gdTransportTemplate{}}
+		transportSummaries: map[string][]gdTransportTemplate{}, requestAPIs: map[string]projectconfig.HTTPRequestAPI{},
+		httpWarned: map[string]bool{}}
+	for _, api := range configuration.HTTP.RequestAPIs {
+		if api.Language == "gdscript" {
+			e.requestAPIs[api.Symbol] = api
+		}
+	}
 	project, projectErr := godotid.LoadProject(input.Root, input.Path)
 	if projectErr != nil {
 		// The owning project is unknown rather than absent, so res:// references
@@ -299,7 +321,8 @@ func (e *extractor) extract(file *gdast.File) {
 		classID: classID, classBody: true, symbols: map[string]string{}, types: map[string]string{}, fields: map[string]string{},
 		fieldSymbols: map[string]string{}, fieldLocked: map[string]bool{}, locked: map[string]bool{}, signals: map[string]signalRef{},
 		transportConstants: map[string]string{}, transportPayloads: map[string]protobufAPI{},
-		transportFieldPayloads: map[string]protobufAPI{}, transportReceives: map[string]string{}}
+		transportFieldPayloads: map[string]protobufAPI{}, transportReceives: map[string]string{},
+		values: map[string]string{}, fieldValues: map[string]string{}}
 	root.types[className] = qualified
 	base := fileBase(file.Statements)
 	// Register inner class names before resolving the file base, because a script
@@ -344,6 +367,7 @@ func (e *extractor) prepareClassSymbols(statements []gdast.Statement, current sc
 	for _, statement := range statements {
 		switch node := statement.(type) {
 		case *gdast.VariableDeclaration:
+			value, valueOK := e.scalarString(node.Value, current)
 			qualified := qualify(current.container, node.Name)
 			fieldID := graph.NodeID(graph.KindField, qualified, e.input.RepoID, e.input.Path)
 			current.symbols[node.Name] = fieldID
@@ -356,6 +380,13 @@ func (e *extractor) prepareClassSymbols(statements []gdast.Statement, current sc
 				current.fields[node.Name] = resolved
 			}
 			current.locked[node.Name] = node.Type != ""
+			if node.Constant && valueOK {
+				current.values[node.Name] = value
+				current.fieldValues[node.Name] = value
+			} else {
+				delete(current.values, node.Name)
+				delete(current.fieldValues, node.Name)
+			}
 			if node.Constant {
 				if value, status := e.transportConstant(node.Value, current); status == "proven" {
 					current.transportConstants[node.Name] = value
@@ -452,7 +483,10 @@ func (e *extractor) walkStatement(statement gdast.Statement, current scope, anno
 		baseline.transportPayloads = cloneProtobufAPIMap(current.transportPayloads)
 		baseline.transportFieldPayloads = cloneProtobufAPIMap(current.transportFieldPayloads)
 		baseline.transportReceives = cloneMap(current.transportReceives)
+		baseline.values = cloneMap(current.values)
+		baseline.fieldValues = cloneMap(current.fieldValues)
 		var alternatives, fieldAlternatives []map[string]string
+		var valueAlternatives, fieldValueAlternatives []map[string]string
 		var payloadAlternatives, fieldPayloadAlternatives []map[string]protobufAPI
 		var receiveAlternatives []map[string]string
 		for _, branch := range node.Branches {
@@ -461,6 +495,8 @@ func (e *extractor) walkStatement(statement gdast.Statement, current scope, anno
 			e.walkStatements(branch.Body, branchScope)
 			alternatives = append(alternatives, branchScope.types)
 			fieldAlternatives = append(fieldAlternatives, branchScope.fields)
+			valueAlternatives = append(valueAlternatives, branchScope.values)
+			fieldValueAlternatives = append(fieldValueAlternatives, branchScope.fieldValues)
 			payloadAlternatives = append(payloadAlternatives, branchScope.transportPayloads)
 			fieldPayloadAlternatives = append(fieldPayloadAlternatives, branchScope.transportFieldPayloads)
 			receiveAlternatives = append(receiveAlternatives, branchScope.transportReceives)
@@ -468,6 +504,8 @@ func (e *extractor) walkStatement(statement gdast.Statement, current scope, anno
 		if len(node.Else) == 0 {
 			alternatives = append(alternatives, baseline.types)
 			fieldAlternatives = append(fieldAlternatives, baseline.fields)
+			valueAlternatives = append(valueAlternatives, baseline.values)
+			fieldValueAlternatives = append(fieldValueAlternatives, baseline.fieldValues)
 			payloadAlternatives = append(payloadAlternatives, baseline.transportPayloads)
 			fieldPayloadAlternatives = append(fieldPayloadAlternatives, baseline.transportFieldPayloads)
 			receiveAlternatives = append(receiveAlternatives, baseline.transportReceives)
@@ -476,12 +514,16 @@ func (e *extractor) walkStatement(statement gdast.Statement, current scope, anno
 			e.walkStatements(node.Else, elseScope)
 			alternatives = append(alternatives, elseScope.types)
 			fieldAlternatives = append(fieldAlternatives, elseScope.fields)
+			valueAlternatives = append(valueAlternatives, elseScope.values)
+			fieldValueAlternatives = append(fieldValueAlternatives, elseScope.fieldValues)
 			payloadAlternatives = append(payloadAlternatives, elseScope.transportPayloads)
 			fieldPayloadAlternatives = append(fieldPayloadAlternatives, elseScope.transportFieldPayloads)
 			receiveAlternatives = append(receiveAlternatives, elseScope.transportReceives)
 		}
 		mergeFlowTypes(current, alternatives)
 		mergeFlowFields(current, fieldAlternatives)
+		mergeFlowStrings(current.values, valueAlternatives)
+		mergeFlowStrings(current.fieldValues, fieldValueAlternatives)
 		mergeFlowPayloads(current.transportPayloads, payloadAlternatives)
 		mergeFlowPayloads(current.transportFieldPayloads, fieldPayloadAlternatives)
 		mergeFlowStrings(current.transportReceives, receiveAlternatives)
@@ -491,6 +533,8 @@ func (e *extractor) walkStatement(statement gdast.Statement, current scope, anno
 		e.walkStatements(node.Body, bodyScope)
 		mergeFlowTypes(current, []map[string]string{current.types, bodyScope.types})
 		mergeFlowFields(current, []map[string]string{current.fields, bodyScope.fields})
+		mergeFlowStrings(current.values, []map[string]string{current.values, bodyScope.values})
+		mergeFlowStrings(current.fieldValues, []map[string]string{current.fieldValues, bodyScope.fieldValues})
 		mergeFlowPayloads(current.transportPayloads, []map[string]protobufAPI{current.transportPayloads, bodyScope.transportPayloads})
 		mergeFlowPayloads(current.transportFieldPayloads, []map[string]protobufAPI{current.transportFieldPayloads, bodyScope.transportFieldPayloads})
 		mergeFlowStrings(current.transportReceives, []map[string]string{current.transportReceives, bodyScope.transportReceives})
@@ -501,12 +545,15 @@ func (e *extractor) walkStatement(statement gdast.Statement, current scope, anno
 		e.walkStatements(node.Body, bodyScope)
 		mergeFlowTypes(current, []map[string]string{current.types, bodyScope.types})
 		mergeFlowFields(current, []map[string]string{current.fields, bodyScope.fields})
+		mergeFlowStrings(current.values, []map[string]string{current.values, bodyScope.values})
+		mergeFlowStrings(current.fieldValues, []map[string]string{current.fieldValues, bodyScope.fieldValues})
 		mergeFlowPayloads(current.transportPayloads, []map[string]protobufAPI{current.transportPayloads, bodyScope.transportPayloads})
 		mergeFlowPayloads(current.transportFieldPayloads, []map[string]protobufAPI{current.transportFieldPayloads, bodyScope.transportFieldPayloads})
 		mergeFlowStrings(current.transportReceives, []map[string]string{current.transportReceives, bodyScope.transportReceives})
 	case *gdast.MatchStatement:
 		e.walkExpression(node.Value, current)
 		var alternatives, fieldAlternatives []map[string]string
+		var valueAlternatives, fieldValueAlternatives []map[string]string
 		var payloadAlternatives, fieldPayloadAlternatives []map[string]protobufAPI
 		var receiveAlternatives []map[string]string
 		exhaustive := false
@@ -522,6 +569,8 @@ func (e *extractor) walkStatement(statement gdast.Statement, current scope, anno
 			e.walkStatements(matchCase.Body, caseScope)
 			alternatives = append(alternatives, caseScope.types)
 			fieldAlternatives = append(fieldAlternatives, caseScope.fields)
+			valueAlternatives = append(valueAlternatives, caseScope.values)
+			fieldValueAlternatives = append(fieldValueAlternatives, caseScope.fieldValues)
 			payloadAlternatives = append(payloadAlternatives, caseScope.transportPayloads)
 			fieldPayloadAlternatives = append(fieldPayloadAlternatives, caseScope.transportFieldPayloads)
 			receiveAlternatives = append(receiveAlternatives, caseScope.transportReceives)
@@ -531,12 +580,16 @@ func (e *extractor) walkStatement(statement gdast.Statement, current scope, anno
 			// state as an alternative rather than claiming branch-only evidence.
 			alternatives = append(alternatives, current.types)
 			fieldAlternatives = append(fieldAlternatives, current.fields)
+			valueAlternatives = append(valueAlternatives, current.values)
+			fieldValueAlternatives = append(fieldValueAlternatives, current.fieldValues)
 			payloadAlternatives = append(payloadAlternatives, current.transportPayloads)
 			fieldPayloadAlternatives = append(fieldPayloadAlternatives, current.transportFieldPayloads)
 			receiveAlternatives = append(receiveAlternatives, current.transportReceives)
 		}
 		mergeFlowTypes(current, alternatives)
 		mergeFlowFields(current, fieldAlternatives)
+		mergeFlowStrings(current.values, valueAlternatives)
+		mergeFlowStrings(current.fieldValues, fieldValueAlternatives)
 		mergeFlowPayloads(current.transportPayloads, payloadAlternatives)
 		mergeFlowPayloads(current.transportFieldPayloads, fieldPayloadAlternatives)
 		mergeFlowStrings(current.transportReceives, receiveAlternatives)
@@ -579,7 +632,8 @@ func (e *extractor) parseFunction(node *gdast.FunctionDeclaration, current scope
 		classID: current.classID, symbols: cloneMap(current.symbols), types: cloneMap(current.types), fields: cloneMap(current.fields),
 		fieldSymbols: cloneMap(current.fieldSymbols), fieldLocked: cloneBoolMap(current.fieldLocked), locked: cloneBoolMap(current.locked), signals: cloneSignals(current.signals),
 		transportConstants: cloneMap(current.transportConstants), transportPayloads: cloneProtobufAPIMap(current.transportPayloads),
-		transportFieldPayloads: cloneProtobufAPIMap(current.transportFieldPayloads), transportReceives: cloneMap(current.transportReceives)}
+		transportFieldPayloads: cloneProtobufAPIMap(current.transportFieldPayloads), transportReceives: cloneMap(current.transportReceives),
+		values: cloneMap(current.values), fieldValues: cloneMap(current.fieldValues)}
 	for _, parameter := range node.Parameters {
 		parameterProperties := map[string]string{}
 		if parameter.Type != "" {
@@ -590,6 +644,7 @@ func (e *extractor) parseFunction(node *gdast.FunctionDeclaration, current scope
 		functionScope.symbols[parameter.Name] = parameterID
 		functionScope.locked[parameter.Name] = parameter.Type != ""
 		delete(functionScope.types, parameter.Name)
+		delete(functionScope.values, parameter.Name)
 		clearLocalTransportEvidence(parameter.Name, functionScope)
 		if resolved := e.resolveType(parameter.Type, current); resolved != "" {
 			functionScope.types[parameter.Name] = resolved
@@ -610,7 +665,8 @@ func (e *extractor) parseClass(node *gdast.ClassDeclaration, current scope) {
 		classBody: true, symbols: map[string]string{}, types: cloneMap(current.types), fields: map[string]string{},
 		fieldSymbols: map[string]string{}, fieldLocked: map[string]bool{}, locked: cloneBoolMap(current.locked), signals: map[string]signalRef{},
 		transportConstants: cloneMap(current.transportConstants), transportPayloads: map[string]protobufAPI{},
-		transportFieldPayloads: map[string]protobufAPI{}, transportReceives: map[string]string{}}
+		transportFieldPayloads: map[string]protobufAPI{}, transportReceives: map[string]string{},
+		values: cloneMap(current.values), fieldValues: map[string]string{}}
 	inner.types[node.Name] = qualified
 	e.prepareClass(node.Body, inner)
 	e.prepareTransportSummaries(node.Body, inner)
@@ -650,9 +706,15 @@ func (e *extractor) parseVariable(node *gdast.VariableDeclaration, current scope
 		id = e.b.Declare(current.currentID, graphNode)
 	}
 	constant, constantStatus := e.transportConstant(node.Value, current)
+	value, valueOK := e.scalarString(node.Value, current)
 	current.symbols[node.Name] = id
 	current.locked[node.Name] = node.Type != ""
 	delete(current.types, node.Name)
+	if valueOK {
+		current.values[node.Name] = value
+	} else {
+		delete(current.values, node.Name)
+	}
 	clearLocalTransportEvidence(node.Name, current)
 	if node.Constant && constantStatus == "proven" {
 		current.transportConstants[node.Name] = constant
@@ -660,6 +722,11 @@ func (e *extractor) parseVariable(node *gdast.VariableDeclaration, current scope
 	if current.classBody {
 		current.fieldSymbols[node.Name] = id
 		current.fieldLocked[node.Name] = node.Type != ""
+		if valueOK {
+			current.fieldValues[node.Name] = value
+		} else {
+			delete(current.fieldValues, node.Name)
+		}
 	}
 	e.bindTransportVariable(node.Name, node.Value, current, current.classBody)
 	if resolved := e.resolveType(node.Type, current); resolved != "" {
@@ -700,6 +767,7 @@ func (e *extractor) declareLocal(name, typeName string, loc graph.Location, curr
 	current.symbols[name] = id
 	current.locked[name] = typeName != ""
 	delete(current.types, name)
+	delete(current.values, name)
 	clearLocalTransportEvidence(name, current)
 	if resolved := e.resolveType(typeName, current); resolved != "" {
 		current.types[name] = resolved
@@ -722,6 +790,7 @@ func (e *extractor) parseAssignment(node *gdast.Assignment, current scope) {
 		}
 	}
 	if targetName != "" && (node.Operator == "" || node.Operator == "=") {
+		value, valueOK := e.scalarString(node.Value, current)
 		inferred := e.inferExpressionType(node.Value, current)
 		fieldID, isField := current.fieldSymbols[targetName]
 		actualField := isField && (selfField || current.symbols[targetName] == fieldID)
@@ -729,14 +798,35 @@ func (e *extractor) parseAssignment(node *gdast.Assignment, current scope) {
 		if updatesBareType && !current.locked[targetName] {
 			setInferredType(current.types, targetName, inferred)
 		}
+		if updatesBareType {
+			setScalarValue(current.values, targetName, value, valueOK)
+		}
 		if actualField && !current.fieldLocked[targetName] {
 			setInferredType(current.fields, targetName, inferred)
+		}
+		if actualField {
+			setScalarValue(current.fieldValues, targetName, value, valueOK)
 		}
 		if actualField {
 			e.bindTransportVariable(targetName, node.Value, current, true)
 		}
 		if !selfField || !actualField {
 			e.bindTransportVariable(targetName, node.Value, current, false)
+		}
+	} else if targetName != "" && node.Operator == "+=" {
+		right, rightOK := e.scalarString(node.Value, current)
+		fieldID, isField := current.fieldSymbols[targetName]
+		actualField := isField && (selfField || current.symbols[targetName] == fieldID)
+		updatesBareValue := !selfField || actualField && current.symbols[targetName] == fieldID
+		if updatesBareValue {
+			left, leftOK := current.values[targetName]
+			setScalarValue(current.values, targetName, left+right,
+				leftOK && rightOK && len(left)+len(right) <= maxHTTPScalarLength)
+		}
+		if actualField {
+			left, leftOK := current.fieldValues[targetName]
+			setScalarValue(current.fieldValues, targetName, left+right,
+				leftOK && rightOK && len(left)+len(right) <= maxHTTPScalarLength)
 		}
 	}
 	e.walkExpression(node.Target, current)
@@ -814,6 +904,8 @@ func (e *extractor) walkExpression(expression gdast.Expression, current scope) {
 		lambdaScope.transportPayloads = cloneProtobufAPIMap(current.transportPayloads)
 		lambdaScope.transportFieldPayloads = cloneProtobufAPIMap(current.transportFieldPayloads)
 		lambdaScope.transportReceives = cloneMap(current.transportReceives)
+		lambdaScope.values = cloneMap(current.values)
+		lambdaScope.fieldValues = cloneMap(current.fieldValues)
 		for _, parameter := range node.Parameters {
 			e.declareLocal(parameter.Name, parameter.Type, e.location(node), lambdaScope)
 		}
@@ -838,6 +930,7 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 	loc := e.location(node)
 	e.addProtobufUse(node, callee, fromID, current, loc)
 	e.addTransportUse(node, callee, fromID, current, loc)
+	e.addHTTPRequest(node, callee, fromID, current, loc)
 	if member, ok := node.Callee.(*gdast.MemberExpression); ok {
 		if object, ok := member.Object.(*gdast.Identifier); ok {
 			e.addAutoloadUse(object, object.Name, "autoload_call", member.Property, current)
@@ -916,6 +1009,164 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 		}
 	}
 	e.b.AddFact(fromID, graph.EdgeCalls, "", callee, "", loc, nil)
+}
+
+func (e *extractor) addHTTPRequest(node *gdast.CallExpression, callee, fromID string, current scope, loc graph.Location) {
+	methodIndex, routeIndex := -1, -1
+	configured, builtin := false, false
+	apiSymbol := callee
+	if member, ok := node.Callee.(*gdast.MemberExpression); ok && member.Property == "request" && !e.localCall(node.Callee, current) {
+		if receiverType, known := e.httpReceiverType(member.Object, current); known && e.isHTTPRequestReceiverType(receiverType) {
+			builtin, methodIndex, routeIndex, apiSymbol = true, 2, 0, "HTTPRequest.request"
+		}
+	} else if identifier, ok := node.Callee.(*gdast.Identifier); ok && identifier.Name == "request" &&
+		!e.localCall(node.Callee, current) && e.isHTTPRequestReceiverType(current.receiver) {
+		builtin, methodIndex, routeIndex, apiSymbol = true, 2, 0, "HTTPRequest.request"
+	}
+	configuredAPI, hasConfigured := e.requestAPIs[callee]
+	if hasConfigured {
+		if e.untypedLocalReceiver(node.Callee, current) || e.unresolvedMemberReceiver(node.Callee, current) {
+			if !e.httpWarned[callee] {
+				e.httpWarned[callee] = true
+				e.b.Diagnostic(loc.Line, "warning", "configured HTTP request API could not be resolved uniquely: "+callee)
+			}
+		} else {
+			configured = true
+			if !builtin {
+				methodIndex, routeIndex, apiSymbol = configuredAPI.MethodArgument, configuredAPI.URLArgument, configuredAPI.Symbol
+			} else if configuredAPI.MethodArgument != methodIndex || configuredAPI.URLArgument != routeIndex {
+				// One call cannot safely satisfy two conflicting signatures. The shared
+				// loader prevents duplicate configured symbols; a configured override of
+				// the built-in adapter is equally ambiguous at the source callsite.
+				e.b.Diagnostic(loc.Line, "warning", "configured HTTP request signature conflicts with built-in HTTPRequest.request")
+				return
+			}
+		}
+	}
+	if !builtin && !configured {
+		return
+	}
+	if routeIndex < 0 || routeIndex >= len(node.Arguments) {
+		return
+	}
+	routeExpression := node.Arguments[routeIndex]
+	route, routeOK := e.scalarString(routeExpression, current)
+	if !routeOK {
+		if e.hasUnsupportedKnownPercentFormat(routeExpression, current) {
+			e.b.Diagnostic(loc.Line, "warning", "unsupported GDScript HTTP route percent formatting")
+		}
+		return
+	}
+	var method string
+	methodExpression := "<default>"
+	if builtin && methodIndex >= len(node.Arguments) {
+		method = "GET"
+	} else {
+		if methodIndex < 0 || methodIndex >= len(node.Arguments) {
+			return
+		}
+		methodExpression = e.sourceExpression(node.Arguments[methodIndex])
+		method, _ = e.godotHTTPMethod(node.Arguments[methodIndex], current)
+		if method == "" {
+			return
+		}
+	}
+	normalizedMethod, methodErr := httpmodel.NormalizeMethod(method)
+	parsedRoute, routeErr := httpmodel.ParseRoute(route)
+	if methodErr != nil || routeErr != nil {
+		e.b.Diagnostic(loc.Line, "warning", fmt.Sprintf("invalid outbound HTTP request %q %q", method, route))
+		return
+	}
+	properties := map[string]string{
+		"evidence":               "gdscript_scope",
+		"http_api":               apiSymbol,
+		"http_method":            normalizedMethod,
+		"http_method_expression": methodExpression,
+		"http_raw_method":        method,
+		"http_raw_route":         route,
+		"http_route":             parsedRoute.Canonical,
+		"http_route_expression":  e.sourceExpression(routeExpression),
+		"http_source":            "call",
+	}
+	identityRoute := parsedRoute.Canonical
+	if parsedRoute.Query != "" {
+		properties["http_query"] = parsedRoute.Query
+	}
+	if parsedRoute.Fragment != "" {
+		properties["http_fragment"] = parsedRoute.Fragment
+	}
+	if parsedRoute.Authority != "" {
+		properties["http_scheme"] = parsedRoute.Scheme
+		properties["http_authority"] = parsedRoute.Authority
+		identityRoute = parsedRoute.Scheme + "://" + parsedRoute.Authority + parsedRoute.Canonical
+	}
+	signatures := make([]string, 0, 2)
+	if builtin {
+		signatures = append(signatures, "builtin")
+	}
+	if configured {
+		signatures = append(signatures, "configured")
+		properties["http_config"] = fmt.Sprintf("%s:%d", projectconfig.FileName, configuredAPI.Line)
+	}
+	properties["http_signature"] = strings.Join(signatures, ",")
+	e.b.AddFact(fromID, graph.EdgeRequests, "", normalizedMethod+" "+identityRoute, graph.KindEndpoint, loc, properties)
+}
+
+func (e *extractor) isHTTPRequestReceiverType(typeName string) bool {
+	for depth := 0; typeName != "" && depth < 32; depth++ {
+		if typeName == "HTTPRequest" {
+			return true
+		}
+		next, ok := e.bases[typeName]
+		if !ok {
+			return false
+		}
+		typeName = next
+	}
+	return false
+}
+
+func (e *extractor) httpReceiverType(object gdast.Expression, current scope) (string, bool) {
+	if member, ok := object.(*gdast.MemberExpression); ok {
+		identifier, identifierOK := member.Object.(*gdast.Identifier)
+		if identifierOK && identifier.Name == "self" {
+			resolved := current.fields[member.Property]
+			return resolved, resolved != ""
+		}
+	}
+	return e.receiverType(object, current)
+}
+
+func godotHTTPMethodSymbol(expression gdast.Expression) (string, bool) {
+	name := expressionName(expression)
+	const prefix = "HTTPClient.METHOD_"
+	if !strings.HasPrefix(name, prefix) {
+		return "", false
+	}
+	method := strings.TrimPrefix(name, prefix)
+	switch method {
+	case "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "CONNECT", "TRACE":
+		return method, true
+	default:
+		return "", false
+	}
+}
+
+func (e *extractor) godotHTTPMethod(expression gdast.Expression, current scope) (string, bool) {
+	if method, ok := godotHTTPMethodSymbol(expression); ok {
+		return method, true
+	}
+	method, ok := e.scalarString(expression, current)
+	if !ok {
+		return "", false
+	}
+	method = strings.ToUpper(strings.TrimSpace(method))
+	switch method {
+	case "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "CONNECT", "TRACE":
+		return method, true
+	default:
+		return "", false
+	}
 }
 
 func (e *extractor) addProtobufUse(node *gdast.CallExpression, callee, fromID string, current scope, loc graph.Location) {
@@ -1548,6 +1799,186 @@ func literalString(expression gdast.Expression) (string, bool) {
 	return value.String(), true
 }
 
+const maxHTTPScalarLength = 4096
+
+func (e *extractor) scalarString(expression gdast.Expression, current scope) (string, bool) {
+	switch node := expression.(type) {
+	case *gdast.Literal:
+		if value, ok := literalString(node); ok {
+			return value, len(value) <= maxHTTPScalarLength
+		}
+	case *gdast.Identifier:
+		value, ok := current.values[node.Name]
+		return value, ok
+	case *gdast.MemberExpression:
+		if method, ok := godotHTTPMethodSymbol(node); ok {
+			return method, true
+		}
+		if object, ok := node.Object.(*gdast.Identifier); ok && object.Name == "self" {
+			value, exists := current.fieldValues[node.Property]
+			return value, exists
+		}
+	case *gdast.BinaryExpression:
+		switch node.Operator {
+		case "+":
+			left, leftOK := e.scalarString(node.Left, current)
+			right, rightOK := e.scalarString(node.Right, current)
+			if leftOK && rightOK && len(left)+len(right) <= maxHTTPScalarLength {
+				return left + right, true
+			}
+		case "%":
+			format, arguments, ok := e.percentFormatOperands(node, current)
+			if !ok {
+				return "", false
+			}
+			return boundedPercentFormat(format, arguments)
+		}
+	}
+	return "", false
+}
+
+func (e *extractor) percentFormatOperands(expression *gdast.BinaryExpression, current scope) (string, []string, bool) {
+	format, formatOK := e.scalarString(expression.Left, current)
+	if !formatOK {
+		return "", nil, false
+	}
+	arguments := []string{}
+	if array, ok := expression.Right.(*gdast.ArrayLiteral); ok {
+		if len(array.Elements) > 16 {
+			return "", nil, false
+		}
+		for _, element := range array.Elements {
+			value, ok := e.scalarFormatValue(element, current)
+			if !ok {
+				return "", nil, false
+			}
+			arguments = append(arguments, value)
+		}
+	} else if value, ok := e.scalarFormatValue(expression.Right, current); ok {
+		arguments = append(arguments, value)
+	} else {
+		return "", nil, false
+	}
+	return format, arguments, true
+}
+
+func (e *extractor) hasUnsupportedKnownPercentFormat(expression gdast.Expression, current scope) bool {
+	unsupported := false
+	gdast.Inspect(expression, func(node gdast.Node) bool {
+		binary, ok := node.(*gdast.BinaryExpression)
+		if !ok || binary.Operator != "%" {
+			return true
+		}
+		format, arguments, known := e.percentFormatOperands(binary, current)
+		if !known {
+			return true
+		}
+		if _, supported := boundedPercentFormat(format, arguments); !supported {
+			unsupported = true
+			return false
+		}
+		return true
+	})
+	return unsupported
+}
+
+func (e *extractor) scalarFormatValue(expression gdast.Expression, current scope) (string, bool) {
+	if value, ok := e.scalarString(expression, current); ok {
+		return value, true
+	}
+	literal, ok := expression.(*gdast.Literal)
+	if !ok || literal.Kind != gdast.IntegerLiteral && literal.Kind != gdast.FloatLiteral {
+		return "", false
+	}
+	value := strings.ReplaceAll(literal.Raw, "_", "")
+	if literal.Kind == gdast.IntegerLiteral {
+		parsed, err := strconv.ParseInt(value, 0, 64)
+		if err != nil {
+			return "", false
+		}
+		return strconv.FormatInt(parsed, 10), true
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return "", false
+	}
+	return strconv.FormatFloat(parsed, 'g', -1, 64), true
+}
+
+func boundedPercentFormat(format string, arguments []string) (string, bool) {
+	var result strings.Builder
+	argument := 0
+	for index := 0; index < len(format); {
+		if format[index] != '%' {
+			result.WriteByte(format[index])
+			index++
+			if result.Len() > maxHTTPScalarLength {
+				return "", false
+			}
+			continue
+		}
+		if index+1 < len(format) && format[index+1] == '%' {
+			result.WriteByte('%')
+			index += 2
+			continue
+		}
+		end := index + 1
+		for end < len(format) && strings.ContainsRune("+-0 .123456789", rune(format[end])) {
+			end++
+		}
+		if end != index+1 || end >= len(format) || !strings.ContainsRune("sdifxXoc", rune(format[end])) || argument >= len(arguments) {
+			return "", false
+		}
+		value := arguments[argument]
+		switch format[end] {
+		case 'd', 'i', 'x', 'X', 'o', 'c':
+			number, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return "", false
+			}
+			switch format[end] {
+			case 'd', 'i':
+				value = strconv.FormatInt(number, 10)
+			case 'x':
+				value = strconv.FormatInt(number, 16)
+			case 'X':
+				value = strings.ToUpper(strconv.FormatInt(number, 16))
+			case 'o':
+				value = strconv.FormatInt(number, 8)
+			case 'c':
+				value = string(rune(number))
+			}
+		case 'f':
+			number, err := strconv.ParseFloat(value, 64)
+			if err != nil {
+				return "", false
+			}
+			value = strconv.FormatFloat(number, 'f', 6, 64)
+		}
+		result.WriteString(value)
+		if result.Len() > maxHTTPScalarLength {
+			return "", false
+		}
+		argument++
+		index = end + 1
+	}
+	if argument != len(arguments) {
+		return "", false
+	}
+	return result.String(), true
+}
+
+func (e *extractor) sourceExpression(expression gdast.Expression) string {
+	if expression == nil {
+		return ""
+	}
+	span := expression.Span()
+	if span.Start.Offset < 0 || span.End.Offset < span.Start.Offset || span.End.Offset > len(e.input.Content) {
+		return expressionName(expression)
+	}
+	return strings.TrimSpace(string(e.input.Content[span.Start.Offset:span.End.Offset]))
+}
+
 // resourceModule canonicalizes a res:// reference against the Godot project
 // that owns this script, because such a reference is project-relative and a
 // project can sit in any subdirectory of a repository. A reference that leaves
@@ -1614,6 +2045,8 @@ func cloneFlowScope(current scope) scope {
 	current.transportPayloads = cloneProtobufAPIMap(current.transportPayloads)
 	current.transportFieldPayloads = cloneProtobufAPIMap(current.transportFieldPayloads)
 	current.transportReceives = cloneMap(current.transportReceives)
+	current.values = cloneMap(current.values)
+	current.fieldValues = cloneMap(current.fieldValues)
 	return current
 }
 
@@ -1623,6 +2056,14 @@ func setInferredType(types map[string]string, name, inferred string) {
 		return
 	}
 	types[name] = inferred
+}
+
+func setScalarValue(values map[string]string, name, value string, ok bool) {
+	if !ok {
+		delete(values, name)
+		return
+	}
+	values[name] = value
 }
 
 func mergeFlowTypes(current scope, alternatives []map[string]string) {
