@@ -43,7 +43,7 @@ type chiState struct {
 	middleware []SemanticChiMiddleware
 }
 
-type chiChain struct{ marker byte }
+type chiChain byte
 
 type chiEndpointTemplate struct {
 	function     string
@@ -494,13 +494,13 @@ func (a *chiAnalyzer) executeCall(execution *chiExecution, function *chiFunction
 			}
 			return base, true
 		case "With":
-			base.chain = &chiChain{}
+			base.chain = new(chiChain)
 			base.middleware = append(base.middleware, a.middleware(call.Args, "with", function.path)...)
 			return base, true
 		case "Group":
 			if len(call.Args) > 0 {
 				child := cloneChiState(base)
-				child.chain = &chiChain{}
+				child.chain = new(chiChain)
 				a.executeCallback(execution, function, call.Args[0], child, environment, conditional)
 			}
 			return base, true
@@ -519,7 +519,7 @@ func (a *chiAnalyzer) executeCall(execution *chiExecution, function *chiFunction
 				return base, true
 			}
 			child := cloneChiState(base)
-			child.chain = &chiChain{}
+			child.chain = new(chiChain)
 			child.prefix = joined
 			a.executeCallback(execution, function, call.Args[1], child, environment, conditional)
 			return base, true
@@ -651,7 +651,7 @@ func (a *chiAnalyzer) evalRouter(execution *chiExecution, function *chiFunction,
 		if a.isChiNewRouter(value) {
 			router := &chiRouter{}
 			execution.created = append(execution.created, router)
-			return chiState{router: router, chain: &chiChain{}, prefix: "/"}, true
+			return chiState{router: router, chain: new(chiChain), prefix: "/"}, true
 		}
 		return a.executeCall(execution, function, value, environment, conditional)
 	}
