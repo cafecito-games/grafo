@@ -256,6 +256,21 @@ func BranchFields(flag bool) {
 	_, _ = http.DefaultClient.Do(request)
 }
 
+func mutateRequest(request *http.Request) { request.Method = http.MethodPost }
+
+func HelperMutation() {
+	request, _ := http.NewRequest(http.MethodGet, "/helper-mutated", nil)
+	mutateRequest(request)
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func URLThenPath() {
+	request, _ := http.NewRequest(http.MethodGet, "/stale-url", nil)
+	request.URL = &url.URL{}
+	request.URL.Path = "/actual-url"
+	_, _ = http.DefaultClient.Do(request)
+}
+
 func Alternatives(flag bool) {
 	method := http.MethodGet
 	if flag { method = http.MethodDelete }
@@ -380,6 +395,7 @@ func cycleB(path string) {
 	_, _ = http.Get(fmt.Sprintf("/cycle/%s", path))
 }
 func Cyclic(path string) { cycleA(path) }
+func CyclicAgain(path string) { cycleA(path) }
 
 type unrelated struct{}
 func (unrelated) NewRequest(string, string, any) *http.Request { return nil }
@@ -434,6 +450,8 @@ func NotHTTP() {
 		"GET /select-effect-default":             "example.com/client.ClauseEffects",
 		"GET /branch-left":                       "example.com/client.BranchFields",
 		"POST /branch-right":                     "example.com/client.BranchFields",
+		"POST /helper-mutated":                   "example.com/client.HelperMutation",
+		"GET /actual-url":                        "example.com/client.URLThenPath",
 		"GET /alternative":                       "example.com/client.Alternatives",
 		"DELETE /alternative":                    "example.com/client.Alternatives",
 		"GET https://api.example.test/users/{_}": "example.com/client.External",
@@ -463,6 +481,11 @@ func NotHTTP() {
 			t.Fatalf("request %q lacks semantic provenance: %#v", target, fact)
 		}
 	}
+	for _, target := range []string{"GET /alternative", "DELETE /alternative", "GET /branch-left", "POST /branch-right"} {
+		if found[target].Properties["conditional"] != "true" {
+			t.Fatalf("branch alternative %q lacks conditional provenance: %#v", target, found[target])
+		}
+	}
 	wrapped := found["POST /charge/{_}"]
 	if !strings.Contains(wrapped.Properties["http_wrapper_chain"], "example.com/client.invoke") ||
 		wrapped.Properties["http_query"] != "view=full" || wrapped.Location.Line != 28 {
@@ -489,15 +512,17 @@ func NotHTTP() {
 			t.Fatalf("unproven or unrelated request %q was invented: %#v", forbidden, found[forbidden])
 		}
 	}
-	foundCycleDiagnostic := false
+	foundCycleDiagnostics := 0
 	foundBoundDiagnostics := 0
 	for _, diagnostic := range result.Diagnostics {
-		foundCycleDiagnostic = foundCycleDiagnostic || strings.Contains(diagnostic.Message, "recursive HTTP wrapper")
+		if strings.Contains(diagnostic.Message, "recursive HTTP wrapper") {
+			foundCycleDiagnostics++
+		}
 		if strings.Contains(diagnostic.Message, "HTTP alternatives exceeded") {
 			foundBoundDiagnostics++
 		}
 	}
-	if !foundCycleDiagnostic {
+	if foundCycleDiagnostics != 1 {
 		t.Fatalf("recursive wrapper was not diagnosed: %#v", result.Diagnostics)
 	}
 	if foundBoundDiagnostics < 6 {

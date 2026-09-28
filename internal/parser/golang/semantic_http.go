@@ -32,6 +32,7 @@ type httpStringValue struct {
 	text        string
 	unknownBase bool
 	overflow    bool
+	conditional bool
 }
 
 type httpRequestValue struct {
@@ -44,6 +45,7 @@ type httpRequestValue struct {
 	conditional      bool
 	authorityUnknown bool
 	overflow         bool
+	urlObject        *httpObjectValue
 }
 
 type httpObjectValue struct {
@@ -69,16 +71,18 @@ type httpExecution struct {
 }
 
 type httpEvalResult struct {
-	values  []httpValue
-	effects []httpRequestValue
+	values    []httpValue
+	effects   []httpRequestValue
+	arguments []httpValue
 }
 
 type httpSemanticAnalyzer struct {
-	root      string
-	pkg       *packages.Package
-	views     map[string]SemanticView
-	functions map[*types.Func]*httpSemanticFunction
-	relevant  map[*types.Func]bool
+	root        string
+	pkg         *packages.Package
+	views       map[string]SemanticView
+	functions   map[*types.Func]*httpSemanticFunction
+	relevant    map[*types.Func]bool
+	diagnostics map[string]bool
 }
 
 func collectHTTPPackageViews(root string, pkg *packages.Package, views map[string]SemanticView) {
@@ -87,7 +91,7 @@ func collectHTTPPackageViews(root string, pkg *packages.Package, views map[strin
 	}
 	analyzer := &httpSemanticAnalyzer{
 		root: root, pkg: pkg, views: views, functions: map[*types.Func]*httpSemanticFunction{},
-		relevant: map[*types.Func]bool{},
+		relevant: map[*types.Func]bool{}, diagnostics: map[string]bool{},
 	}
 	analyzer.collectFunctions()
 	analyzer.collectRelevantFunctions()
@@ -254,6 +258,7 @@ func (a *httpSemanticAnalyzer) executeFunction(execution *httpExecution, functio
 	execution.stack[function.object] = true
 	defer delete(execution.stack, function.object)
 	environment := httpEnvironment{}
+	bindings := make([]types.Object, len(arguments))
 	argument := 0
 	bind := func(field *goast.FieldList, receiver bool) {
 		if field == nil {
@@ -264,6 +269,7 @@ func (a *httpSemanticAnalyzer) executeFunction(execution *httpExecution, functio
 				object := a.pkg.TypesInfo.Defs[name]
 				if argument < len(arguments) {
 					environment[object] = cloneHTTPValue(arguments[argument])
+					bindings[argument] = object
 				} else if receiver {
 					environment[object] = httpValue{objects: []*httpObjectValue{{fields: map[types.Object]httpValue{}}}}
 				} else if a.isHTTPClient(a.pkg.TypesInfo.TypeOf(item.Type)) {
@@ -276,6 +282,12 @@ func (a *httpSemanticAnalyzer) executeFunction(execution *httpExecution, functio
 	bind(function.decl.Recv, true)
 	bind(function.decl.Type.Params, false)
 	result, _ := a.executeStatements(execution, function, function.decl.Body.List, environment, conditional)
+	result.arguments = make([]httpValue, len(arguments))
+	for index, object := range bindings {
+		if object != nil {
+			result.arguments[index] = cloneHTTPValue(environment[object])
+		}
+	}
 	return result
 }
 
@@ -565,7 +577,7 @@ func (a *httpSemanticAnalyzer) evaluateCall(execution *httpExecution, function *
 				continue
 			}
 			effects = append(effects, httpRequestValue{method: httpStringValue{text: method}, route: route,
-				sink: sink, source: "convenience", location: location, conditional: conditional,
+				sink: sink, source: "convenience", location: location, conditional: conditional || route.conditional,
 				authorityUnknown: route.unknownBase})
 		}
 		if len(effects) > 0 {
@@ -587,7 +599,7 @@ func (a *httpSemanticAnalyzer) evaluateCall(execution *httpExecution, function *
 		} else {
 			for index := range values {
 				if values[index].unknownBase {
-					values[index] = httpStringValue{text: "{_}"}
+					values[index] = httpStringValue{text: "{_}", conditional: values[index].conditional}
 				} else {
 					values[index].text = url.PathEscape(values[index].text)
 				}
@@ -624,6 +636,7 @@ func (a *httpSemanticAnalyzer) evaluateCall(execution *httpExecution, function *
 				requests = append(requests, requestObjectRequests(object)...)
 			}
 		}
+		requests = resolveRequestURLs(requests)
 		var effects []httpRequestValue
 		for _, request := range requests {
 			request.sink = "net/http.Client.Do"
@@ -640,16 +653,27 @@ func (a *httpSemanticAnalyzer) evaluateCall(execution *httpExecution, function *
 		return emptyHTTPCallResult(a.pkg.TypesInfo.TypeOf(call))
 	}
 	var arguments []httpValue
+	var argumentExpressions []goast.Expr
 	if selector, ok := call.Fun.(*goast.SelectorExpr); ok {
 		selection := a.pkg.TypesInfo.Selections[selector]
 		if selection != nil && selection.Kind() != types.MethodExpr {
 			arguments = append(arguments, firstHTTPValue(a.evaluateExpression(execution, function, selector.X, environment, conditional).values))
+			argumentExpressions = append(argumentExpressions, selector.X)
 		}
 	}
 	for _, argument := range call.Args {
 		arguments = append(arguments, firstHTTPValue(a.evaluateExpression(execution, function, argument, environment, conditional).values))
+		argumentExpressions = append(argumentExpressions, argument)
 	}
 	result := a.executeFunction(execution, local, arguments, conditional)
+	for index, updated := range result.arguments {
+		if index >= len(argumentExpressions) || !isPointerType(a.pkg.TypesInfo.TypeOf(argumentExpressions[index])) ||
+			!isHTTPMutableValue(updated) {
+			continue
+		}
+		a.assign(execution, function, argumentExpressions[index], updated, environment, conditional)
+	}
+	result.arguments = nil
 	for valueIndex := range result.values {
 		for requestIndex := range result.values[valueIndex].requests {
 			request := &result.values[valueIndex].requests[requestIndex]
@@ -755,6 +779,16 @@ func (a *httpSemanticAnalyzer) evaluateSelector(execution *httpExecution, functi
 		return httpValue{overflow: true}
 	}
 	result := httpValue{}
+	if selection.Obj().Name() == "URL" {
+		for _, request := range base.requests {
+			if request.overflow {
+				return httpValue{overflow: true}
+			}
+			if request.urlObject != nil {
+				result.objects = appendUniqueHTTPObject(result.objects, request.urlObject)
+			}
+		}
+	}
 	for _, object := range base.objects {
 		if field, ok := object.fields[selection.Obj()]; ok {
 			result = mergeHTTPValues(result, field)
@@ -811,7 +845,7 @@ func (a *httpSemanticAnalyzer) assign(execution *httpExecution, function *httpSe
 				if value.overflow {
 					current.requests = []httpRequestValue{{overflow: true}}
 				} else {
-					current.requests = replaceRequestRoutes(current.requests, urlObjectStrings(value.objects))
+					current.requests = replaceRequestURLs(current.requests, value.objects)
 				}
 			}
 			environment[object] = current
@@ -993,6 +1027,11 @@ func (a *httpSemanticAnalyzer) markAbandonedRootCalls(root *httpSemanticFunction
 }
 
 func (a *httpSemanticAnalyzer) diagnostic(location graph.Location, message string) {
+	key := strings.Join([]string{location.Path, strconv.Itoa(location.Line), message}, "\x00")
+	if a.diagnostics[key] {
+		return
+	}
+	a.diagnostics[key] = true
 	view := a.views[location.Path]
 	view.Diagnostics = append(view.Diagnostics, graph.Diagnostic{
 		Path: location.Path, Line: location.Line, Level: "warning", Message: message,
@@ -1015,7 +1054,7 @@ func crossHTTPRequests(methods, routes []httpStringValue, sink, source string) [
 				return []httpRequestValue{{sink: sink, source: source, overflow: true}}
 			}
 			requests = append(requests, httpRequestValue{method: method, route: route, sink: sink, source: source,
-				authorityUnknown: route.unknownBase})
+				authorityUnknown: route.unknownBase, conditional: method.conditional || route.conditional})
 		}
 	}
 	return requests
@@ -1033,6 +1072,7 @@ func combineHTTPStrings(left, right []httpStringValue) []httpStringValue {
 			}
 			result = appendUniqueHTTPString(result, httpStringValue{
 				text: first.text + second.text, unknownBase: first.unknownBase || second.unknownBase,
+				conditional: first.conditional || second.conditional,
 			})
 		}
 	}
@@ -1047,8 +1087,9 @@ func appendUniqueHTTPString(values []httpStringValue, candidate httpStringValue)
 	if candidate.overflow || hasHTTPStringOverflow(values) {
 		return []httpStringValue{{overflow: true}}
 	}
-	for _, value := range values {
-		if value == candidate {
+	for index, value := range values {
+		if value.text == candidate.text && value.unknownBase == candidate.unknownBase && value.overflow == candidate.overflow {
+			values[index].conditional = value.conditional || candidate.conditional
 			return values
 		}
 	}
@@ -1087,6 +1128,7 @@ func httpURLStrings(object *httpObjectValue) []httpStringValue {
 				candidate.text += "?" + query.text
 			}
 			candidate.overflow = candidate.overflow || query.overflow
+			candidate.conditional = candidate.conditional || query.conditional
 			result = appendUniqueHTTPString(result, candidate)
 		}
 	}
@@ -1101,6 +1143,15 @@ func urlObjectStrings(objects []*httpObjectValue) []httpStringValue {
 		}
 	}
 	return routes
+}
+
+func appendUniqueHTTPObject(objects []*httpObjectValue, candidate *httpObjectValue) []*httpObjectValue {
+	for _, object := range objects {
+		if object == candidate {
+			return objects
+		}
+	}
+	return append(objects, candidate)
 }
 
 func requestObjectRequests(object *httpObjectValue) []httpRequestValue {
@@ -1127,25 +1178,44 @@ func replaceRequestMethods(requests []httpRequestValue, methods []httpStringValu
 				return []httpRequestValue{{overflow: true}}
 			}
 			request.method = method
+			request.conditional = request.conditional || method.conditional
 			result = append(result, request)
 		}
 	}
 	return result
 }
 
-func replaceRequestRoutes(requests []httpRequestValue, routes []httpStringValue) []httpRequestValue {
-	if hasHTTPStringOverflow(routes) {
-		return []httpRequestValue{{overflow: true}}
-	}
+func replaceRequestURLs(requests []httpRequestValue, objects []*httpObjectValue) []httpRequestValue {
 	var result []httpRequestValue
 	for _, request := range requests {
-		for _, route := range routes {
-			if len(result) >= httpAlternativeLimit {
-				return []httpRequestValue{{overflow: true}}
+		for _, object := range objects {
+			for _, route := range httpURLStrings(object) {
+				if len(result) >= httpAlternativeLimit {
+					return []httpRequestValue{{overflow: true}}
+				}
+				candidate := request
+				candidate.urlObject = object
+				candidate.route = route
+				candidate.authorityUnknown = route.unknownBase
+				candidate.conditional = candidate.conditional || route.conditional
+				result = append(result, candidate)
 			}
-			request.route = route
-			request.authorityUnknown = route.unknownBase
+		}
+	}
+	return result
+}
+
+func resolveRequestURLs(requests []httpRequestValue) []httpRequestValue {
+	var result []httpRequestValue
+	for _, request := range requests {
+		if request.overflow || request.urlObject == nil {
 			result = append(result, request)
+			continue
+		}
+		resolved := replaceRequestURLs([]httpRequestValue{request}, []*httpObjectValue{request.urlObject})
+		result = append(result, resolved...)
+		if len(result) > httpAlternativeLimit {
+			return []httpRequestValue{{overflow: true}}
 		}
 	}
 	return result
@@ -1189,22 +1259,32 @@ func deepCloneHTTPValue(value httpValue, objects map[*httpObjectValue]*httpObjec
 	result := cloneHTTPValue(value)
 	result.objects = make([]*httpObjectValue, 0, len(value.objects))
 	for _, object := range value.objects {
-		cloned, ok := objects[object]
-		if !ok {
-			cloned = &httpObjectValue{fields: map[types.Object]httpValue{}}
-			objects[object] = cloned
-			for field, fieldValue := range object.fields {
-				cloned.fields[field] = deepCloneHTTPValue(fieldValue, objects)
-			}
+		result.objects = append(result.objects, deepCloneHTTPObject(object, objects))
+	}
+	for index := range result.requests {
+		if result.requests[index].urlObject != nil {
+			result.requests[index].urlObject = deepCloneHTTPObject(result.requests[index].urlObject, objects)
 		}
-		result.objects = append(result.objects, cloned)
 	}
 	return result
+}
+
+func deepCloneHTTPObject(object *httpObjectValue, objects map[*httpObjectValue]*httpObjectValue) *httpObjectValue {
+	if cloned, ok := objects[object]; ok {
+		return cloned
+	}
+	cloned := &httpObjectValue{fields: map[types.Object]httpValue{}}
+	objects[object] = cloned
+	for field, fieldValue := range object.fields {
+		cloned.fields[field] = deepCloneHTTPValue(fieldValue, objects)
+	}
+	return cloned
 }
 
 func mergeHTTPEnvironments(target httpEnvironment, environments ...httpEnvironment) {
 	merged := httpEnvironment{}
 	for _, environment := range environments {
+		markHTTPEnvironmentConditional(environment)
 		for object, value := range environment {
 			merged[object] = mergeHTTPValues(merged[object], value)
 		}
@@ -1212,6 +1292,40 @@ func mergeHTTPEnvironments(target httpEnvironment, environments ...httpEnvironme
 	clear(target)
 	for object, value := range merged {
 		target[object] = value
+	}
+}
+
+func markHTTPEnvironmentConditional(environment httpEnvironment) {
+	objects := map[*httpObjectValue]bool{}
+	for object, value := range environment {
+		markHTTPValueConditional(&value, objects)
+		environment[object] = value
+	}
+}
+
+func markHTTPValueConditional(value *httpValue, objects map[*httpObjectValue]bool) {
+	for index := range value.strings {
+		value.strings[index].conditional = true
+	}
+	for index := range value.requests {
+		value.requests[index].conditional = true
+		if value.requests[index].urlObject != nil {
+			markHTTPObjectConditional(value.requests[index].urlObject, objects)
+		}
+	}
+	for _, object := range value.objects {
+		markHTTPObjectConditional(object, objects)
+	}
+}
+
+func markHTTPObjectConditional(object *httpObjectValue, objects map[*httpObjectValue]bool) {
+	if object == nil || objects[object] {
+		return
+	}
+	objects[object] = true
+	for field, value := range object.fields {
+		markHTTPValueConditional(&value, objects)
+		object.fields[field] = value
 	}
 }
 
@@ -1227,9 +1341,12 @@ func mergeHTTPValues(left, right httpValue) httpValue {
 			break
 		}
 		duplicate := false
-		for _, current := range result.requests {
-			duplicate = duplicate || current.method == request.method && current.route == request.route &&
-				current.source == request.source
+		for index, current := range result.requests {
+			if current.method == request.method && current.route == request.route && current.source == request.source &&
+				current.urlObject == request.urlObject {
+				result.requests[index].conditional = current.conditional || request.conditional
+				duplicate = true
+			}
 		}
 		if !duplicate {
 			if len(result.requests) >= httpAlternativeLimit {
@@ -1370,4 +1487,16 @@ func isIntegerType(value types.Type) bool {
 	}
 	basic, _ := value.Underlying().(*types.Basic)
 	return basic != nil && basic.Info()&types.IsInteger != 0
+}
+
+func isPointerType(value types.Type) bool {
+	if value == nil {
+		return false
+	}
+	_, ok := types.Unalias(value).(*types.Pointer)
+	return ok
+}
+
+func isHTTPMutableValue(value httpValue) bool {
+	return len(value.requests) > 0 || value.requestObject || len(value.objects) > 0 || value.overflow
 }
