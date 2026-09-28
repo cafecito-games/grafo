@@ -1,0 +1,3 @@
+sql:
+  paths:
+    "internal/storage/sqlite/**/*.sql": sqlite
