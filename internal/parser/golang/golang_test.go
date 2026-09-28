@@ -2,8 +2,10 @@ package golang_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -159,13 +161,18 @@ func TestHTTPExtractionUsesCanonicalIdentityAndKeepsRawEvidence(t *testing.T) {
 import "net/http"
 func Handler(http.ResponseWriter, *http.Request) {}
 func Routes() {
-	router.Get("/users/{characterID}/?view=full#details", Handler)
 	_, _ = http.Get("https://api.example.test/users/{id}/?expand=true#top")
 	_, _ = http.Get("https://api.example.test/users/{id}/?expand=false#other")
-	router.Get("/bad/%zz", Handler)
 }
 `)
-	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+	parser := golangparser.NewWithSemanticLoader(fakeSemanticLoader{view: golangparser.SemanticView{
+		Available: true, Included: true,
+		ChiEndpoints: []golangparser.SemanticChiEndpoint{
+			{Function: "example.com/sample/api.Routes", FunctionKind: graph.KindFunction, Method: "GET", Route: "/users/{characterID}/?view=full#details", Handler: "example.com/sample/api.Handler", HandlerKind: graph.KindFunction, Location: graph.Location{Path: "api/routes.go", Line: 4, Column: 2}},
+			{Function: "example.com/sample/api.Routes", FunctionKind: graph.KindFunction, Method: "GET", Route: "/bad/%zz", Handler: "example.com/sample/api.Handler", HandlerKind: graph.KindFunction, Location: graph.Location{Path: "api/routes.go", Line: 4, Column: 2}},
+		},
+	}})
+	result, err := parser.Parse(context.Background(), parserapi.Input{
 		Path: "api/routes.go", Content: content, Repository: "sample", RepoID: "repo", GoModule: "example.com/sample",
 	})
 	if err != nil {
@@ -211,6 +218,37 @@ func Routes() {
 		if node.Kind == graph.KindEndpoint && node.Properties["raw_route"] == "/bad/%zz" && node.Properties["http_invalid"] != "true" {
 			t.Fatalf("malformed endpoint was not kept fail-closed: %#v", node)
 		}
+	}
+}
+
+func TestSyntaxHTTPVerbCallsRemainOrdinaryWithoutServerEvidence(t *testing.T) {
+	content := []byte(`package client
+type Client struct{}
+func Use(c *Client, body, response any) {
+	c.Connect("/connect", body, response)
+	c.Delete("/delete", body, response)
+	c.Get("/get", body, response)
+	c.Head("/head", body, response)
+	c.Options("/options", body, response)
+	c.Patch("/patch", body, response)
+	c.Post("/post", body, response)
+	c.Put("/put", body, response)
+	c.Trace("/trace", body, response)
+}
+`)
+	result, err := golangparser.NewWithSemanticLoader(nil).Parse(context.Background(), parserapi.Input{
+		Path: "client.go", Content: content, Repository: "client", RepoID: "repo", GoModule: "example.com/client",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, node := range result.Nodes {
+		if node.Kind == graph.KindEndpoint {
+			t.Fatalf("verb-named client call invented server endpoint: %#v", node)
+		}
+	}
+	for _, method := range []string{"Connect", "Delete", "Get", "Head", "Options", "Patch", "Post", "Put", "Trace"} {
+		assertHasFact(t, result.Facts, graph.EdgeCalls, "example.com/client.Client."+method)
 	}
 }
 
@@ -817,7 +855,14 @@ func TestCanonicalEndpointsAtSameLineRemainDistinct(t *testing.T) {
 func Handler() {}
 func Routes() { router.Get("/users/{id}", Handler); router.Get("/users/{name}", Handler) }
 `)
-	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+	parser := golangparser.NewWithSemanticLoader(fakeSemanticLoader{view: golangparser.SemanticView{
+		Available: true, Included: true,
+		ChiEndpoints: []golangparser.SemanticChiEndpoint{
+			{Function: "example.com/sample.Routes", FunctionKind: graph.KindFunction, Method: "GET", Route: "/users/{id}", Handler: "example.com/sample.Handler", HandlerKind: graph.KindFunction, Location: graph.Location{Path: "routes.go", Line: 3, Column: 17}},
+			{Function: "example.com/sample.Routes", FunctionKind: graph.KindFunction, Method: "GET", Route: "/users/{name}", Handler: "example.com/sample.Handler", HandlerKind: graph.KindFunction, Location: graph.Location{Path: "routes.go", Line: 3, Column: 54}},
+		},
+	}})
+	result, err := parser.Parse(context.Background(), parserapi.Input{
 		Path: "routes.go", Content: content, Repository: "sample", RepoID: "repo", GoModule: "example.com/sample",
 	})
 	if err != nil {
@@ -1095,6 +1140,245 @@ func TestPackageSemanticLoaderUsesWorkspaceModuleImportPath(t *testing.T) {
 	}
 	assertHasNodeQualified(t, result.Nodes, graph.KindFunction, "example.com/workspace/service.Run")
 	assertHasFact(t, result.Facts, graph.EdgeCalls, "example.com/workspace/service.helper")
+}
+
+func TestPackageSemanticLoaderLoadsSiblingModulesWithoutWorkspace(t *testing.T) {
+	root := t.TempDir()
+	modules := []struct {
+		directory string
+		module    string
+		function  string
+	}{
+		{directory: "apps/api", module: "example.com/apps/api", function: "Serve"},
+		{directory: "tools/client", module: "example.com/tools/client", function: "Run"},
+	}
+	parser := golangparser.New()
+	for _, module := range modules {
+		writeFile(t, filepath.Join(root, module.directory, "go.mod"), "module "+module.module+"\n\ngo 1.26\n")
+		content := []byte("package main\nfunc helper() {}\nfunc " + module.function + "() { helper() }\n")
+		path := filepath.ToSlash(filepath.Join(module.directory, "main.go"))
+		writeFile(t, filepath.Join(root, filepath.FromSlash(path)), string(content))
+	}
+	for _, module := range modules {
+		path := filepath.ToSlash(filepath.Join(module.directory, "main.go"))
+		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := parser.Parse(context.Background(), parserapi.Input{
+			Root: root, Path: path, Content: content, Repository: "multi", RepoID: "repo",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertHasNodeQualified(t, result.Nodes, graph.KindFunction, module.module+"."+module.function)
+		fact := assertFact(t, result.Facts, graph.EdgeCalls, module.module+".helper")
+		if fact.Properties["resolution"] != "go/types" {
+			t.Fatalf("%s call was not type resolved: %#v", module.directory, fact)
+		}
+		var file graph.Node
+		for _, node := range result.Nodes {
+			if node.Kind == graph.KindFile {
+				file = node
+				break
+			}
+		}
+		if got := file.Properties["go_module"]; got != module.module {
+			t.Fatalf("%s file module = %q, want %q; file=%#v", module.directory, got, module.module, file)
+		}
+	}
+}
+
+func TestPackageSemanticLoaderIsolatesBrokenSiblingModule(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "healthy", "go.mod"), "module example.com/healthy\n\ngo 1.26\n")
+	healthy := []byte("package healthy\nfunc helper() {}\nfunc Run() { helper() }\n")
+	writeFile(t, filepath.Join(root, "healthy", "healthy.go"), string(healthy))
+	writeFile(t, filepath.Join(root, "broken", "go.mod"), "module example.com/broken\n\ngo 1.26\nrequire example.invalid/missing v1.0.0\n")
+	broken := []byte("package broken\nimport missing \"example.invalid/missing\"\nfunc Run() { missing.Call() }\n")
+	writeFile(t, filepath.Join(root, "broken", "broken.go"), string(broken))
+
+	parser := golangparser.New()
+	result, err := parser.Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "healthy/healthy.go", Content: healthy, Repository: "multi", RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fact := assertFact(t, result.Facts, graph.EdgeCalls, "example.com/healthy.helper")
+	if fact.Properties["resolution"] != "go/types" {
+		t.Fatalf("broken sibling degraded healthy module: %#v", fact)
+	}
+
+	result, err = parser.Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "broken/broken.go", Content: broken, Repository: "multi", RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, diagnostic := range result.Diagnostics {
+		if strings.Contains(diagnostic.Message, "broken") || strings.Contains(diagnostic.Message, "example.invalid/missing") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("broken module failure lacked module provenance: %#v", result.Diagnostics)
+	}
+}
+
+func TestPackageSemanticLoaderTreatsWorkspaceAsAuthoritativeSubset(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.work"), "go 1.26\n\nuse ./listed\n")
+	writeFile(t, filepath.Join(root, "listed", "go.mod"), "module example.com/listed\n\ngo 1.26\n")
+	writeFile(t, filepath.Join(root, "listed", "listed.go"), "package listed\n")
+	writeFile(t, filepath.Join(root, "unlisted", "go.mod"), "module example.com/unlisted\n\ngo 1.26\n")
+	content := []byte("package unlisted\nfunc helper() {}\nfunc Run() { helper() }\n")
+	writeFile(t, filepath.Join(root, "unlisted", "unlisted.go"), string(content))
+
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "unlisted/unlisted.go", Content: content, Repository: "workspace", RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeCalls && fact.Target == "example.com/unlisted.helper" && fact.Properties["resolution"] == "go/types" {
+			t.Fatalf("unlisted module was loaded outside authoritative workspace: %#v", fact)
+		}
+	}
+	found := false
+	for _, diagnostic := range result.Diagnostics {
+		found = found || strings.Contains(diagnostic.Message, "omitted source")
+	}
+	if !found {
+		t.Fatalf("workspace-unlisted module omission was not diagnosed: %#v", result.Diagnostics)
+	}
+}
+
+func TestPackageSemanticLoaderExcludesIgnoredVendoredAndSymlinkedModules(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(*testing.T, string) (string, []byte)
+	}{
+		{
+			name: "git ignored",
+			prepare: func(t *testing.T, root string) (string, []byte) {
+				command := exec.Command("git", "init", "-q", root)
+				if output, err := command.CombinedOutput(); err != nil {
+					t.Fatalf("git init: %v: %s", err, output)
+				}
+				writeFile(t, filepath.Join(root, ".gitignore"), "ignored/\n")
+				content := []byte("package ignored\nfunc helper() {}\nfunc Run() { helper() }\n")
+				writeFile(t, filepath.Join(root, "ignored", "go.mod"), "module example.com/ignored\n\ngo 1.26\n")
+				writeFile(t, filepath.Join(root, "ignored", "ignored.go"), string(content))
+				return "ignored/ignored.go", content
+			},
+		},
+		{
+			name: "vendored",
+			prepare: func(t *testing.T, root string) (string, []byte) {
+				content := []byte("package vendored\nfunc helper() {}\nfunc Run() { helper() }\n")
+				writeFile(t, filepath.Join(root, "vendor", "nested", "go.mod"), "module example.com/vendored\n\ngo 1.26\n")
+				writeFile(t, filepath.Join(root, "vendor", "nested", "vendored.go"), string(content))
+				return "vendor/nested/vendored.go", content
+			},
+		},
+		{
+			name: "symlink escaped",
+			prepare: func(t *testing.T, root string) (string, []byte) {
+				external := t.TempDir()
+				content := []byte("package escaped\nfunc helper() {}\nfunc Run() { helper() }\n")
+				writeFile(t, filepath.Join(external, "go.mod"), "module example.com/escaped\n\ngo 1.26\n")
+				writeFile(t, filepath.Join(external, "escaped.go"), string(content))
+				if err := os.Symlink(external, filepath.Join(root, "linked")); err != nil {
+					t.Fatal(err)
+				}
+				return "linked/escaped.go", content
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			path, content := test.prepare(t, root)
+			result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+				Root: root, Path: path, Content: content, Repository: "excluded", RepoID: "repo",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, fact := range result.Facts {
+				if fact.Kind == graph.EdgeCalls && fact.Properties["resolution"] == "go/types" {
+					t.Fatalf("excluded module produced typed evidence: %#v", fact)
+				}
+			}
+		})
+	}
+}
+
+func TestSemanticKeyTracksNestedModulePlanChanges(t *testing.T) {
+	root := t.TempDir()
+	parser := golangparser.New()
+	first, err := parser.SemanticKey(context.Background(), parserapi.Input{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(root, "nested", "go.mod"), "module example.com/first\n\ngo 1.26\n")
+	second, err := parser.SemanticKey(context.Background(), parserapi.Input{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(root, "nested", "go.mod"), "module example.com/second\n\ngo 1.26\n")
+	third, err := parser.SemanticKey(context.Background(), parserapi.Input{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second || second == third || first == third {
+		t.Fatalf("nested module addition/identity did not invalidate semantic key: %q %q %q", first, second, third)
+	}
+	if err := os.Remove(filepath.Join(root, "nested", "go.mod")); err != nil {
+		t.Fatal(err)
+	}
+	fourth, err := parser.SemanticKey(context.Background(), parserapi.Input{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fourth != first {
+		t.Fatalf("nested module removal did not restore semantic plan key: first=%q fourth=%q", first, fourth)
+	}
+}
+
+func TestSemanticKeyTracksWorkspaceVendorManifestChanges(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.work"), "go 1.26\n\nuse ./service\n")
+	writeFile(t, filepath.Join(root, "service", "go.mod"), "module example.com/service\n\ngo 1.26\n")
+	manifest := filepath.Join(root, "vendor", "modules.txt")
+	writeFile(t, manifest, "# example.com/dependency v1.0.0\n")
+
+	parser := golangparser.New()
+	first, err := parser.SemanticKey(context.Background(), parserapi.Input{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, manifest, "# example.com/dependency v1.1.0\n")
+	second, err := parser.SemanticKey(context.Background(), parserapi.Input{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("workspace vendor manifest change did not invalidate semantic key: %q", first)
+	}
+}
+
+func TestSemanticModuleDiscoveryHonorsCancellation(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/canceled\n\ngo 1.26\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := golangparser.New().SemanticKey(ctx, parserapi.Input{Root: root}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled module discovery error = %v, want context.Canceled", err)
+	}
 }
 
 func TestPackageSemanticLoaderFallsBackForUnloadedGoFiles(t *testing.T) {
@@ -2200,6 +2484,57 @@ func NotARouter() { unrelated{}.Get("/invented", login) }
 	}
 }
 
+func TestPackageSemanticLoaderKeepsProvenHTTPAndChiEvidenceWithUnrelatedErrors(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), `module example.com/partial
+
+go 1.26
+
+require github.com/go-chi/chi/v5 v5.0.0
+replace github.com/go-chi/chi/v5 => ./third_party/chi
+`)
+	writeMinimalChiModule(t, root)
+	content := []byte(`package partial
+import (
+	"net/http"
+	"github.com/go-chi/chi/v5"
+)
+func handler(http.ResponseWriter, *http.Request) {}
+func Routes() {
+	router := chi.NewRouter()
+	router.Route("/v1", func(r chi.Router) { r.Get("/items", handler) })
+	_ = unrelatedMissingName
+}
+func Send(client *http.Client) {
+	_, _ = client.Post("/v1/characters", "application/json", nil)
+}
+`)
+	writeFile(t, filepath.Join(root, "routes.go"), string(content))
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "routes.go", Content: content, Repository: "partial", RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasNode(t, result.Nodes, graph.KindEndpoint, "GET /v1/items")
+	for _, node := range result.Nodes {
+		if node.Kind == graph.KindEndpoint && (node.Name == "GET /items" || node.Name == "POST /v1/characters") {
+			t.Fatalf("partial semantic evidence invented server endpoint: %#v", node)
+		}
+	}
+	request := assertFact(t, result.Facts, graph.EdgeRequests, "POST /v1/characters")
+	if request.Properties["resolution"] != "go/types" {
+		t.Fatalf("partial-package HTTP request was not type resolved: %#v", request)
+	}
+	foundDiagnostic := false
+	for _, diagnostic := range result.Diagnostics {
+		foundDiagnostic = foundDiagnostic || strings.Contains(diagnostic.Message, "unrelatedMissingName")
+	}
+	if !foundDiagnostic {
+		t.Fatalf("unrelated package error was not retained: %#v", result.Diagnostics)
+	}
+}
+
 func TestChiHelperEditInvalidatesEveryGoPackageView(t *testing.T) {
 	parser := golangparser.New()
 	got := parser.SemanticAffectedPaths(
@@ -2219,6 +2554,24 @@ func writeFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func writeMinimalChiModule(t *testing.T, root string) {
+	t.Helper()
+	writeFile(t, filepath.Join(root, "third_party", "chi", "go.mod"), "module github.com/go-chi/chi/v5\n\ngo 1.26\n")
+	writeFile(t, filepath.Join(root, "third_party", "chi", "chi.go"), `package chi
+import "net/http"
+type Router interface {
+	http.Handler
+	Route(string, func(Router)) Router
+	Get(string, http.HandlerFunc)
+}
+type Mux struct{}
+func NewRouter() *Mux { return &Mux{} }
+func (*Mux) ServeHTTP(http.ResponseWriter, *http.Request) {}
+func (*Mux) Route(string, func(Router)) Router { return &Mux{} }
+func (*Mux) Get(string, http.HandlerFunc) {}
+`)
 }
 
 func assertHasFactKind(t *testing.T, facts []graph.Fact, kind graph.EdgeKind) {
@@ -2263,6 +2616,17 @@ func assertHasFact(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, target
 		}
 	}
 	t.Fatalf("missing %s fact to %q; available targets: %v", kind, target, available)
+}
+
+func assertFact(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, target string) graph.Fact {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.Kind == kind && fact.Target == target {
+			return fact
+		}
+	}
+	t.Fatalf("missing %s fact targeting %q: %#v", kind, target, facts)
+	return graph.Fact{}
 }
 
 func assertNodeProperty(t *testing.T, nodes []graph.Node, kind graph.NodeKind, qualified, key, want string) {
@@ -2355,7 +2719,8 @@ func assertNoFailureTarget(t *testing.T, facts []graph.Fact, kind graph.EdgeKind
 
 func TestWorkspaceSemanticEvidenceTracksExternalInputs(t *testing.T) {
 	root := t.TempDir()
-	external := filepath.Join(t.TempDir(), "go.work")
+	externalRoot := t.TempDir()
+	external := filepath.Join(externalRoot, "go.work")
 	if err := os.WriteFile(external, []byte("go 1.26\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -2375,12 +2740,21 @@ func TestWorkspaceSemanticEvidenceTracksExternalInputs(t *testing.T) {
 	if first == second {
 		t.Fatal("external go.work content did not change workspace evidence")
 	}
-	t.Setenv("GOFLAGS", "-tags=freshness")
+	vendorManifest := filepath.Join(externalRoot, "vendor", "modules.txt")
+	writeFile(t, vendorManifest, "# example.com/dependency v1.0.0\n")
 	third, err := parser.WorkspaceSemanticEvidenceKey(context.Background(), parserapi.Input{Root: root})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if second == third {
+		t.Fatal("external workspace vendor manifest did not change workspace evidence")
+	}
+	t.Setenv("GOFLAGS", "-tags=freshness")
+	fourth, err := parser.WorkspaceSemanticEvidenceKey(context.Background(), parserapi.Input{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third == fourth {
 		t.Fatal("Go build environment did not change workspace evidence")
 	}
 }
