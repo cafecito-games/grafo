@@ -42,27 +42,29 @@ func BenchmarkMCPFreshnessSession(b *testing.B) {
 			b.Fatal(err)
 		}
 		defer func() { _ = client.Close(); _ = server.Close(); _ = coordinator.Close() }()
-		call := func() {
-			result, callErr := client.CallTool(ctx, &mcp.CallToolParams{Name: "get_node", Arguments: map[string]any{"selector": "indexer.DiscoverProject"}})
-			if callErr != nil || result.IsError {
-				b.Fatalf("get_node error=%v result=%#v", callErr, result)
-			}
-		}
+		selector := benchmarkExactSelector(b, ctx, client, "DiscoverProject")
+		call := func() { benchmarkExactNode(b, ctx, client, selector) }
 		call()
 		b.ResetTimer()
 		for range b.N {
 			call()
+		}
+		b.StopTimer()
+		if coordinator.current != generation {
+			b.Fatal("unchanged corpus call replaced its query generation")
 		}
 	})
 	b.Run("UnchangedExactNode", func(b *testing.B) {
 		fixture := newMCPBenchmarkFixture(b, false)
 		defer fixture.close()
 		arguments := map[string]any{"selector": "fixture.first"}
-		fixture.call(b, "get_node", arguments)
+		fixture.callExact(b, arguments, "fixture.first")
 		b.ResetTimer()
 		for range b.N {
-			fixture.call(b, "get_node", arguments)
+			fixture.callExact(b, arguments, "fixture.first")
 		}
+		b.StopTimer()
+		fixture.assertUnchanged(b)
 	})
 	b.Run("UnchangedBatch", func(b *testing.B) {
 		fixture := newMCPBenchmarkFixture(b, false)
@@ -73,6 +75,8 @@ func BenchmarkMCPFreshnessSession(b *testing.B) {
 		for range b.N {
 			fixture.call(b, "get_node", arguments)
 		}
+		b.StopTimer()
+		fixture.assertUnchanged(b)
 	})
 	b.Run("RepeatedSamePathDirtyEdit", func(b *testing.B) {
 		fixture := newMCPBenchmarkFixture(b, false)
@@ -84,7 +88,7 @@ func BenchmarkMCPFreshnessSession(b *testing.B) {
 			if err := os.WriteFile(filepath.Join(fixture.roots[0], "sample.snap"), []byte(value), 0o644); err != nil {
 				b.Fatal(err)
 			}
-			fixture.call(b, "get_node", map[string]any{"selector": "fixture." + value})
+			fixture.callExact(b, map[string]any{"selector": "fixture." + value}, "fixture."+value)
 		}
 	})
 	b.Run("FederatedOneMemberChange", func(b *testing.B) {
@@ -97,7 +101,7 @@ func BenchmarkMCPFreshnessSession(b *testing.B) {
 			if err := os.WriteFile(filepath.Join(fixture.roots[1], "sample.snap"), []byte(value), 0o644); err != nil {
 				b.Fatal(err)
 			}
-			fixture.call(b, "get_node", map[string]any{"selector": "fixture." + value})
+			fixture.callExact(b, map[string]any{"selector": "fixture." + value}, "fixture."+value)
 		}
 	})
 }
@@ -155,12 +159,14 @@ func prepareBenchmarkCorpus(tb testing.TB, source string) string {
 }
 
 type mcpBenchmarkFixture struct {
-	ctx     context.Context
-	roots   []string
-	client  *mcp.ClientSession
-	server  *mcp.ServerSession
-	coord   *FreshnessCoordinator
-	cleanup func()
+	ctx       context.Context
+	roots     []string
+	client    *mcp.ClientSession
+	server    *mcp.ServerSession
+	coord     *FreshnessCoordinator
+	startup   *FreshnessGeneration
+	indexedAt string
+	cleanup   func()
 }
 
 func newMCPBenchmarkFixture(b *testing.B, federated bool) *mcpBenchmarkFixture {
@@ -191,7 +197,11 @@ func newMCPBenchmarkFixture(b *testing.B, federated bool) *mcpBenchmarkFixture {
 		_ = coordinator.Close()
 		b.Fatal(err)
 	}
-	return &mcpBenchmarkFixture{ctx: ctx, roots: roots, client: client, server: server, coord: coordinator}
+	indexedAt, err := generation.Repository.Meta(ctx, "indexed_at")
+	if err != nil {
+		b.Fatal(err)
+	}
+	return &mcpBenchmarkFixture{ctx: ctx, roots: roots, client: client, server: server, coord: coordinator, startup: generation, indexedAt: indexedAt}
 }
 
 func (f *mcpBenchmarkFixture) call(b *testing.B, name string, arguments map[string]any) {
@@ -202,6 +212,72 @@ func (f *mcpBenchmarkFixture) call(b *testing.B, name string, arguments map[stri
 	}
 	if result.IsError {
 		b.Fatalf("%s returned an error: %#v", name, result.Content)
+	}
+}
+
+func (f *mcpBenchmarkFixture) callExact(b *testing.B, arguments map[string]any, expected string) {
+	b.Helper()
+	result, err := f.client.CallTool(f.ctx, &mcp.CallToolParams{Name: "get_node", Arguments: arguments})
+	if err != nil || result.IsError {
+		b.Fatalf("get_node error=%v result=%#v", err, result)
+	}
+	benchmarkAssertNode(b, result.StructuredContent, expected)
+}
+
+func (f *mcpBenchmarkFixture) assertUnchanged(b *testing.B) {
+	b.Helper()
+	if f.coord.current != f.startup {
+		b.Fatal("unchanged benchmark replaced its query generation")
+	}
+	indexedAt, err := f.startup.Repository.Meta(f.ctx, "indexed_at")
+	if err != nil || indexedAt != f.indexedAt {
+		b.Fatalf("unchanged benchmark wrote metadata: before=%q after=%q err=%v", f.indexedAt, indexedAt, err)
+	}
+}
+
+func benchmarkExactSelector(b *testing.B, ctx context.Context, client *mcp.ClientSession, name string) string {
+	b.Helper()
+	result, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "find_symbols", Arguments: map[string]any{"query": name}})
+	if err != nil || result.IsError {
+		b.Fatalf("find_symbols error=%v result=%#v", err, result)
+	}
+	structured, ok := result.StructuredContent.(map[string]any)
+	if !ok {
+		b.Fatalf("find_symbols structured payload = %#v", result.StructuredContent)
+	}
+	matches, ok := structured["matches"].([]any)
+	if !ok || len(matches) == 0 {
+		b.Fatalf("find_symbols matches = %#v", structured["matches"])
+	}
+	node, ok := matches[0].(map[string]any)
+	if !ok {
+		b.Fatalf("find_symbols node = %#v", matches[0])
+	}
+	qualified, ok := node["qualified_name"].(string)
+	if !ok || qualified == "" {
+		b.Fatalf("find_symbols qualified_name = %#v", node["qualified_name"])
+	}
+	return qualified
+}
+
+func benchmarkExactNode(b *testing.B, ctx context.Context, client *mcp.ClientSession, selector string) {
+	b.Helper()
+	result, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "get_node", Arguments: map[string]any{"selector": selector}})
+	if err != nil || result.IsError {
+		b.Fatalf("get_node error=%v result=%#v", err, result)
+	}
+	benchmarkAssertNode(b, result.StructuredContent, selector)
+}
+
+func benchmarkAssertNode(b *testing.B, content any, expected string) {
+	b.Helper()
+	structured, ok := content.(map[string]any)
+	if !ok {
+		b.Fatalf("get_node structured payload = %#v", content)
+	}
+	node, ok := structured["node"].(map[string]any)
+	if !ok || node["qualified_name"] != expected {
+		b.Fatalf("get_node node = %#v, want qualified_name %q", structured["node"], expected)
 	}
 }
 

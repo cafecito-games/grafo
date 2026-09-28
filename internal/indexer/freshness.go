@@ -118,12 +118,26 @@ func ReprobeFreshness(ctx context.Context, previous FreshnessProbe, registry *pa
 	}
 	snapshot.Identity = identity
 	snapshot.Commands += identityCommands
-	project := projectFromSnapshot(root, filepath.Base(root), readGoModule(root), *snapshot, true)
+	goModule := previous.Project.GoModule
+	if previous.Project.gitSnapshot == nil || previous.Project.gitSnapshot.Head != snapshot.Head ||
+		previous.Project.gitSnapshot.Identity != snapshot.Identity || freshnessContainsPath(snapshot.Changed, "go.mod") {
+		goModule = readGoModule(root)
+	}
+	project := projectFromSnapshot(root, filepath.Base(root), goModule, *snapshot, true)
 	reuseWorkspaceKeys := previous.Project.gitSnapshot != nil &&
 		previous.Project.gitSnapshot.Head == snapshot.Head && previous.Project.gitSnapshot.Identity == snapshot.Identity &&
 		len(freshnessRelevantPaths(previous.Project.gitSnapshot.Changed, registry)) == 0 &&
 		len(freshnessRelevantPaths(snapshot.Changed, registry)) == 0
 	return probeProjectFreshness(ctx, project, registry, options, &previous, reuseWorkspaceKeys)
+}
+
+func freshnessContainsPath(paths []string, target string) bool {
+	for _, path := range paths {
+		if filepath.ToSlash(path) == target {
+			return true
+		}
+	}
+	return false
 }
 
 func probeProjectFreshness(ctx context.Context, project Project, registry *parserapi.Registry, options FreshnessOptions,

@@ -27,6 +27,7 @@ type execGitRunner struct{}
 
 func (execGitRunner) Run(ctx context.Context, directory string, arguments ...string) ([]byte, error) {
 	command := exec.CommandContext(ctx, "git", append([]string{"-C", directory}, arguments...)...)
+	command.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
 	return command.Output()
 }
 
