@@ -65,7 +65,22 @@ Each direction carries its own `truncated` flag. A truncated report is a partial
 answer: raise the depth or limit, or narrow the root, before concluding that a
 change is safe. State the impact findings before editing, not afterwards.
 
-## 5. Fall back to native tools deliberately
+## 5. Treat repository abstractions as possible modelling boundaries
+
+When a negative event or HTTP result conflicts with visible calls through a
+repository abstraction, inspect current index diagnostics and the root
+`grafo.yaml` `adapters` coverage—including the legacy `http.request_apis`
+compatibility alias—before concluding that the relationship is absent. Use
+native source inspection to prove the exact wrapper boundary: Grafo cannot
+model evidence that is absent from its current index.
+
+A read-only structural question does not authorize a configuration edit. Report
+the limitation and recommend or invoke the `grafo-setup` workflow only when the
+user requests setup or configuration work. After an authorized adapter change,
+reindex before trusting event, outbound-request, or topology results. Unresolved
+and truncated output remains partial evidence even when an adapter exists.
+
+## 6. Fall back to native tools deliberately
 
 Use your own search, read, and edit tools when the question is not structural,
 the content is not code, the repository or branch has no index, or a Grafo tool

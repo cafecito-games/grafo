@@ -19,12 +19,12 @@ import (
 
 // Version is the guidance format version. Bumping it makes every installed copy
 // stale, so `grafo install` replaces older Grafo-owned content exactly.
-const Version = "3"
+const Version = "4"
 
 // SetupVersion is the repository-setup skill format version. It is independent
 // from Version because either installed skill may evolve without making the
 // other stale.
-const SetupVersion = "1"
+const SetupVersion = "2"
 
 // Name is the stable identity Grafo installs guidance under.
 const Name = "grafo"
@@ -40,7 +40,7 @@ const Description = "Route structural code questions through Grafo's semantic gr
 // SetupDescription tells skill-capable clients when to invoke the repository
 // onboarding workflow.
 const SetupDescription = "Set up or improve Grafo for a repository: inspect project boundaries, " +
-	"transports, serialization, HTTP wrappers, SQL, and test conventions; update only supported " +
+	"transports, serialization, semantic application wrappers, SQL, and test conventions; update only supported " +
 	"grafo.yaml settings; index the project; and verify graph coverage without inventing configuration."
 
 // BeginMarker and EndMarker delimit the managed block. They are matched exactly;

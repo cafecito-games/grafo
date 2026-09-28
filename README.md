@@ -75,12 +75,14 @@ content is not code or the branch has no index.
 Claude Code and Codex also receive a separate `grafo-setup` skill. Invoke it
 when onboarding or tuning a repository for Grafo (`/grafo-setup` in Claude Code
 or “use `$grafo-setup`” in Codex). It inspects monorepo boundaries,
-SQL ownership, GDScript HTTP wrappers and custom test bases, Protobuf
-serialization, and supported transport evidence; merges only supported
-`grafo.yaml` settings; indexes the repository; and verifies topology and message
-coverage. Built-in transport and serialization support is detected from source
-and code-generation evidence, so the skill reports unsupported integrations
-instead of inventing configuration keys.
+SQL ownership, source-proven GDScript event and HTTP application wrappers,
+custom test bases, Protobuf serialization, and supported transport evidence. It
+merges only supported `grafo.yaml` settings, indexes the repository, and verifies
+topology and message coverage. Built-in transport and serialization support is
+detected from source and code-generation evidence, so the skill reports
+unsupported integrations instead of inventing configuration keys. Adapter audits
+require an exact helper body, qualified symbol, supported effect, and
+argument-role mapping, followed by a reindex and before/after graph comparison.
 
 Guidance is installed only through documented, user-scoped surfaces: isolated
 Grafo-owned skill files for Claude Code and Codex, and one delimited managed
@@ -90,6 +92,10 @@ byte-for-byte, a file with no Grafo ownership marker is never overwritten, and
 duplicated or half-present markers are reported instead of repaired.
 Repository-local instruction files are never edited, no permission is granted,
 and no edit is ever blocked.
+
+After upgrading Grafo, run `grafo install --refresh` to update existing
+Grafo-owned structural and setup skills to the current canonical versions. It
+does not create a missing guidance artifact and never adopts a foreign file.
 
 `--hooks` opts in to advisory `PreToolUse` hooks in Claude Code's documented
 personal settings. They only inject context: `grafo guidance --hook pre-search`
