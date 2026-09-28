@@ -107,7 +107,7 @@ func (s *Service) Server(version string) *mcp.Server {
 		mcp.AddTool(server, &mcp.Tool{Name: "list_endpoints", Title: "List endpoints", Description: "Catalog exact HTTP endpoint declarations with source locations, exposer evidence, and resolved, ambiguous, missing, or unresolved handlers.", Annotations: annotations}, s.listEndpoints)
 		mcp.AddTool(server, &mcp.Tool{Name: "list_outbound_requests", Title: "List outbound requests", Description: "List outbound HTTP facts and resolve each to the strongest compatible endpoint when available. Equal-best declarations remain ambiguous and unknown targets remain external.", Annotations: annotations}, s.listOutboundRequests)
 		mcp.AddTool(server, &mcp.Tool{Name: "find_handler", Title: "Find handler", Description: "Find HTTP and event handlers only from handled_by graph evidence, preserving ambiguous, missing, and unresolved targets.", Annotations: annotations}, s.findHandler)
-		mcp.AddTool(server, &mcp.Tool{Name: "get_service_topology", Title: "Get service topology", Description: "Return repository-backed service nodes and evidence-backed synchronous HTTP and asynchronous event links. Every link retains its endpoint or event node IDs and underlying edge IDs.", Annotations: annotations}, s.getServiceTopology)
+		mcp.AddTool(server, &mcp.Tool{Name: "get_service_topology", Title: "Get service topology", Description: "Return component-backed service nodes, repository fallbacks for unassigned files, and evidence-backed synchronous HTTP and asynchronous event links. Every link retains its endpoint or event node IDs and underlying edge IDs.", Annotations: annotations}, s.getServiceTopology)
 	}
 	mcp.AddTool(server, &mcp.Tool{Name: "get_index_status", Title: "Get index status", Description: "Return the active repository, branch, indexed commit, and graph counts.", Annotations: annotations}, s.getIndexStatus)
 	if s.reusable != nil {
@@ -676,16 +676,17 @@ func (i HandlerInput) options() query.TopologyOptions {
 }
 
 type ServiceTopologyInput struct {
-	Repository string `json:"repository,omitempty" jsonschema:"restrict results to one indexed repository service by stable name"`
+	Repository string `json:"repository,omitempty" jsonschema:"restrict results to every component and fallback service in one indexed repository"`
+	Component  string `json:"component,omitempty" jsonschema:"restrict results to this exact indexed component name across selected repositories"`
 	Method     string `json:"method,omitempty" jsonschema:"exact HTTP method such as GET or POST"`
 	Route      string `json:"route,omitempty" jsonschema:"canonical-compatible route path or template"`
 	Event      string `json:"event,omitempty" jsonschema:"literal event name fragment; cannot be combined with method or route"`
-	Direction  string `json:"direction,omitempty" jsonschema:"incoming, outgoing, or both when filtering one service"`
+	Direction  string `json:"direction,omitempty" jsonschema:"incoming, outgoing, or both relative to every service matching repository and component scope"`
 	Limit      int    `json:"limit,omitempty" jsonschema:"maximum service links; defaults to 100 and may not exceed 1000"`
 }
 
 func (i ServiceTopologyInput) options() query.TopologyOptions {
-	return query.TopologyOptions{Repository: i.Repository, Method: i.Method, Route: i.Route,
+	return query.TopologyOptions{Repository: i.Repository, Component: i.Component, Method: i.Method, Route: i.Route,
 		Event: i.Event, Direction: query.Direction(i.Direction), Limit: i.Limit}
 }
 
