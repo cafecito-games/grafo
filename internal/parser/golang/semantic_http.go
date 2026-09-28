@@ -215,6 +215,7 @@ func (a *httpSemanticAnalyzer) composeRoots() {
 		execution := &httpExecution{stack: map[*types.Func]bool{}, remaining: httpExecutionLimit}
 		result := a.executeFunction(execution, root, nil, false)
 		if execution.exhausted {
+			a.markAbandonedRootCalls(root)
 			continue
 		}
 		for _, request := range result.effects {
@@ -394,22 +395,105 @@ func (a *httpSemanticAnalyzer) executeStatements(execution *httpExecution, funct
 				return result, false
 			}
 			branch := cloneHTTPEnvironment(environment)
-			child, _ := a.executeStatements(execution, function, value.Body.List, branch, true)
+			child, stopped := a.executeStatements(execution, function, value.Body.List, branch, true)
 			markHTTPConditional(child.effects)
 			result.effects = append(result.effects, child.effects...)
-			mergeHTTPEnvironments(environment, environment, branch)
+			result.values = mergeHTTPReturnValues(result.values, child.values)
+			continuing := []httpEnvironment{environment}
+			if !stopped {
+				continuing = append(continuing, branch)
+			}
+			mergeHTTPEnvironments(environment, continuing...)
 		case *goast.RangeStmt:
 			if !a.consumeExecution(execution, function, value, 1) {
 				return result, false
 			}
 			branch := cloneHTTPEnvironment(environment)
-			child, _ := a.executeStatements(execution, function, value.Body.List, branch, true)
+			child, stopped := a.executeStatements(execution, function, value.Body.List, branch, true)
 			markHTTPConditional(child.effects)
 			result.effects = append(result.effects, child.effects...)
-			mergeHTTPEnvironments(environment, environment, branch)
+			result.values = mergeHTTPReturnValues(result.values, child.values)
+			continuing := []httpEnvironment{environment}
+			if !stopped {
+				continuing = append(continuing, branch)
+			}
+			mergeHTTPEnvironments(environment, continuing...)
+		case *goast.SwitchStmt:
+			if value.Init != nil {
+				child, _ := a.executeStatements(execution, function, []goast.Stmt{value.Init}, environment, conditional)
+				result.effects = append(result.effects, child.effects...)
+			}
+			if value.Tag != nil {
+				tag := a.evaluateExpression(execution, function, value.Tag, environment, conditional)
+				result.effects = append(result.effects, tag.effects...)
+			}
+			bodies, hasDefault := switchClauseBodies(value.Body.List)
+			child, stopped := a.executeConditionalClauses(execution, function, bodies, environment, hasDefault)
+			result.effects = append(result.effects, child.effects...)
+			result.values = mergeHTTPReturnValues(result.values, child.values)
+			if stopped {
+				return result, true
+			}
+		case *goast.TypeSwitchStmt:
+			if value.Init != nil {
+				child, _ := a.executeStatements(execution, function, []goast.Stmt{value.Init}, environment, conditional)
+				result.effects = append(result.effects, child.effects...)
+			}
+			if value.Assign != nil {
+				child, _ := a.executeStatements(execution, function, []goast.Stmt{value.Assign}, environment, conditional)
+				result.effects = append(result.effects, child.effects...)
+			}
+			bodies, hasDefault := switchClauseBodies(value.Body.List)
+			child, stopped := a.executeConditionalClauses(execution, function, bodies, environment, hasDefault)
+			result.effects = append(result.effects, child.effects...)
+			result.values = mergeHTTPReturnValues(result.values, child.values)
+			if stopped {
+				return result, true
+			}
+		case *goast.SelectStmt:
+			bodies, hasDefault := selectClauseBodies(value.Body.List)
+			child, stopped := a.executeConditionalClauses(execution, function, bodies, environment, hasDefault)
+			result.effects = append(result.effects, child.effects...)
+			result.values = mergeHTTPReturnValues(result.values, child.values)
+			if stopped {
+				return result, true
+			}
 		}
 	}
 	return result, false
+}
+
+func (a *httpSemanticAnalyzer) executeConditionalClauses(execution *httpExecution,
+	function *httpSemanticFunction, bodies [][]goast.Stmt, environment httpEnvironment, hasDefault bool,
+) (httpEvalResult, bool) {
+	result := httpEvalResult{}
+	if len(bodies) == 0 {
+		return result, false
+	}
+	if !a.consumeExecution(execution, function, function.decl, len(bodies)) {
+		return result, false
+	}
+	continuing := []httpEnvironment{}
+	allStopped := true
+	for _, body := range bodies {
+		branch := cloneHTTPEnvironment(environment)
+		child, stopped := a.executeStatements(execution, function, body, branch, true)
+		markHTTPConditional(child.effects)
+		result.effects = append(result.effects, child.effects...)
+		result.values = mergeHTTPReturnValues(result.values, child.values)
+		allStopped = allStopped && stopped
+		if !stopped {
+			continuing = append(continuing, branch)
+		}
+	}
+	if !hasDefault {
+		continuing = append(continuing, environment)
+		allStopped = false
+	}
+	if len(continuing) > 0 {
+		mergeHTTPEnvironments(environment, continuing...)
+	}
+	return result, allStopped
 }
 
 func (a *httpSemanticAnalyzer) evaluateExpressions(execution *httpExecution, function *httpSemanticFunction,
@@ -445,8 +529,8 @@ func (a *httpSemanticAnalyzer) evaluateExpression(execution *httpExecution, func
 		if value.Op == token.ADD {
 			left := a.evaluateExpression(execution, function, value.X, environment, conditional)
 			right := a.evaluateExpression(execution, function, value.Y, environment, conditional)
-			return httpEvalResult{values: []httpValue{{strings: combineHTTPStrings(firstHTTPValue(left.values).strings,
-				firstHTTPValue(right.values).strings)}}, effects: append(left.effects, right.effects...)}
+			return httpEvalResult{values: []httpValue{{strings: combineHTTPStrings(httpValueStrings(firstHTTPValue(left.values)),
+				httpValueStrings(firstHTTPValue(right.values)))}}, effects: append(left.effects, right.effects...)}
 		}
 	case *goast.CallExpr:
 		return a.evaluateCall(execution, function, value, environment, conditional)
@@ -472,7 +556,7 @@ func (a *httpSemanticAnalyzer) evaluateCall(execution *httpExecution, function *
 			return emptyHTTPCallResult(a.pkg.TypesInfo.TypeOf(call))
 		}
 		routeResult := a.evaluateExpression(execution, function, call.Args[0], environment, conditional)
-		routes := firstHTTPValue(routeResult.values).strings
+		routes := httpValueStrings(firstHTTPValue(routeResult.values))
 		var effects []httpRequestValue
 		for _, route := range routes {
 			if route.overflow {
@@ -497,7 +581,7 @@ func (a *httpSemanticAnalyzer) evaluateCall(execution *httpExecution, function *
 			return emptyHTTPCallResult(a.pkg.TypesInfo.TypeOf(call))
 		}
 		argument := a.evaluateExpression(execution, function, call.Args[0], environment, conditional)
-		values := firstHTTPValue(argument.values).strings
+		values := httpValueStrings(firstHTTPValue(argument.values))
 		if len(values) == 0 {
 			values = []httpStringValue{{text: "{_}"}}
 		} else {
@@ -520,8 +604,8 @@ func (a *httpSemanticAnalyzer) evaluateCall(execution *httpExecution, function *
 		if len(call.Args) <= routeIndex {
 			return emptyHTTPCallResult(a.pkg.TypesInfo.TypeOf(call))
 		}
-		methods := firstHTTPValue(a.evaluateExpression(execution, function, call.Args[methodIndex], environment, conditional).values).strings
-		routes := firstHTTPValue(a.evaluateExpression(execution, function, call.Args[routeIndex], environment, conditional).values).strings
+		methods := httpValueStrings(firstHTTPValue(a.evaluateExpression(execution, function, call.Args[methodIndex], environment, conditional).values))
+		routes := httpValueStrings(firstHTTPValue(a.evaluateExpression(execution, function, call.Args[routeIndex], environment, conditional).values))
 		requests := crossHTTPRequests(methods, routes, target, "constructor")
 		return httpEvalResult{values: []httpValue{{requests: requests}}, effects: nil}
 	}
@@ -612,7 +696,7 @@ func (a *httpSemanticAnalyzer) evaluateSprintf(execution *httpExecution, functio
 		if verb != 's' && verb != 'd' && verb != 'v' {
 			return emptyHTTPCallResult(a.pkg.TypesInfo.TypeOf(call))
 		}
-		part := firstHTTPValue(a.evaluateExpression(execution, function, call.Args[argument], environment, conditional).values).strings
+		part := httpValueStrings(firstHTTPValue(a.evaluateExpression(execution, function, call.Args[argument], environment, conditional).values))
 		if len(part) == 0 && verb == 'd' && isIntegerType(a.pkg.TypesInfo.TypeOf(call.Args[argument])) {
 			part = []httpStringValue{{text: "{_}"}}
 		}
@@ -879,6 +963,29 @@ func (a *httpSemanticAnalyzer) markHTTPRequestCall(call *goast.CallExpr) {
 	}
 	view.HTTPRequestCalls[position.Offset] = true
 	a.views[path] = view
+}
+
+func (a *httpSemanticAnalyzer) markAbandonedRootCalls(root *httpSemanticFunction) {
+	visited := map[*types.Func]bool{}
+	var visit func(*httpSemanticFunction)
+	visit = func(function *httpSemanticFunction) {
+		if function == nil || visited[function.object] {
+			return
+		}
+		visited[function.object] = true
+		goast.Inspect(function.decl.Body, func(node goast.Node) bool {
+			call, ok := node.(*goast.CallExpr)
+			if !ok {
+				return true
+			}
+			if _, _, convenience := a.httpConvenience(call); convenience {
+				a.markHTTPRequestCall(call)
+			}
+			visit(a.localFunction(call.Fun))
+			return true
+		})
+	}
+	visit(root)
 }
 
 func (a *httpSemanticAnalyzer) diagnostic(location graph.Location, message string) {
@@ -1172,6 +1279,13 @@ func firstHTTPValue(values []httpValue) httpValue {
 	return values[0]
 }
 
+func httpValueStrings(value httpValue) []httpStringValue {
+	if value.overflow {
+		return []httpStringValue{{overflow: true}}
+	}
+	return value.strings
+}
+
 func emptyHTTPCallResult(value types.Type) httpEvalResult {
 	count := 1
 	if tuple, ok := value.(*types.Tuple); ok {
@@ -1198,6 +1312,38 @@ func httpStatementList(statement goast.Stmt) []goast.Stmt {
 		return block.List
 	}
 	return []goast.Stmt{statement}
+}
+
+func switchClauseBodies(statements []goast.Stmt) ([][]goast.Stmt, bool) {
+	bodies := make([][]goast.Stmt, 0, len(statements))
+	hasDefault := false
+	for _, statement := range statements {
+		clause, ok := statement.(*goast.CaseClause)
+		if !ok {
+			continue
+		}
+		hasDefault = hasDefault || len(clause.List) == 0
+		bodies = append(bodies, clause.Body)
+	}
+	return bodies, hasDefault
+}
+
+func selectClauseBodies(statements []goast.Stmt) ([][]goast.Stmt, bool) {
+	bodies := make([][]goast.Stmt, 0, len(statements))
+	hasDefault := false
+	for _, statement := range statements {
+		clause, ok := statement.(*goast.CommClause)
+		if !ok {
+			continue
+		}
+		hasDefault = hasDefault || clause.Comm == nil
+		body := append([]goast.Stmt(nil), clause.Body...)
+		if clause.Comm != nil {
+			body = append([]goast.Stmt{clause.Comm}, body...)
+		}
+		bodies = append(bodies, body)
+	}
+	return bodies, hasDefault
 }
 
 func isBaseURLField(name string) bool {

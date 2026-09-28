@@ -190,6 +190,60 @@ func ConditionalReturn(flag bool) {
 	_, _ = http.Get(chooseAll(flag))
 }
 
+func loopRoute(flag bool) string {
+	for flag { return "/loop-body" }
+	return "/loop-after"
+}
+
+func rangeRoute(values []string) string {
+	for range values { return "/range-body" }
+	return "/range-after"
+}
+
+func switchRoute(value int) string {
+	switch value {
+	case 1: return "/switch-one"
+	default: return "/switch-default"
+	}
+}
+
+func typeSwitchRoute(value any) string {
+	switch value.(type) {
+	case string: return "/type-string"
+	default: return "/type-default"
+	}
+}
+
+func selectRoute(ch <-chan struct{}) string {
+	select {
+	case <-ch: return "/select-case"
+	default: return "/select-default"
+	}
+}
+
+func ControlReturns(flag bool, values []string, value any, ch <-chan struct{}) {
+	_, _ = http.Get(loopRoute(flag))
+	_, _ = http.Get(rangeRoute(values))
+	_, _ = http.Get(switchRoute(1))
+	_, _ = http.Get(typeSwitchRoute(value))
+	_, _ = http.Get(selectRoute(ch))
+}
+
+func ClauseEffects(value any, ch <-chan struct{}) {
+	switch value {
+	case "left": _, _ = http.Get("/switch-effect-left")
+	default: _, _ = http.Get("/switch-effect-default")
+	}
+	switch value.(type) {
+	case string: _, _ = http.Get("/type-effect-string")
+	default: _, _ = http.Get("/type-effect-default")
+	}
+	select {
+	case <-ch: _, _ = http.Get("/select-effect-case")
+	default: _, _ = http.Get("/select-effect-default")
+	}
+}
+
 func BranchFields(flag bool) {
 	request := &http.Request{URL: &url.URL{}}
 	if flag {
@@ -221,6 +275,20 @@ func TooManyAlternatives(flags [9]bool) {
 	if flags[7] { method = http.MethodTrace }
 	request, _ := http.NewRequest(method, "/bounded", nil)
 	_, _ = http.DefaultClient.Do(request)
+}
+
+func ObjectOverflow(flags [9]bool) {
+	api := &API{baseURL: "/base-zero"}
+	if flags[0] { api = &API{baseURL: "/base-one"} }
+	if flags[1] { api = &API{baseURL: "/base-two"} }
+	if flags[2] { api = &API{baseURL: "/base-three"} }
+	if flags[3] { api = &API{baseURL: "/base-four"} }
+	if flags[4] { api = &API{baseURL: "/base-five"} }
+	if flags[5] { api = &API{baseURL: "/base-six"} }
+	if flags[6] { api = &API{baseURL: "/base-seven"} }
+	if flags[7] { api = &API{baseURL: "/base-eight"} }
+	if flags[8] { api = &API{baseURL: "/base-nine"} }
+	_, _ = http.Get(api.baseURL + "/object-overflow")
 }
 
 type API struct {
@@ -308,6 +376,22 @@ func NotHTTP() {
 		"GET /conditional-right":                 "example.com/client.ConditionalReturn",
 		"GET /all-left":                          "example.com/client.ConditionalReturn",
 		"GET /all-right":                         "example.com/client.ConditionalReturn",
+		"GET /loop-body":                         "example.com/client.ControlReturns",
+		"GET /loop-after":                        "example.com/client.ControlReturns",
+		"GET /range-body":                        "example.com/client.ControlReturns",
+		"GET /range-after":                       "example.com/client.ControlReturns",
+		"GET /switch-one":                        "example.com/client.ControlReturns",
+		"GET /switch-default":                    "example.com/client.ControlReturns",
+		"GET /type-string":                       "example.com/client.ControlReturns",
+		"GET /type-default":                      "example.com/client.ControlReturns",
+		"GET /select-case":                       "example.com/client.ControlReturns",
+		"GET /select-default":                    "example.com/client.ControlReturns",
+		"GET /switch-effect-left":                "example.com/client.ClauseEffects",
+		"GET /switch-effect-default":             "example.com/client.ClauseEffects",
+		"GET /type-effect-string":                "example.com/client.ClauseEffects",
+		"GET /type-effect-default":               "example.com/client.ClauseEffects",
+		"GET /select-effect-case":                "example.com/client.ClauseEffects",
+		"GET /select-effect-default":             "example.com/client.ClauseEffects",
 		"GET /branch-left":                       "example.com/client.BranchFields",
 		"POST /branch-right":                     "example.com/client.BranchFields",
 		"GET /alternative":                       "example.com/client.Alternatives",
@@ -366,15 +450,17 @@ func NotHTTP() {
 		}
 	}
 	foundCycleDiagnostic := false
-	foundBoundDiagnostic := false
+	foundBoundDiagnostics := 0
 	for _, diagnostic := range result.Diagnostics {
 		foundCycleDiagnostic = foundCycleDiagnostic || strings.Contains(diagnostic.Message, "recursive HTTP wrapper")
-		foundBoundDiagnostic = foundBoundDiagnostic || strings.Contains(diagnostic.Message, "HTTP alternatives exceeded")
+		if strings.Contains(diagnostic.Message, "HTTP alternatives exceeded") {
+			foundBoundDiagnostics++
+		}
 	}
 	if !foundCycleDiagnostic {
 		t.Fatalf("recursive wrapper was not diagnosed: %#v", result.Diagnostics)
 	}
-	if !foundBoundDiagnostic {
+	if foundBoundDiagnostics < 2 {
 		t.Fatalf("alternative bound was not diagnosed: %#v", result.Diagnostics)
 	}
 }
@@ -388,6 +474,11 @@ func TestPackageSemanticLoaderBoundsHTTPExecution(t *testing.T) {
 		fmt.Fprintf(&body, "if flags[%d] { method = http.MethodPost }\n", index)
 	}
 	body.WriteString("request, _ := http.NewRequest(method, \"/bounded\", nil)\n_, _ = http.DefaultClient.Do(request)\n}\n")
+	body.WriteString("func AfterBudget(flags []bool) {\nmethod := http.MethodGet\n")
+	for index := range 700 {
+		fmt.Fprintf(&body, "if flags[%d] { method = http.MethodPost }\n", index)
+	}
+	body.WriteString("_, _ = http.Get(\"/root-after\")\n_ = method\n}\n")
 	content := []byte(body.String())
 	writeFile(t, filepath.Join(root, "client.go"), string(content))
 	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
