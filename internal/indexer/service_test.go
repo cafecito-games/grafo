@@ -63,6 +63,64 @@ func (forgingProducerParser) Parse(_ context.Context, input parserapi.Input) (gr
 	return result, nil
 }
 
+type legacyVerbEndpointParser struct{}
+
+func (legacyVerbEndpointParser) Language() string          { return "go" }
+func (legacyVerbEndpointParser) Supports(path string) bool { return strings.HasSuffix(path, ".go") }
+func (legacyVerbEndpointParser) Parse(_ context.Context, input parserapi.Input) (graph.ParseResult, error) {
+	builder := parserapi.NewBuilder(input, "go")
+	location := graph.Location{Path: input.Path, Line: 3, Column: 2, EndLine: 3}
+	endpoint := builder.AddNode(graph.Node{Kind: graph.KindEndpoint, Name: "POST /v1/characters",
+		QualifiedName: "endpoint:POST /v1/characters@client.go:3:2", Location: location})
+	builder.AddFact(builder.FileID(), graph.EdgeExposes, endpoint, "", "", location, nil)
+	return builder.Finish(), nil
+}
+
+func TestServiceIncrementallyRemovesLegacyVerbOnlyEndpoint(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	write(t, filepath.Join(root, "go.mod"), "module example.com/client\n\ngo 1.26\n")
+	source := "package client\nfunc post(string, any) {}\nfunc Run() { post(\"/v1/characters\", nil) }\n"
+	write(t, filepath.Join(root, "client.go"), source)
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	legacy := indexer.NewService(repository, parserapi.NewRegistry(legacyVerbEndpointParser{}))
+	if _, err := legacy.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	counts, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts.ByKind[string(graph.KindEndpoint)] != 1 {
+		t.Fatalf("legacy fixture did not persist false endpoint: %#v", counts.ByKind)
+	}
+
+	write(t, filepath.Join(root, "client.go"), source+"\n")
+	current := indexer.NewService(repository, parserapi.NewRegistry(golangparser.New()))
+	report, err := current.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Updated) != 1 || report.Counts.ByKind[string(graph.KindEndpoint)] != 0 {
+		t.Fatalf("incremental refresh retained legacy false endpoint: %#v", report)
+	}
+	clean, err := current.Run(ctx, project, indexer.Options{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(report.Counts, clean.Counts) {
+		t.Fatalf("incremental endpoint removal differs from clean rebuild:\n%#v\n%#v", report.Counts, clean.Counts)
+	}
+}
+
 func TestServiceNormalizesProducerBeforePersistence(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

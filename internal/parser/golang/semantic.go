@@ -1,6 +1,7 @@
 package golang
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -12,6 +13,7 @@ import (
 	"go/types"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -150,6 +152,7 @@ type SemanticView struct {
 	Available         bool
 	Included          bool
 	PackagePath       string
+	ModulePath        string
 	BuildContext      string
 	Calls             map[int]SemanticCall
 	ProtocolUses      []SemanticProtocolUse
@@ -217,7 +220,7 @@ func (l *PackageLoader) Load(ctx context.Context, input parserapi.Input) (Semant
 	buildContext := buildContextString(root)
 	if key == "" {
 		var err error
-		key, buildContext, err = semanticWorkspaceKey(root)
+		key, buildContext, err = semanticWorkspaceKey(ctx, root)
 		if err != nil {
 			return SemanticView{}, err
 		}
@@ -392,6 +395,45 @@ func safeLoadWorkspace(ctx context.Context, root, buildContext string) (views ma
 }
 
 func loadWorkspace(ctx context.Context, root, buildContext string) (map[string]SemanticView, error) {
+	plan, err := semanticLoadPlan(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	views := map[string]SemanticView{}
+	for _, unit := range plan {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		unitViews, loadErr := safeLoadSemanticUnit(ctx, root, buildContext, unit)
+		if loadErr != nil {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			recordModuleLoadFailure(root, buildContext, unit, loadErr, views)
+			continue
+		}
+		mergeSemanticUnit(root, buildContext, unit, unitViews, views)
+	}
+	return views, nil
+}
+
+func safeLoadSemanticUnit(ctx context.Context, root, buildContext string, unit semanticLoadUnit) (views map[string]SemanticView, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("recovered from Go semantic module loader panic: %v", recovered)
+		}
+	}()
+	return loadSemanticUnit(ctx, root, buildContext, unit)
+}
+
+type semanticLoadUnit struct {
+	root       string
+	modulePath string
+	patterns   []string
+	sources    []string
+}
+
+func loadSemanticUnit(ctx context.Context, root, buildContext string, unit semanticLoadUnit) (map[string]SemanticView, error) {
 	environment := append([]string(nil), os.Environ()...)
 	environment = setEnvironment(environment, "GOPROXY", "off")
 	environment = setEnvironment(environment, "GOSUMDB", "off")
@@ -399,7 +441,7 @@ func loadWorkspace(ctx context.Context, root, buildContext string) (map[string]S
 	flags := strings.TrimSpace(os.Getenv("GOFLAGS"))
 	if !strings.Contains(flags, "-mod=") {
 		mode := "readonly"
-		if info, err := os.Stat(filepath.Join(root, "vendor")); err == nil && info.IsDir() {
+		if info, err := os.Stat(filepath.Join(unit.root, "vendor")); err == nil && info.IsDir() {
 			mode = "vendor"
 		}
 		flags = strings.TrimSpace(flags + " -mod=" + mode)
@@ -407,7 +449,7 @@ func loadWorkspace(ctx context.Context, root, buildContext string) (map[string]S
 	environment = setEnvironment(environment, "GOFLAGS", flags)
 	config := &packages.Config{
 		Context: ctx,
-		Dir:     root,
+		Dir:     unit.root,
 		Env:     environment,
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
 			packages.NeedImports | packages.NeedDeps | packages.NeedSyntax |
@@ -415,11 +457,7 @@ func loadWorkspace(ctx context.Context, root, buildContext string) (map[string]S
 			packages.NeedForTest,
 		Tests: true,
 	}
-	patterns, err := workspacePackagePatterns(root)
-	if err != nil {
-		return nil, err
-	}
-	loaded, err := packages.Load(config, patterns...)
+	loaded, err := packages.Load(config, unit.patterns...)
 	if err != nil {
 		return nil, err
 	}
@@ -428,16 +466,19 @@ func loadWorkspace(ctx context.Context, root, buildContext string) (map[string]S
 	for _, pkg := range loaded {
 		if pkg.ForTest == "" {
 			basePackages = append(basePackages, pkg)
-			collectPackageViews(root, buildContext, pkg, views)
+			collectPackageViews(root, buildContext, unit.modulePath, pkg, views)
 			continue
 		}
-		collectTestPackageViews(root, buildContext, pkg, views)
+		collectTestPackageViews(root, buildContext, unit.modulePath, pkg, views)
 	}
 	interfaces := loadedInterfaces(basePackages)
 	for _, pkg := range basePackages {
 		collectImplementations(root, pkg, interfaces, views)
 	}
 	for path, view := range views {
+		if view.ModulePath == "" {
+			view.ModulePath = unit.modulePath
+		}
 		sort.Slice(view.Implementations, func(i, j int) bool {
 			if view.Implementations[i].Concrete == view.Implementations[j].Concrete {
 				return view.Implementations[i].Interface < view.Implementations[j].Interface
@@ -449,11 +490,54 @@ func loadWorkspace(ctx context.Context, root, buildContext string) (map[string]S
 	return views, nil
 }
 
+func mergeSemanticUnit(root, buildContext string, unit semanticLoadUnit, incoming, views map[string]SemanticView) {
+	paths := make([]string, 0, len(incoming))
+	for path := range incoming {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		view := incoming[path]
+		if _, claimed := views[path]; claimed {
+			moduleRoot, _ := filepath.Rel(root, unit.root)
+			if moduleRoot == "." {
+				moduleRoot = "repository root"
+			}
+			views[path] = SemanticView{
+				Included: true, BuildContext: buildContext,
+				Diagnostics: []graph.Diagnostic{{Path: path, Level: "warning", Message: "Go semantic source is claimed by more than one module plan (including " + filepath.ToSlash(moduleRoot) + "); using syntax evidence"}},
+			}
+			continue
+		}
+		views[path] = view
+	}
+}
+
+func recordModuleLoadFailure(root, buildContext string, unit semanticLoadUnit, loadErr error, views map[string]SemanticView) {
+	moduleRoot, err := filepath.Rel(root, unit.root)
+	if err != nil || moduleRoot == "." {
+		moduleRoot = "repository root"
+	} else {
+		moduleRoot = filepath.ToSlash(moduleRoot)
+	}
+	message := fmt.Sprintf("Go semantic module %s load failed; using syntax evidence: %v", moduleRoot, loadErr)
+	for _, path := range unit.sources {
+		if !strings.EqualFold(filepath.Ext(path), ".go") {
+			continue
+		}
+		view := views[path]
+		view.Included = true
+		view.BuildContext = buildContext
+		view.Diagnostics = append(view.Diagnostics, graph.Diagnostic{Path: path, Level: "warning", Message: message})
+		views[path] = view
+	}
+}
+
 // collectTestPackageViews adds go/types evidence only for _test.go sources.
 // packages.Load returns augmented test variants that also repeat every
 // production file; limiting the variant prevents duplicate production facts
 // and keeps package-level protocol/HTTP analyzers on the canonical build.
-func collectTestPackageViews(root, buildContext string, pkg *packages.Package, views map[string]SemanticView) {
+func collectTestPackageViews(root, buildContext, modulePath string, pkg *packages.Package, views map[string]SemanticView) {
 	if pkg == nil {
 		return
 	}
@@ -469,6 +553,7 @@ func collectTestPackageViews(root, buildContext string, pkg *packages.Package, v
 		view.Available = true
 		view.Included = true
 		view.PackagePath = pkg.PkgPath
+		view.ModulePath = packageModulePath(pkg, modulePath)
 		view.BuildContext = buildContext
 		if view.Calls == nil {
 			view.Calls = map[int]SemanticCall{}
@@ -480,7 +565,7 @@ func collectTestPackageViews(root, buildContext string, pkg *packages.Package, v
 	collectPackageDiagnostics(root, pkg, views, buildContext)
 }
 
-func collectPackageViews(root, buildContext string, pkg *packages.Package, views map[string]SemanticView) {
+func collectPackageViews(root, buildContext, modulePath string, pkg *packages.Package, views map[string]SemanticView) {
 	if pkg == nil {
 		return
 	}
@@ -496,6 +581,7 @@ func collectPackageViews(root, buildContext string, pkg *packages.Package, views
 		view.Available = true
 		view.Included = true
 		view.PackagePath = pkg.PkgPath
+		view.ModulePath = packageModulePath(pkg, modulePath)
 		view.BuildContext = buildContext
 		if view.Calls == nil {
 			view.Calls = map[int]SemanticCall{}
@@ -510,12 +596,22 @@ func collectPackageViews(root, buildContext string, pkg *packages.Package, views
 		collectFailureView(root, pkg, file, path, &view)
 		views[path] = view
 	}
+	// Chi and HTTP analyzers are individually evidence-gated and can retain
+	// useful local type identities when an unrelated declaration failed to
+	// check. Missing identities remain unknown and therefore emit no facts.
+	collectChiPackageViews(root, pkg, views)
+	collectHTTPPackageViews(root, pkg, views)
 	if len(pkg.Errors) == 0 {
-		collectChiPackageViews(root, pkg, views)
 		collectTransportPackageViews(root, pkg, views)
-		collectHTTPPackageViews(root, pkg, views)
 	}
 	collectPackageDiagnostics(root, pkg, views, buildContext)
+}
+
+func packageModulePath(pkg *packages.Package, fallback string) string {
+	if pkg != nil && pkg.Module != nil && pkg.Module.Path != "" {
+		return pkg.Module.Path
+	}
+	return fallback
 }
 
 func collectProtocolUses(pkg *packages.Package, file *goast.File, path string, view *SemanticView) {
@@ -718,11 +814,59 @@ func semanticLocation(path string, fset *token.FileSet, start, end token.Pos) gr
 	return graph.Location{Path: path, Line: from.Line, Column: from.Column, EndLine: to.Line}
 }
 
-func workspacePackagePatterns(root string) ([]string, error) {
-	workspace := discoverGoWorkspace(root)
-	if workspace == "" || workspace == "off" {
-		return []string{"./..."}, nil
+func semanticLoadPlan(ctx context.Context, root string) ([]semanticLoadUnit, error) {
+	paths, err := semanticRepositoryPaths(ctx, root)
+	if err != nil {
+		return nil, err
 	}
+	workspace := discoverGoWorkspace(root)
+	var roots []string
+	if workspace != "" && workspace != "off" && workspace != "auto" {
+		roots, err = workspaceModuleRoots(root, workspace, paths)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		for _, path := range paths {
+			if filepath.Base(path) == "go.mod" {
+				roots = append(roots, filepath.Dir(filepath.Join(root, filepath.FromSlash(path))))
+			}
+		}
+	}
+	if len(roots) == 0 && (workspace == "" || workspace == "off" || workspace == "auto") {
+		roots = []string{root}
+	}
+	sort.Slice(roots, func(i, j int) bool {
+		left, _ := filepath.Rel(root, roots[i])
+		right, _ := filepath.Rel(root, roots[j])
+		return filepath.ToSlash(left) < filepath.ToSlash(right)
+	})
+	units := make([]semanticLoadUnit, 0, len(roots))
+	for _, moduleRoot := range roots {
+		unit := semanticLoadUnit{root: moduleRoot, patterns: []string{"./..."}}
+		content, readErr := os.ReadFile(filepath.Join(moduleRoot, "go.mod"))
+		if readErr == nil {
+			unit.modulePath = modfile.ModulePath(content)
+		}
+		units = append(units, unit)
+	}
+	for _, path := range paths {
+		absolute := filepath.Join(root, filepath.FromSlash(path))
+		best := -1
+		bestLength := -1
+		for index, unit := range units {
+			if pathWithin(unit.root, absolute) && len(unit.root) > bestLength {
+				best, bestLength = index, len(unit.root)
+			}
+		}
+		if best >= 0 {
+			units[best].sources = append(units[best].sources, path)
+		}
+	}
+	return units, nil
+}
+
+func workspaceModuleRoots(root, workspace string, paths []string) ([]string, error) {
 	content, err := os.ReadFile(workspace)
 	if err != nil {
 		return nil, err
@@ -732,31 +876,106 @@ func workspacePackagePatterns(root string) ([]string, error) {
 		return nil, err
 	}
 	workspaceDir := filepath.Dir(workspace)
+	visible := map[string]bool{}
+	for _, path := range paths {
+		visible[path] = true
+	}
 	seen := map[string]bool{}
-	var patterns []string
+	var roots []string
 	for _, use := range parsed.Use {
 		moduleDir := use.Path
 		if !filepath.IsAbs(moduleDir) {
 			moduleDir = filepath.Join(workspaceDir, moduleDir)
 		}
-		relative, err := filepath.Rel(root, moduleDir)
-		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		moduleDir = filepath.Clean(moduleDir)
+		if !pathWithin(root, moduleDir) || !directoryContainedBy(root, moduleDir) {
 			continue
 		}
-		pattern := "./..."
-		if relative != "." {
-			pattern = "./" + filepath.ToSlash(relative) + "/..."
+		relative, err := filepath.Rel(root, filepath.Join(moduleDir, "go.mod"))
+		if err != nil || !visible[filepath.ToSlash(relative)] {
+			continue
 		}
-		if !seen[pattern] {
-			seen[pattern] = true
-			patterns = append(patterns, pattern)
+		if !seen[moduleDir] {
+			seen[moduleDir] = true
+			roots = append(roots, moduleDir)
 		}
 	}
-	if len(patterns) == 0 {
-		return []string{"./..."}, nil
+	return roots, nil
+}
+
+func semanticRepositoryPaths(ctx context.Context, root string) ([]string, error) {
+	command := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	if output, err := command.Output(); err == nil {
+		var paths []string
+		for _, raw := range bytes.Split(output, []byte{0}) {
+			if len(raw) == 0 {
+				continue
+			}
+			path := filepath.ToSlash(string(raw))
+			if semanticPathIgnored(path) {
+				continue
+			}
+			info, statErr := os.Lstat(filepath.Join(root, filepath.FromSlash(path)))
+			if statErr == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+				paths = append(paths, path)
+			}
+		}
+		sort.Strings(paths)
+		return paths, nil
 	}
-	sort.Strings(patterns)
-	return patterns, nil
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var paths []string
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if path != root && semanticPathIgnored(entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		relative, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return relErr
+		}
+		relative = filepath.ToSlash(relative)
+		if !semanticPathIgnored(relative) {
+			paths = append(paths, relative)
+		}
+		return nil
+	})
+	sort.Strings(paths)
+	return paths, err
+}
+
+func semanticPathIgnored(path string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+		switch part {
+		case ".git", ".grafo", ".worktrees", "node_modules", "vendor", "dist", "build", "coverage", ".next", ".turbo":
+			return true
+		}
+	}
+	return false
+}
+
+func pathWithin(root, path string) bool {
+	relative, err := filepath.Rel(root, path)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+}
+
+func directoryContainedBy(root, directory string) bool {
+	realRoot, rootErr := filepath.EvalSymlinks(root)
+	realDirectory, directoryErr := filepath.EvalSymlinks(directory)
+	return rootErr == nil && directoryErr == nil && pathWithin(realRoot, realDirectory)
 }
 
 func collectCalls(pkg *packages.Package, file *goast.File, calls map[int]SemanticCall) {
@@ -948,6 +1167,15 @@ func collectImplementations(root string, pkg *packages.Package, interfaces []sem
 }
 
 func collectPackageDiagnostics(root string, pkg *packages.Package, views map[string]SemanticView, buildContext string) {
+	moduleRoot := ""
+	if pkg != nil && pkg.Module != nil && pkg.Module.Dir != "" && pathWithin(root, pkg.Module.Dir) {
+		if relative, err := filepath.Rel(root, pkg.Module.Dir); err == nil {
+			moduleRoot = filepath.ToSlash(relative)
+			if moduleRoot == "." {
+				moduleRoot = "repository root"
+			}
+		}
+	}
 	for _, packageError := range pkg.Errors {
 		path, line := diagnosticPosition(root, packageError.Pos)
 		if path == "" {
@@ -965,8 +1193,12 @@ func collectPackageDiagnostics(root string, pkg *packages.Package, views map[str
 		view.Available = true
 		view.Included = true
 		view.BuildContext = buildContext
+		message := packageError.Msg
+		if moduleRoot != "" {
+			message = "Go module " + moduleRoot + ": " + message
+		}
 		view.Diagnostics = append(view.Diagnostics, graph.Diagnostic{
-			Path: path, Line: line, Level: "warning", Message: packageError.Msg,
+			Path: path, Line: line, Level: "warning", Message: message,
 		})
 		views[path] = view
 	}
@@ -1004,53 +1236,42 @@ func relativeSourcePath(root, filename string) (string, bool) {
 	return filepath.ToSlash(relative), true
 }
 
-func semanticWorkspaceKey(root string) (string, string, error) {
+func semanticWorkspaceKey(ctx context.Context, root string) (string, string, error) {
 	buildContext := buildContextString(root)
 	digest := sha256.New()
 	_, _ = digest.Write([]byte(buildContext))
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			if path == root {
-				return walkErr
-			}
-			return nil
-		}
-		if entry.IsDir() {
-			switch entry.Name() {
-			case ".git", ".grafo", ".worktrees":
-				if path != root {
-					return filepath.SkipDir
-				}
-			}
-			return nil
-		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil || !info.Mode().IsRegular() {
-			return nil
-		}
-		relative, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		relative = filepath.ToSlash(relative)
+	paths, err := semanticRepositoryPaths(ctx, root)
+	if err != nil {
+		return "", "", err
+	}
+	for _, relative := range paths {
 		if !isGoSemanticInput(relative) {
-			return nil
+			continue
 		}
-		content, err := os.ReadFile(path)
+		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
 		if err != nil {
-			return nil
+			continue
 		}
 		_, _ = digest.Write([]byte(relative))
 		_, _ = digest.Write([]byte{0})
 		_, _ = digest.Write(content)
 		_, _ = digest.Write([]byte{0})
-		return nil
-	})
-	if err != nil {
-		return "", "", err
+	}
+	// Vendor trees are not application modules, but their manifest controls
+	// the load mode and exact dependency graph for each eligible module.
+	for _, relative := range paths {
+		if filepath.Base(relative) != "go.mod" {
+			continue
+		}
+		vendorManifest := filepath.ToSlash(filepath.Join(filepath.Dir(relative), "vendor", "modules.txt"))
+		content, readErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(vendorManifest)))
+		if readErr != nil {
+			continue
+		}
+		_, _ = digest.Write([]byte(vendorManifest))
+		_, _ = digest.Write([]byte{0})
+		_, _ = digest.Write(content)
+		_, _ = digest.Write([]byte{0})
 	}
 	workspace := discoverGoWorkspace(root)
 	if workspace != "" && workspace != "off" {
