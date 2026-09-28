@@ -261,7 +261,7 @@ func (a *chiAnalyzer) composeRoots() {
 	seen := map[string]bool{}
 	for _, root := range roots {
 		execution := &chiExecution{stack: map[*types.Func]bool{}}
-		returned := a.executeFunction(execution, root, nil, false)
+		returned, _ := a.executeFunction(execution, root, nil, false)
 		var routers []*chiRouter
 		for _, state := range returned {
 			if state.router != nil {
@@ -297,31 +297,38 @@ func (a *chiAnalyzer) composeRoots() {
 	}
 }
 
-func (a *chiAnalyzer) executeFunction(execution *chiExecution, function *chiFunction, arguments []chiState, conditional bool) []chiState {
+func (a *chiAnalyzer) executeFunction(execution *chiExecution, function *chiFunction, arguments []chiState, conditional bool) ([]chiState, []chiState) {
 	if function == nil || function.decl.Body == nil {
-		return nil
+		return nil, nil
 	}
 	if len(execution.stack) >= chiSummaryLimit || execution.stack[function.object] {
 		a.diagnostic(semanticLocation(function.path, a.pkg.Fset, function.decl.Pos(), function.decl.End()),
 			"recursive Chi router composition exceeded the bounded package summary")
-		return nil
+		return nil, nil
 	}
 	execution.stack[function.object] = true
 	defer delete(execution.stack, function.object)
 	environment := map[types.Object]chiState{}
+	var parameterObjects []types.Object
 	argument := 0
 	if function.decl.Type.Params != nil {
 		for _, field := range function.decl.Type.Params.List {
 			for _, name := range field.Names {
+				object := a.pkg.TypesInfo.Defs[name]
+				parameterObjects = append(parameterObjects, object)
 				if argument < len(arguments) {
-					environment[a.pkg.TypesInfo.Defs[name]] = cloneChiState(arguments[argument])
+					environment[object] = cloneChiState(arguments[argument])
 				}
 				argument++
 			}
 		}
 	}
 	returned, _ := a.executeBlock(execution, function, function.decl.Body.List, environment, conditional)
-	return returned
+	updated := make([]chiState, len(parameterObjects))
+	for index, object := range parameterObjects {
+		updated[index] = cloneChiState(environment[object])
+	}
+	return returned, updated
 }
 
 func (a *chiAnalyzer) executeBlock(execution *chiExecution, function *chiFunction, statements []goast.Stmt,
@@ -440,6 +447,7 @@ func (a *chiAnalyzer) executeCall(execution *chiExecution, function *chiFunction
 		selector := call.Fun.(*goast.SelectorExpr)
 		base, valid := a.evalRouter(execution, function, selector.X, environment, conditional)
 		if !valid || base.router == nil {
+			a.diagnostic(a.location(function.path, selector.X), "Chi router receiver could not be proven; composition omitted")
 			return chiState{}, false
 		}
 		location := a.location(function.path, call)
@@ -505,6 +513,12 @@ func (a *chiAnalyzer) executeCall(execution *chiExecution, function *chiFunction
 			if !chiEndpointMethod(name) {
 				return base, true
 			}
+			if (name == "Method" || name == "MethodFunc") && len(call.Args) >= 3 {
+				if _, ok := a.constantString(call.Args[0]); !ok {
+					a.diagnostic(location, "dynamic Chi endpoint method could not be proven; endpoint omitted")
+					return base, true
+				}
+			}
 			method, routeIndex, handlerIndex, ok := a.endpointArguments(name, call.Args)
 			if !ok {
 				return base, true
@@ -543,7 +557,13 @@ func (a *chiAnalyzer) executeCall(execution *chiExecution, function *chiFunction
 	if !hasRouter && !a.functionReturnsRouter(target) {
 		return chiState{}, false
 	}
-	returned := a.executeFunction(execution, target, arguments, conditional)
+	returned, updated := a.executeFunction(execution, target, arguments, conditional)
+	for index, state := range updated {
+		if index >= len(call.Args) || state.router == nil {
+			continue
+		}
+		a.storeRouterState(call.Args[index], state, environment)
+	}
 	if len(returned) == 1 {
 		return returned[0], true
 	}
@@ -593,6 +613,20 @@ func (a *chiAnalyzer) executeCallback(execution *chiExecution, function *chiFunc
 			return
 		}
 		a.executeFunction(execution, target, []chiState{state}, conditional)
+	}
+}
+
+func (a *chiAnalyzer) storeRouterState(expression goast.Expr, state chiState, environment map[types.Object]chiState) {
+	identifier, ok := expression.(*goast.Ident)
+	if !ok {
+		return
+	}
+	object := a.pkg.TypesInfo.Uses[identifier]
+	if object == nil {
+		object = a.pkg.TypesInfo.Defs[identifier]
+	}
+	if object != nil {
+		environment[object] = cloneChiState(state)
 	}
 }
 

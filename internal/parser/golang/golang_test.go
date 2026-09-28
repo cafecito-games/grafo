@@ -1010,10 +1010,20 @@ func childRoutes() chi.Router {
 }
 
 func dynamicOnly(r chi.Router) { r.Get("/hidden", me) }
+func applyHelper(r chi.Router) { r.Use(audit) }
+func dynamicMethod(r chi.Router, method string) { r.MethodFunc(method, "/dynamic-method", me) }
+
+type server struct { router chi.Router }
+func (s *server) fieldRoute() { s.router.Get("/field", me) }
 
 func Routes(dynamic string) chi.Router {
 	r := chi.NewRouter()
 	r.Use(outer)
+	helperRouter := chi.NewRouter()
+	applyHelper(helperRouter)
+	helperRouter.Get("/use", me)
+	r.Mount("/helper", helperRouter)
+	dynamicMethod(r, dynamic)
 	r.Route(api+"/auth", authRoutes)
 	r.Route("/one", authRoutes)
 	r.Route("/two", authRoutes)
@@ -1071,6 +1081,7 @@ func NotARouter() { unrelated{}.Get("/invented", login) }
 		"PATCH /method":       {"example.com/app.outer"},
 		"ANY /any":            {"example.com/app.outer"},
 		"GET /conditional":    {"example.com/app.outer"},
+		"GET /helper/use":     {"example.com/app.outer", "example.com/app.audit"},
 	}
 	endpoints := map[string]graph.Node{}
 	for _, node := range result.Nodes {
@@ -1117,13 +1128,17 @@ func NotARouter() { unrelated{}.Get("/invented", login) }
 		}
 	}
 	foundDynamicDiagnostic, foundCycleDiagnostic, foundAmbiguousDiagnostic := false, false, false
+	foundDynamicMethodDiagnostic, foundRouterReceiverDiagnostic := false, false
 	for _, diagnostic := range result.Diagnostics {
 		foundDynamicDiagnostic = foundDynamicDiagnostic || strings.Contains(diagnostic.Message, "dynamic Chi route prefix")
 		foundCycleDiagnostic = foundCycleDiagnostic || strings.Contains(diagnostic.Message, "recursive Chi router composition")
 		foundAmbiguousDiagnostic = foundAmbiguousDiagnostic || strings.Contains(diagnostic.Message, "ambiguous Chi router helper result")
+		foundDynamicMethodDiagnostic = foundDynamicMethodDiagnostic || strings.Contains(diagnostic.Message, "dynamic Chi endpoint method")
+		foundRouterReceiverDiagnostic = foundRouterReceiverDiagnostic || strings.Contains(diagnostic.Message, "Chi router receiver could not be proven")
 	}
-	if !foundDynamicDiagnostic || !foundCycleDiagnostic || !foundAmbiguousDiagnostic {
-		t.Fatalf("dynamic Chi prefix was not diagnosed: %#v", result.Diagnostics)
+	if !foundDynamicDiagnostic || !foundCycleDiagnostic || !foundAmbiguousDiagnostic ||
+		!foundDynamicMethodDiagnostic || !foundRouterReceiverDiagnostic {
+		t.Fatalf("fail-closed Chi composition was not diagnosed: %#v", result.Diagnostics)
 	}
 	conditional := endpoints["GET /conditional"]
 	for _, fact := range result.Facts {
