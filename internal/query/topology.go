@@ -1299,7 +1299,7 @@ func (t *Topology) ServiceTopology(ctx context.Context, options TopologyOptions)
 				Scheme: request.Scheme, Authority: request.Authority,
 				Status: request.Status, EndpointIDs: endpointIDs,
 				SourceNodes: []Resource{request.Source}, TargetNodes: targetNodes,
-				Evidence: []LinkEvidence{request.Evidence}}
+				Evidence: []LinkEvidence{request.Evidence}, Truncated: request.Truncated}
 			finalizeLink(&link)
 			if !linkMatchesPathPrefixes(link, options.PathPrefixes) {
 				continue
@@ -1342,9 +1342,6 @@ func (t *Topology) ServiceTopology(ctx context.Context, options TopologyOptions)
 		}
 	}
 	result := ServiceTopology{Services: make([]ServiceNode, 0, len(services)), Links: make([]ServiceLink, 0, len(links))}
-	for _, request := range requests {
-		result.Truncated = result.Truncated || request.Truncated
-	}
 	for _, service := range services {
 		result.Services = append(result.Services, service)
 	}

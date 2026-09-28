@@ -150,6 +150,12 @@ func TestTopologyPathPrefixesSelectAnchorsAndRetainCounterparts(t *testing.T) {
 	if err != nil || len(externalOnly.Links) != 0 || len(externalOnly.Services) != 0 || externalOnly.Truncated {
 		t.Fatalf("external-only path created a scoped topology result: %#v, %v", externalOnly, err)
 	}
+	unmatched, err := service.ServiceTopology(context.Background(), query.TopologyOptions{
+		PathPrefixes: []string{"not-present"}, Limit: 1,
+	})
+	if err != nil || len(unmatched.Links) != 0 || len(unmatched.Services) != 0 || unmatched.Truncated {
+		t.Fatalf("out-of-scope truncation leaked into an empty topology: %#v, %v", unmatched, err)
+	}
 }
 
 func TestEndpointRepositoryFilterKeepsReferencedUnresolvedTargets(t *testing.T) {
