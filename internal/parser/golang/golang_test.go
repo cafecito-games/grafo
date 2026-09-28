@@ -291,6 +291,25 @@ func ObjectOverflow(flags [9]bool) {
 	_, _ = http.Get(api.baseURL + "/object-overflow")
 }
 
+func RequestFieldOverflow(flags [9]bool) {
+	api := &API{baseURL: http.MethodGet}
+	if flags[0] { api = &API{baseURL: http.MethodPost} }
+	if flags[1] { api = &API{baseURL: http.MethodPut} }
+	if flags[2] { api = &API{baseURL: http.MethodPatch} }
+	if flags[3] { api = &API{baseURL: http.MethodDelete} }
+	if flags[4] { api = &API{baseURL: http.MethodHead} }
+	if flags[5] { api = &API{baseURL: http.MethodOptions} }
+	if flags[6] { api = &API{baseURL: http.MethodConnect} }
+	if flags[7] { api = &API{baseURL: http.MethodTrace} }
+	if flags[8] { api = &API{baseURL: "CUSTOM"} }
+	constructed, _ := http.NewRequest(http.MethodGet, "/field-overflow", nil)
+	constructed.Method = api.baseURL
+	_, _ = http.DefaultClient.Do(constructed)
+	literal := &http.Request{Method: http.MethodGet, URL: &url.URL{}}
+	literal.URL.Path = api.baseURL
+	_, _ = http.DefaultClient.Do(literal)
+}
+
 type API struct {
 	baseURL string
 	client *http.Client
@@ -460,7 +479,7 @@ func NotHTTP() {
 	if !foundCycleDiagnostic {
 		t.Fatalf("recursive wrapper was not diagnosed: %#v", result.Diagnostics)
 	}
-	if foundBoundDiagnostics < 2 {
+	if foundBoundDiagnostics < 4 {
 		t.Fatalf("alternative bound was not diagnosed: %#v", result.Diagnostics)
 	}
 }

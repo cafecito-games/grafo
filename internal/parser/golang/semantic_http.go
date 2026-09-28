@@ -806,9 +806,13 @@ func (a *httpSemanticAnalyzer) assign(execution *httpExecution, function *httpSe
 			}
 			switch selection.Obj().Name() {
 			case "Method":
-				current.requests = replaceRequestMethods(current.requests, value.strings)
+				current.requests = replaceRequestMethods(current.requests, httpValueStrings(value))
 			case "URL":
-				current.requests = replaceRequestRoutes(current.requests, urlObjectStrings(value.objects))
+				if value.overflow {
+					current.requests = []httpRequestValue{{overflow: true}}
+				} else {
+					current.requests = replaceRequestRoutes(current.requests, urlObjectStrings(value.objects))
+				}
 			}
 			environment[object] = current
 		}
@@ -1103,6 +1107,10 @@ func requestObjectRequests(object *httpObjectValue) []httpRequestValue {
 	methods := httpObjectStrings(object, "Method")
 	var routes []httpStringValue
 	for _, value := range httpObjectValues(object, "URL") {
+		if value.overflow {
+			routes = []httpStringValue{{overflow: true}}
+			break
+		}
 		routes = append(routes, urlObjectStrings(value.objects)...)
 	}
 	return crossHTTPRequests(methods, routes, "net/http.Request", "request_fields")
@@ -1146,7 +1154,7 @@ func replaceRequestRoutes(requests []httpRequestValue, routes []httpStringValue)
 func httpObjectStrings(object *httpObjectValue, name string) []httpStringValue {
 	for field, value := range object.fields {
 		if field.Name() == name {
-			return append([]httpStringValue(nil), value.strings...)
+			return append([]httpStringValue(nil), httpValueStrings(value)...)
 		}
 	}
 	return nil
