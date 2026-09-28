@@ -108,6 +108,12 @@ explicitly marked as test helpers or lifecycle hooks, is bounded by depth and
 work limits, and reports cycles or exhausted bounds as truncated. These reports
 are structural evidence and never claim runtime execution coverage.
 
+Semantic-index version 30 refreshes Go workspace evidence when nested modules
+or vendored semantic inputs change. Semantic-index version 31 adds
+repository-declared call-effect adapters. The
+durable graph schema does not change: configured calls project through the
+existing event and HTTP vocabularies and retain their ordinary call evidence.
+
 For Git worktrees, the indexer narrows content hashing to files changed since
 the indexed commit, current untracked files, and paths that were dirty during
 the previous run. Remembering the previous dirty set closes the restore case:
@@ -681,11 +687,22 @@ changing a path mapping or default reparses unchanged SQL sources that may now
 select another dialect, while a component-only edit does not. Parser-contract
 changes also bump the semantic-index version.
 
-The same loader owns `http.request_apis`. GDScript includes only that validated
-HTTP subtree in its semantic key and declares repository-root `grafo.yaml` as a
-semantic dependency. A configured adapter names one exact qualified callable
-and its method/URL argument positions; parser scope and receiver evidence still
-decide whether a source call resolves to that identity. Built-in Godot
-`HTTPRequest.request` uses its fixed Godot 4 signature. Both paths feed the
-shared HTTP route model, so canonical request identity and topology matching do
-not acquire a GDScript-specific variant.
+The same loader owns the language-neutral `adapters` registry. Its closed V1
+vocabulary contains GDScript `event.publish`, `event.subscribe`,
+`event.unsubscribe`, `event.connection_test`, and `http.request` effects with
+validated argument roles. `internal/parser/calleffect` is the sole vocabulary
+and role-schema authority; project configuration owns structural parsing,
+provenance, exact `(language, symbol)` registration, and the deterministic
+semantic digest. A future frontend extends that shared vocabulary and supplies
+its own exact callee/expression resolver rather than adding a language-specific
+configuration section.
+
+GDScript includes the normalized adapter registry in its semantic key and
+declares repository-root `grafo.yaml` as a semantic dependency. Parser scope
+and receiver evidence still decide whether a source call resolves to the exact
+configured identity. Configured event effects converge with native signal
+emission before fact creation, so event identity, forms, and handler proof stay
+single-sourced. Configured HTTP effects and built-in Godot
+`HTTPRequest.request` both feed the shared HTTP route model. The legacy
+`http.request_apis` section is parsed as a compatibility alias into this same
+registry; a cross-form duplicate is rejected instead of ordered.

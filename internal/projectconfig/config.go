@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cafecito-games/grafo/internal/parser/calleffect"
 	"github.com/cafecito-games/grafo/internal/pathscope"
 	"gopkg.in/yaml.v3"
 )
@@ -35,6 +36,7 @@ var (
 // interpret them.
 type Config struct {
 	Components      []Component
+	Adapters        calleffect.Registry
 	HTTP            HTTP
 	SQL             SQL
 	Tests           Tests
@@ -249,6 +251,7 @@ func Parse(content []byte) (Config, error) {
 		return Config{}, fmt.Errorf("line %d: top-level configuration must be a mapping", root.Line)
 	}
 	result := Config{UnknownSections: map[string][]yaml.Node{}}
+	var adapters []calleffect.Adapter
 	seenOwned := map[string]bool{}
 	for index := 0; index < len(root.Content); index += 2 {
 		keyNode, valueNode := root.Content[index], root.Content[index+1]
@@ -257,6 +260,15 @@ func Parse(content []byte) (Config, error) {
 			continue // Unknown non-string keys belong to no Grafo-owned section.
 		}
 		switch key {
+		case "adapters":
+			if seenOwned[key] {
+				return Config{}, fmt.Errorf("line %d: duplicate top-level section %q", keyNode.Line, key)
+			}
+			seenOwned[key] = true
+			adapters, err = parseAdapters(valueNode)
+			if err != nil {
+				return Config{}, err
+			}
 		case "components":
 			if seenOwned[key] {
 				return Config{}, fmt.Errorf("line %d: duplicate top-level section %q", keyNode.Line, key)
@@ -305,7 +317,192 @@ func Parse(content []byte) (Config, error) {
 			result.UnknownSections[key] = append(result.UnknownSections[key], value)
 		}
 	}
+	for _, api := range result.HTTP.RequestAPIs {
+		adapters = append(adapters, calleffect.Adapter{Language: api.Language, Symbol: api.Symbol, Line: api.Line, Legacy: true,
+			Effects: []calleffect.Effect{{Kind: calleffect.HTTPRequest, Line: api.Line, Roles: map[string]calleffect.Selector{
+				calleffect.RoleMethod: {Argument: api.MethodArgument, Line: api.Line},
+				calleffect.RoleURL:    {Argument: api.URLArgument, Line: api.Line},
+			}}}})
+	}
+	registry, registryErr := calleffect.New(adapters)
+	if registryErr != nil {
+		return Config{}, registryErr
+	}
+	result.Adapters = registry
 	return result, nil
+}
+
+func parseAdapters(node *yaml.Node) ([]calleffect.Adapter, error) {
+	if isEmptyYAMLValue(node) {
+		return nil, nil
+	}
+	if node.Kind != yaml.SequenceNode {
+		return nil, fmt.Errorf("line %d: adapters must be a sequence", node.Line)
+	}
+	result := make([]calleffect.Adapter, 0, len(node.Content))
+	for _, item := range node.Content {
+		if item.Kind != yaml.MappingNode {
+			return nil, fmt.Errorf("line %d: adapter must be a mapping", item.Line)
+		}
+		adapter := calleffect.Adapter{Line: item.Line, Column: item.Column}
+		seen := map[string]bool{}
+		for index := 0; index < len(item.Content); index += 2 {
+			keyNode, valueNode := item.Content[index], item.Content[index+1]
+			key, err := stringScalar(keyNode)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: adapter field name must be a string", keyNode.Line)
+			}
+			if seen[key] {
+				return nil, fmt.Errorf("line %d: duplicate adapter field %q", keyNode.Line, key)
+			}
+			seen[key] = true
+			switch key {
+			case "match":
+				adapter.Language, adapter.Symbol, err = parseAdapterMatch(valueNode)
+				if err != nil {
+					return nil, err
+				}
+			case "effects":
+				adapter.Effects, err = parseAdapterEffects(valueNode)
+				if err != nil {
+					return nil, err
+				}
+			default:
+				return nil, fmt.Errorf("line %d: unknown adapter field %q", keyNode.Line, key)
+			}
+		}
+		if adapter.Language == "" || adapter.Symbol == "" {
+			return nil, fmt.Errorf("line %d: adapter match is required", item.Line)
+		}
+		if len(adapter.Effects) == 0 {
+			return nil, fmt.Errorf("line %d: adapter effects must contain at least one effect", item.Line)
+		}
+		if adapter.Language == "gdscript" && adapter.Symbol == "HTTPRequest.request" {
+			for _, effect := range adapter.Effects {
+				if effect.Kind != calleffect.HTTPRequest {
+					continue
+				}
+				if effect.Roles[calleffect.RoleMethod].Argument != 2 || effect.Roles[calleffect.RoleURL].Argument != 0 {
+					return nil, fmt.Errorf("line %d: configured signature for %q conflicts with built-in method argument 2 and URL argument 0", effect.Line, adapter.Symbol)
+				}
+			}
+		}
+		result = append(result, adapter)
+	}
+	return result, nil
+}
+
+func parseAdapterMatch(node *yaml.Node) (string, string, error) {
+	if node.Kind != yaml.MappingNode {
+		return "", "", fmt.Errorf("line %d: adapter match must be a mapping", node.Line)
+	}
+	language, symbol := "", ""
+	seen := map[string]bool{}
+	for index := 0; index < len(node.Content); index += 2 {
+		keyNode, valueNode := node.Content[index], node.Content[index+1]
+		key, err := stringScalar(keyNode)
+		if err != nil {
+			return "", "", fmt.Errorf("line %d: adapter match field name must be a string", keyNode.Line)
+		}
+		if seen[key] {
+			return "", "", fmt.Errorf("line %d: duplicate adapter match field %q", keyNode.Line, key)
+		}
+		seen[key] = true
+		value, valueErr := stringScalar(valueNode)
+		if valueErr != nil {
+			return "", "", fmt.Errorf("line %d: adapter match %s must be a non-empty string", valueNode.Line, key)
+		}
+		switch key {
+		case "language":
+			language = strings.ToLower(strings.TrimSpace(value))
+		case "symbol":
+			symbol = strings.TrimSpace(value)
+		default:
+			return "", "", fmt.Errorf("line %d: unknown adapter match field %q", keyNode.Line, key)
+		}
+	}
+	if language != "gdscript" {
+		return "", "", fmt.Errorf("line %d: unsupported adapter language %q", node.Line, language)
+	}
+	if !requestSymbolPattern.MatchString(symbol) {
+		return "", "", fmt.Errorf("line %d: adapter symbol %q must be an exact qualified symbol", node.Line, symbol)
+	}
+	return language, symbol, nil
+}
+
+func parseAdapterEffects(node *yaml.Node) ([]calleffect.Effect, error) {
+	if node.Kind != yaml.SequenceNode {
+		return nil, fmt.Errorf("line %d: adapter effects must be a sequence", node.Line)
+	}
+	result := make([]calleffect.Effect, 0, len(node.Content))
+	for _, item := range node.Content {
+		if item.Kind != yaml.MappingNode {
+			return nil, fmt.Errorf("line %d: adapter effect must be a mapping", item.Line)
+		}
+		effect := calleffect.Effect{Line: item.Line, Column: item.Column}
+		seen := map[string]bool{}
+		for index := 0; index < len(item.Content); index += 2 {
+			keyNode, valueNode := item.Content[index], item.Content[index+1]
+			key, err := stringScalar(keyNode)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: adapter effect field name must be a string", keyNode.Line)
+			}
+			if seen[key] {
+				return nil, fmt.Errorf("line %d: duplicate adapter effect field %q", keyNode.Line, key)
+			}
+			seen[key] = true
+			switch key {
+			case "kind":
+				value, valueErr := stringScalar(valueNode)
+				if valueErr != nil {
+					return nil, fmt.Errorf("line %d: adapter effect kind must be a non-empty string", valueNode.Line)
+				}
+				effect.Kind = calleffect.Kind(strings.TrimSpace(value))
+			case "roles":
+				effect.Roles, err = parseAdapterRoles(valueNode)
+				if err != nil {
+					return nil, err
+				}
+			default:
+				return nil, fmt.Errorf("line %d: unknown adapter effect field %q", keyNode.Line, key)
+			}
+		}
+		if err := calleffect.ValidateEffect(effect); err != nil {
+			return nil, err
+		}
+		result = append(result, effect)
+	}
+	return result, nil
+}
+
+func parseAdapterRoles(node *yaml.Node) (map[string]calleffect.Selector, error) {
+	if node.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("line %d: adapter effect roles must be a mapping", node.Line)
+	}
+	roles := map[string]calleffect.Selector{}
+	for index := 0; index < len(node.Content); index += 2 {
+		keyNode, selectorNode := node.Content[index], node.Content[index+1]
+		role, err := stringScalar(keyNode)
+		if err != nil {
+			return nil, fmt.Errorf("line %d: adapter role name must be a string", keyNode.Line)
+		}
+		if _, ok := roles[role]; ok {
+			return nil, fmt.Errorf("line %d: duplicate adapter role %q", keyNode.Line, role)
+		}
+		if selectorNode.Kind != yaml.MappingNode || len(selectorNode.Content) != 2 {
+			return nil, fmt.Errorf("line %d: adapter role %q requires exactly one argument selector", selectorNode.Line, role)
+		}
+		selectorKey, err := stringScalar(selectorNode.Content[0])
+		if err != nil || selectorKey != "argument" {
+			return nil, fmt.Errorf("line %d: adapter role %q requires exactly one argument selector", selectorNode.Line, role)
+		}
+		argument, err := nonNegativeYAMLInteger(selectorNode.Content[1], "argument")
+		if err != nil {
+			return nil, err
+		}
+		roles[role] = calleffect.Selector{Argument: argument, Line: selectorNode.Line, Column: selectorNode.Column}
+	}
+	return roles, nil
 }
 
 func parseIndexScope(node *yaml.Node) (IndexScope, error) {
