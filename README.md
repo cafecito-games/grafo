@@ -607,7 +607,10 @@ Changing the normalized scope forces full candidate discovery at the next
 index pass: narrowing removes stale file-owned graph evidence and broadening
 discovers files absent from the prior catalog. Repeating an unchanged scope
 retains normal incremental membership reuse. Index reports expose only the
-count scoped out by configuration, not the excluded path list.
+count of parser-supported candidates scoped out by configuration, not the
+excluded path list. Because scope is enforced before filesystem inspection,
+an excluded candidate is classified as scoped out rather than subsequently as
+a symlink, non-regular file, size skip, or read failure.
 
 ## Endpoint and service topology
 
@@ -699,7 +702,9 @@ not `internal/application`. They select canonical top-level subjects before
 limits while retaining complete bounded counterpart evidence. A topology link
 is selected when either non-external boundary is in scope. Federation applies
 the same relative prefixes independently to every member. Scalar selector
-commands intentionally do not accept this list filter.
+commands and commands outside this list intentionally reject this filter before
+opening a repository; they never accept and silently ignore it. Source search
+keeps its pre-existing `--path-prefix` support.
 
 ## Protobuf message flow and coverage
 

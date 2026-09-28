@@ -82,6 +82,10 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		a.println("grafo " + Version)
 		return 0
 	}
+	if _, present := parsed.values["path-prefix"]; present && !pathPrefixCommands[parsed.command] {
+		a.fail(fmt.Errorf("--path-prefix is not supported by %s", parsed.command))
+		return 2
+	}
 	var runErr error
 	switch parsed.command {
 	case "install":
@@ -1387,11 +1391,15 @@ func (a *App) search(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) == 0 {
 		return fmt.Errorf("usage: grafo search <pattern>... [--regex] [--case-sensitive] [--path-prefix dir] [--language go] [--context-lines 0] [--max-matches 500]")
 	}
+	prefixes, err := pathPrefixOption(args)
+	if err != nil {
+		return err
+	}
 	request := search.Request{
 		Patterns:      args.positionals,
 		Regex:         args.flags["regex"],
 		CaseSensitive: args.flags["case-sensitive"],
-		PathPrefixes:  splitList(args.values["path-prefix"]),
+		PathPrefixes:  prefixes,
 		Languages:     splitList(args.values["language"]),
 		Repositories:  splitList(args.values["repo-name"]),
 	}
@@ -2240,6 +2248,21 @@ var valueOptions = map[string]bool{
 	"filter": true, "method": true, "route": true, "event": true, "component": true,
 	"package": true, "message": true, "oneof": true, "status": true,
 	"progress": true,
+}
+
+// pathPrefixCommands is the adapter boundary for the one globally parsed
+// option that is intentionally available to only a bounded command set. Keep
+// aliases here so unsupported commands fail before opening any repository.
+var pathPrefixCommands = map[string]bool{
+	"search":          true,
+	"data-resources":  true,
+	"config-keys":     true,
+	"events":          true,
+	"orphaned-events": true,
+	"endpoints":       true, "list-endpoints": true, "list_endpoints": true,
+	"outbound-requests": true, "list-outbound-requests": true, "list_outbound_requests": true,
+	"service-topology": true, "get-service-topology": true, "get_service_topology": true,
+	"message-coverage": true, "list-message-coverage": true, "list_message_coverage": true,
 }
 
 func parseArguments(arguments []string) (parsedArguments, error) {

@@ -84,6 +84,21 @@ func TestParseArgumentsAccumulatesRepeatablePathPrefixes(t *testing.T) {
 	}
 }
 
+func TestRunRejectsPathPrefixForEveryUnsupportedCommandBeforeWork(t *testing.T) {
+	for _, arguments := range [][]string{
+		{"index", "--path-prefix", "internal"},
+		{"path", "From", "To", "--path-prefix", "internal"},
+		{"find-tests", "pkg.Symbol", "--path-prefix", "internal"},
+		{"message-flow", "acme.Message", "--path-prefix", "internal"},
+	} {
+		var stdout, stderr bytes.Buffer
+		code := New(&stdout, &stderr).Run(context.Background(), arguments)
+		if code == 0 || !strings.Contains(stderr.String(), "--path-prefix is not supported") {
+			t.Fatalf("grafo %v: code=%d stderr=%q", arguments, code, stderr.String())
+		}
+	}
+}
+
 func TestOpenReadRetainsSemanticWritesForReusableAlias(t *testing.T) {
 	root := indexedRepository(t)
 	args, err := parseArguments([]string{"find-reusable-code", "payment helper", "--repo", root})
