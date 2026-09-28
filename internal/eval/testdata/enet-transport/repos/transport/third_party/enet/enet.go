@@ -4,7 +4,7 @@ type PacketFlags uint32
 
 const PacketFlagReliable PacketFlags = 1
 
-type Packet interface { GetData() []byte }
+type Packet interface{ GetData() []byte }
 type Event interface {
 	GetPacket() Packet
 	GetChannelID() uint8

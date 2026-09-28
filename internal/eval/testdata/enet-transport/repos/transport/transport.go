@@ -1,8 +1,8 @@
 package transport
 
 import (
-	enet "github.com/codecat/go-enet"
 	generated "example.com/transport/generated/go/proto"
+	enet "github.com/codecat/go-enet"
 	wire "google.golang.org/protobuf/proto"
 )
 

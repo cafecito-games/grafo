@@ -920,7 +920,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 5,
+          "line": 4,
           "column": 2
         },
         "properties": {
@@ -941,7 +941,7 @@
         },
         "source": {
           "path": "transport.go",
-          "line": 4,
+          "line": 5,
           "column": 2
         },
         "properties": {
@@ -1510,7 +1510,7 @@
         "source": {
           "path": "third_party/enet/enet.go",
           "line": 7,
-          "column": 25
+          "column": 24
         }
       },
       {
@@ -2547,7 +2547,7 @@
         "source": {
           "path": "generated/go/proto/envelope.pb.go",
           "line": 5,
-          "column": 24
+          "column": 23
         }
       },
       {

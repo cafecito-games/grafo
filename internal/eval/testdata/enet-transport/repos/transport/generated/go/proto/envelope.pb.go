@@ -2,4 +2,4 @@
 // source: proto/envelope.proto
 package generated
 
-type Envelope struct { Text string }
+type Envelope struct{ Text string }
