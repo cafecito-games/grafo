@@ -294,20 +294,18 @@ func (e *extractor) extract(file *gdast.File) {
 		fieldSymbols: map[string]string{}, fieldLocked: map[string]bool{}, locked: map[string]bool{}, signals: map[string]signalRef{}}
 	root.types[className] = qualified
 	base := fileBase(file.Statements)
-	// Field initializers are inferred while the class is prepared, so retain the
-	// raw base early enough for bare inherited generated APIs such as from_bytes.
-	if base != "" {
-		e.bases[qualified] = base
-	}
-	// Prepare inner class names before resolving the file base, because a script
-	// may extend a class declared later in the same file.
-	e.prepareClass(file.Statements, root)
+	// Register inner class names before resolving the file base, because a script
+	// may extend a class declared later in the same file. Resolve that base before
+	// field inference so bare inherited generated APIs such as from_bytes remain
+	// available to forward-declared fields without bypassing inner-class shadows.
+	e.prepareClassSymbols(file.Statements, root)
 	if base != "" {
 		if resolved := e.resolveType(base, root); resolved != "" {
 			base = resolved
 		}
 		e.bases[qualified] = base
 	}
+	e.prepareClassFields(file.Statements, root)
 	e.walkStatements(file.Statements, root)
 }
 
@@ -329,6 +327,11 @@ func fileBase(statements []gdast.Statement) string {
 }
 
 func (e *extractor) prepareClass(statements []gdast.Statement, current scope) {
+	e.prepareClassSymbols(statements, current)
+	e.prepareClassFields(statements, current)
+}
+
+func (e *extractor) prepareClassSymbols(statements []gdast.Statement, current scope) {
 	for _, statement := range statements {
 		switch node := statement.(type) {
 		case *gdast.VariableDeclaration:
@@ -361,20 +364,26 @@ func (e *extractor) prepareClass(statements []gdast.Statement, current scope) {
 			}
 		}
 	}
+}
+
+func (e *extractor) prepareClassFields(statements []gdast.Statement, current scope) {
+	// Establish every declared inner-class base before inferring fields so a
+	// forward initializer can follow the complete local inheritance chain.
 	for _, statement := range statements {
-		switch node := statement.(type) {
-		case *gdast.VariableDeclaration:
-			if node.Type == "" && current.types[node.Name] == "" {
-				if inferred := e.inferExpressionType(node.Value, current); inferred != "" {
-					current.types[node.Name] = inferred
-					current.fields[node.Name] = inferred
-				}
-			}
-		case *gdast.ClassDeclaration:
-			if node.Extends != "" {
-				qualified := qualify(current.container, node.Name)
-				e.bases[qualified] = e.resolveType(node.Extends, current)
-			}
+		node, ok := statement.(*gdast.ClassDeclaration)
+		if ok && node.Extends != "" {
+			qualified := qualify(current.container, node.Name)
+			e.bases[qualified] = e.resolveType(node.Extends, current)
+		}
+	}
+	for _, statement := range statements {
+		node, ok := statement.(*gdast.VariableDeclaration)
+		if !ok || node.Type != "" || current.types[node.Name] != "" {
+			continue
+		}
+		if inferred := e.inferExpressionType(node.Value, current); inferred != "" {
+			current.types[node.Name] = inferred
+			current.fields[node.Name] = inferred
 		}
 	}
 }

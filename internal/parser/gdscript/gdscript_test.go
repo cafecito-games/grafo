@@ -392,6 +392,60 @@ var cached = from_bytes(PackedByteArray())
 	assertProtocolFact(t, result.Facts, useID, graph.EdgeWrites, "acme.v1.Envelope.text", "set")
 }
 
+func TestParserRejectsShadowedGeneratedBaseForForwardField(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "buf.gen.yaml", "version: v2\nplugins:\n  - local: protoc-gen-gdscript\n    out: generated\n")
+	writeFile(t, root, "envelope.proto", "syntax = \"proto3\"; package acme.v1; message Envelope { string text = 1; }\n")
+	content := []byte(`class_name Shadow extends AcmeV1EnvelopeEnvelope
+
+class AcmeV1EnvelopeEnvelope:
+	pass
+
+func use() -> void:
+	cached.set_text("not a generated message")
+
+var cached = from_bytes(PackedByteArray())
+`)
+	writeFile(t, root, "shadow.gd", string(content))
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "shadow.gd", Content: content, RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	useID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Shadow.use").ID
+	for _, fact := range result.Facts {
+		if fact.FromID == useID && fact.Properties["protocol"] == "protobuf" {
+			t.Fatalf("shadowed generated base produced protocol usage: %#v", fact)
+		}
+	}
+}
+
+func TestParserInfersForwardFieldThroughInnerGeneratedBase(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "buf.gen.yaml", "version: v2\nplugins:\n  - local: protoc-gen-gdscript\n    out: generated\n")
+	writeFile(t, root, "envelope.proto", "syntax = \"proto3\"; package acme.v1; message Envelope { string text = 1; }\n")
+	content := []byte(`class_name Multi extends Mid
+
+class Mid extends AcmeV1EnvelopeEnvelope:
+	pass
+
+func use() -> void:
+	cached.set_text("forward through inner base")
+
+var cached = from_bytes(PackedByteArray())
+`)
+	writeFile(t, root, "multi.gd", string(content))
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "multi.gd", Content: content, RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	useID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Multi.use").ID
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeWrites, "acme.v1.Envelope.text", "set")
+}
+
 func TestParserRejectsAmbiguousProtobufGDScriptBindings(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "buf.yaml", "version: v2\nmodules:\n  - path: proto\n")
