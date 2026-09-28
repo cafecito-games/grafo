@@ -102,7 +102,10 @@ message Envelope {
 }
 message Child { string name = 1; }
 `)
-	content := []byte(`class_name Client
+	content := []byte(`class_name Client extends Middle
+
+class Middle extends AcmeV1EnvelopeEnvelope:
+	pass
 
 class Lookalike:
 	func set_text(_value: String) -> void:
@@ -261,6 +264,46 @@ func uncertain_loops(items: Array, data: PackedByteArray) -> void:
 		1:
 			match_value = AcmeV1EnvelopeEnvelope.from_bytes(data)
 	match_value.set_text("pattern may not match")
+
+func exhaustive_match(value: int, data: PackedByteArray) -> void:
+	var message
+	match value:
+		1:
+			message = AcmeV1EnvelopeEnvelope.from_bytes(data)
+		_:
+			message = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	message.set_text("every arm proves the type")
+
+func inherited_chain() -> void:
+	set_text("inherited through inner base")
+
+func shadow_parameter(stored) -> void:
+	stored.set_text("untyped parameter")
+
+func shadow_local() -> void:
+	var stored
+	stored.set_text("untyped local")
+
+func shadow_for(items: Array) -> void:
+	for stored in items:
+		stored.set_text("untyped loop variable")
+
+func shadow_lambda() -> void:
+	var callback = func(stored):
+		stored.set_text("untyped lambda parameter")
+	callback.call(null)
+
+func shadow_branch(cond: bool) -> void:
+	var value: AcmeV1EnvelopeEnvelope
+	if cond:
+		var value
+		value.set_text("untyped branch local")
+
+func invalid_static_accessors() -> void:
+	AcmeV1EnvelopeEnvelope.set_text("class object")
+	AcmeV1EnvelopeEnvelope.to_bytes()
+	var child = AcmeV1EnvelopeEnvelope.get_child()
+	child.set_name("unproven return")
 `)
 	writeFile(t, root, "client.gd", string(content))
 	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
@@ -301,14 +344,22 @@ func uncertain_loops(items: Array, data: PackedByteArray) -> void:
 	assertProtocolFactCount(t, result.Facts, assignedFieldsID, graph.EdgeWrites, "acme.v1.Envelope.text", "set", 2)
 	assignedFieldAgreedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.assigned_field_agreed").ID
 	assertProtocolFact(t, result.Facts, assignedFieldAgreedID, graph.EdgeWrites, "acme.v1.Envelope.text", "set")
+	exhaustiveMatchID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.exhaustive_match").ID
+	assertProtocolFact(t, result.Facts, exhaustiveMatchID, graph.EdgeWrites, "acme.v1.Envelope.text", "set")
+	inheritedChainID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.inherited_chain").ID
+	assertProtocolFact(t, result.Facts, inheritedChainID, graph.EdgeWrites, "acme.v1.Envelope.text", "set")
 	uncertainID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.uncertain").ID
 	uncertainSwappedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.uncertain_swapped").ID
 	uncertainLoopsID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.uncertain_loops").ID
 	uncertainFieldsID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.uncertain_fields").ID
 	selfShadowedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.self_shadowed").ID
 	overrideID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.Override.use_override").ID
+	negativeMethods := map[string]bool{}
+	for _, qualified := range []string{"Client.shadow_parameter", "Client.shadow_local", "Client.shadow_for", "Client.shadow_lambda", "Client.shadow_branch", "Client.invalid_static_accessors"} {
+		negativeMethods[findQualifiedNode(t, result.Nodes, graph.KindMethod, qualified).ID] = true
+	}
 	for _, fact := range result.Facts {
-		if (fact.FromID == forbiddenID || fact.FromID == shadowedID || fact.FromID == selfShadowedID || fact.FromID == overrideID) && fact.Properties["protocol"] == "protobuf" {
+		if (fact.FromID == forbiddenID || fact.FromID == shadowedID || fact.FromID == selfShadowedID || fact.FromID == overrideID || negativeMethods[fact.FromID]) && fact.Properties["protocol"] == "protobuf" {
 			t.Fatalf("unproven or local lookalike receiver produced protocol usage: %#v", fact)
 		}
 		if (fact.FromID == uncertainID || fact.FromID == uncertainSwappedID || fact.FromID == uncertainLoopsID || fact.FromID == uncertainFieldsID) && fact.Kind == graph.EdgeWrites && fact.Properties["protocol"] == "protobuf" {

@@ -293,8 +293,9 @@ func (e *extractor) extract(file *gdast.File) {
 		classID: classID, classBody: true, symbols: map[string]string{}, types: map[string]string{}, fields: map[string]string{},
 		fieldSymbols: map[string]string{}, fieldLocked: map[string]bool{}, locked: map[string]bool{}, signals: map[string]signalRef{}}
 	root.types[className] = qualified
-	// The base class is recorded before anything is walked, because a method body
-	// earlier in the file may already call through a receiver typed by it.
+	// Prepare inner class names before resolving the file base, because a script
+	// may extend a class declared later in the same file.
+	e.prepareClass(file.Statements, root)
 	for _, statement := range file.Statements {
 		directive, ok := statement.(*gdast.Directive)
 		if !ok {
@@ -308,10 +309,12 @@ func (e *extractor) extract(file *gdast.File) {
 			base = expressionName(directive.Extends)
 		}
 		if base != "" {
+			if resolved := e.resolveType(base, root); resolved != "" {
+				base = resolved
+			}
 			e.bases[qualified] = base
 		}
 	}
-	e.prepareClass(file.Statements, root)
 	e.walkStatements(file.Statements, root)
 }
 
@@ -324,6 +327,8 @@ func (e *extractor) prepareClass(statements []gdast.Statement, current scope) {
 			current.symbols[node.Name] = fieldID
 			current.fieldSymbols[node.Name] = fieldID
 			current.fieldLocked[node.Name] = node.Type != ""
+			delete(current.types, node.Name)
+			delete(current.fields, node.Name)
 			if resolved := e.resolveType(node.Type, current); resolved != "" {
 				current.types[node.Name] = resolved
 				current.fields[node.Name] = resolved
@@ -340,9 +345,6 @@ func (e *extractor) prepareClass(statements []gdast.Statement, current scope) {
 		case *gdast.ClassDeclaration:
 			qualified := qualify(current.container, node.Name)
 			current.types[node.Name] = qualified
-			if node.Extends != "" {
-				e.bases[qualified] = node.Extends
-			}
 		case *gdast.EnumDeclaration:
 			if node.Name != "" {
 				current.types[node.Name] = qualify(current.container, node.Name)
@@ -350,10 +352,18 @@ func (e *extractor) prepareClass(statements []gdast.Statement, current scope) {
 		}
 	}
 	for _, statement := range statements {
-		if node, ok := statement.(*gdast.VariableDeclaration); ok && node.Type == "" && current.types[node.Name] == "" {
-			if inferred := e.inferExpressionType(node.Value, current); inferred != "" {
-				current.types[node.Name] = inferred
-				current.fields[node.Name] = inferred
+		switch node := statement.(type) {
+		case *gdast.VariableDeclaration:
+			if node.Type == "" && current.types[node.Name] == "" {
+				if inferred := e.inferExpressionType(node.Value, current); inferred != "" {
+					current.types[node.Name] = inferred
+					current.fields[node.Name] = inferred
+				}
+			}
+		case *gdast.ClassDeclaration:
+			if node.Extends != "" {
+				qualified := qualify(current.container, node.Name)
+				e.bases[qualified] = e.resolveType(node.Extends, current)
 			}
 		}
 	}
@@ -440,20 +450,26 @@ func (e *extractor) walkStatement(statement gdast.Statement, current scope, anno
 	case *gdast.MatchStatement:
 		e.walkExpression(node.Value, current)
 		var alternatives, fieldAlternatives []map[string]string
+		exhaustive := false
 		for _, matchCase := range node.Cases {
 			caseScope := cloneFlowScope(current)
 			for _, pattern := range matchCase.Patterns {
 				e.walkExpression(pattern, caseScope)
+				if identifier, ok := pattern.(*gdast.Identifier); ok && identifier.Name == "_" && matchCase.Guard == nil {
+					exhaustive = true
+				}
 			}
 			e.walkExpression(matchCase.Guard, caseScope)
 			e.walkStatements(matchCase.Body, caseScope)
 			alternatives = append(alternatives, caseScope.types)
 			fieldAlternatives = append(fieldAlternatives, caseScope.fields)
 		}
-		// A match may have no applicable arm. Keeping the incoming state as one
-		// alternative avoids claiming a type that only some patterns establish.
-		alternatives = append(alternatives, current.types)
-		fieldAlternatives = append(fieldAlternatives, current.fields)
+		if !exhaustive {
+			// A non-exhaustive match may have no applicable arm. Keep the incoming
+			// state as an alternative rather than claiming branch-only evidence.
+			alternatives = append(alternatives, current.types)
+			fieldAlternatives = append(fieldAlternatives, current.fields)
+		}
 		mergeFlowTypes(current, alternatives)
 		mergeFlowFields(current, fieldAlternatives)
 	}
@@ -503,6 +519,7 @@ func (e *extractor) parseFunction(node *gdast.FunctionDeclaration, current scope
 			QualifiedName: qualified + "." + parameter.Name, Location: e.location(node), Properties: parameterProperties})
 		functionScope.symbols[parameter.Name] = parameterID
 		functionScope.locked[parameter.Name] = parameter.Type != ""
+		delete(functionScope.types, parameter.Name)
 		if resolved := e.resolveType(parameter.Type, current); resolved != "" {
 			functionScope.types[parameter.Name] = resolved
 		}
@@ -560,6 +577,7 @@ func (e *extractor) parseVariable(node *gdast.VariableDeclaration, current scope
 	}
 	current.symbols[node.Name] = id
 	current.locked[node.Name] = node.Type != ""
+	delete(current.types, node.Name)
 	if current.classBody {
 		current.fieldSymbols[node.Name] = id
 		current.fieldLocked[node.Name] = node.Type != ""
@@ -601,6 +619,7 @@ func (e *extractor) declareLocal(name, typeName string, loc graph.Location, curr
 		QualifiedName: fmt.Sprintf("%s.%s@%d", current.container, name, loc.Line), Location: loc, Properties: properties})
 	current.symbols[name] = id
 	current.locked[name] = typeName != ""
+	delete(current.types, name)
 	if resolved := e.resolveType(typeName, current); resolved != "" {
 		current.types[name] = resolved
 	}
@@ -831,6 +850,9 @@ func (e *extractor) addProtobufUse(node *gdast.CallExpression, callee, fromID st
 	if !ok || api.form == "" {
 		return
 	}
+	if e.protobufClassReceiver(node.Callee, current) && api.form != "from_bytes" {
+		return
+	}
 	// A local symbol without proven type information can spell the same name as
 	// a generated class. It is application code, not evidence of generated API
 	// use. Typed aliases and parameters have an entry in current.types.
@@ -859,6 +881,21 @@ func (e *extractor) addProtobufUse(node *gdast.CallExpression, callee, fromID st
 		"static_type": staticType, "binding": api.symbol, "binding_id": api.bindingID,
 		"evidence": "gdscript_scope",
 	})
+}
+
+func (e *extractor) protobufClassReceiver(expression gdast.Expression, current scope) bool {
+	member, ok := expression.(*gdast.MemberExpression)
+	if !ok {
+		return false
+	}
+	identifier, ok := member.Object.(*gdast.Identifier)
+	if !ok {
+		return false
+	}
+	if _, shadowed := current.symbols[identifier.Name]; shadowed {
+		return false
+	}
+	return e.protobufTypes[identifier.Name]
 }
 
 func (e *extractor) protobufCallee(callee string, current scope) string {
@@ -1275,7 +1312,9 @@ func (e *extractor) inferExpressionType(expression gdast.Expression, current sco
 	if !e.localCall(call.Callee, current) && !e.unresolvedMemberReceiver(call.Callee, current) &&
 		!e.untypedLocalReceiver(call.Callee, current) && !e.protobufAmbiguous[apiCallee] {
 		if api, exists := e.protobufAPIs[apiCallee]; exists && api.returns != "" {
-			return api.returns
+			if !e.protobufClassReceiver(call.Callee, current) || api.form == "" || api.form == "from_bytes" {
+				return api.returns
+			}
 		}
 	}
 	if callee == "preload" || callee == "load" {
