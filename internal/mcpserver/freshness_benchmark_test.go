@@ -184,7 +184,7 @@ func prepareBenchmarkCorpus(tb testing.TB, source string) string {
 		if err != nil {
 			return err
 		}
-		defer input.Close()
+		defer func() { _ = input.Close() }()
 		target := filepath.Join(root, relative)
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
@@ -217,7 +217,6 @@ type mcpBenchmarkFixture struct {
 	coord     *FreshnessCoordinator
 	startup   *FreshnessGeneration
 	indexedAt string
-	cleanup   func()
 }
 
 func newMCPBenchmarkFixture(b *testing.B, federated bool) *mcpBenchmarkFixture {

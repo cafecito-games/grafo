@@ -275,7 +275,7 @@ func compatPrepareCorpus(tb testing.TB, source string) string {
 		if err != nil {
 			return err
 		}
-		defer input.Close()
+		defer func() { _ = input.Close() }()
 		target := filepath.Join(root, relative)
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err

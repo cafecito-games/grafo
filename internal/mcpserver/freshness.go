@@ -120,12 +120,19 @@ func NewFreshnessCoordinator(ctx context.Context, roots []string, registry *pars
 			if err != nil {
 				return indexer.Report{}, fmt.Errorf("open writer for %s: %w", probe.Project.Root, err)
 			}
-			defer repository.Close()
-			report, err := indexer.NewService(repository, registry).Run(refreshContext, probe.Project, indexer.Options{
+			report, refreshErr := indexer.NewService(repository, registry).Run(refreshContext, probe.Project, indexer.Options{
 				MaxFileSize: options.MaxFileSize, ReportDetail: indexer.ReportWithoutCounts,
 			})
-			if err != nil {
-				return report, fmt.Errorf("refresh %s: %w", probe.Project.Root, err)
+			closeErr := repository.Close()
+			if refreshErr != nil || closeErr != nil {
+				var refreshFailure, closeFailure error
+				if refreshErr != nil {
+					refreshFailure = fmt.Errorf("refresh %s: %w", probe.Project.Root, refreshErr)
+				}
+				if closeErr != nil {
+					closeFailure = fmt.Errorf("close writer for %s: %w", probe.Project.Root, closeErr)
+				}
+				return report, errors.Join(refreshFailure, closeFailure)
 			}
 			return report, nil
 		},

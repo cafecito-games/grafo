@@ -80,7 +80,11 @@ func TestProductionFreshnessCoordinatorPublishesQueryOnlyGenerations(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer coordinator.Close()
+	defer func() {
+		if err := coordinator.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if _, writable := startup.Repository.(graph.IndexRepository); writable {
 		t.Fatal("published generation exposed index-write capability")
 	}
@@ -135,7 +139,11 @@ func TestProductionFreshnessCoordinatorUsesConservativeNonGitFallback(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer coordinator.Close()
+	defer func() {
+		if err := coordinator.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if startup.Diagnostics.Fallbacks[startup.Projects[0].Root] == "" {
 		t.Fatalf("missing non-Git fallback diagnostic: %#v", startup.Diagnostics)
 	}
@@ -157,7 +165,11 @@ func TestProductionFreshnessCoordinatorPublishesFederationAtomically(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer coordinator.Close()
+	defer func() {
+		if err := coordinator.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	if len(startup.Projects) != 2 || startup.Projects[0].Root > startup.Projects[1].Root || len(startup.Diagnostics.Refreshed) != 2 {
 		t.Fatalf("startup federation = projects %#v diagnostics %#v", startup.Projects, startup.Diagnostics)
 	}

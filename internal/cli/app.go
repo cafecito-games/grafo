@@ -510,7 +510,7 @@ func (a *App) mcp(ctx context.Context, args parsedArguments) error {
 			if openErr != nil {
 				return semantic.SearchResult{}, openErr
 			}
-			defer closeRepository()
+			defer func() { _ = closeRepository() }()
 			semanticService, serviceErr := newSemanticService(repository, args)
 			if serviceErr != nil {
 				return semantic.SearchResult{}, serviceErr
