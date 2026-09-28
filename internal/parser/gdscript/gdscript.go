@@ -111,7 +111,9 @@ type scope struct {
 	types     map[string]string
 	// fields retains class-member types separately from shadowable locals and
 	// parameters so self.<field> always resolves the field declaration.
-	fields map[string]string
+	fields       map[string]string
+	fieldSymbols map[string]string
+	fieldLocked  map[string]bool
 	// locked marks declarations whose explicit annotation controls their type.
 	// In particular, a Variant must not become a generated message merely
 	// because its initializer happens to be one.
@@ -288,7 +290,8 @@ func (e *extractor) extract(file *gdast.File) {
 	classID := e.b.Declare(moduleID, graph.Node{Kind: graph.KindClass, Name: className,
 		QualifiedName: qualified, Location: loc, Properties: properties})
 	root := scope{currentID: classID, parentID: classID, container: qualified, receiver: qualified,
-		classID: classID, classBody: true, symbols: map[string]string{}, types: map[string]string{}, fields: map[string]string{}, locked: map[string]bool{}, signals: map[string]signalRef{}}
+		classID: classID, classBody: true, symbols: map[string]string{}, types: map[string]string{}, fields: map[string]string{},
+		fieldSymbols: map[string]string{}, fieldLocked: map[string]bool{}, locked: map[string]bool{}, signals: map[string]signalRef{}}
 	root.types[className] = qualified
 	// The base class is recorded before anything is walked, because a method body
 	// earlier in the file may already call through a receiver typed by it.
@@ -317,7 +320,10 @@ func (e *extractor) prepareClass(statements []gdast.Statement, current scope) {
 		switch node := statement.(type) {
 		case *gdast.VariableDeclaration:
 			qualified := qualify(current.container, node.Name)
-			current.symbols[node.Name] = graph.NodeID(graph.KindField, qualified, e.input.RepoID, e.input.Path)
+			fieldID := graph.NodeID(graph.KindField, qualified, e.input.RepoID, e.input.Path)
+			current.symbols[node.Name] = fieldID
+			current.fieldSymbols[node.Name] = fieldID
+			current.fieldLocked[node.Name] = node.Type != ""
 			if resolved := e.resolveType(node.Type, current); resolved != "" {
 				current.types[node.Name] = resolved
 				current.fields[node.Name] = resolved
@@ -395,36 +401,45 @@ func (e *extractor) walkStatement(statement gdast.Statement, current scope, anno
 		baseline := current
 		baseline.symbols = cloneMap(current.symbols)
 		baseline.types = cloneMap(current.types)
+		baseline.fields = cloneMap(current.fields)
+		baseline.fieldSymbols = cloneMap(current.fieldSymbols)
+		baseline.fieldLocked = cloneBoolMap(current.fieldLocked)
 		baseline.locked = cloneBoolMap(current.locked)
-		var alternatives []map[string]string
+		var alternatives, fieldAlternatives []map[string]string
 		for _, branch := range node.Branches {
 			e.walkExpression(branch.Condition, current)
 			branchScope := cloneFlowScope(baseline)
 			e.walkStatements(branch.Body, branchScope)
 			alternatives = append(alternatives, branchScope.types)
+			fieldAlternatives = append(fieldAlternatives, branchScope.fields)
 		}
 		if len(node.Else) == 0 {
 			alternatives = append(alternatives, baseline.types)
+			fieldAlternatives = append(fieldAlternatives, baseline.fields)
 		} else {
 			elseScope := cloneFlowScope(baseline)
 			e.walkStatements(node.Else, elseScope)
 			alternatives = append(alternatives, elseScope.types)
+			fieldAlternatives = append(fieldAlternatives, elseScope.fields)
 		}
 		mergeFlowTypes(current, alternatives)
+		mergeFlowFields(current, fieldAlternatives)
 	case *gdast.WhileStatement:
 		e.walkExpression(node.Condition, current)
 		bodyScope := cloneFlowScope(current)
 		e.walkStatements(node.Body, bodyScope)
 		mergeFlowTypes(current, []map[string]string{current.types, bodyScope.types})
+		mergeFlowFields(current, []map[string]string{current.fields, bodyScope.fields})
 	case *gdast.ForStatement:
 		e.walkExpression(node.Iterable, current)
 		bodyScope := cloneFlowScope(current)
 		e.declareLocal(node.Variable, node.Type, e.location(node), bodyScope)
 		e.walkStatements(node.Body, bodyScope)
 		mergeFlowTypes(current, []map[string]string{current.types, bodyScope.types})
+		mergeFlowFields(current, []map[string]string{current.fields, bodyScope.fields})
 	case *gdast.MatchStatement:
 		e.walkExpression(node.Value, current)
-		var alternatives []map[string]string
+		var alternatives, fieldAlternatives []map[string]string
 		for _, matchCase := range node.Cases {
 			caseScope := cloneFlowScope(current)
 			for _, pattern := range matchCase.Patterns {
@@ -433,11 +448,14 @@ func (e *extractor) walkStatement(statement gdast.Statement, current scope, anno
 			e.walkExpression(matchCase.Guard, caseScope)
 			e.walkStatements(matchCase.Body, caseScope)
 			alternatives = append(alternatives, caseScope.types)
+			fieldAlternatives = append(fieldAlternatives, caseScope.fields)
 		}
 		// A match may have no applicable arm. Keeping the incoming state as one
 		// alternative avoids claiming a type that only some patterns establish.
 		alternatives = append(alternatives, current.types)
+		fieldAlternatives = append(fieldAlternatives, current.fields)
 		mergeFlowTypes(current, alternatives)
+		mergeFlowFields(current, fieldAlternatives)
 	}
 }
 
@@ -474,7 +492,8 @@ func (e *extractor) parseFunction(node *gdast.FunctionDeclaration, current scope
 	id := e.b.Declare(current.parentID, graph.Node{Kind: graph.KindMethod, Name: node.Name,
 		QualifiedName: qualified, Location: e.location(node), Properties: properties})
 	functionScope := scope{currentID: id, parentID: id, container: qualified, receiver: current.receiver,
-		classID: current.classID, symbols: cloneMap(current.symbols), types: cloneMap(current.types), fields: cloneMap(current.fields), locked: cloneBoolMap(current.locked), signals: cloneSignals(current.signals)}
+		classID: current.classID, symbols: cloneMap(current.symbols), types: cloneMap(current.types), fields: cloneMap(current.fields),
+		fieldSymbols: cloneMap(current.fieldSymbols), fieldLocked: cloneBoolMap(current.fieldLocked), locked: cloneBoolMap(current.locked), signals: cloneSignals(current.signals)}
 	for _, parameter := range node.Parameters {
 		parameterProperties := map[string]string{}
 		if parameter.Type != "" {
@@ -500,7 +519,8 @@ func (e *extractor) parseClass(node *gdast.ClassDeclaration, current scope) {
 		e.b.AddFact(id, graph.EdgeExtends, "", e.resolveType(node.Extends, current), graph.KindClass, e.location(node), nil)
 	}
 	inner := scope{currentID: id, parentID: id, container: qualified, receiver: qualified, classID: id,
-		classBody: true, symbols: map[string]string{}, types: cloneMap(current.types), fields: map[string]string{}, locked: cloneBoolMap(current.locked), signals: map[string]signalRef{}}
+		classBody: true, symbols: map[string]string{}, types: cloneMap(current.types), fields: map[string]string{},
+		fieldSymbols: map[string]string{}, fieldLocked: map[string]bool{}, locked: cloneBoolMap(current.locked), signals: map[string]signalRef{}}
 	inner.types[node.Name] = qualified
 	e.prepareClass(node.Body, inner)
 	e.walkStatements(node.Body, inner)
@@ -540,6 +560,10 @@ func (e *extractor) parseVariable(node *gdast.VariableDeclaration, current scope
 	}
 	current.symbols[node.Name] = id
 	current.locked[node.Name] = node.Type != ""
+	if current.classBody {
+		current.fieldSymbols[node.Name] = id
+		current.fieldLocked[node.Name] = node.Type != ""
+	}
 	if resolved := e.resolveType(node.Type, current); resolved != "" {
 		current.types[node.Name] = resolved
 		if current.classBody {
@@ -589,11 +613,24 @@ func (e *extractor) parseAssignment(node *gdast.Assignment, current scope) {
 			e.b.AddFact(sourceID, graph.EdgeAssigns, targetID, "", graph.KindVariable, e.location(node), nil)
 		}
 	}
-	if target, ok := node.Target.(*gdast.Identifier); ok && !current.locked[target.Name] {
-		if inferred := e.inferExpressionType(node.Value, current); inferred != "" {
-			current.types[target.Name] = inferred
-		} else {
-			delete(current.types, target.Name)
+	targetName, selfField := "", false
+	if target, ok := node.Target.(*gdast.Identifier); ok {
+		targetName = target.Name
+	} else if target, ok := node.Target.(*gdast.MemberExpression); ok {
+		if object, ok := target.Object.(*gdast.Identifier); ok && object.Name == "self" {
+			targetName, selfField = target.Property, true
+		}
+	}
+	if targetName != "" {
+		inferred := e.inferExpressionType(node.Value, current)
+		fieldID, isField := current.fieldSymbols[targetName]
+		actualField := isField && (selfField || current.symbols[targetName] == fieldID)
+		updatesBareType := !selfField || actualField && current.symbols[targetName] == fieldID
+		if updatesBareType && !current.locked[targetName] {
+			setInferredType(current.types, targetName, inferred)
+		}
+		if actualField && !current.fieldLocked[targetName] {
+			setInferredType(current.fields, targetName, inferred)
 		}
 	}
 	e.walkExpression(node.Target, current)
@@ -663,6 +700,9 @@ func (e *extractor) walkExpression(expression gdast.Expression, current scope) {
 		lambdaScope := current
 		lambdaScope.symbols = cloneMap(current.symbols)
 		lambdaScope.types = cloneMap(current.types)
+		lambdaScope.fields = cloneMap(current.fields)
+		lambdaScope.fieldSymbols = cloneMap(current.fieldSymbols)
+		lambdaScope.fieldLocked = cloneBoolMap(current.fieldLocked)
 		lambdaScope.locked = cloneBoolMap(current.locked)
 		for _, parameter := range node.Parameters {
 			e.declareLocal(parameter.Name, parameter.Type, e.location(node), lambdaScope)
@@ -1416,8 +1456,18 @@ func cloneFlowScope(current scope) scope {
 	current.symbols = cloneMap(current.symbols)
 	current.types = cloneMap(current.types)
 	current.fields = cloneMap(current.fields)
+	current.fieldSymbols = cloneMap(current.fieldSymbols)
+	current.fieldLocked = cloneBoolMap(current.fieldLocked)
 	current.locked = cloneBoolMap(current.locked)
 	return current
+}
+
+func setInferredType(types map[string]string, name, inferred string) {
+	if inferred == "" {
+		delete(types, name)
+		return
+	}
+	types[name] = inferred
 }
 
 func mergeFlowTypes(current scope, alternatives []map[string]string) {
@@ -1444,6 +1494,31 @@ func mergeFlowTypes(current scope, alternatives []map[string]string) {
 	}
 	for name, value := range merged {
 		current.types[name] = value
+	}
+}
+
+func mergeFlowFields(current scope, alternatives []map[string]string) {
+	if len(alternatives) == 0 {
+		return
+	}
+	merged := cloneMap(alternatives[0])
+	for name, value := range merged {
+		if _, field := current.fieldSymbols[name]; !field {
+			delete(merged, name)
+			continue
+		}
+		for _, alternative := range alternatives[1:] {
+			if alternative[name] != value {
+				delete(merged, name)
+				break
+			}
+		}
+	}
+	for name := range current.fields {
+		delete(current.fields, name)
+	}
+	for name, value := range merged {
+		current.fields[name] = value
 	}
 }
 

@@ -114,6 +114,8 @@ class Lookalike:
 
 var stored: AcmeV1EnvelopeEnvelope
 var ordinary: Node
+var assigned_field
+var assigned_self
 
 class Derived extends AcmeV1EnvelopeEnvelope:
 	func inherited() -> void:
@@ -128,6 +130,8 @@ class Override extends AcmeV1EnvelopeEnvelope:
 		set_text("local override")
 		var child = get_child()
 		child.set_name("not a generated child")
+		self.set_text("self local override")
+		self.get_child().set_name("still not a generated child")
 
 func use(data: PackedByteArray, typed: AcmeV1EnvelopeEnvelope) -> String:
 	var envelope_type = AcmeV1EnvelopeEnvelope
@@ -164,6 +168,19 @@ func self_qualified() -> void:
 
 func self_shadowed(ordinary: AcmeV1EnvelopeEnvelope) -> void:
 	self.ordinary.set_text("field remains Node")
+
+func assigned_fields(data: PackedByteArray) -> void:
+	assigned_field = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	self.assigned_field.set_text("bare assignment, self use")
+	self.assigned_self = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	assigned_self.set_text("self assignment, bare use")
+
+func assigned_field_agreed(cond: bool, data: PackedByteArray) -> void:
+	if cond:
+		self.assigned_field = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	else:
+		self.assigned_field = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	self.assigned_field.set_text("field proven on every branch")
 
 func uncertain(cond: bool, dynamic, data: PackedByteArray) -> void:
 	var value
@@ -239,6 +256,10 @@ func uncertain_loops(items: Array, data: PackedByteArray) -> void:
 	}
 	agreedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.agreed").ID
 	assertProtocolFact(t, result.Facts, agreedID, graph.EdgeWrites, "acme.v1.Envelope.text", "set")
+	assignedFieldsID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.assigned_fields").ID
+	assertProtocolFactCount(t, result.Facts, assignedFieldsID, graph.EdgeWrites, "acme.v1.Envelope.text", "set", 2)
+	assignedFieldAgreedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.assigned_field_agreed").ID
+	assertProtocolFact(t, result.Facts, assignedFieldAgreedID, graph.EdgeWrites, "acme.v1.Envelope.text", "set")
 	uncertainID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.uncertain").ID
 	uncertainSwappedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.uncertain_swapped").ID
 	uncertainLoopsID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.uncertain_loops").ID
@@ -322,6 +343,19 @@ func assertProtocolFact(t *testing.T, facts []graph.Fact, fromID string, kind gr
 	}
 	t.Fatalf("missing %s protocol fact from %q to %q with form %q", kind, fromID, target, form)
 	return graph.Fact{}
+}
+
+func assertProtocolFactCount(t *testing.T, facts []graph.Fact, fromID string, kind graph.EdgeKind, target, form string, want int) {
+	t.Helper()
+	count := 0
+	for _, fact := range facts {
+		if fact.FromID == fromID && fact.Kind == kind && fact.Target == target && fact.Properties["form"] == form {
+			count++
+		}
+	}
+	if count != want {
+		t.Fatalf("%s protocol fact count from %q to %q with form %q = %d, want %d", kind, fromID, target, form, count, want)
+	}
 }
 
 func TestParserCreatesImplicitScriptClassAndInnerTypes(t *testing.T) {
