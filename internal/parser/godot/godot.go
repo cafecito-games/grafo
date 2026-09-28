@@ -38,6 +38,10 @@ func (*Parser) WorkspaceSemanticKey(_ context.Context, input parserapi.Input) (s
 	return "godot-workspace-v1:" + aliases.Digest, nil
 }
 
+func (*Parser) WorkspaceSemanticEvidenceKey(context.Context, parserapi.Input) (string, error) {
+	return "godot-worktree-v1", nil
+}
+
 func (*Parser) Supports(path string) bool {
 	if isConfigFile(path) {
 		return true

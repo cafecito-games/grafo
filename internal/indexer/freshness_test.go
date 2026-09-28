@@ -18,6 +18,25 @@ func (p freshnessParser) Supports(path string) bool { return filepath.Ext(path) 
 func (p freshnessParser) Parse(context.Context, parserapi.Input) (graph.ParseResult, error) {
 	return graph.ParseResult{}, nil
 }
+
+type cacheableFreshnessParser struct {
+	evidence *string
+	calls    *int
+}
+
+func (cacheableFreshnessParser) Language() string          { return "cacheable" }
+func (cacheableFreshnessParser) Supports(path string) bool { return filepath.Ext(path) == ".snap" }
+func (cacheableFreshnessParser) Parse(context.Context, parserapi.Input) (graph.ParseResult, error) {
+	return graph.ParseResult{}, nil
+}
+func (p cacheableFreshnessParser) WorkspaceSemanticKey(context.Context, parserapi.Input) (string, error) {
+	*p.calls++
+	return "workspace-key:" + *p.evidence, nil
+}
+func (p cacheableFreshnessParser) WorkspaceSemanticEvidenceKey(context.Context, parserapi.Input) (string, error) {
+	return *p.evidence, nil
+}
+func (cacheableFreshnessParser) SemanticDependencies() []string { return []string{"semantic.cfg"} }
 func (p freshnessParser) WorkspaceSemanticKey(context.Context, parserapi.Input) (string, error) {
 	if p.semantic == nil {
 		return "", nil
@@ -119,6 +138,65 @@ func TestFreshnessProbeFallsBackForNonGitAndHonorsCancellation(t *testing.T) {
 	cancel()
 	if _, err := indexer.ProbeFreshness(ctx, root, registry, indexer.FreshnessOptions{}); err == nil {
 		t.Fatal("canceled freshness probe succeeded")
+	}
+}
+
+func TestFreshnessReprobeCachesKeysOnlyWhileExternalEvidenceAndGitInputsMatch(t *testing.T) {
+	root := t.TempDir()
+	runGit(t, root, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(root, "sample.snap"), []byte("first"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "add", "sample.snap")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+	evidence, calls := "external-v1", 0
+	registry := parserapi.NewRegistry(cacheableFreshnessParser{evidence: &evidence, calls: &calls})
+	first, err := indexer.ProbeFreshness(context.Background(), root, registry, indexer.FreshnessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := indexer.ReprobeFreshness(context.Background(), first, registry, indexer.FreshnessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 || !first.Token.Equal(second.Token) {
+		t.Fatalf("clean reprobe calls=%d equal=%t", calls, first.Token.Equal(second.Token))
+	}
+	semanticPath := filepath.Join(root, "semantic.cfg")
+	if err := os.WriteFile(semanticPath, []byte("first"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	semanticChanged, err := indexer.ReprobeFreshness(context.Background(), second, registry, indexer.FreshnessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || second.Token.Equal(semanticChanged.Token) {
+		t.Fatalf("semantic dependency change calls=%d equal=%t", calls, second.Token.Equal(semanticChanged.Token))
+	}
+	info, err := os.Stat(semanticPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(semanticPath, []byte("other"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(semanticPath, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	repeatedDependencyEdit, err := indexer.ReprobeFreshness(context.Background(), semanticChanged, registry, indexer.FreshnessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 3 || semanticChanged.Token.Equal(repeatedDependencyEdit.Token) {
+		t.Fatalf("repeated dependency edit calls=%d equal=%t", calls, semanticChanged.Token.Equal(repeatedDependencyEdit.Token))
+	}
+	evidence = "external-v2"
+	third, err := indexer.ReprobeFreshness(context.Background(), repeatedDependencyEdit, registry, indexer.FreshnessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 4 || repeatedDependencyEdit.Token.Equal(third.Token) {
+		t.Fatalf("external evidence change calls=%d equal=%t", calls, repeatedDependencyEdit.Token.Equal(third.Token))
 	}
 }
 

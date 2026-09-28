@@ -126,6 +126,7 @@ func inspectGitIdentity(ctx context.Context, root string, runner gitCommandRunne
 		if ctx.Err() != nil || errors.Is(commandErr, context.Canceled) || errors.Is(commandErr, context.DeadlineExceeded) {
 			return "", 1, commandErr
 		}
+		cacheGitIdentity(root, root, gitConfigPath(root))
 		return root, 1, nil
 	}
 	parts := bytes.Split(output, []byte{0})
@@ -141,15 +142,44 @@ func inspectGitIdentity(ctx context.Context, root string, runner gitCommandRunne
 		origin = filepath.Join(root, filepath.FromSlash(origin))
 	}
 	if origin != "" {
-		if content, readErr := os.ReadFile(origin); readErr == nil {
-			gitIdentityCache.Lock()
-			gitIdentityCache.byRoot[root] = cachedGitIdentity{
-				identity: identity, origin: origin, digest: sha256.Sum256(content),
-			}
-			gitIdentityCache.Unlock()
-		}
+		cacheGitIdentity(root, identity, origin)
 	}
 	return identity, 1, nil
+}
+
+func cacheGitIdentity(root, identity, origin string) {
+	content, err := os.ReadFile(origin)
+	if err != nil {
+		return
+	}
+	gitIdentityCache.Lock()
+	gitIdentityCache.byRoot[root] = cachedGitIdentity{identity: identity, origin: origin, digest: sha256.Sum256(content)}
+	gitIdentityCache.Unlock()
+}
+
+func gitConfigPath(root string) string {
+	dotGit := filepath.Join(root, ".git")
+	info, err := os.Stat(dotGit)
+	if err == nil && info.IsDir() {
+		return filepath.Join(dotGit, "config")
+	}
+	content, err := os.ReadFile(dotGit)
+	if err != nil {
+		return ""
+	}
+	line := strings.TrimSpace(string(content))
+	if !strings.HasPrefix(line, "gitdir:") {
+		return ""
+	}
+	gitDir := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(root, gitDir)
+	}
+	commonDir := gitDir
+	if common, readErr := os.ReadFile(filepath.Join(gitDir, "commondir")); readErr == nil {
+		commonDir = filepath.Clean(filepath.Join(gitDir, strings.TrimSpace(string(common))))
+	}
+	return filepath.Join(commonDir, "config")
 }
 
 func refreshGitSnapshot(ctx context.Context, previous *GitSnapshot, runner gitCommandRunner) (*GitSnapshot, error) {

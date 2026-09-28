@@ -63,6 +63,10 @@ func (p *Parser) WorkspaceSemanticKey(ctx context.Context, input parserapi.Input
 	return moduleCatalogDigest(ctx, input.Root)
 }
 
+func (*Parser) WorkspaceSemanticEvidenceKey(context.Context, parserapi.Input) (string, error) {
+	return "typescript-worktree-v1", nil
+}
+
 func (*Parser) SemanticAffectedPaths(allPaths, changedPaths []string) []string {
 	affected := false
 	for _, path := range changedPaths {

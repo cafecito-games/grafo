@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	goast "go/ast"
 	"go/build"
@@ -1065,6 +1066,39 @@ func semanticWorkspaceKey(root string) (string, string, error) {
 		}
 	}
 	return hex.EncodeToString(digest.Sum(nil)), buildContext, nil
+}
+
+func semanticWorkspaceEvidenceKey(root string) (string, error) {
+	digest := sha256.New()
+	_, _ = digest.Write([]byte(buildContextString(root)))
+	workspace := discoverGoWorkspace(root)
+	if workspace == "" || workspace == "off" {
+		return hex.EncodeToString(digest.Sum(nil)), nil
+	}
+	absoluteRoot, rootErr := filepath.Abs(root)
+	absoluteWorkspace, workspaceErr := filepath.Abs(workspace)
+	if rootErr != nil || workspaceErr != nil {
+		return "", errors.Join(rootErr, workspaceErr)
+	}
+	relative, err := filepath.Rel(absoluteRoot, absoluteWorkspace)
+	if err != nil {
+		return "", err
+	}
+	if relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return hex.EncodeToString(digest.Sum(nil)), nil
+	}
+	for _, path := range []string{absoluteWorkspace, absoluteWorkspace + ".sum"} {
+		_, _ = digest.Write([]byte(path))
+		_, _ = digest.Write([]byte{0})
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			_, _ = digest.Write([]byte("missing:" + readErr.Error()))
+		} else {
+			_, _ = digest.Write(content)
+		}
+		_, _ = digest.Write([]byte{0})
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 func buildContextString(root ...string) string {

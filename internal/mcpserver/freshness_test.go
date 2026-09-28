@@ -376,6 +376,181 @@ func TestFreshnessCoordinatorRejectsThreeUnstableAttempts(t *testing.T) {
 	}
 }
 
+func TestFreshnessCoordinatorFederationFailurePublishesNothingAndRetriesAllMembers(t *testing.T) {
+	first := coordinatorProbe(t, "one")
+	second := coordinatorProbe(t, "two")
+	probes := []indexer.FreshnessProbe{first, second}
+	var failSecond atomic.Bool
+	failSecond.Store(true)
+	var refreshed []string
+	var opens atomic.Int32
+	operations := freshnessOperations{
+		probe: func(context.Context, []string) ([]indexer.FreshnessProbe, error) {
+			return append([]indexer.FreshnessProbe(nil), probes...), nil
+		},
+		refresh: func(_ context.Context, probe indexer.FreshnessProbe) (indexer.Report, error) {
+			refreshed = append(refreshed, probe.Project.Root)
+			if probe.Project.Root == second.Project.Root && failSecond.Swap(false) {
+				return indexer.Report{}, errors.New("injected second-member failure")
+			}
+			return indexer.Report{}, nil
+		},
+		open: testGenerationOpener(t, &opens),
+	}
+	coordinator := newFreshnessCoordinator([]string{second.Project.Root, first.Project.Root}, 3, operations)
+	if _, _, err := coordinator.Acquire(context.Background()); err == nil || !strings.Contains(err.Error(), "injected") {
+		t.Fatalf("first acquisition error = %v", err)
+	}
+	if coordinator.current != nil || opens.Load() != 0 {
+		t.Fatalf("partial federation was published: current=%#v opens=%d", coordinator.current, opens.Load())
+	}
+	firstAttemptCalls := len(refreshed)
+	generation, release, err := coordinator.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if generation == nil || opens.Load() != 1 {
+		t.Fatalf("retry generation=%#v opens=%d", generation, opens.Load())
+	}
+	retryRoots := refreshed[firstAttemptCalls:]
+	if len(retryRoots) != 2 || retryRoots[0] != first.Project.Root || retryRoots[1] != second.Project.Root {
+		t.Fatalf("retry did not reconverge every member in deterministic order: %#v", retryRoots)
+	}
+	if err := coordinator.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFreshnessCoordinatorOpenFailurePublishesNothing(t *testing.T) {
+	probe := coordinatorProbe(t, "one")
+	var refreshes, opens atomic.Int32
+	operations := freshnessOperations{
+		probe: func(context.Context, []string) ([]indexer.FreshnessProbe, error) {
+			return []indexer.FreshnessProbe{probe}, nil
+		},
+		refresh: func(context.Context, indexer.FreshnessProbe) (indexer.Report, error) {
+			refreshes.Add(1)
+			return indexer.Report{}, nil
+		},
+		open: func(ctx context.Context, probes []indexer.FreshnessProbe) (graph.ReadRepository, func() error, error) {
+			if opens.Add(1) == 1 {
+				return nil, nil, errors.New("injected query-only open failure")
+			}
+			return testGenerationOpener(t, new(atomic.Int32))(ctx, probes)
+		},
+	}
+	coordinator := newFreshnessCoordinator([]string{probe.Project.Root}, 3, operations)
+	if _, _, err := coordinator.Acquire(context.Background()); err == nil || !strings.Contains(err.Error(), "query-only") {
+		t.Fatalf("first acquisition error = %v", err)
+	}
+	if coordinator.current != nil {
+		t.Fatal("failed query-only open published a generation")
+	}
+	generation, release, err := coordinator.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if generation == nil || refreshes.Load() != 2 || opens.Load() != 2 {
+		t.Fatalf("retry generation=%#v refreshes=%d opens=%d", generation, refreshes.Load(), opens.Load())
+	}
+	if err := coordinator.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMCPHandlerLeaseBlocksChangedGenerationWriter(t *testing.T) {
+	firstProbe := coordinatorProbe(t, "one")
+	secondProbe := changedCoordinatorProbe(t, firstProbe, "two")
+	var current atomic.Pointer[indexer.FreshnessProbe]
+	current.Store(&firstProbe)
+	queryStarted := make(chan struct{})
+	releaseQuery := make(chan struct{})
+	refreshStarted := make(chan struct{})
+	var refreshes, opens atomic.Int32
+	operations := freshnessOperations{
+		probe: func(context.Context, []string) ([]indexer.FreshnessProbe, error) {
+			return []indexer.FreshnessProbe{*current.Load()}, nil
+		},
+		refresh: func(context.Context, indexer.FreshnessProbe) (indexer.Report, error) {
+			if refreshes.Add(1) > 1 {
+				close(refreshStarted)
+			}
+			return indexer.Report{}, nil
+		},
+		open: func(ctx context.Context, probes []indexer.FreshnessProbe) (graph.ReadRepository, func() error, error) {
+			repository, closeRepository, err := testGenerationOpener(t, &opens)(ctx, probes)
+			if err != nil {
+				return nil, nil, err
+			}
+			if opens.Load() == 1 {
+				repository = &blockingSearchRepository{ReadRepository: repository, started: queryStarted, release: releaseQuery}
+			}
+			return repository, closeRepository, nil
+		},
+	}
+	coordinator := newFreshnessCoordinator([]string{firstProbe.Project.Root}, 3, operations)
+	startup, startupRelease, err := coordinator.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	startupRelease()
+	service := NewFederated(startup.Repository, startup.Projects).WithFreshness(coordinator)
+	firstDone := make(chan error, 1)
+	go func() {
+		_, _, queryErr := service.findSymbols(context.Background(), nil, FindSymbolsInput{Query: "one"})
+		firstDone <- queryErr
+	}()
+	<-queryStarted
+	current.Store(&secondProbe)
+	secondDone := make(chan error, 1)
+	go func() {
+		_, release, acquireErr := coordinator.Acquire(context.Background())
+		if release != nil {
+			release()
+		}
+		secondDone <- acquireErr
+	}()
+	select {
+	case <-refreshStarted:
+		t.Fatal("writer started before the MCP handler finished building its result")
+	case <-time.After(40 * time.Millisecond):
+	}
+	close(releaseQuery)
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-refreshStarted:
+	default:
+		t.Fatal("writer never started after the handler released its lease")
+	}
+	if err := coordinator.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type blockingSearchRepository struct {
+	graph.ReadRepository
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (r *blockingSearchRepository) SearchNodes(ctx context.Context, query string, limit int) ([]graph.Node, error) {
+	r.once.Do(func() { close(r.started) })
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-r.release:
+		return r.ReadRepository.SearchNodes(ctx, query, limit)
+	}
+}
+
 func coordinatorProbe(t *testing.T, content string) indexer.FreshnessProbe {
 	t.Helper()
 	root := t.TempDir()

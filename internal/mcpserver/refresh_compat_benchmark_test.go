@@ -138,10 +138,13 @@ func compatPrepareCorpus(tb testing.TB, source string) string {
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() && relative != "." {
+		if relative != "." {
 			switch entry.Name() {
 			case ".git", ".grafo", ".worktrees":
-				return filepath.SkipDir
+				if entry.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
 			}
 		}
 		if relative == "." || entry.IsDir() {

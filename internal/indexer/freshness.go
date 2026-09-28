@@ -59,11 +59,13 @@ func (t FreshnessToken) String() string {
 // Unsupported means the project is not Git-managed and must conservatively be
 // refreshed for every request generation.
 type FreshnessProbe struct {
-	Project     Project
-	Token       FreshnessToken
-	Supported   bool
-	Fallback    string
-	GitCommands int
+	Project                   Project
+	Token                     FreshnessToken
+	Supported                 bool
+	Fallback                  string
+	GitCommands               int
+	workspaceSemanticKeys     map[string]string
+	workspaceSemanticEvidence map[string]string
 }
 
 // ProbeFreshness computes a stable token from Git state, dirty/untracked
@@ -79,7 +81,7 @@ func ProbeFreshness(ctx context.Context, start string, registry *parserapi.Regis
 	if err != nil {
 		return FreshnessProbe{}, err
 	}
-	return probeProjectFreshness(ctx, project, registry, options)
+	return probeProjectFreshness(ctx, project, registry, options, nil, false)
 }
 
 // ReprobeFreshness updates a prior probe with one porcelain status command in
@@ -117,10 +119,15 @@ func ReprobeFreshness(ctx context.Context, previous FreshnessProbe, registry *pa
 	snapshot.Identity = identity
 	snapshot.Commands += identityCommands
 	project := projectFromSnapshot(root, filepath.Base(root), readGoModule(root), *snapshot, true)
-	return probeProjectFreshness(ctx, project, registry, options)
+	reuseWorkspaceKeys := previous.Project.gitSnapshot != nil &&
+		previous.Project.gitSnapshot.Head == snapshot.Head && previous.Project.gitSnapshot.Identity == snapshot.Identity &&
+		len(freshnessRelevantPaths(previous.Project.gitSnapshot.Changed, registry)) == 0 &&
+		len(freshnessRelevantPaths(snapshot.Changed, registry)) == 0
+	return probeProjectFreshness(ctx, project, registry, options, &previous, reuseWorkspaceKeys)
 }
 
-func probeProjectFreshness(ctx context.Context, project Project, registry *parserapi.Registry, options FreshnessOptions) (FreshnessProbe, error) {
+func probeProjectFreshness(ctx context.Context, project Project, registry *parserapi.Registry, options FreshnessOptions,
+	previous *FreshnessProbe, reuseWorkspaceKeys bool) (FreshnessProbe, error) {
 	if registry == nil {
 		return FreshnessProbe{}, fmt.Errorf("freshness parser registry is required")
 	}
@@ -130,15 +137,26 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 	if err := ctx.Err(); err != nil {
 		return FreshnessProbe{}, err
 	}
-	keys, err := registry.WorkspaceSemanticKeys(ctx, parserapi.Input{
+	semanticInput := parserapi.Input{
 		Root: project.Root, Repository: project.Name, RepoID: project.ID, GoModule: project.GoModule,
-	})
+	}
+	evidence, cacheable, err := registry.WorkspaceSemanticEvidenceKeys(ctx, semanticInput)
 	if err != nil {
 		return FreshnessProbe{}, err
+	}
+	var keys map[string]string
+	if reuseWorkspaceKeys && cacheable && previous != nil && equalFreshnessMap(evidence, previous.workspaceSemanticEvidence) {
+		keys = cloneFreshnessMap(previous.workspaceSemanticKeys)
+	} else {
+		keys, err = registry.WorkspaceSemanticKeys(ctx, semanticInput)
+		if err != nil {
+			return FreshnessProbe{}, err
+		}
 	}
 	if !project.GitManaged || project.gitSnapshot == nil {
 		return FreshnessProbe{
 			Project: project, Fallback: "non-Git project requires a conservative full refresh",
+			workspaceSemanticKeys: cloneFreshnessMap(keys), workspaceSemanticEvidence: cloneFreshnessMap(evidence),
 		}, nil
 	}
 
@@ -192,7 +210,7 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 		if PathIgnored(path) || path == projectconfig.FileName {
 			continue
 		}
-		if _, ok := registry.For(path); !ok {
+		if _, ok := registry.For(path); !ok && !registry.IsSemanticDependency(path) {
 			continue
 		}
 		encoder.addString("status-path", path)
@@ -208,10 +226,30 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 		return FreshnessProbe{}, err
 	}
 	return FreshnessProbe{
-		Project:   project,
-		Token:     FreshnessToken{version: FreshnessTokenVersion, digest: encoder.sum()},
+		Project: project, Token: FreshnessToken{version: FreshnessTokenVersion, digest: encoder.sum()},
 		Supported: true, GitCommands: snapshot.Commands,
+		workspaceSemanticKeys: cloneFreshnessMap(keys), workspaceSemanticEvidence: cloneFreshnessMap(evidence),
 	}, nil
+}
+
+func cloneFreshnessMap(values map[string]string) map[string]string {
+	result := make(map[string]string, len(values))
+	for key, value := range values {
+		result[key] = value
+	}
+	return result
+}
+
+func equalFreshnessMap(left, right map[string]string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key, value := range left {
+		if right[key] != value {
+			return false
+		}
+	}
+	return true
 }
 
 func addFreshnessConfig(ctx context.Context, encoder *freshnessEncoder, path string) error {
@@ -240,6 +278,10 @@ func freshnessRelevantPaths(paths []string, registry *parserapi.Registry) []stri
 			continue
 		}
 		if path == projectconfig.FileName {
+			result = append(result, path)
+			continue
+		}
+		if registry.IsSemanticDependency(path) {
 			result = append(result, path)
 			continue
 		}
