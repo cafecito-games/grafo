@@ -1,6 +1,7 @@
 package indexer
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -9,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -66,6 +68,7 @@ type FreshnessProbe struct {
 	GitCommands               int
 	workspaceSemanticKeys     map[string]string
 	workspaceSemanticEvidence map[string]string
+	hiddenSemanticDigest      [sha256.Size]byte
 }
 
 // ProbeFreshness computes a stable token from Git state, dirty/untracked
@@ -145,6 +148,14 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 	if registry == nil {
 		return FreshnessProbe{}, fmt.Errorf("freshness parser registry is required")
 	}
+	maximum := options.MaxFileSize
+	if maximum <= 0 {
+		maximum = defaultFreshnessMax
+	}
+	hiddenSemanticDigest, hiddenGitCommands, err := freshnessHiddenSemanticDigest(ctx, project, registry, maximum)
+	if err != nil {
+		return FreshnessProbe{}, err
+	}
 	if _, err := projectconfig.Load(project.Root); err != nil {
 		return FreshnessProbe{}, err
 	}
@@ -159,7 +170,8 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 		return FreshnessProbe{}, err
 	}
 	var keys map[string]string
-	if reuseWorkspaceKeys && cacheable && previous != nil && equalFreshnessMap(evidence, previous.workspaceSemanticEvidence) {
+	if reuseWorkspaceKeys && cacheable && previous != nil && hiddenSemanticDigest == previous.hiddenSemanticDigest &&
+		equalFreshnessMap(evidence, previous.workspaceSemanticEvidence) {
 		keys = cloneFreshnessMap(previous.workspaceSemanticKeys)
 	} else {
 		keys, err = registry.WorkspaceSemanticKeys(ctx, semanticInput)
@@ -171,13 +183,10 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 		return FreshnessProbe{
 			Project: project, Fallback: "non-Git project requires a conservative full refresh",
 			workspaceSemanticKeys: cloneFreshnessMap(keys), workspaceSemanticEvidence: cloneFreshnessMap(evidence),
+			hiddenSemanticDigest: hiddenSemanticDigest,
 		}, nil
 	}
 
-	maximum := options.MaxFileSize
-	if maximum <= 0 {
-		maximum = defaultFreshnessMax
-	}
 	snapshot := project.gitSnapshot
 	encoder := newFreshnessEncoder()
 	encoder.addString("token-version", FreshnessTokenVersion)
@@ -189,6 +198,7 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 	encoder.addString("detached-branch", snapshot.DetachedBranch)
 	encoder.addString("head", snapshot.Head)
 	encoder.addString("index-path", project.IndexPath)
+	encoder.addBytes("hidden-semantic-digest", hiddenSemanticDigest[:])
 	encoder.addStrings("changed", freshnessRelevantPaths(snapshot.Changed, registry))
 	encoder.addStrings("dirty", freshnessRelevantPaths(snapshot.Dirty, registry))
 	encoder.addStrings("untracked", freshnessRelevantPaths(snapshot.Untracked, registry))
@@ -221,10 +231,11 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 			continue
 		}
 		last = path
-		if PathIgnored(path) || path == projectconfig.FileName {
+		semanticInput := registry.IsSemanticDependency(path)
+		if (PathIgnored(path) && !semanticInput) || path == projectconfig.FileName {
 			continue
 		}
-		if _, ok := registry.For(path); !ok && !registry.IsSemanticDependency(path) {
+		if _, ok := registry.For(path); !ok && !semanticInput {
 			continue
 		}
 		encoder.addString("status-path", path)
@@ -241,9 +252,70 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 	}
 	return FreshnessProbe{
 		Project: project, Token: FreshnessToken{version: FreshnessTokenVersion, digest: encoder.sum()},
-		Supported: true, GitCommands: snapshot.Commands,
+		Supported: true, GitCommands: snapshot.Commands + hiddenGitCommands,
 		workspaceSemanticKeys: cloneFreshnessMap(keys), workspaceSemanticEvidence: cloneFreshnessMap(evidence),
+		hiddenSemanticDigest: hiddenSemanticDigest,
 	}, nil
+}
+
+func freshnessHiddenSemanticDigest(ctx context.Context, project Project, registry *parserapi.Registry, maximum int64) ([sha256.Size]byte, int, error) {
+	encoder := newFreshnessEncoder()
+	encoder.addString("hidden-semantic-version", "hidden-semantic-v1")
+	if !project.GitManaged || project.gitSnapshot == nil {
+		return encoder.sum(), 0, nil
+	}
+	runner := gitCommandRunner(execGitRunner{})
+	if project.gitSnapshot.runner != nil {
+		runner = project.gitSnapshot.runner
+	}
+	visibleRaw, err := runner.Run(ctx, project.Root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+	if err != nil {
+		return [sha256.Size]byte{}, 1, fmt.Errorf("enumerate Git-visible semantic inputs: %w", err)
+	}
+	visible := make(map[string]bool)
+	for _, raw := range bytes.Split(visibleRaw, []byte{0}) {
+		if len(raw) != 0 {
+			visible[filepath.ToSlash(string(raw))] = true
+		}
+	}
+	err = filepath.WalkDir(project.Root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(project.Root, path)
+		if err != nil {
+			return err
+		}
+		relative = filepath.ToSlash(relative)
+		if entry.IsDir() {
+			if relative != "." {
+				switch entry.Name() {
+				case ".git", ".grafo", ".worktrees":
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		if visible[relative] || !registry.IsSemanticDependency(relative) {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("inspect hidden semantic input %s: %w", relative, err)
+		}
+		if info.Mode().IsRegular() && maximum >= 0 && info.Size() > maximum {
+			return fmt.Errorf("hidden semantic input %s exceeds freshness bound %d", relative, maximum)
+		}
+		encoder.addString("hidden-semantic-path", relative)
+		return addFreshnessFile(ctx, encoder, "hidden-semantic:"+relative, path, maximum)
+	})
+	if err != nil {
+		return [sha256.Size]byte{}, 1, err
+	}
+	return encoder.sum(), 1, nil
 }
 
 func cloneFreshnessMap(values map[string]string) map[string]string {
@@ -288,14 +360,15 @@ func freshnessRelevantPaths(paths []string, registry *parserapi.Registry) []stri
 	result := make([]string, 0, len(paths))
 	for _, path := range paths {
 		path = filepath.ToSlash(path)
-		if PathIgnored(path) {
+		semanticInput := registry.IsSemanticDependency(path)
+		if PathIgnored(path) && !semanticInput {
 			continue
 		}
 		if path == projectconfig.FileName {
 			result = append(result, path)
 			continue
 		}
-		if registry.IsSemanticDependency(path) {
+		if semanticInput {
 			result = append(result, path)
 			continue
 		}
