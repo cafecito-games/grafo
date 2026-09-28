@@ -855,7 +855,7 @@ func (a *httpSemanticAnalyzer) assign(execution *httpExecution, function *httpSe
 		if object != nil {
 			if current, exists := environment[object]; exists && isHTTPMutableValue(current) {
 				if shareHTTPMutableIdentity(current, value) {
-					propagateHTTPRequestAliases(environment, current, value)
+					propagateHTTPRequestAliases(execution, environment, current, value)
 				} else {
 					captureHTTPArgumentRebind(execution, object, current)
 				}
@@ -1162,7 +1162,7 @@ func httpURLObjectFromRoute(valueType types.Type, route httpStringValue) *httpOb
 			text: text, unknownBase: unknownBase, conditional: route.conditional,
 		}}}
 	}
-	set("Path", parsed.EscapedPath(), route.unknownBase)
+	set("Path", rawHTTPRoutePath(route.text, parsed), route.unknownBase)
 	if parsed.Scheme != "" {
 		set("Scheme", parsed.Scheme, false)
 	}
@@ -1173,6 +1173,31 @@ func httpURLObjectFromRoute(valueType types.Type, route httpStringValue) *httpOb
 		set("RawQuery", parsed.RawQuery, false)
 	}
 	return object
+}
+
+func rawHTTPRoutePath(raw string, parsed *url.URL) string {
+	path := raw
+	authority := -1
+	if parsed.Scheme != "" {
+		prefix := parsed.Scheme + "://"
+		if strings.HasPrefix(raw, prefix) {
+			authority = len(prefix)
+		}
+	} else if strings.HasPrefix(raw, "//") {
+		authority = 2
+	}
+	if authority >= 0 {
+		rest := raw[authority:]
+		separator := strings.IndexAny(rest, "/?#")
+		if separator < 0 || rest[separator] != '/' {
+			return ""
+		}
+		path = rest[separator:]
+	}
+	if end := strings.IndexAny(path, "?#"); end >= 0 {
+		path = path[:end]
+	}
+	return path
 }
 
 func httpStructField(value types.Type, name string) types.Object {
@@ -1728,7 +1753,7 @@ func captureHTTPArgumentRebind(execution *httpExecution, object types.Object, cu
 	}
 }
 
-func propagateHTTPRequestAliases(environment httpEnvironment, previous, updated httpValue) {
+func propagateHTTPRequestAliases(execution *httpExecution, environment httpEnvironment, previous, updated httpValue) {
 	previousIdentities := map[*httpRequestIdentity]bool{}
 	for _, request := range previous.requests {
 		if request.identity != nil {
@@ -1749,17 +1774,36 @@ func propagateHTTPRequestAliases(environment httpEnvironment, previous, updated 
 		replaceHTTPRequestAliases(&value, updates, seen)
 		environment[object] = value
 	}
+	for _, frame := range execution.frames {
+		for object, value := range frame.escaped {
+			replaceHTTPRequestAliases(&value, updates, seen)
+			frame.escaped[object] = value
+		}
+	}
 }
 
 func replaceHTTPRequestAliases(value *httpValue, updates map[*httpRequestIdentity][]httpRequestValue,
 	seen map[*httpObjectValue]bool,
 ) {
 	var requests []httpRequestValue
+	replaced := map[*httpRequestIdentity]bool{}
 	for _, request := range value.requests {
 		if replacements := updates[request.identity]; len(replacements) > 0 {
-			requests = append(requests, replacements...)
+			if replaced[request.identity] {
+				continue
+			}
+			replaced[request.identity] = true
+			for _, replacement := range replacements {
+				if !appendBoundedHTTPRequest(&requests, replacement) {
+					value.requests = []httpRequestValue{{overflow: true}}
+					return
+				}
+			}
 		} else {
-			requests = append(requests, request)
+			if !appendBoundedHTTPRequest(&requests, request) {
+				value.requests = []httpRequestValue{{overflow: true}}
+				return
+			}
 		}
 	}
 	value.requests = requests
@@ -1769,6 +1813,25 @@ func replaceHTTPRequestAliases(value *httpValue, updates map[*httpRequestIdentit
 	for _, object := range value.objects {
 		replaceHTTPRequestAliasesInObject(object, updates, seen)
 	}
+}
+
+func appendBoundedHTTPRequest(requests *[]httpRequestValue, candidate httpRequestValue) bool {
+	if candidate.overflow {
+		return false
+	}
+	for index, current := range *requests {
+		if current.identity == candidate.identity && current.method == candidate.method && current.route == candidate.route &&
+			current.source == candidate.source &&
+			equalHTTPObjects(current.urlObject, candidate.urlObject, map[httpObjectPair]bool{}) {
+			(*requests)[index].conditional = current.conditional || candidate.conditional
+			return true
+		}
+	}
+	if len(*requests) >= httpAlternativeLimit {
+		return false
+	}
+	*requests = append(*requests, candidate)
+	return true
 }
 
 func replaceHTTPRequestAliasesInObject(object *httpObjectValue, updates map[*httpRequestIdentity][]httpRequestValue,

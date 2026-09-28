@@ -285,6 +285,18 @@ func MutateThenRebind() {
 	_, _ = http.DefaultClient.Do(request)
 }
 
+func rebindThenMutateAlias(request *http.Request) {
+	alias := request
+	request, _ = http.NewRequest(http.MethodGet, "/late-swapped", nil)
+	alias.Method = http.MethodPost
+}
+
+func RebindThenMutateAlias() {
+	request, _ := http.NewRequest(http.MethodGet, "/late-original", nil)
+	rebindThenMutateAlias(request)
+	_, _ = http.DefaultClient.Do(request)
+}
+
 func rebindLiteral(request *http.Request) {
 	request = &http.Request{Method: http.MethodTrace, URL: &url.URL{Path: "/literal-swapped"}}
 }
@@ -313,6 +325,22 @@ func URLAlias() {
 	alias := request.URL
 	alias.Path = "/alias-new"
 	alias.RawQuery = "mode=alias"
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func AlternativeURLAlias(flag bool) {
+	target := "/alias-alt-left"
+	if flag { target = "/alias-alt-right" }
+	request, _ := http.NewRequest(http.MethodGet, target, nil)
+	alias := request
+	alias.URL.Path = "/alias-alt-final"
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func URLAliasSpace() {
+	request, _ := http.NewRequest(http.MethodGet, "/space direct", nil)
+	alias := request.URL
+	alias.RawQuery = "q=1"
 	_, _ = http.DefaultClient.Do(request)
 }
 
@@ -522,10 +550,13 @@ func NotHTTP() {
 		"POST /helper-mutated":                   "example.com/client.HelperMutation",
 		"GET /original":                          "example.com/client.HelperRebind",
 		"POST /mutate-original":                  "example.com/client.MutateThenRebind",
+		"POST /late-original":                    "example.com/client.RebindThenMutateAlias",
 		"GET /literal-original":                  "example.com/client.CompositeRebind",
 		"GET /actual-url":                        "example.com/client.URLThenPath",
 		"GET /direct-fresh":                      "example.com/client.DirectURLPath",
 		"GET /alias-new":                         "example.com/client.URLAlias",
+		"GET /alias-alt-final":                   "example.com/client.AlternativeURLAlias",
+		"GET /space direct":                      "example.com/client.URLAliasSpace",
 		"POST /request-alias":                    "example.com/client.RequestAlias",
 		"GET /always":                            "example.com/client.UnrelatedConditional",
 		"POST /holder-mutated":                   "example.com/client.HolderMutation",
@@ -590,7 +621,10 @@ func NotHTTP() {
 	if alias := found["GET /alias-new"]; alias.Properties["http_query"] != "mode=alias" {
 		t.Fatalf("URL alias mutation lost its query: %#v", alias)
 	}
-	for _, forbidden := range []string{"POST /swapped", "GET /mutate-original", "GET /mutate-swapped", "TRACE /literal-swapped", "GET /alias-old", "GET /request-alias", "GET /direct-stale", "GET /unsafe/{_}", "GET /synthetic", "GET /invented", "GET /cycle"} {
+	if alias := found["GET /space direct"]; alias.Properties["http_query"] != "q=1" {
+		t.Fatalf("URL alias attachment changed its raw path or lost its query: %#v", alias)
+	}
+	for _, forbidden := range []string{"POST /swapped", "GET /mutate-original", "GET /mutate-swapped", "GET /late-original", "GET /late-swapped", "TRACE /literal-swapped", "GET /alias-old", "GET /alias-alt-left", "GET /alias-alt-right", "GET /space%20direct", "GET /request-alias", "GET /direct-stale", "GET /unsafe/{_}", "GET /synthetic", "GET /invented", "GET /cycle"} {
 		if _, ok := found[forbidden]; ok {
 			t.Fatalf("unproven or unrelated request %q was invented: %#v", forbidden, found[forbidden])
 		}
