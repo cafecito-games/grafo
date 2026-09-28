@@ -1,6 +1,7 @@
 package service
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -24,6 +25,23 @@ func TestLockIsExclusiveAndReleasable(t *testing.T) {
 	}
 	if err := again(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTryIndexLockDoesNotWaitAndLeavesAnchor(t *testing.T) {
+	indexPath := filepath.Join(t.TempDir(), "indexes", "branch.sqlite")
+	first, acquired, err := TryIndexLock(indexPath)
+	if err != nil || !acquired {
+		t.Fatalf("first TryIndexLock = acquired %t, err %v", acquired, err)
+	}
+	if second, acquired, err := TryIndexLock(indexPath); err != nil || acquired || second != nil {
+		t.Fatalf("contended TryIndexLock = unlock %#v, acquired %t, err %v", second, acquired, err)
+	}
+	if err := first(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(indexPath + ".lock"); err != nil {
+		t.Fatalf("lock anchor was not retained: %v", err)
 	}
 }
 

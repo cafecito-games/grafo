@@ -48,3 +48,15 @@ func Lock(path string, wait time.Duration) (Unlock, error) {
 func IndexLock(indexPath string, wait time.Duration) (Unlock, error) {
 	return Lock(indexPath+".lock", wait)
 }
+
+// TryIndexLock attempts to serialize a branch-index mutation without waiting.
+// A false acquired result is ordinary contention, not an operation error. The
+// zero-byte lock anchor intentionally remains after unlock so waiters can never
+// race a replacement inode.
+func TryIndexLock(indexPath string) (unlock Unlock, acquired bool, err error) {
+	path := indexPath + ".lock"
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, false, fmt.Errorf("create lock directory %s: %w", filepath.Dir(path), err)
+	}
+	return tryLock(path)
+}

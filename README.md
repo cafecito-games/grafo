@@ -19,6 +19,7 @@ go install github.com/cafecito-games/grafo/cmd/grafo@latest
 grafo install
 grafo index .
 grafo status
+grafo indexes list
 grafo find "MyHandler"
 grafo neighbors "MyHandler" --depth 2
 grafo path "HandleCheckout" "Charge"
@@ -784,6 +785,38 @@ resolved in committed batches, with WAL checkpoints between batches; an
 interrupted initial index resumes completed file hashes and pending facts.
 Ambiguous symbolic names remain explicit unresolved nodes instead of producing
 speculative edges to every declaration with the same name.
+
+### Branch index inventory and retention
+
+Every Git branch/worktree has its own SQLite database, so disk usage grows with
+both graph size and the number of branches that have been indexed. Inspect the
+complete physical footprint for one repository with:
+
+```sh
+grafo indexes list .
+grafo indexes list . --json
+```
+
+The inventory reports each primary database and its exact WAL/SHM sidecar
+bytes, stored branch/commit/repository metadata, compatibility, current-index
+status, and deterministic totals. It examines only direct regular
+`.grafo/indexes/*.sqlite` entries and never follows symlinks.
+
+Pruning always requires at least one explicit retention selector. Preview first;
+a dry run does not lock, checkpoint, rename, or delete any index file:
+
+```sh
+grafo indexes prune . --older-than 720h --keep 3 --dry-run
+grafo indexes prune . --older-than 720h --keep 3 --yes
+```
+
+When both selectors are present, a branch must be older than the duration and
+outside the keep set to be selected. `--keep 0` keeps no historical index, but
+the current branch index is still always protected. Grafo also refuses to
+automatically prune locked, corrupt, incompatible, metadata-free,
+identity-mismatched, future-dated, or symlinked candidates. Each deleted index
+is rebuildable from source with `grafo index`, but the next switch to that
+branch pays the full rebuild cost. Advisory `.lock` anchors remain in place.
 
 ## Development
 
