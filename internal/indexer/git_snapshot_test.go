@@ -306,3 +306,25 @@ func TestDiscoverFilesUsesInjectedExactMembershipCommand(t *testing.T) {
 		t.Fatalf("discovered = %#v", discovered)
 	}
 }
+
+func TestDiscoverFilesExcludesManagedWorktrees(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{"kept.snap", ".worktrees/other/ignored.snap"} {
+		fullPath := filepath.Join(root, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(fullPath, []byte("fixture"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runner := &scriptedGitRunner{outputs: [][]byte{[]byte("kept.snap\x00.worktrees/other/ignored.snap\x00")}}
+	project := Project{Root: root, GitManaged: true, gitSnapshot: &GitSnapshot{runner: runner}}
+	discovered, err := discoverFiles(context.Background(), project, parserapi.NewRegistry(snapshotTestParser{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(discovered.paths, []string{"kept.snap"}) {
+		t.Fatalf("discovered paths = %q, want only repository-owned file", discovered.paths)
+	}
+}

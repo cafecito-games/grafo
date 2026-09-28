@@ -67,7 +67,7 @@ func (p *Parser) SemanticKey(ctx context.Context, input parserapi.Input) (string
 	if input.Root == "" {
 		return buildContextString() + bindingKey, nil
 	}
-	key, _, err := semanticWorkspaceKey(input.Root)
+	key, _, err := semanticWorkspaceKey(ctx, input.Root)
 	return key + bindingKey, err
 }
 
@@ -119,8 +119,12 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 					"go_build_context":   semantic.BuildContext,
 					"go_semantic_loader": "go/packages",
 				}
-				if input.GoModule != "" {
-					properties["go_module"] = input.GoModule
+				modulePath := input.GoModule
+				if semantic.ModulePath != "" {
+					modulePath = semantic.ModulePath
+				}
+				if modulePath != "" {
+					properties["go_module"] = modulePath
 				}
 				if input.Root != "" {
 					if workspace := discoverGoWorkspace(input.Root); workspace != "" {
@@ -819,16 +823,6 @@ func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input,
 	}
 	if semantic.ChiEndpointCalls[callOffset] {
 		return
-	}
-	if isHTTPMethod(method) && len(call.Args) > 1 && !semantic.NonChiHTTPCalls[callOffset] {
-		if route, ok := stringArgument(call.Args, 0); ok {
-			if strings.HasPrefix(route, "/") {
-				endpointID := addEndpoint(b, loc, strings.ToUpper(method), route)
-				b.AddFact(fromID, graph.EdgeExposes, endpointID, "", "", loc, nil)
-				b.AddFact(endpointID, graph.EdgeHandledBy, "", render(fset, call.Args[len(call.Args)-1]), "", loc, nil)
-				return
-			}
-		}
 	}
 	if event, ok := stringArgument(call.Args, 0); ok {
 		switch method {

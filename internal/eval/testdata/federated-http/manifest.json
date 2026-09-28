@@ -14,6 +14,11 @@
   "expect": {
     "nodes": [
       {
+        "kind": "module",
+        "qualified_name": "net/http",
+        "external": true
+      },
+      {
         "repo": "client",
         "kind": "class",
         "qualified_name": "GodotClient"
@@ -208,12 +213,6 @@
       {
         "repo": "client",
         "kind": "module",
-        "qualified_name": "net/http",
-        "external": true
-      },
-      {
-        "repo": "client",
-        "kind": "module",
         "qualified_name": "net/url",
         "external": true
       },
@@ -295,22 +294,28 @@
       {
         "repo": "server",
         "kind": "endpoint",
-        "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:11:2"
+        "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:18:2"
       },
       {
         "repo": "server",
         "kind": "endpoint",
-        "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:12:2"
+        "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:19:2"
       },
       {
         "repo": "server",
         "kind": "endpoint",
-        "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
+        "qualified_name": "endpoint:GET /charge/{_}@server.go:16:2"
       },
       {
         "repo": "server",
         "kind": "endpoint",
-        "qualified_name": "endpoint:POST /charge/{_}@server.go:10:2"
+        "qualified_name": "endpoint:POST /charge/{_}@server.go:17:2"
+      },
+      {
+        "repo": "server",
+        "kind": "external",
+        "qualified_name": "http.Handler",
+        "external": true
       },
       {
         "repo": "server",
@@ -321,6 +326,16 @@
         "repo": "server",
         "kind": "file",
         "qualified_name": "server.go"
+      },
+      {
+        "repo": "server",
+        "kind": "file",
+        "qualified_name": "third_party/chi/chi.go"
+      },
+      {
+        "repo": "server",
+        "kind": "file",
+        "qualified_name": "third_party/chi/go.mod"
       },
       {
         "repo": "server",
@@ -349,13 +364,68 @@
       },
       {
         "repo": "server",
+        "kind": "function",
+        "qualified_name": "github.com/go-chi/chi/v5.NewRouter"
+      },
+      {
+        "repo": "server",
+        "kind": "interface",
+        "qualified_name": "github.com/go-chi/chi/v5.Router"
+      },
+      {
+        "repo": "server",
+        "kind": "method",
+        "qualified_name": "github.com/go-chi/chi/v5.Mux.Get"
+      },
+      {
+        "repo": "server",
+        "kind": "method",
+        "qualified_name": "github.com/go-chi/chi/v5.Mux.Post"
+      },
+      {
+        "repo": "server",
+        "kind": "method",
+        "qualified_name": "github.com/go-chi/chi/v5.Mux.ServeHTTP"
+      },
+      {
+        "repo": "server",
+        "kind": "method",
+        "qualified_name": "github.com/go-chi/chi/v5.Router.Get"
+      },
+      {
+        "repo": "server",
+        "kind": "method",
+        "qualified_name": "github.com/go-chi/chi/v5.Router.Post"
+      },
+      {
+        "repo": "server",
+        "kind": "method",
+        "qualified_name": "github.com/go-chi/chi/v5.Router.ServeHTTP"
+      },
+      {
+        "repo": "server",
         "kind": "module",
         "qualified_name": "example.com/server"
       },
       {
         "repo": "server",
+        "kind": "module",
+        "qualified_name": "github.com/go-chi/chi/v5"
+      },
+      {
+        "repo": "server",
         "kind": "repository",
         "qualified_name": "server"
+      },
+      {
+        "repo": "server",
+        "kind": "type",
+        "qualified_name": "github.com/go-chi/chi/v5.Mux"
+      },
+      {
+        "repo": "server",
+        "kind": "variable",
+        "qualified_name": "example.com/server.Routes.router@15"
       }
     ],
     "edges": [
@@ -565,18 +635,17 @@
         },
         "relation": "imports",
         "to": {
-          "repo": "client",
           "kind": "module",
-          "qualified_name": "fmt",
+          "qualified_name": "net/http",
           "external": true
         },
         "source": {
           "path": "client.go",
-          "line": 4,
+          "line": 5,
           "column": 2
         },
         "properties": {
-          "alias": "fmt"
+          "alias": "http"
         }
       },
       {
@@ -589,16 +658,16 @@
         "to": {
           "repo": "client",
           "kind": "module",
-          "qualified_name": "net/http",
+          "qualified_name": "fmt",
           "external": true
         },
         "source": {
           "path": "client.go",
-          "line": 5,
+          "line": 4,
           "column": 2
         },
         "properties": {
-          "alias": "http"
+          "alias": "fmt"
         }
       },
       {
@@ -879,7 +948,7 @@
         "to": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:11:2"
+          "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:18:2"
         },
         "source": {
           "path": "client.go",
@@ -908,7 +977,7 @@
         "to": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:12:2"
+          "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:19:2"
         },
         "source": {
           "path": "client.go",
@@ -1015,7 +1084,7 @@
         "to": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
+          "qualified_name": "endpoint:GET /charge/{_}@server.go:16:2"
         },
         "source": {
           "path": "client.go",
@@ -1097,10 +1166,9 @@
         },
         "relation": "calls",
         "to": {
-          "repo": "client",
-          "kind": "external",
-          "qualified_name": "net/http.Get",
-          "external": true
+          "repo": "server",
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Get"
         },
         "source": {
           "path": "client.go",
@@ -1108,6 +1176,29 @@
           "column": 9
         },
         "properties": {
+          "federated": "true",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.Unsafe"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "server",
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Router.Get"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 41,
+          "column": 9
+        },
+        "properties": {
+          "federated": "true",
           "resolution": "go/types"
         }
       },
@@ -1460,7 +1551,7 @@
         "to": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
+          "qualified_name": "endpoint:GET /charge/{_}@server.go:16:2"
         },
         "source": {
           "path": "godot_client.gd",
@@ -1625,13 +1716,13 @@
         "to": {
           "repo": "client",
           "kind": "external",
-          "qualified_name": "net/http.Get",
+          "qualified_name": "net/url.PathEscape",
           "external": true
         },
         "source": {
           "path": "client.go",
           "line": 28,
-          "column": 9
+          "column": 45
         },
         "properties": {
           "argument": "0"
@@ -1645,18 +1736,40 @@
         },
         "relation": "passes",
         "to": {
-          "repo": "client",
-          "kind": "external",
-          "qualified_name": "net/url.PathEscape",
-          "external": true
+          "repo": "server",
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Get"
         },
         "source": {
           "path": "client.go",
           "line": 28,
-          "column": 45
+          "column": 9
         },
         "properties": {
-          "argument": "0"
+          "argument": "0",
+          "federated": "true"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.API.UnknownAuthority.requestID"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "server",
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Router.Get"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 28,
+          "column": 9
+        },
+        "properties": {
+          "argument": "0",
+          "federated": "true"
         }
       },
       {
@@ -1790,10 +1903,9 @@
         },
         "relation": "passes",
         "to": {
-          "repo": "client",
-          "kind": "external",
-          "qualified_name": "net/http.Get",
-          "external": true
+          "repo": "server",
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Get"
         },
         "source": {
           "path": "client.go",
@@ -1801,7 +1913,30 @@
           "column": 9
         },
         "properties": {
-          "argument": "0"
+          "argument": "0",
+          "federated": "true"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.Unsafe.requestID"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "server",
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Router.Get"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 41,
+          "column": 9
+        },
+        "properties": {
+          "argument": "0",
+          "federated": "true"
         }
       },
       {
@@ -2141,7 +2276,7 @@
         "from": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:11:2"
+          "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:18:2"
         },
         "relation": "handled_by",
         "to": {
@@ -2151,15 +2286,20 @@
         },
         "source": {
           "path": "server.go",
-          "line": 11,
+          "line": 18,
           "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
         }
       },
       {
         "from": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:12:2"
+          "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:19:2"
         },
         "relation": "handled_by",
         "to": {
@@ -2169,15 +2309,20 @@
         },
         "source": {
           "path": "server.go",
-          "line": 12,
+          "line": 19,
           "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
         }
       },
       {
         "from": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
+          "qualified_name": "endpoint:GET /charge/{_}@server.go:16:2"
         },
         "relation": "handled_by",
         "to": {
@@ -2187,15 +2332,20 @@
         },
         "source": {
           "path": "server.go",
-          "line": 9,
+          "line": 16,
           "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
         }
       },
       {
         "from": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:POST /charge/{_}@server.go:10:2"
+          "qualified_name": "endpoint:POST /charge/{_}@server.go:17:2"
         },
         "relation": "handled_by",
         "to": {
@@ -2205,8 +2355,13 @@
         },
         "source": {
           "path": "server.go",
-          "line": 10,
+          "line": 17,
           "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
         }
       },
       {
@@ -2241,7 +2396,7 @@
         },
         "source": {
           "path": "server.go",
-          "line": 5,
+          "line": 11,
           "column": 1
         }
       },
@@ -2259,7 +2414,7 @@
         },
         "source": {
           "path": "server.go",
-          "line": 6,
+          "line": 12,
           "column": 1
         }
       },
@@ -2277,7 +2432,7 @@
         },
         "source": {
           "path": "server.go",
-          "line": 3,
+          "line": 9,
           "column": 1
         }
       },
@@ -2295,7 +2450,7 @@
         },
         "source": {
           "path": "server.go",
-          "line": 8,
+          "line": 14,
           "column": 1
         }
       },
@@ -2313,7 +2468,196 @@
         },
         "source": {
           "path": "server.go",
+          "line": 10,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "file",
+          "qualified_name": "server.go"
+        },
+        "relation": "imports",
+        "to": {
+          "kind": "module",
+          "qualified_name": "net/http",
+          "external": true
+        },
+        "source": {
+          "path": "server.go",
           "line": 4,
+          "column": 2
+        },
+        "properties": {
+          "alias": "http"
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "file",
+          "qualified_name": "server.go"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "server",
+          "kind": "module",
+          "qualified_name": "github.com/go-chi/chi/v5"
+        },
+        "source": {
+          "path": "server.go",
+          "line": 6,
+          "column": 2
+        },
+        "properties": {
+          "alias": "v5"
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "server",
+          "kind": "function",
+          "qualified_name": "github.com/go-chi/chi/v5.NewRouter"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 13,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "server",
+          "kind": "interface",
+          "qualified_name": "github.com/go-chi/chi/v5.Router"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 5,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "server",
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Get"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 15,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "server",
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Post"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 16,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "server",
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.ServeHTTP"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 14,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "server",
+          "kind": "type",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 11,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "relation": "imports",
+        "to": {
+          "kind": "module",
+          "qualified_name": "net/http",
+          "external": true
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 3,
+          "column": 8
+        },
+        "properties": {
+          "alias": "http"
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "file",
+          "qualified_name": "third_party/chi/go.mod"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "server",
+          "kind": "module",
+          "qualified_name": "github.com/go-chi/chi/v5"
+        },
+        "source": {
+          "path": "third_party/chi/go.mod",
+          "line": 1,
           "column": 1
         }
       },
@@ -2323,15 +2667,36 @@
           "kind": "function",
           "qualified_name": "example.com/server.Routes"
         },
-        "relation": "exposes",
+        "relation": "calls",
         "to": {
           "repo": "server",
-          "kind": "endpoint",
-          "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:11:2"
+          "kind": "function",
+          "qualified_name": "github.com/go-chi/chi/v5.NewRouter"
         },
         "source": {
           "path": "server.go",
-          "line": 11,
+          "line": 15,
+          "column": 12
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "function",
+          "qualified_name": "example.com/server.Routes"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "server",
+          "kind": "variable",
+          "qualified_name": "example.com/server.Routes.router@15"
+        },
+        "source": {
+          "path": "server.go",
+          "line": 15,
           "column": 2
         }
       },
@@ -2345,12 +2710,17 @@
         "to": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:12:2"
+          "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:18:2"
         },
         "source": {
           "path": "server.go",
-          "line": 12,
+          "line": 18,
           "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
         }
       },
       {
@@ -2363,12 +2733,17 @@
         "to": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
+          "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:19:2"
         },
         "source": {
           "path": "server.go",
-          "line": 9,
+          "line": 19,
           "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
         }
       },
       {
@@ -2381,12 +2756,140 @@
         "to": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:POST /charge/{_}@server.go:10:2"
+          "qualified_name": "endpoint:GET /charge/{_}@server.go:16:2"
         },
         "source": {
           "path": "server.go",
-          "line": 10,
+          "line": 16,
           "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "function",
+          "qualified_name": "example.com/server.Routes"
+        },
+        "relation": "exposes",
+        "to": {
+          "repo": "server",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:POST /charge/{_}@server.go:17:2"
+        },
+        "source": {
+          "path": "server.go",
+          "line": 17,
+          "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "interface",
+          "qualified_name": "github.com/go-chi/chi/v5.Router"
+        },
+        "relation": "extends",
+        "to": {
+          "repo": "server",
+          "kind": "external",
+          "qualified_name": "http.Handler",
+          "external": true
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 6,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "interface",
+          "qualified_name": "github.com/go-chi/chi/v5.Router"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "server",
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Router.Get"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 7,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "interface",
+          "qualified_name": "github.com/go-chi/chi/v5.Router"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "server",
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Router.Post"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 8,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "interface",
+          "qualified_name": "github.com/go-chi/chi/v5.Router"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "server",
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Router.ServeHTTP"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 5,
+          "column": 23
+        },
+        "properties": {
+          "promoted": "true"
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "module",
+          "qualified_name": "example.com/server"
+        },
+        "relation": "depends_on",
+        "to": {
+          "repo": "server",
+          "kind": "module",
+          "qualified_name": "github.com/go-chi/chi/v5"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 5,
+          "column": 1
+        },
+        "properties": {
+          "ecosystem": "go",
+          "replacement": "./third_party/chi",
+          "scope": "runtime",
+          "version": "v5.0.0"
         }
       },
       {
@@ -2424,36 +2927,63 @@
           "line": 1,
           "column": 1
         }
-      }
-    ],
-    "diagnostics": [
-      {
-        "repo": "server",
-        "path": "server.go",
-        "line": 9,
-        "level": "warning",
-        "message_contains": "router"
       },
       {
-        "repo": "server",
-        "path": "server.go",
-        "line": 10,
-        "level": "warning",
-        "message_contains": "router"
+        "from": {
+          "repo": "server",
+          "kind": "repository",
+          "qualified_name": "server"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "server",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 1,
+          "column": 1
+        }
       },
       {
-        "repo": "server",
-        "path": "server.go",
-        "line": 11,
-        "level": "warning",
-        "message_contains": "router"
+        "from": {
+          "repo": "server",
+          "kind": "repository",
+          "qualified_name": "server"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "server",
+          "kind": "file",
+          "qualified_name": "third_party/chi/go.mod"
+        },
+        "source": {
+          "path": "third_party/chi/go.mod",
+          "line": 1,
+          "column": 1
+        }
       },
       {
-        "repo": "server",
-        "path": "server.go",
-        "line": 12,
-        "level": "warning",
-        "message_contains": "router"
+        "from": {
+          "repo": "server",
+          "kind": "type",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux"
+        },
+        "relation": "implements",
+        "to": {
+          "repo": "server",
+          "kind": "interface",
+          "qualified_name": "github.com/go-chi/chi/v5.Router"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 11,
+          "column": 6
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
       }
     ],
     "queries": [
@@ -2475,7 +3005,7 @@
           {
             "repo": "server",
             "kind": "endpoint",
-            "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
+            "qualified_name": "endpoint:GET /charge/{_}@server.go:16:2"
           },
           {
             "repo": "server",
@@ -2494,7 +3024,7 @@
             "to": {
               "repo": "server",
               "kind": "endpoint",
-              "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
+              "qualified_name": "endpoint:GET /charge/{_}@server.go:16:2"
             },
             "source": {
               "path": "godot_client.gd",
@@ -2523,7 +3053,7 @@
             "from": {
               "repo": "server",
               "kind": "endpoint",
-              "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
+              "qualified_name": "endpoint:GET /charge/{_}@server.go:16:2"
             },
             "relation": "handled_by",
             "to": {
@@ -2533,8 +3063,13 @@
             },
             "source": {
               "path": "server.go",
-              "line": 9,
+              "line": 16,
               "column": 2
+            },
+            "properties": {
+              "evidence": "go/types",
+              "framework": "chi",
+              "resolution": "go/types"
             }
           }
         ]
@@ -2557,7 +3092,7 @@
           {
             "repo": "server",
             "kind": "endpoint",
-            "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
+            "qualified_name": "endpoint:GET /charge/{_}@server.go:16:2"
           },
           {
             "repo": "server",
@@ -2576,7 +3111,7 @@
             "to": {
               "repo": "server",
               "kind": "endpoint",
-              "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
+              "qualified_name": "endpoint:GET /charge/{_}@server.go:16:2"
             },
             "source": {
               "path": "client.go",
@@ -2601,7 +3136,7 @@
             "from": {
               "repo": "server",
               "kind": "endpoint",
-              "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
+              "qualified_name": "endpoint:GET /charge/{_}@server.go:16:2"
             },
             "relation": "handled_by",
             "to": {
@@ -2611,8 +3146,13 @@
             },
             "source": {
               "path": "server.go",
-              "line": 9,
+              "line": 16,
               "column": 2
+            },
+            "properties": {
+              "evidence": "go/types",
+              "framework": "chi",
+              "resolution": "go/types"
             }
           }
         ]
@@ -2629,7 +3169,7 @@
         "to": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:POST /charge/{_}@server.go:10:2"
+          "qualified_name": "endpoint:POST /charge/{_}@server.go:17:2"
         }
       },
       {
@@ -2642,7 +3182,7 @@
         "to": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
+          "qualified_name": "endpoint:GET /charge/{_}@server.go:16:2"
         }
       }
     ],
