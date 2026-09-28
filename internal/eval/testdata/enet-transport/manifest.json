@@ -104,6 +104,11 @@
       },
       {
         "repo": "transport",
+        "kind": "field",
+        "qualified_name": "example.com/transport/generated/go/proto.Envelope.Text"
+      },
+      {
+        "repo": "transport",
         "kind": "file",
         "qualified_name": "buf.gen.yaml"
       },
@@ -116,6 +121,11 @@
         "repo": "transport",
         "kind": "file",
         "qualified_name": "client.gd"
+      },
+      {
+        "repo": "transport",
+        "kind": "file",
+        "qualified_name": "generated/go/proto/envelope.pb.go"
       },
       {
         "repo": "transport",
@@ -402,6 +412,11 @@
       {
         "repo": "transport",
         "kind": "type",
+        "qualified_name": "example.com/transport/generated/go/proto.Envelope"
+      },
+      {
+        "repo": "transport",
+        "kind": "type",
         "qualified_name": "example.com/transport/third_party/enet.PacketFlags"
       },
       {
@@ -600,6 +615,24 @@
           "path": "client.gd",
           "line": 1,
           "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "generated/go/proto/envelope.pb.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope"
+        },
+        "source": {
+          "path": "generated/go/proto/envelope.pb.go",
+          "line": 5,
+          "column": 6
         }
       },
       {
@@ -2209,6 +2242,24 @@
         "to": {
           "repo": "transport",
           "kind": "file",
+          "qualified_name": "generated/go/proto/envelope.pb.go"
+        },
+        "source": {
+          "path": "generated/go/proto/envelope.pb.go",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "repository",
+          "qualified_name": "transport"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "transport",
+          "kind": "file",
           "qualified_name": "go.mod"
         },
         "source": {
@@ -2479,6 +2530,24 @@
           "adapter_version": "2",
           "generator": "protoc-gen-go",
           "generator_version": "v1.36.11"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "transport",
+          "kind": "field",
+          "qualified_name": "example.com/transport/generated/go/proto.Envelope.Text"
+        },
+        "source": {
+          "path": "generated/go/proto/envelope.pb.go",
+          "line": 5,
+          "column": 24
         }
       },
       {
