@@ -1950,7 +1950,9 @@ func openRead(ctx context.Context, args parsedArguments) (graph.ReadRepository, 
 	return readRepository, []indexer.Project{project}, readRepository.Close, nil
 }
 
-func requiresWritableRead(command string) bool { return command == "mcp" || command == "reusable" }
+func requiresWritableRead(command string) bool {
+	return command == "mcp" || command == "reusable" || command == "find-reusable-code"
+}
 
 func refreshRead(ctx context.Context, repository graph.ReadRepository, projects []indexer.Project) error {
 	if federated, ok := repository.(*federation.Repository); ok {

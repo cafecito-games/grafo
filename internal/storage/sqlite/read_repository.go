@@ -136,9 +136,7 @@ func OpenReadOnly(ctx context.Context, path string) (*ReadRepository, error) {
 		return nil, incompatibleIndex("index path is not a regular database file")
 	}
 
-	query := url.Values{}
-	query.Set("mode", "ro")
-	dsn := (&url.URL{Scheme: "file", Path: filepath.ToSlash(absolute), RawQuery: query.Encode()}).String()
+	dsn := readOnlyDSN(absolute)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open query-only graph: %w", err)
@@ -169,6 +167,18 @@ func OpenReadOnly(ctx context.Context, path string) (*ReadRepository, error) {
 		return nil, fmt.Errorf("configure query-only busy timeout: %w", err)
 	}
 	return &ReadRepository{reader: shared, statements: statements}, nil
+}
+
+func readOnlyDSN(absolute string) string {
+	uriPath := filepath.ToSlash(absolute)
+	// net/url treats a leading Windows drive letter as a URI authority unless
+	// the slash-form path is rooted. SQLite expects file:///C:/... instead.
+	if len(uriPath) >= 3 && uriPath[1] == ':' && uriPath[2] == '/' && uriPath[0] != '/' {
+		uriPath = "/" + uriPath
+	}
+	query := url.Values{}
+	query.Set("mode", "ro")
+	return (&url.URL{Scheme: "file", Path: uriPath, RawQuery: query.Encode()}).String()
 }
 
 func incompatibleIndex(reason string) error {
