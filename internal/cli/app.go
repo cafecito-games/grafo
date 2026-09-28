@@ -1276,7 +1276,7 @@ func (a *App) search(ctx context.Context, args parsedArguments) error {
 // newSearchService binds search to the file catalogs of the opened indexes.
 // Index membership, not the filesystem, decides what is searchable.
 func newSearchService(repository graph.ReadRepository, projects []indexer.Project) (*search.Service, error) {
-	if federated, ok := repository.(*federation.Repository); ok {
+	if federated, ok := repository.(interface{ Members() []federation.Member }); ok {
 		members := federated.Members()
 		sources := make([]search.Source, 0, len(members))
 		for _, member := range members {
@@ -1854,14 +1854,37 @@ func openRead(ctx context.Context, args parsedArguments) (graph.ReadRepository, 
 			_ = repository.Close()
 			return nil, nil, nil, err
 		}
-		return repository, repository.Projects(), repository.Close, nil
+		projects := repository.Projects()
+		if requiresWritableRead(args.command) {
+			return repository, projects, repository.Close, nil
+		}
+		if err := repository.Close(); err != nil {
+			return nil, nil, nil, fmt.Errorf("close refreshed indexes: %w", err)
+		}
+		readRepository, err := federation.OpenReadOnly(ctx, paths)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		return readRepository, projects, readRepository.Close, nil
 	}
 	project, repository, err := openExisting(ctx, repoPath(args))
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	return repository, []indexer.Project{project}, repository.Close, nil
+	if requiresWritableRead(args.command) {
+		return repository, []indexer.Project{project}, repository.Close, nil
+	}
+	if err := repository.Close(); err != nil {
+		return nil, nil, nil, fmt.Errorf("close refreshed index: %w", err)
+	}
+	readRepository, err := sqlite.OpenReadOnly(ctx, project.IndexPath)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return readRepository, []indexer.Project{project}, readRepository.Close, nil
 }
+
+func requiresWritableRead(command string) bool { return command == "mcp" || command == "reusable" }
 
 func refreshRead(ctx context.Context, repository graph.ReadRepository, projects []indexer.Project) error {
 	if federated, ok := repository.(*federation.Repository); ok {

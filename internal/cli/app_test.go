@@ -7,7 +7,32 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cafecito-games/grafo/internal/graph"
 )
+
+func TestOpenReadUsesCapabilitySafeRepositoryAfterRefresh(t *testing.T) {
+	root := indexedRepository(t)
+	args, err := parseArguments([]string{"find", "Charge", "--repo", root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, projects, closeRepository, err := openRead(context.Background(), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = closeRepository() }()
+	if len(projects) != 1 {
+		t.Fatalf("projects = %#v", projects)
+	}
+	if _, ok := repository.(graph.IndexRepository); ok {
+		t.Fatal("query command retained index-write capability")
+	}
+	nodes, err := repository.SearchNodes(context.Background(), "Charge", 10)
+	if err != nil || len(nodes) == 0 {
+		t.Fatalf("query-only search = %#v, %v", nodes, err)
+	}
+}
 
 func TestParseArgumentsAcceptsNewOptions(t *testing.T) {
 	tests := []struct {

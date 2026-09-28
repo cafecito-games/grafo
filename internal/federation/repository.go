@@ -19,7 +19,14 @@ import (
 
 type member struct {
 	project    indexer.Project
-	repository graph.Repository
+	repository memberRepository
+}
+
+type memberRepository interface {
+	graph.ReadRepository
+	graph.CatalogRepository
+	graph.FileCatalog
+	Close() error
 }
 
 // Repository presents multiple branch-specific SQLite indexes as one read-only
@@ -32,6 +39,18 @@ var _ graph.ReadRepository = (*Repository)(nil)
 var _ graph.CatalogRepository = (*Repository)(nil)
 var _ semantic.Repository = (*Repository)(nil)
 var _ sourcecontext.ProjectLocator = (*Repository)(nil)
+
+// ReadRepository exposes the federated read surface without refresh, indexing,
+// or embedding-write methods.
+type ReadRepository struct {
+	repository *Repository
+}
+
+var _ graph.ReadRepository = (*ReadRepository)(nil)
+var _ graph.CatalogRepository = (*ReadRepository)(nil)
+var _ graph.TopologyRepository = (*ReadRepository)(nil)
+var _ semantic.ReadRepository = (*ReadRepository)(nil)
+var _ sourcecontext.ProjectLocator = (*ReadRepository)(nil)
 
 func Open(ctx context.Context, paths []string) (*Repository, error) {
 	if len(paths) < 2 {
@@ -71,6 +90,46 @@ func Open(ctx context.Context, paths []string) (*Repository, error) {
 	return result, nil
 }
 
+// OpenReadOnly opens existing compatible indexes without migrations or write
+// capabilities and federates their query surfaces.
+func OpenReadOnly(ctx context.Context, paths []string) (*ReadRepository, error) {
+	if len(paths) < 2 {
+		return nil, fmt.Errorf("federation requires at least two repository paths")
+	}
+	result := &Repository{}
+	seen := map[string]bool{}
+	for _, path := range paths {
+		project, err := indexer.DiscoverProject(ctx, strings.TrimSpace(path))
+		if err != nil {
+			_ = result.Close()
+			return nil, err
+		}
+		if seen[project.IndexPath] {
+			continue
+		}
+		seen[project.IndexPath] = true
+		if _, err := os.Stat(project.IndexPath); errors.Is(err, os.ErrNotExist) {
+			_ = result.Close()
+			return nil, fmt.Errorf("repository %s branch %q has no index; run 'grafo index %s'", project.Name, project.Branch, project.Root)
+		} else if err != nil {
+			_ = result.Close()
+			return nil, err
+		}
+		repository, err := sqlite.OpenReadOnly(ctx, project.IndexPath)
+		if err != nil {
+			_ = result.Close()
+			return nil, err
+		}
+		result.members = append(result.members, member{project: project, repository: repository})
+	}
+	if len(result.members) < 2 {
+		_ = result.Close()
+		return nil, fmt.Errorf("federation requires at least two distinct indexes")
+	}
+	sort.Slice(result.members, func(i, j int) bool { return result.members[i].project.Root < result.members[j].project.Root })
+	return &ReadRepository{repository: result}, nil
+}
+
 func (r *Repository) Close() error {
 	var joined error
 	for _, item := range r.members {
@@ -100,7 +159,7 @@ func (r *Repository) ProjectForNode(ctx context.Context, id string) (indexer.Pro
 func (r *Repository) CandidateNodes(ctx context.Context) ([]graph.Node, error) {
 	var result []graph.Node
 	for _, item := range r.members {
-		repository, ok := item.repository.(semantic.Repository)
+		repository, ok := item.repository.(semantic.ReadRepository)
 		if !ok {
 			return nil, fmt.Errorf("repository %s does not support semantic candidates", item.project.Name)
 		}
@@ -122,7 +181,7 @@ func (r *Repository) CandidateNodes(ctx context.Context) ([]graph.Node, error) {
 func (r *Repository) EmbeddingHashes(ctx context.Context, model string) (map[string]string, error) {
 	result := map[string]string{}
 	for _, item := range r.members {
-		repository, ok := item.repository.(semantic.Repository)
+		repository, ok := item.repository.(semantic.ReadRepository)
 		if !ok {
 			return nil, fmt.Errorf("repository %s does not support embeddings", item.project.Name)
 		}
@@ -140,7 +199,7 @@ func (r *Repository) EmbeddingHashes(ctx context.Context, model string) (map[str
 func (r *Repository) Embeddings(ctx context.Context, model string) ([]semantic.Embedding, error) {
 	var result []semantic.Embedding
 	for _, item := range r.members {
-		repository, ok := item.repository.(semantic.Repository)
+		repository, ok := item.repository.(semantic.ReadRepository)
 		if !ok {
 			return nil, fmt.Errorf("repository %s does not support embeddings", item.project.Name)
 		}
@@ -186,11 +245,60 @@ func (r *Repository) DeleteStaleEmbeddings(ctx context.Context, model string) (i
 
 func (r *Repository) Refresh(ctx context.Context, parsers *parserapi.Registry) error {
 	for _, item := range r.members {
-		if _, err := indexer.NewService(item.repository, parsers).Run(ctx, item.project, indexer.Options{ReportDetail: indexer.ReportWithoutCounts}); err != nil {
+		indexed, ok := item.repository.(graph.IndexRepository)
+		if !ok {
+			return fmt.Errorf("repository %s does not support index refresh", item.project.Name)
+		}
+		if _, err := indexer.NewService(indexed, parsers).Run(ctx, item.project, indexer.Options{ReportDetail: indexer.ReportWithoutCounts}); err != nil {
 			return fmt.Errorf("refresh %s: %w", item.project.Name, err)
 		}
 	}
 	return nil
+}
+
+func (r *ReadRepository) Close() error                { return r.repository.Close() }
+func (r *ReadRepository) Projects() []indexer.Project { return r.repository.Projects() }
+func (r *ReadRepository) Meta(ctx context.Context, key string) (string, error) {
+	return r.repository.Meta(ctx, key)
+}
+func (r *ReadRepository) ProjectForNode(ctx context.Context, id string) (indexer.Project, error) {
+	return r.repository.ProjectForNode(ctx, id)
+}
+func (r *ReadRepository) CandidateNodes(ctx context.Context) ([]graph.Node, error) {
+	return r.repository.CandidateNodes(ctx)
+}
+func (r *ReadRepository) EmbeddingHashes(ctx context.Context, model string) (map[string]string, error) {
+	return r.repository.EmbeddingHashes(ctx, model)
+}
+func (r *ReadRepository) Embeddings(ctx context.Context, model string) ([]semantic.Embedding, error) {
+	return r.repository.Embeddings(ctx, model)
+}
+func (r *ReadRepository) SearchNodes(ctx context.Context, term string, limit int) ([]graph.Node, error) {
+	return r.repository.SearchNodes(ctx, term, limit)
+}
+func (r *ReadRepository) Repositories(ctx context.Context) ([]string, error) {
+	return r.repository.Repositories(ctx)
+}
+func (r *ReadRepository) ListNodesByKind(ctx context.Context, request graph.NodeListQuery) ([]graph.ScopedNode, error) {
+	return r.repository.ListNodesByKind(ctx, request)
+}
+func (r *ReadRepository) MatchNodes(ctx context.Context, request graph.NodeMatchQuery) (graph.NodeMatchGroup, error) {
+	return r.repository.MatchNodes(ctx, request)
+}
+func (r *ReadRepository) Node(ctx context.Context, id string) (graph.Node, error) {
+	return r.repository.Node(ctx, id)
+}
+func (r *ReadRepository) EdgesFrom(ctx context.Context, id string) ([]graph.Edge, error) {
+	return r.repository.EdgesFrom(ctx, id)
+}
+func (r *ReadRepository) EdgesTo(ctx context.Context, id string) ([]graph.Edge, error) {
+	return r.repository.EdgesTo(ctx, id)
+}
+func (r *ReadRepository) RelationEdges(ctx context.Context, request graph.RelationEdgeQuery) (graph.RelationEdgePage, error) {
+	return r.repository.RelationEdges(ctx, request)
+}
+func (r *ReadRepository) Counts(ctx context.Context) (graph.Counts, error) {
+	return r.repository.Counts(ctx)
 }
 
 func (r *Repository) SearchNodes(ctx context.Context, term string, limit int) ([]graph.Node, error) {
@@ -534,7 +642,7 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 	return boundRelationEdges(items, request.Limit, truncated), nil
 }
 
-func memberRelationEdges(ctx context.Context, repository graph.Repository,
+func memberRelationEdges(ctx context.Context, repository memberRepository,
 	request graph.RelationEdgeQuery) (graph.RelationEdgePage, error) {
 	loader, ok := repository.(graph.RelationEdgeRepository)
 	if !ok {
@@ -632,7 +740,7 @@ func (r *Repository) preferLocalNode(ctx context.Context, id string) (graph.Node
 	return fallback, fallback.ID != "", nil
 }
 
-func matchingExternalNodes(ctx context.Context, repository graph.Repository, target graph.Node) ([]graph.Node, error) {
+func matchingExternalNodes(ctx context.Context, repository memberRepository, target graph.Node) ([]graph.Node, error) {
 	matcher, ok := repository.(graph.ExternalNodeRepository)
 	if !ok {
 		return nil, fmt.Errorf("repository does not support external node matching")
@@ -791,3 +899,5 @@ func (r *Repository) Members() []Member {
 	}
 	return result
 }
+
+func (r *ReadRepository) Members() []Member { return r.repository.Members() }

@@ -33,11 +33,18 @@ type Embedding struct {
 	UpdatedAt   string
 }
 
-// Repository is the persistence port required by semantic candidate search.
-type Repository interface {
+// ReadRepository is the persistence port required by semantic candidate
+// discovery and matching. It deliberately excludes embedding writes so a
+// query-only storage handle can expose semantic search safely.
+type ReadRepository interface {
 	CandidateNodes(context.Context) ([]graph.Node, error)
 	EmbeddingHashes(context.Context, string) (map[string]string, error)
 	Embeddings(context.Context, string) ([]Embedding, error)
+}
+
+// Repository adds the write capabilities required by semantic synchronization.
+type Repository interface {
+	ReadRepository
 	UpsertEmbedding(context.Context, Embedding) error
 	DeleteStaleEmbeddings(context.Context, string) (int64, error)
 }
