@@ -30,13 +30,14 @@ const (
 // topology queries. Repository and Component select independently stable
 // indexed ownership identities; labels are presentation-only.
 type TopologyOptions struct {
-	Repository string    `json:"repository,omitempty"`
-	Component  string    `json:"component,omitempty"`
-	Method     string    `json:"method,omitempty"`
-	Route      string    `json:"route,omitempty"`
-	Event      string    `json:"event,omitempty"`
-	Direction  Direction `json:"direction,omitempty"`
-	Limit      int       `json:"limit,omitempty"`
+	Repository   string    `json:"repository,omitempty"`
+	Component    string    `json:"component,omitempty"`
+	Method       string    `json:"method,omitempty"`
+	Route        string    `json:"route,omitempty"`
+	Event        string    `json:"event,omitempty"`
+	Direction    Direction `json:"direction,omitempty"`
+	PathPrefixes []string  `json:"path_prefixes,omitempty"`
+	Limit        int       `json:"limit,omitempty"`
 }
 
 // Endpoint is an HTTP declaration plus the graph evidence that exposes and
@@ -210,12 +211,21 @@ func (t *Topology) normalize(ctx context.Context, options TopologyOptions) (Topo
 	if options.Event != "" && (options.Method != "" || options.Route != "") {
 		return options, 0, fmt.Errorf("event and HTTP method/route filters cannot be combined")
 	}
+	var err error
+	options.PathPrefixes, err = normalizePathPrefixes(options.PathPrefixes)
+	if err != nil {
+		return options, 0, err
+	}
 	limit, err := t.catalog.bounds(ctx, CatalogOptions{Repository: options.Repository, Limit: options.Limit})
 	return options, limit, err
 }
 
 func (t *Topology) scoped(ctx context.Context, kinds []graph.NodeKind, visibility graph.NodeVisibility) ([]graph.ScopedNode, error) {
-	result, err := t.repository.ListNodesByKind(ctx, graph.NodeListQuery{Kinds: kinds, Visibility: visibility})
+	return t.scopedWithPaths(ctx, kinds, visibility, nil)
+}
+
+func (t *Topology) scopedWithPaths(ctx context.Context, kinds []graph.NodeKind, visibility graph.NodeVisibility, prefixes []string) ([]graph.ScopedNode, error) {
+	result, err := t.repository.ListNodesByKind(ctx, graph.NodeListQuery{Kinds: kinds, Visibility: visibility, PathPrefixes: prefixes})
 	if err != nil {
 		return nil, err
 	}
@@ -508,7 +518,7 @@ func (t *Topology) Endpoints(ctx context.Context, options TopologyOptions) (Endp
 	}
 	result := EndpointList{Endpoints: []Endpoint{}, Unresolved: []Endpoint{}}
 	for _, visibility := range []graph.NodeVisibility{graph.LocalNodes, graph.ExternalNodes} {
-		nodes, err := t.scoped(ctx, []graph.NodeKind{graph.KindEndpoint}, visibility)
+		nodes, err := t.scopedWithPaths(ctx, []graph.NodeKind{graph.KindEndpoint}, visibility, options.PathPrefixes)
 		if err != nil {
 			return EndpointList{}, err
 		}
@@ -586,6 +596,9 @@ func (t *Topology) Handlers(ctx context.Context, options TopologyOptions) (Handl
 	options, limit, err := t.normalize(ctx, options)
 	if err != nil {
 		return HandlerList{}, err
+	}
+	if len(options.PathPrefixes) > 0 {
+		return HandlerList{}, fmt.Errorf("path prefixes do not apply to an explicit handler lookup")
 	}
 	if options.Component != "" {
 		return HandlerList{}, fmt.Errorf("a component filter applies only to service topology")
@@ -924,6 +937,19 @@ func (t *Topology) OutboundRequests(ctx context.Context, options TopologyOptions
 		return OutboundRequestList{}, err
 	}
 	result := OutboundRequestList{Requests: requests}
+	if len(options.PathPrefixes) > 0 {
+		result.Requests = nil
+		for _, request := range requests {
+			anchor := request.Source.Location.Path
+			if anchor == "" {
+				anchor = request.Evidence.Location.Path
+			}
+			if matchesPathPrefixes(anchor, options.PathPrefixes) {
+				result.Requests = append(result.Requests, request)
+			}
+		}
+		requests = result.Requests
+	}
 	for _, request := range requests {
 		result.Truncated = result.Truncated || request.Truncated
 	}
@@ -1217,6 +1243,10 @@ func (t *Topology) ServiceTopology(ctx context.Context, options TopologyOptions)
 	options.Limit = limit
 	requestOptions := options
 	requestOptions.Repository = ""
+	// A topology link is selected when either local boundary is in scope. The
+	// outbound-request source-only anchor therefore cannot be applied while the
+	// complete link is still being assembled.
+	requestOptions.PathPrefixes = nil
 	owners, err := t.ownership(ctx)
 	if err != nil {
 		return ServiceTopology{}, err
@@ -1271,6 +1301,9 @@ func (t *Topology) ServiceTopology(ctx context.Context, options TopologyOptions)
 				SourceNodes: []Resource{request.Source}, TargetNodes: targetNodes,
 				Evidence: []LinkEvidence{request.Evidence}}
 			finalizeLink(&link)
+			if !linkMatchesPathPrefixes(link, options.PathPrefixes) {
+				continue
+			}
 			if !linkMatchesScope(from, to, options) {
 				continue
 			}
@@ -1297,6 +1330,9 @@ func (t *Topology) ServiceTopology(ctx context.Context, options TopologyOptions)
 			}
 			from := resourceService(link.SourceNodes[0])
 			to := resourceService(link.TargetNodes[0])
+			if !linkMatchesPathPrefixes(link, options.PathPrefixes) {
+				continue
+			}
 			if !linkMatchesScope(from, to, options) {
 				continue
 			}
@@ -1347,6 +1383,20 @@ func (t *Topology) ServiceTopology(ctx context.Context, options TopologyOptions)
 		result.Services = kept
 	}
 	return result, nil
+}
+
+func linkMatchesPathPrefixes(link ServiceLink, prefixes []string) bool {
+	if len(prefixes) == 0 {
+		return true
+	}
+	for _, group := range [][]Resource{link.SourceNodes, link.TargetNodes} {
+		for _, resource := range group {
+			if resource.Repository != "" && matchesPathPrefixes(resource.Location.Path, prefixes) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func mermaidLabel(value string) string {

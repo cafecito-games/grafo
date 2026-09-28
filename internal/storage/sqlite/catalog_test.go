@@ -246,6 +246,39 @@ func TestListNodesByKindEnumeratesExactKinds(t *testing.T) {
 	}
 }
 
+func TestListNodesByKindFiltersSegmentPathsBeforeLimit(t *testing.T) {
+	ctx := context.Background()
+	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	if err := repository.SetMeta(ctx, "root", "/tmp/example/checkout"); err != nil {
+		t.Fatal(err)
+	}
+	for index, candidate := range []struct{ name, path string }{
+		{name: "a", path: "internal/application/a.sql"},
+		{name: "b", path: "other/b.sql"},
+		{name: "c", path: "internal/app/c.sql"},
+		{name: "d", path: "internal/app/nested/d.sql"},
+	} {
+		node := graph.Node{ID: graph.NodeID(graph.KindTable, candidate.name), Kind: graph.KindTable,
+			Name: candidate.name, QualifiedName: candidate.name, OwnerFile: candidate.path,
+			Location: graph.Location{Path: candidate.path, Line: index + 1}}
+		if err := repository.ReplaceOwner(ctx, candidate.path, graph.ParseResult{Nodes: []graph.Node{node}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	listed, err := repository.ListNodesByKind(ctx, graph.NodeListQuery{Kinds: []graph.NodeKind{graph.KindTable},
+		PathPrefixes: []string{"internal/app"}, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].Node.Name != "c" {
+		t.Fatalf("path-filtered bounded nodes = %#v", listed)
+	}
+}
+
 func TestNameMatchingUsesUnicodeLowercase(t *testing.T) {
 	ctx := context.Background()
 	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))

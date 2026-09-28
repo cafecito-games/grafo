@@ -1495,8 +1495,12 @@ func (a *App) catalogOptions(args parsedArguments) (query.CatalogOptions, error)
 	if err != nil {
 		return query.CatalogOptions{}, err
 	}
+	prefixes, err := query.NormalizePathPrefixes(splitList(args.values["path-prefix"]))
+	if err != nil {
+		return query.CatalogOptions{}, err
+	}
 	return query.CatalogOptions{Repository: args.values["repo-name"],
-		Name: args.values["name"], Limit: limit}, nil
+		Name: args.values["name"], PathPrefixes: prefixes, Limit: limit}, nil
 }
 
 func openCatalog(ctx context.Context, args parsedArguments) (*query.Catalog, func() error, error) {
@@ -1517,10 +1521,14 @@ func (a *App) topologyOptions(args parsedArguments) (query.TopologyOptions, erro
 	if err != nil {
 		return query.TopologyOptions{}, err
 	}
+	prefixes, err := query.NormalizePathPrefixes(splitList(args.values["path-prefix"]))
+	if err != nil {
+		return query.TopologyOptions{}, err
+	}
 	return query.TopologyOptions{
 		Repository: args.values["repo-name"], Component: args.values["component"], Method: args.values["method"],
 		Route: args.values["route"], Event: args.values["event"],
-		Direction: query.Direction(args.values["direction"]), Limit: limit,
+		Direction: query.Direction(args.values["direction"]), PathPrefixes: prefixes, Limit: limit,
 	}, nil
 }
 
@@ -1551,6 +1559,9 @@ func openMessageFlow(ctx context.Context, args parsedArguments) (*query.MessageF
 }
 
 func (a *App) messageFlowOptions(args parsedArguments) (query.MessageFlowOptions, error) {
+	if args.values["path-prefix"] != "" {
+		return query.MessageFlowOptions{}, fmt.Errorf("--path-prefix applies only to list queries, not message-flow")
+	}
 	limit, err := intOption(args, "limit", query.DefaultCatalogLimit)
 	if err != nil {
 		return query.MessageFlowOptions{}, err
@@ -1603,9 +1614,13 @@ func (a *App) messageFlow(ctx context.Context, args parsedArguments) error {
 
 func (a *App) messageCoverage(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo message-coverage [--package name] [--message name] [--oneof name] [--direction incoming|outgoing|both] [--component name] [--status resolved|missing_evidence|unknown] [--repo-name name] [--limit 100] [--json]")
+		return fmt.Errorf("usage: grafo message-coverage [--package name] [--message name] [--oneof name] [--direction incoming|outgoing|both] [--component name] [--status resolved|missing_evidence|unknown] [--repo-name name] [--path-prefix dir] [--limit 100] [--json]")
 	}
 	limit, err := intOption(args, "limit", query.DefaultCatalogLimit)
+	if err != nil {
+		return err
+	}
+	prefixes, err := query.NormalizePathPrefixes(splitList(args.values["path-prefix"]))
 	if err != nil {
 		return err
 	}
@@ -1617,7 +1632,7 @@ func (a *App) messageCoverage(ctx context.Context, args parsedArguments) error {
 	result, err := service.Coverage(ctx, query.MessageCoverageOptions{Repository: args.values["repo-name"],
 		Package: args.values["package"], Message: args.values["message"], Oneof: args.values["oneof"],
 		Direction: query.Direction(args.values["direction"]), Component: args.values["component"],
-		Status: query.CoverageStatus(args.values["status"]), Limit: limit})
+		Status: query.CoverageStatus(args.values["status"]), PathPrefixes: prefixes, Limit: limit})
 	if err != nil {
 		return err
 	}
@@ -1638,7 +1653,7 @@ func (a *App) messageCoverage(ctx context.Context, args parsedArguments) error {
 
 func (a *App) endpoints(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo endpoints [--method GET] [--route path] [--repo-name name] [--limit 100] [--json]")
+		return fmt.Errorf("usage: grafo endpoints [--method GET] [--route path] [--repo-name name] [--path-prefix dir] [--limit 100] [--json]")
 	}
 	options, err := a.topologyOptions(args)
 	if err != nil {
@@ -1680,7 +1695,7 @@ func (a *App) endpoints(ctx context.Context, args parsedArguments) error {
 
 func (a *App) outboundRequests(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo outbound-requests [--method GET] [--route path] [--repo-name name] [--limit 100] [--json]")
+		return fmt.Errorf("usage: grafo outbound-requests [--method GET] [--route path] [--repo-name name] [--path-prefix dir] [--limit 100] [--json]")
 	}
 	options, err := a.topologyOptions(args)
 	if err != nil {
@@ -1724,6 +1739,9 @@ func (a *App) findHandler(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
+	if len(options.PathPrefixes) > 0 {
+		return fmt.Errorf("--path-prefix applies only to list queries, not find-handler")
+	}
 	service, closeRepository, err := openTopology(ctx, args)
 	if err != nil {
 		return err
@@ -1756,7 +1774,7 @@ func (a *App) findHandler(ctx context.Context, args parsedArguments) error {
 
 func (a *App) serviceTopology(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo service-topology [--repo-name name] [--component name] [--method GET] [--route path | --event name] [--direction incoming|outgoing|both] [--limit 100] [--json | --mermaid]")
+		return fmt.Errorf("usage: grafo service-topology [--repo-name name] [--component name] [--method GET] [--route path | --event name] [--direction incoming|outgoing|both] [--path-prefix dir] [--limit 100] [--json | --mermaid]")
 	}
 	if args.flags["json"] && args.flags["mermaid"] {
 		return errors.New("--json and --mermaid are mutually exclusive")
@@ -1802,7 +1820,7 @@ func (a *App) serviceTopology(ctx context.Context, args parsedArguments) error {
 
 func (a *App) dataResources(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo data-resources [--kind table,view] [--name text] [--repo-name name] [--limit 100] [--json]")
+		return fmt.Errorf("usage: grafo data-resources [--kind table,view] [--name text] [--repo-name name] [--path-prefix dir] [--limit 100] [--json]")
 	}
 	options, err := a.catalogOptions(args)
 	if err != nil {
@@ -1842,6 +1860,9 @@ func (a *App) dataResourceUsage(ctx context.Context, args parsedArguments) error
 	if err != nil {
 		return err
 	}
+	if len(options.PathPrefixes) > 0 {
+		return fmt.Errorf("--path-prefix applies only to list queries, not data-usage")
+	}
 	catalog, closeRepository, err := openCatalog(ctx, args)
 	if err != nil {
 		return err
@@ -1866,7 +1887,7 @@ func (a *App) dataResourceUsage(ctx context.Context, args parsedArguments) error
 
 func (a *App) configKeys(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo config-keys [--name text] [--repo-name name] [--limit 100] [--json]")
+		return fmt.Errorf("usage: grafo config-keys [--name text] [--repo-name name] [--path-prefix dir] [--limit 100] [--json]")
 	}
 	options, err := a.catalogOptions(args)
 	if err != nil {
@@ -1896,7 +1917,7 @@ func (a *App) configKeys(ctx context.Context, args parsedArguments) error {
 
 func (a *App) events(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo events [--name text] [--repo-name name] [--limit 100] [--json]")
+		return fmt.Errorf("usage: grafo events [--name text] [--repo-name name] [--path-prefix dir] [--limit 100] [--json]")
 	}
 	options, err := a.catalogOptions(args)
 	if err != nil {
@@ -1927,7 +1948,7 @@ func (a *App) events(ctx context.Context, args parsedArguments) error {
 
 func (a *App) orphanedEvents(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo orphaned-events [--name text] [--repo-name name] [--limit 100] [--json]")
+		return fmt.Errorf("usage: grafo orphaned-events [--name text] [--repo-name name] [--path-prefix dir] [--limit 100] [--json]")
 	}
 	options, err := a.catalogOptions(args)
 	if err != nil {
@@ -2138,7 +2159,8 @@ func (a *App) printIndexReport(report indexer.Report, asJSON bool) error {
 		return writeJSON(a.stdout, report)
 	}
 	a.printf("indexed %s · branch %s\n", report.Project.Name, report.Project.Branch)
-	a.printf("%d updated · %d unchanged · %d removed · %d skipped\n", len(report.Updated), report.Unchanged, len(report.Removed), len(report.Skipped))
+	a.printf("%d updated · %d unchanged · %d removed · %d skipped · %d scoped out\n",
+		len(report.Updated), report.Unchanged, len(report.Removed), len(report.Skipped), report.ScopedOut)
 	a.printf("%d file contents checked\n", report.Checked)
 	a.printf("edge reconciliation: %dms\n", report.ReconcileMS)
 	if report.Rebuild != "" {
@@ -2234,7 +2256,11 @@ func parseArguments(arguments []string) (parsedArguments, error) {
 			}
 			value = arguments[index]
 		}
-		result.values[name] = value
+		if name == "path-prefix" && result.values[name] != "" {
+			result.values[name] += "," + value
+		} else {
+			result.values[name] = value
+		}
 	}
 	if result.values["progress"] != "" && result.command != "status" && result.command != "counts" {
 		return result, fmt.Errorf("--progress is only supported by status and counts")
@@ -2363,24 +2389,24 @@ Usage:
                             [--max-matches-per-pattern 200] [--max-file-size 1048576]
   grafo path <from> <to> [--kind function] [--direction outgoing] [--relation calls,...]
   grafo data-resources [--kind table,view] [--name text] [--repo-name name]
-                       [--limit 100] [--json]
+                       [--path-prefix dir,...] [--limit 100] [--json]
   grafo data-usage <table-view-or-id> [--repo-name name] [--limit 100] [--json]
-  grafo config-keys [--name text] [--repo-name name] [--limit 100] [--json]
-  grafo events [--name text] [--repo-name name] [--limit 100] [--json]
-  grafo orphaned-events [--name text] [--repo-name name] [--limit 100] [--json]
-  grafo endpoints [--method GET] [--route path] [--repo-name name] [--limit 100] [--json]
-  grafo outbound-requests [--method GET] [--route path] [--repo-name name] [--limit 100] [--json]
+  grafo config-keys [--name text] [--repo-name name] [--path-prefix dir,...] [--limit 100] [--json]
+  grafo events [--name text] [--repo-name name] [--path-prefix dir,...] [--limit 100] [--json]
+  grafo orphaned-events [--name text] [--repo-name name] [--path-prefix dir,...] [--limit 100] [--json]
+  grafo endpoints [--method GET] [--route path] [--repo-name name] [--path-prefix dir,...] [--limit 100] [--json]
+  grafo outbound-requests [--method GET] [--route path] [--repo-name name] [--path-prefix dir,...] [--limit 100] [--json]
   grafo find-handler [--method GET] [--route path | --event name] [--repo-name name]
                      [--limit 100] [--json]
   grafo service-topology [--repo-name name] [--component name] [--method GET] [--route path | --event name]
-                         [--direction incoming|outgoing|both] [--limit 100]
+                         [--direction incoming|outgoing|both] [--path-prefix dir,...] [--limit 100]
                          [--json | --mermaid]
   grafo message-flow <message-or-id> [--repo-name name] [--component name]
                      [--direction incoming|outgoing|both] [--limit 100] [--json]
   grafo message-coverage [--package name] [--message name] [--oneof name]
                          [--direction incoming|outgoing|both] [--component name]
                          [--status resolved|missing_evidence|unknown] [--repo-name name]
-                         [--limit 100] [--json]
+                         [--path-prefix dir,...] [--limit 100] [--json]
   grafo find-tests <production-symbol-or-id> [--kind function] [--depth 8] [--limit 100] [--json]
   grafo test-coverage <test-or-id> [--depth 8] [--limit 100] [--json]
   grafo version

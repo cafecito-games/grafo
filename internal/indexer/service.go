@@ -23,6 +23,7 @@ const workspaceOwner = "__workspace__"
 const workspaceSemanticKeysMeta = "parser_workspace_semantic_keys"
 const workspaceStateDigestMeta = "workspace_state_digest"
 const gitUntrackedPathsMeta = "git_untracked_paths"
+const indexScopeDigestMeta = "index_scope_digest"
 const SemanticIndexVersion = indexversion.Semantic
 
 type Options struct {
@@ -80,6 +81,7 @@ type Report struct {
 	Unchanged                    int                `json:"unchanged"`
 	Removed                      []string           `json:"removed"`
 	Skipped                      []string           `json:"skipped,omitempty"`
+	ScopedOut                    int                `json:"scoped_out"`
 	Checked                      int                `json:"content_checked"`
 	Diagnostics                  []graph.Diagnostic `json:"diagnostics,omitempty"`
 	Counts                       graph.Counts       `json:"-"`
@@ -224,6 +226,12 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	if indexedCommit != "" && previousUntrackedRaw == "" {
 		previousUntrackedValid = false
 	}
+	indexedScopeDigest, err := s.repository.Meta(ctx, indexScopeDigestMeta)
+	if err != nil {
+		return report, fmt.Errorf("load index scope digest: %w", err)
+	}
+	scopeDigest := configuration.Index.SemanticKey()
+	scopeChanged := indexedScopeDigest != scopeDigest
 	if err := progress.emit(ProgressMembership, ProgressStarted, "files", 0, 0, ""); err != nil {
 		return report, err
 	}
@@ -239,7 +247,7 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	reuseMembership := project.gitSnapshot != nil && indexedCommit != "" &&
 		project.gitSnapshot.Head == indexedCommit && project.gitSnapshot.MembershipStable &&
 		previousUntrackedValid && equalPaths(previousUntracked, project.gitSnapshot.Untracked) &&
-		!schemaChanged && previousDirtyValid && !options.Force && options.Boundary == nil
+		!scopeChanged && !schemaChanged && previousDirtyValid && !options.Force && options.Boundary == nil
 	var detectedChanges gitChanges
 	changesValid := false
 	var dirtyPaths []string
@@ -268,7 +276,7 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	}
 	discoveryStarted := time.Now()
 	membershipStarted := time.Now()
-	discovered, err := discoverFilesWithCatalog(ctx, project, s.parsers, known, reuseMembership)
+	discovered, err := discoverFilesWithCatalog(ctx, project, s.parsers, known, reuseMembership, configuration.Index)
 	report.Phases.MembershipNS += time.Since(membershipStarted).Nanoseconds()
 	report.Phases.DiscoveryNS += time.Since(discoveryStarted).Nanoseconds()
 	report.GitCommands += discovered.gitCommands
@@ -280,6 +288,7 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		return report, err
 	}
 	report.Skipped = append(report.Skipped, discovered.skipped...)
+	report.ScopedOut = discovered.scopedOut
 	workspaceSemanticKeys, err := s.parsers.WorkspaceSemanticKeys(ctx, parserapi.Input{
 		Root: project.Root, Repository: project.Name, RepoID: project.ID, GoModule: project.GoModule,
 	})
@@ -543,6 +552,9 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		return report, err
 	}
 	if err := setMetaIfChanged(ctx, s.repository, workspaceStateDigestMeta, workspaceDigest); err != nil {
+		return report, err
+	}
+	if err := setMetaIfChanged(ctx, s.repository, indexScopeDigestMeta, scopeDigest); err != nil {
 		return report, err
 	}
 	if dirtyPathsValid {

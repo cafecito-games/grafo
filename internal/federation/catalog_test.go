@@ -94,6 +94,13 @@ type Bus interface{ Subscribe(string) }
 	if len(filtered.Resources) != 0 {
 		t.Fatalf("repository filter leaked a peer's resources: %#v", filtered.Resources)
 	}
+	pathFiltered, err := catalog.DataResources(ctx, nil, query.CatalogOptions{PathPrefixes: []string{"schema.sql"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pathFiltered.Resources) != 1 || pathFiltered.Resources[0].Repository != "producer" {
+		t.Fatalf("federated relative path filter = %#v", pathFiltered)
+	}
 
 	events, err := catalog.Events(ctx, query.CatalogOptions{})
 	if err != nil {

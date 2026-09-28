@@ -57,6 +57,16 @@ func TestMCPUsesCoordinatorRootsAndNotWritableOpenRead(t *testing.T) {
 	}
 }
 
+func TestParseArgumentsAccumulatesRepeatablePathPrefixes(t *testing.T) {
+	args, err := parseArguments([]string{"events", "--path-prefix", "internal/app", "--path-prefix=cmd,web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := args.values["path-prefix"]; got != "internal/app,cmd,web" {
+		t.Fatalf("path-prefix = %q", got)
+	}
+}
+
 func TestOpenReadRetainsSemanticWritesForReusableAlias(t *testing.T) {
 	root := indexedRepository(t)
 	args, err := parseArguments([]string{"find-reusable-code", "payment helper", "--repo", root})

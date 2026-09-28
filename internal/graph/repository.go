@@ -105,6 +105,9 @@ type NodeListQuery struct {
 	Kinds      []NodeKind
 	Name       string
 	Repository string
+	// PathPrefixes are normalized repository-relative segment prefixes. They
+	// filter canonical node locations before the per-kind Limit is applied.
+	PathPrefixes []string
 	// Visibility defaults to LocalNodes so a catalog never silently mixes
 	// declarations with unresolved external targets.
 	Visibility NodeVisibility

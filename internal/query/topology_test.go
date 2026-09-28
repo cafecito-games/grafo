@@ -103,6 +103,45 @@ func TestEndpointMiddlewareEvidenceIsBounded(t *testing.T) {
 	}
 }
 
+func TestTopologyPathPrefixesSelectAnchorsAndRetainCounterparts(t *testing.T) {
+	service := query.NewTopology(newTopologyFixture())
+	endpoints, err := service.Endpoints(context.Background(), query.TopologyOptions{PathPrefixes: []string{"routes.go"}, Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(endpoints.Endpoints) != 1 || endpoints.Endpoints[0].ID != "n:endpoint-orders" ||
+		len(endpoints.Endpoints[0].Handlers) != 1 || endpoints.Endpoints[0].Handlers[0].Location.Path != "routes.go" {
+		t.Fatalf("path-scoped endpoints lost complete evidence: %#v", endpoints)
+	}
+	requests, err := service.OutboundRequests(context.Background(), query.TopologyOptions{PathPrefixes: []string{"client.go"}, Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requests.Requests) != 3 {
+		t.Fatalf("source-scoped requests = %#v", requests)
+	}
+	empty, err := service.OutboundRequests(context.Background(), query.TopologyOptions{PathPrefixes: []string{"client"}, Limit: 20})
+	if err != nil || len(empty.Requests) != 0 || empty.Truncated {
+		t.Fatalf("segment no-match requests = %#v, %v", empty, err)
+	}
+	topology, err := service.ServiceTopology(context.Background(), query.TopologyOptions{PathPrefixes: []string{"routes.go"}, Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, link := range topology.Links {
+		if link.Name == "GET /orders" {
+			found = true
+			if len(link.SourceNodes) != 1 || len(link.TargetNodes) == 0 {
+				t.Fatalf("selected topology link lost opposite boundary: %#v", link)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("target-anchored topology link missing: %#v", topology)
+	}
+}
+
 func TestEndpointRepositoryFilterKeepsReferencedUnresolvedTargets(t *testing.T) {
 	repository := newTopologyFixture()
 	repository.add("orders", graph.Node{ID: "n:orders-delete-other", Kind: graph.KindFunction,

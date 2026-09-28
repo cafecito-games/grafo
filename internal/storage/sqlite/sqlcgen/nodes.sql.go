@@ -347,16 +347,25 @@ WHERE kind = ?1
   AND external >= ?2
   AND external <= ?3
   AND (instr(name_folded, ?4) > 0 OR instr(qualified_name_folded, ?4) > 0)
+  AND (
+    ?5 = '[]'
+    OR EXISTS (
+      SELECT 1 FROM json_each(?5) AS prefix
+      WHERE nodes.path = prefix.value
+         OR substr(nodes.path, 1, length(prefix.value) + 1) = prefix.value || '/'
+    )
+  )
 ORDER BY qualified_name, id
-LIMIT ?5
+LIMIT ?6
 `
 
 type ListNodesByKindParams struct {
-	Kind         string `json:"kind"`
-	MinExternal  int64  `json:"min_external"`
-	MaxExternal  int64  `json:"max_external"`
-	NameFragment string `json:"name_fragment"`
-	MaxResults   int64  `json:"max_results"`
+	Kind             string      `json:"kind"`
+	MinExternal      int64       `json:"min_external"`
+	MaxExternal      int64       `json:"max_external"`
+	NameFragment     string      `json:"name_fragment"`
+	PathPrefixesJson interface{} `json:"path_prefixes_json"`
+	MaxResults       int64       `json:"max_results"`
 }
 
 func (q *Queries) ListNodesByKind(ctx context.Context, arg ListNodesByKindParams) ([]Node, error) {
@@ -365,6 +374,7 @@ func (q *Queries) ListNodesByKind(ctx context.Context, arg ListNodesByKindParams
 		arg.MinExternal,
 		arg.MaxExternal,
 		arg.NameFragment,
+		arg.PathPrefixesJson,
 		arg.MaxResults,
 	)
 	if err != nil {

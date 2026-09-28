@@ -749,11 +749,19 @@ func (r *Repository) ListNodesByKind(ctx context.Context, request graph.NodeList
 	// The fragment is matched literally, so a name containing % or _ narrows
 	// the catalog instead of silently widening it.
 	fragment := foldName(request.Name)
+	prefixes := request.PathPrefixes
+	if prefixes == nil {
+		prefixes = []string{}
+	}
+	prefixesJSON, err := json.Marshal(prefixes)
+	if err != nil {
+		return nil, fmt.Errorf("encode node path prefixes: %w", err)
+	}
 	result := []graph.ScopedNode{}
 	for _, kind := range request.Kinds {
 		rows, err := r.queries.ListNodesByKind(ctx, sqlcgen.ListNodesByKindParams{
 			Kind: string(kind), MinExternal: minExternal, MaxExternal: maxExternal,
-			NameFragment: fragment, MaxResults: limit,
+			NameFragment: fragment, PathPrefixesJson: string(prefixesJSON), MaxResults: limit,
 		})
 		if err != nil {
 			return nil, err

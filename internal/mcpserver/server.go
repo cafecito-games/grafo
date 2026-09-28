@@ -755,13 +755,14 @@ func (s *Service) searchSource(ctx context.Context, _ *mcp.CallToolRequest, inpu
 }
 
 type CatalogInput struct {
-	Repository string `json:"repository,omitempty" jsonschema:"restrict results to one indexed repository by name"`
-	Name       string `json:"name,omitempty" jsonschema:"optional name or qualified-name fragment"`
-	Limit      int    `json:"limit,omitempty" jsonschema:"maximum catalog entries per section, and separately the maximum evidence sites per relation; defaults to 100 and may not exceed 1000"`
+	Repository   string   `json:"repository,omitempty" jsonschema:"restrict results to one indexed repository by name"`
+	Name         string   `json:"name,omitempty" jsonschema:"optional name or qualified-name fragment"`
+	PathPrefixes []string `json:"path_prefixes,omitempty" jsonschema:"repository-relative segment prefixes selecting canonical result locations"`
+	Limit        int      `json:"limit,omitempty" jsonschema:"maximum catalog entries per section, and separately the maximum evidence sites per relation; defaults to 100 and may not exceed 1000"`
 }
 
 func (i CatalogInput) options() query.CatalogOptions {
-	return query.CatalogOptions{Repository: i.Repository, Name: i.Name, Limit: i.Limit}
+	return query.CatalogOptions{Repository: i.Repository, Name: i.Name, PathPrefixes: i.PathPrefixes, Limit: i.Limit}
 }
 
 type DataResourceInput struct {
@@ -770,6 +771,11 @@ type DataResourceInput struct {
 }
 
 func (s *Service) listDataResources(ctx context.Context, _ *mcp.CallToolRequest, input DataResourceInput) (*mcp.CallToolResult, query.DataResourceList, error) {
+	var err error
+	input.PathPrefixes, err = query.NormalizePathPrefixes(input.PathPrefixes)
+	if err != nil {
+		return nil, query.DataResourceList{}, err
+	}
 	release, err := s.ready(ctx)
 	if err != nil {
 		return nil, query.DataResourceList{}, err
@@ -803,6 +809,11 @@ func (s *Service) getDataResourceUsage(ctx context.Context, _ *mcp.CallToolReque
 }
 
 func (s *Service) listConfigKeys(ctx context.Context, _ *mcp.CallToolRequest, input CatalogInput) (*mcp.CallToolResult, query.ConfigKeyList, error) {
+	var err error
+	input.PathPrefixes, err = query.NormalizePathPrefixes(input.PathPrefixes)
+	if err != nil {
+		return nil, query.ConfigKeyList{}, err
+	}
 	release, err := s.ready(ctx)
 	if err != nil {
 		return nil, query.ConfigKeyList{}, err
@@ -813,6 +824,11 @@ func (s *Service) listConfigKeys(ctx context.Context, _ *mcp.CallToolRequest, in
 }
 
 func (s *Service) listEvents(ctx context.Context, _ *mcp.CallToolRequest, input CatalogInput) (*mcp.CallToolResult, query.EventList, error) {
+	var err error
+	input.PathPrefixes, err = query.NormalizePathPrefixes(input.PathPrefixes)
+	if err != nil {
+		return nil, query.EventList{}, err
+	}
 	release, err := s.ready(ctx)
 	if err != nil {
 		return nil, query.EventList{}, err
@@ -823,6 +839,11 @@ func (s *Service) listEvents(ctx context.Context, _ *mcp.CallToolRequest, input 
 }
 
 func (s *Service) findOrphanedEvents(ctx context.Context, _ *mcp.CallToolRequest, input CatalogInput) (*mcp.CallToolResult, query.OrphanedEventList, error) {
+	var err error
+	input.PathPrefixes, err = query.NormalizePathPrefixes(input.PathPrefixes)
+	if err != nil {
+		return nil, query.OrphanedEventList{}, err
+	}
 	release, err := s.ready(ctx)
 	if err != nil {
 		return nil, query.OrphanedEventList{}, err
@@ -833,14 +854,15 @@ func (s *Service) findOrphanedEvents(ctx context.Context, _ *mcp.CallToolRequest
 }
 
 type EndpointInput struct {
-	Repository string `json:"repository,omitempty" jsonschema:"restrict results to one indexed repository service by stable name"`
-	Method     string `json:"method,omitempty" jsonschema:"exact HTTP method such as GET or POST"`
-	Route      string `json:"route,omitempty" jsonschema:"canonical-compatible route path or template"`
-	Limit      int    `json:"limit,omitempty" jsonschema:"maximum entries or links; defaults to 100 and may not exceed 1000"`
+	Repository   string   `json:"repository,omitempty" jsonschema:"restrict results to one indexed repository service by stable name"`
+	Method       string   `json:"method,omitempty" jsonschema:"exact HTTP method such as GET or POST"`
+	Route        string   `json:"route,omitempty" jsonschema:"canonical-compatible route path or template"`
+	PathPrefixes []string `json:"path_prefixes,omitempty" jsonschema:"repository-relative segment prefixes selecting local result anchors"`
+	Limit        int      `json:"limit,omitempty" jsonschema:"maximum entries or links; defaults to 100 and may not exceed 1000"`
 }
 
 func (i EndpointInput) options() query.TopologyOptions {
-	return query.TopologyOptions{Repository: i.Repository, Method: i.Method, Route: i.Route, Limit: i.Limit}
+	return query.TopologyOptions{Repository: i.Repository, Method: i.Method, Route: i.Route, PathPrefixes: i.PathPrefixes, Limit: i.Limit}
 }
 
 type HandlerInput struct {
@@ -857,21 +879,27 @@ func (i HandlerInput) options() query.TopologyOptions {
 }
 
 type ServiceTopologyInput struct {
-	Repository string `json:"repository,omitempty" jsonschema:"restrict results to every component and fallback service in one indexed repository"`
-	Component  string `json:"component,omitempty" jsonschema:"restrict results to this exact indexed component name across selected repositories"`
-	Method     string `json:"method,omitempty" jsonschema:"exact HTTP method such as GET or POST"`
-	Route      string `json:"route,omitempty" jsonschema:"canonical-compatible route path or template"`
-	Event      string `json:"event,omitempty" jsonschema:"literal event name fragment; cannot be combined with method or route"`
-	Direction  string `json:"direction,omitempty" jsonschema:"incoming, outgoing, or both relative to every service matching repository and component scope"`
-	Limit      int    `json:"limit,omitempty" jsonschema:"maximum service links; defaults to 100 and may not exceed 1000"`
+	Repository   string   `json:"repository,omitempty" jsonschema:"restrict results to every component and fallback service in one indexed repository"`
+	Component    string   `json:"component,omitempty" jsonschema:"restrict results to this exact indexed component name across selected repositories"`
+	Method       string   `json:"method,omitempty" jsonschema:"exact HTTP method such as GET or POST"`
+	Route        string   `json:"route,omitempty" jsonschema:"canonical-compatible route path or template"`
+	Event        string   `json:"event,omitempty" jsonschema:"literal event name fragment; cannot be combined with method or route"`
+	Direction    string   `json:"direction,omitempty" jsonschema:"incoming, outgoing, or both relative to every service matching repository and component scope"`
+	PathPrefixes []string `json:"path_prefixes,omitempty" jsonschema:"repository-relative segment prefixes selecting links with an in-scope local boundary"`
+	Limit        int      `json:"limit,omitempty" jsonschema:"maximum service links; defaults to 100 and may not exceed 1000"`
 }
 
 func (i ServiceTopologyInput) options() query.TopologyOptions {
 	return query.TopologyOptions{Repository: i.Repository, Component: i.Component, Method: i.Method, Route: i.Route,
-		Event: i.Event, Direction: query.Direction(i.Direction), Limit: i.Limit}
+		Event: i.Event, Direction: query.Direction(i.Direction), PathPrefixes: i.PathPrefixes, Limit: i.Limit}
 }
 
 func (s *Service) listEndpoints(ctx context.Context, _ *mcp.CallToolRequest, input EndpointInput) (*mcp.CallToolResult, query.EndpointList, error) {
+	var err error
+	input.PathPrefixes, err = query.NormalizePathPrefixes(input.PathPrefixes)
+	if err != nil {
+		return nil, query.EndpointList{}, err
+	}
 	release, err := s.ready(ctx)
 	if err != nil {
 		return nil, query.EndpointList{}, err
@@ -882,6 +910,11 @@ func (s *Service) listEndpoints(ctx context.Context, _ *mcp.CallToolRequest, inp
 }
 
 func (s *Service) listOutboundRequests(ctx context.Context, _ *mcp.CallToolRequest, input EndpointInput) (*mcp.CallToolResult, query.OutboundRequestList, error) {
+	var err error
+	input.PathPrefixes, err = query.NormalizePathPrefixes(input.PathPrefixes)
+	if err != nil {
+		return nil, query.OutboundRequestList{}, err
+	}
 	release, err := s.ready(ctx)
 	if err != nil {
 		return nil, query.OutboundRequestList{}, err
@@ -902,6 +935,11 @@ func (s *Service) findHandler(ctx context.Context, _ *mcp.CallToolRequest, input
 }
 
 func (s *Service) getServiceTopology(ctx context.Context, _ *mcp.CallToolRequest, input ServiceTopologyInput) (*mcp.CallToolResult, query.ServiceTopology, error) {
+	var err error
+	input.PathPrefixes, err = query.NormalizePathPrefixes(input.PathPrefixes)
+	if err != nil {
+		return nil, query.ServiceTopology{}, err
+	}
 	release, err := s.ready(ctx)
 	if err != nil {
 		return nil, query.ServiceTopology{}, err
@@ -953,17 +991,23 @@ func (s *Service) getMessageFlow(ctx context.Context, _ *mcp.CallToolRequest, in
 }
 
 type MessageCoverageInput struct {
-	Repository string `json:"repository,omitempty" jsonschema:"restrict canonical messages to one indexed repository; federated peer evidence is retained"`
-	Package    string `json:"package,omitempty" jsonschema:"exact canonical protocol package"`
-	Message    string `json:"message,omitempty" jsonschema:"exact message name or qualified canonical message name"`
-	Oneof      string `json:"oneof,omitempty" jsonschema:"exact oneof name; each selected arm is evaluated independently"`
-	Direction  string `json:"direction,omitempty" jsonschema:"outgoing, incoming, or both; defaults to both"`
-	Component  string `json:"component,omitempty" jsonschema:"restrict application evidence to one exact component name or stable component ID"`
-	Status     string `json:"status,omitempty" jsonschema:"resolved, missing_evidence, or unknown"`
-	Limit      int    `json:"limit,omitempty" jsonschema:"maximum messages and evidence sites per exact relation; defaults to 100 and may not exceed 1000"`
+	Repository   string   `json:"repository,omitempty" jsonschema:"restrict canonical messages to one indexed repository; federated peer evidence is retained"`
+	Package      string   `json:"package,omitempty" jsonschema:"exact canonical protocol package"`
+	Message      string   `json:"message,omitempty" jsonschema:"exact message name or qualified canonical message name"`
+	Oneof        string   `json:"oneof,omitempty" jsonschema:"exact oneof name; each selected arm is evaluated independently"`
+	Direction    string   `json:"direction,omitempty" jsonschema:"outgoing, incoming, or both; defaults to both"`
+	Component    string   `json:"component,omitempty" jsonschema:"restrict application evidence to one exact component name or stable component ID"`
+	Status       string   `json:"status,omitempty" jsonschema:"resolved, missing_evidence, or unknown"`
+	PathPrefixes []string `json:"path_prefixes,omitempty" jsonschema:"repository-relative segment prefixes selecting canonical message declarations"`
+	Limit        int      `json:"limit,omitempty" jsonschema:"maximum messages and evidence sites per exact relation; defaults to 100 and may not exceed 1000"`
 }
 
 func (s *Service) listMessageCoverage(ctx context.Context, _ *mcp.CallToolRequest, input MessageCoverageInput) (*mcp.CallToolResult, query.MessageCoverageList, error) {
+	var err error
+	input.PathPrefixes, err = query.NormalizePathPrefixes(input.PathPrefixes)
+	if err != nil {
+		return nil, query.MessageCoverageList{}, err
+	}
 	release, err := s.ready(ctx)
 	if err != nil {
 		return nil, query.MessageCoverageList{}, err
@@ -971,7 +1015,7 @@ func (s *Service) listMessageCoverage(ctx context.Context, _ *mcp.CallToolReques
 	defer release()
 	result, err := s.messageFlow.Coverage(ctx, query.MessageCoverageOptions{Repository: input.Repository,
 		Package: input.Package, Message: input.Message, Oneof: input.Oneof, Direction: query.Direction(input.Direction),
-		Component: input.Component, Status: query.CoverageStatus(input.Status), Limit: input.Limit})
+		Component: input.Component, Status: query.CoverageStatus(input.Status), PathPrefixes: input.PathPrefixes, Limit: input.Limit})
 	return nil, result, err
 }
 

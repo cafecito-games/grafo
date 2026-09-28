@@ -39,14 +39,15 @@ type MessageFlowOptions struct {
 }
 
 type MessageCoverageOptions struct {
-	Repository string         `json:"repository,omitempty"`
-	Package    string         `json:"package,omitempty"`
-	Message    string         `json:"message,omitempty"`
-	Oneof      string         `json:"oneof,omitempty"`
-	Direction  Direction      `json:"direction,omitempty"`
-	Component  string         `json:"component,omitempty"`
-	Status     CoverageStatus `json:"status,omitempty"`
-	Limit      int            `json:"limit,omitempty"`
+	Repository   string         `json:"repository,omitempty"`
+	Package      string         `json:"package,omitempty"`
+	Message      string         `json:"message,omitempty"`
+	Oneof        string         `json:"oneof,omitempty"`
+	Direction    Direction      `json:"direction,omitempty"`
+	Component    string         `json:"component,omitempty"`
+	Status       CoverageStatus `json:"status,omitempty"`
+	PathPrefixes []string       `json:"path_prefixes,omitempty"`
+	Limit        int            `json:"limit,omitempty"`
 }
 
 // FlowEvidence retains the exact fact and graph edge behind one result.
@@ -355,6 +356,11 @@ func (s *MessageFlowService) flow(ctx context.Context, selector string, options 
 }
 
 func (s *MessageFlowService) Coverage(ctx context.Context, options MessageCoverageOptions) (MessageCoverageList, error) {
+	var err error
+	options.PathPrefixes, err = normalizePathPrefixes(options.PathPrefixes)
+	if err != nil {
+		return MessageCoverageList{}, err
+	}
 	limit, err := messageFlowLimit(options.Limit)
 	if err != nil {
 		return MessageCoverageList{}, err
@@ -369,7 +375,8 @@ func (s *MessageFlowService) Coverage(ctx context.Context, options MessageCovera
 		return MessageCoverageList{}, fmt.Errorf("unknown message coverage status %q", options.Status)
 	}
 	nodes, err := s.repository.ListNodesByKind(ctx, graph.NodeListQuery{Kinds: []graph.NodeKind{graph.KindType},
-		Name: options.Message, Repository: options.Repository, Visibility: graph.LocalNodes, Limit: MaxCatalogLimit + 1})
+		Name: options.Message, Repository: options.Repository, PathPrefixes: options.PathPrefixes,
+		Visibility: graph.LocalNodes, Limit: MaxCatalogLimit + 1})
 	if err != nil {
 		return MessageCoverageList{}, err
 	}
