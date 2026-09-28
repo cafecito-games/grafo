@@ -577,6 +577,24 @@ helpers remain diagnosed boundaries rather than root-relative guesses.
 Persisted `uses_middleware` edges are the sole query authority for the ordered
 effective middleware chain; topology queries do not reconstruct router syntax.
 
+## Protocol message flow
+
+`internal/query.MessageFlowService` owns the task-shaped interpretation of
+canonical Protobuf flow. It resolves canonical messages through the shared
+selector service, then uses only bounded `RelationEdgeRepository` pages for
+`generated_from`, field reads/writes, codecs, transport carries, sends,
+receives, and direct caller evidence. Storage and federation hydrate each
+counterpart atomically; the query layer alone calculates member gaps, pipeline
+gaps, channel conflicts, and `resolved`, `missing_evidence`, or `unknown`.
+
+Component and repository attribution is built from bounded node enumeration and
+bounded `component contains file` evidence. Dynamic or symbolic transport,
+unresolved or unsupported bindings, failed refreshes, and truncation never
+become negative claims. CLI and MCP adapters render the same typed result, and
+evaluation schema version 2 stores compact task-query goldens keyed by stable
+node and edge identities across initial, unchanged-incremental, and fresh
+database runs.
+
 ## Persistence
 
 Each branch has a separate SQLite file under `.grafo/indexes`. The database is

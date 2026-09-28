@@ -32,6 +32,8 @@ Use Grafo, not text or embedding search, for these questions:
 | Which HTTP endpoints exist, and who handles them? | `list_endpoints`, `find_handler` |
 | Which outbound calls cross a service boundary? | `list_outbound_requests` |
 | How do repositories communicate over HTTP and events? | `get_service_topology` |
+| Where is a Protobuf message built, encoded, transported, decoded, and handled? | `get_message_flow` |
+| Which message or oneof flows have proven gaps or uncertain evidence? | `list_message_coverage` |
 | What breaks if I change this? | `get_blast_radius` |
 
 Resolve a name to a node first, then pass the returned qualified name or stable

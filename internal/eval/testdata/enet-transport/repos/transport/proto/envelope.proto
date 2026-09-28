@@ -1,4 +1,14 @@
 syntax = "proto3";
 package acme.v1;
 option go_package = "example.com/transport/generated/go/proto;generated";
-message Envelope { string text = 1; }
+message Envelope {
+  oneof payload {
+    string text = 1;
+    bytes image = 2;
+    string unused = 3;
+    string receipt = 4;
+  }
+}
+message EncodedOnly {
+  string value = 1;
+}

@@ -578,6 +578,7 @@ type catalogRepository struct {
 	edges             []graph.Edge
 	repositories      []string
 	nodeCalls         int
+	componentScans    int
 	legacyEdgeCalls   int
 	relationEdgeCalls int
 	relationEdgeErr   error
@@ -593,6 +594,9 @@ func (c *catalogRepository) Repositories(context.Context) ([]string, error) {
 }
 
 func (c *catalogRepository) ListNodesByKind(_ context.Context, request graph.NodeListQuery) ([]graph.ScopedNode, error) {
+	if len(request.Kinds) == len(graph.NodeKinds()) {
+		c.componentScans++
+	}
 	var result []graph.ScopedNode
 	for _, kind := range request.Kinds {
 		var matched []graph.ScopedNode
@@ -650,6 +654,9 @@ func (c *catalogRepository) MatchNodes(_ context.Context, request graph.NodeMatc
 		for _, external := range []bool{false, true} {
 			group := graph.NodeMatchGroup{Level: level, External: external}
 			for _, node := range c.nodes {
+				if request.Repository != "" && c.owners[node.ID] != request.Repository {
+					continue
+				}
 				if request.Kind != "" && node.Kind != request.Kind {
 					continue
 				}

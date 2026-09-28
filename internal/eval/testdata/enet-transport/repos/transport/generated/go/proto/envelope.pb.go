@@ -2,4 +2,13 @@
 // source: proto/envelope.proto
 package generated
 
-type Envelope struct{ Text string }
+type Envelope struct {
+	Text    string
+	Image   []byte
+	Unused  string
+	Receipt string
+}
+
+type EncodedOnly struct {
+	Value string
+}

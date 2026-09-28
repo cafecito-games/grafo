@@ -147,16 +147,29 @@ func (s *Service) Resolve(ctx context.Context, selector string) (graph.Node, err
 //   - Narrowing a truncated list is refused outright, because the nodes that
 //     were cut off could be equally good matches.
 func (s *Service) ResolveKind(ctx context.Context, selector string, kind graph.NodeKind) (graph.Node, error) {
+	return s.ResolveKindInRepository(ctx, selector, kind, "")
+}
+
+// ResolveKindInRepository applies the shared fail-closed selector rules inside
+// one stable indexed repository. An empty repository preserves global/federated
+// resolution.
+func (s *Service) ResolveKindInRepository(ctx context.Context, selector string, kind graph.NodeKind, repository string) (graph.Node, error) {
 	selector = strings.TrimSpace(selector)
 	if selector == "" {
 		return graph.Node{}, errors.New("selector is required")
 	}
 	if strings.HasPrefix(selector, "n:") {
 		if node, err := s.repository.Node(ctx, selector); err == nil && (kind == "" || node.Kind == kind) {
-			return node, nil
+			inRepository, scopeErr := nodeInRepository(ctx, s.repository, node, repository)
+			if scopeErr != nil {
+				return graph.Node{}, scopeErr
+			}
+			if repository == "" || inRepository {
+				return node, nil
+			}
 		}
 	}
-	group, err := s.repository.MatchNodes(ctx, graph.NodeMatchQuery{Selector: selector, Kind: kind, Limit: candidateLimit})
+	group, err := s.repository.MatchNodes(ctx, graph.NodeMatchQuery{Selector: selector, Kind: kind, Repository: repository, Limit: candidateLimit})
 	if err != nil {
 		return graph.Node{}, err
 	}
@@ -187,6 +200,27 @@ func (s *Service) ResolveKind(ctx context.Context, selector string, kind graph.N
 	}
 	return graph.Node{}, &AmbiguousError{Term: selector, Kind: kind, Level: group.Level,
 		Reason: matchReason(group), Total: total, Candidates: candidates}
+}
+
+func nodeInRepository(ctx context.Context, repository graph.QueryRepository, node graph.Node, name string) (bool, error) {
+	if name == "" {
+		return true, nil
+	}
+	lister, ok := repository.(graph.NodeListRepository)
+	if !ok {
+		return false, fmt.Errorf("repository does not support repository-scoped selector resolution")
+	}
+	nodes, err := lister.ListNodesByKind(ctx, graph.NodeListQuery{Kinds: []graph.NodeKind{node.Kind}, Name: node.QualifiedName,
+		Repository: name, Visibility: graph.AllNodes, Limit: 2})
+	if err != nil {
+		return false, err
+	}
+	for _, scoped := range nodes {
+		if scoped.Node.ID == node.ID && scoped.Repository == name {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // strictMatches keeps the case-sensitive matches of a group. The group contract

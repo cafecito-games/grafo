@@ -18,7 +18,7 @@ import (
 
 // Version is the guidance format version. Bumping it makes every installed copy
 // stale, so `grafo install` replaces older Grafo-owned content exactly.
-const Version = "2"
+const Version = "3"
 
 // Name is the stable identity Grafo installs guidance under.
 const Name = "grafo"

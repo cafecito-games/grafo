@@ -618,6 +618,28 @@ structured result; it never replaces the node and edge evidence. Explicit
 federation refreshes all member indexes before answering, so a failed refresh
 returns no mixed-freshness topology.
 
+## Protobuf message flow and coverage
+
+Message-flow queries join canonical Protobuf declarations to generated
+bindings, exact field and oneof-arm reads/writes, codecs, ENet operations, and
+bounded caller evidence without reconstructing relationships from names:
+
+```sh
+grafo message-flow acme.v1.Envelope --json
+grafo message-coverage --package acme.v1 --status missing_evidence --json
+grafo message-coverage --message Envelope --oneof payload --component client --json
+```
+
+The MCP equivalents are `get_message_flow` (scalar or ordered batch selectors)
+and `list_message_coverage`. Coverage reports `resolved`, `missing_evidence`,
+or `unknown`; dynamic transport, absent supported binding evidence, unresolved
+projections, and bounded truncation are uncertainty rather than proof of a
+missing runtime stage. Every aggregate retains canonical node IDs, edge and
+fact IDs, source locations, repository identity, and component identity when
+available. Oneof arms are evaluated independently. Channel mismatches are
+reported only for proven send and receive operations carrying the same
+canonical message.
+
 ## SQL dialects
 
 One SQL router owns `.sql` files and delegates them to installed dialects.

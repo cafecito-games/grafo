@@ -756,6 +756,15 @@ var matchScopes = []matchScope{
 // count query runs before the row query so the reported totals cover the whole
 // graph even when the row list is truncated.
 func (r *Repository) MatchNodes(ctx context.Context, request graph.NodeMatchQuery) (graph.NodeMatchGroup, error) {
+	if request.Repository != "" {
+		name, err := r.repositoryName(ctx)
+		if err != nil {
+			return graph.NodeMatchGroup{}, err
+		}
+		if request.Repository != name {
+			return graph.NodeMatchGroup{}, nil
+		}
+	}
 	selector := strings.TrimSpace(request.Selector)
 	if selector == "" {
 		return graph.NodeMatchGroup{}, nil
