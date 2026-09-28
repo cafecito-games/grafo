@@ -3,6 +3,7 @@ package golang
 import (
 	goast "go/ast"
 	"go/constant"
+	"go/token"
 	"go/types"
 	"sort"
 	"strconv"
@@ -15,30 +16,51 @@ import (
 
 const maxTransportWrapperDepth = 8
 
+// goENetPackage is the import path of the ENet binding this parser understands.
+const goENetPackage = "github.com/cafecito-games/goenet/pkg"
+
+const (
+	goENetEventType = goENetPackage + ".Event"
+	// goENetReceiveAPI names the Event payload field read that anchors receive
+	// evidence. goenet delivers packets as struct fields rather than through a
+	// getter, so there is no receive call to match on.
+	goENetReceiveAPI = goENetPackage + ".Event.Packet.Data"
+)
+
+// goENetAdapter matches goenet's send APIs. Both carry the channel positionally
+// and keep the payload and reliability inside the *Packet argument.
 var goENetAdapter transport.Adapter = transport.ExactAdapter{
-	"github.com/codecat/go-enet.Peer.SendBytes": {
-		Protocol: "enet", API: "github.com/codecat/go-enet.Peer.SendBytes", Direction: transport.Send,
-		ChannelPosition: 1, PayloadPosition: 0, ReliabilityPosition: 2,
+	goENetPackage + ".Peer.Send": {
+		Protocol: "enet", API: goENetPackage + ".Peer.Send", Direction: transport.Send,
+		ChannelPosition: 0, PayloadPosition: 1, PayloadField: "Data",
+		ReliabilityPosition: 1, ReliabilityField: "Flags",
 	},
-	"github.com/codecat/go-enet.Peer.SendString": {
-		Protocol: "enet", API: "github.com/codecat/go-enet.Peer.SendString", Direction: transport.Send,
-		ChannelPosition: 1, PayloadPosition: 0, ReliabilityPosition: 2,
+	goENetPackage + ".Host.Broadcast": {
+		Protocol: "enet", API: goENetPackage + ".Host.Broadcast", Direction: transport.Send,
+		ChannelPosition: 0, PayloadPosition: 1, PayloadField: "Data",
+		ReliabilityPosition: 1, ReliabilityField: "Flags",
 	},
-	"github.com/codecat/go-enet.Peer.SendPacket": {
-		Protocol: "enet", API: "github.com/codecat/go-enet.Peer.SendPacket", Direction: transport.Send,
-		ChannelPosition: 1, PayloadPosition: 0, ReliabilityPosition: -1,
-	},
-	"github.com/codecat/go-enet.Packet.GetData": {
-		Protocol: "enet", API: "github.com/codecat/go-enet.Packet.GetData", Direction: transport.Receive,
-		ChannelPosition: -1, PayloadPosition: -1, ReliabilityPosition: -1,
-	},
+}
+
+// goENetReceiveSpec describes receive evidence anchored on an Event payload
+// field read. Neither value is an argument: the channel comes from the
+// function-level symbolic scan of Event.ChannelID reads and the payload from
+// proto.Unmarshal linkage on the bytes the read is bound to.
+var goENetReceiveSpec = transport.Spec{
+	Protocol: "enet", API: goENetReceiveAPI, Direction: transport.Receive,
+	ChannelPosition: transport.NoPosition, PayloadPosition: transport.NoPosition,
+	ReliabilityPosition: transport.NoPosition,
+	ChannelField:        "ChannelID", PayloadField: "Packet.Data",
 }
 
 type transportValue struct {
 	parameter int
-	constant  string
-	status    string
-	binding   string
+	// field is a dotted path resolved through the value at parameter, kept so
+	// that wrapper instantiation can re-resolve it against the caller argument.
+	field    string
+	constant string
+	status   string
+	binding  string
 }
 
 type transportTemplate struct {
@@ -47,6 +69,9 @@ type transportTemplate struct {
 	payload     transportValue
 	reliability transportValue
 	depth       int
+	// location anchors a directly observed operation. It is unset on summaries,
+	// which are re-anchored at each call site that instantiates them.
+	location graph.Location
 }
 
 type transportCall struct {
@@ -56,12 +81,15 @@ type transportCall struct {
 }
 
 type transportFunction struct {
-	name        string
-	path        string
-	decl        *goast.FuncDecl
-	parameters  map[types.Object]int
-	bytes       map[types.Object]string
-	receives    map[*goast.CallExpr]types.Object
+	name       string
+	path       string
+	decl       *goast.FuncDecl
+	parameters map[types.Object]int
+	bytes      map[types.Object]string
+	// packets maps a variable assigned exactly once to a composite literal onto
+	// that literal, so a packet built on one line and sent on the next resolves.
+	packets     map[types.Object]*goast.CompositeLit
+	receives    map[goast.Expr]types.Object
 	decode      map[types.Object]string
 	direct      []transportTemplate
 	summaries   []transportTemplate
@@ -89,7 +117,8 @@ func collectTransportPackageViews(root string, pkg *packages.Package, views map[
 			}
 			function := &transportFunction{name: name, path: path, decl: decl,
 				parameters: map[types.Object]int{}, bytes: map[types.Object]string{},
-				receives: map[*goast.CallExpr]types.Object{}, decode: map[types.Object]string{}}
+				packets:  map[types.Object]*goast.CompositeLit{},
+				receives: map[goast.Expr]types.Object{}, decode: map[types.Object]string{}}
 			index := 0
 			if decl.Type.Params != nil {
 				for _, field := range decl.Type.Params.List {
@@ -134,7 +163,7 @@ func collectTransportPackageViews(root string, pkg *packages.Package, views map[
 	}
 
 	for _, function := range sortedTransportFunctions(functions) {
-		uses := directTransportUses(pkg, function)
+		uses := directTransportUses(function)
 		for _, call := range function.calls {
 			callee := functions[call.target]
 			if callee == nil {
@@ -194,6 +223,7 @@ func truncatedTransportTemplate(template transportTemplate) transportTemplate {
 	template.channel = transportValue{parameter: -1, status: "truncated"}
 	template.payload = transportValue{parameter: -1, status: "truncated"}
 	template.reliability = transportValue{parameter: -1, status: "truncated"}
+	template.location = graph.Location{}
 	template.depth = maxTransportWrapperDepth
 	return template
 }
@@ -224,6 +254,7 @@ func collectTransportFunction(pkg *packages.Package, function *transportFunction
 	var assignments []*goast.AssignStmt
 	var valueSpecs []*goast.ValueSpec
 	var calls []*goast.CallExpr
+	var selectors []*goast.SelectorExpr
 	goast.Inspect(function.decl.Body, func(node goast.Node) bool {
 		switch value := node.(type) {
 		case *goast.AssignStmt:
@@ -232,6 +263,8 @@ func collectTransportFunction(pkg *packages.Package, function *transportFunction
 			valueSpecs = append(valueSpecs, value)
 		case *goast.CallExpr:
 			calls = append(calls, value)
+		case *goast.SelectorExpr:
+			selectors = append(selectors, value)
 		}
 		return true
 	})
@@ -309,12 +342,13 @@ func collectTransportFunction(pkg *packages.Package, function *transportFunction
 	}
 
 	channelCandidates := map[string]bool{}
-	for _, call := range calls {
-		target := callableTarget(call.Fun, info, nil)
-		if target == "github.com/codecat/go-enet.Event.GetChannelID" {
-			channelCandidates[render(pkg.Fset, call)] = true
+	for _, selector := range selectors {
+		if goENetEventChannel(selector, info) {
+			channelCandidates[render(pkg.Fset, selector)] = true
 		}
-		if target == "google.golang.org/protobuf/proto.Unmarshal" && len(call.Args) > 1 {
+	}
+	for _, call := range calls {
+		if callableTarget(call.Fun, info, nil) == "google.golang.org/protobuf/proto.Unmarshal" && len(call.Args) > 1 {
 			if object := expressionObject(call.Args[0], info); object != nil {
 				function.decode[object] = semanticNamedType(info.TypeOf(call.Args[1]))
 			}
@@ -332,42 +366,67 @@ func collectTransportFunction(pkg *packages.Package, function *transportFunction
 		if len(assignment.Lhs) != 1 || len(assignment.Rhs) != 1 {
 			continue
 		}
-		call, ok := assignment.Rhs[0].(*goast.CallExpr)
-		if !ok || callableTarget(call.Fun, info, nil) != "github.com/codecat/go-enet.Packet.GetData" {
+		identifier, ok := assignment.Lhs[0].(*goast.Ident)
+		if !ok {
 			continue
 		}
-		if identifier, ok := assignment.Lhs[0].(*goast.Ident); ok {
-			object := info.Defs[identifier]
-			if object == nil {
-				object = info.Uses[identifier]
+		object := info.Defs[identifier]
+		if object == nil {
+			object = info.Uses[identifier]
+		}
+		if object == nil || assignmentCounts[object] != 1 {
+			continue
+		}
+		if selector, ok := assignment.Rhs[0].(*goast.SelectorExpr); ok && goENetEventPayload(selector, info) {
+			function.receives[selector] = object
+		}
+		if literal := compositeLiteral(assignment.Rhs[0]); literal != nil {
+			function.packets[object] = literal
+		}
+	}
+	for _, spec := range valueSpecs {
+		for index, name := range spec.Names {
+			if index >= len(spec.Values) {
+				break
 			}
-			if assignmentCounts[object] == 1 {
-				function.receives[call] = object
+			object := info.Defs[name]
+			if object == nil || assignmentCounts[object] != 1 {
+				continue
+			}
+			if literal := compositeLiteral(spec.Values[index]); literal != nil {
+				function.packets[object] = literal
 			}
 		}
+	}
+
+	for _, selector := range selectors {
+		if !goENetEventPayload(selector, info) {
+			continue
+		}
+		template := transportTemplate{spec: goENetReceiveSpec, depth: 0,
+			channel: transportValue{parameter: -1, constant: function.channel, status: function.channelMode},
+			payload: transportValue{parameter: -1}, reliability: transportValue{parameter: -1},
+			location: semanticLocation(function.path, pkg.Fset, selector.Pos(), selector.End())}
+		if object := function.receives[selector]; object != nil {
+			template.payload.binding = function.decode[object]
+			if template.payload.binding != "" {
+				template.payload.status = "proven"
+			}
+		}
+		function.direct = append(function.direct, template)
+		addTransportSummary(function, template)
 	}
 
 	for _, call := range calls {
 		target := callableTarget(call.Fun, info, nil)
 		if spec, ok := goENetAdapter.Match(target); ok {
 			template := transportTemplate{spec: spec, depth: 0,
-				channel: transportValue{parameter: -1}, payload: transportValue{parameter: -1}, reliability: transportValue{parameter: -1}}
-			if spec.ChannelPosition >= 0 && spec.ChannelPosition < len(call.Args) {
-				template.channel = transportValueForExpression(call.Args[spec.ChannelPosition], function, info)
-			} else if spec.Direction == transport.Receive {
-				template.channel = transportValue{parameter: -1, constant: function.channel, status: function.channelMode}
-			}
-			if spec.PayloadPosition >= 0 && spec.PayloadPosition < len(call.Args) {
-				template.payload = transportValueForExpression(call.Args[spec.PayloadPosition], function, info)
-			} else if object := function.receives[call]; object != nil {
-				template.payload.binding = function.decode[object]
-				if template.payload.binding != "" {
-					template.payload.status = "proven"
-				}
-			}
-			if spec.ReliabilityPosition >= 0 && spec.ReliabilityPosition < len(call.Args) {
-				template.reliability = transportValueForExpression(call.Args[spec.ReliabilityPosition], function, info)
-			}
+				channel: transportValue{parameter: -1}, payload: transportValue{parameter: -1},
+				reliability: transportValue{parameter: -1},
+				location:    semanticLocation(function.path, pkg.Fset, call.Pos(), call.End())}
+			template.channel = transportArgumentValue(call.Args, spec.ChannelPosition, spec.ChannelField, function, info)
+			template.payload = transportArgumentValue(call.Args, spec.PayloadPosition, spec.PayloadField, function, info)
+			template.reliability = transportArgumentValue(call.Args, spec.ReliabilityPosition, spec.ReliabilityField, function, info)
 			function.direct = append(function.direct, template)
 			addTransportSummary(function, template)
 		}
@@ -378,24 +437,126 @@ func collectTransportFunction(pkg *packages.Package, function *transportFunction
 	}
 }
 
-func directTransportUses(pkg *packages.Package, function *transportFunction) []SemanticTransportUse {
-	var result []SemanticTransportUse
-	directIndex := 0
-	goast.Inspect(function.decl.Body, func(node goast.Node) bool {
-		call, ok := node.(*goast.CallExpr)
+// transportArgumentValue resolves the value a spec places at position, optionally
+// reached through a dotted field path of the argument found there.
+func transportArgumentValue(arguments []goast.Expr, position int, field string,
+	function *transportFunction, info *types.Info) transportValue {
+	if position < 0 || position >= len(arguments) {
+		return transportValue{parameter: -1}
+	}
+	return transportValueForFieldPath(arguments[position], field, function, info)
+}
+
+// goENetEventPayload reports whether selector reads the payload bytes of a
+// goenet Event, that is <event>.Packet.Data.
+func goENetEventPayload(selector *goast.SelectorExpr, info *types.Info) bool {
+	if selector.Sel.Name != "Data" {
+		return false
+	}
+	inner, ok := unwrapTransportExpression(selector.X).(*goast.SelectorExpr)
+	return ok && inner.Sel.Name == "Packet" && isGoENetEvent(inner.X, info)
+}
+
+// goENetEventChannel reports whether selector reads <event>.ChannelID.
+func goENetEventChannel(selector *goast.SelectorExpr, info *types.Info) bool {
+	return selector.Sel.Name == "ChannelID" && isGoENetEvent(selector.X, info)
+}
+
+func isGoENetEvent(expression goast.Expr, info *types.Info) bool {
+	return semanticNamedType(info.TypeOf(expression)) == goENetEventType
+}
+
+// transportValueForFieldPath resolves a value held in a struct field of
+// expression, as goenet's payload and reliability are held in its *Packet
+// argument. An empty field resolves expression itself. When expression is a
+// parameter the field path is carried on the value so that wrapper
+// instantiation can resolve it against the caller's argument instead.
+func transportValueForFieldPath(expression goast.Expr, field string,
+	function *transportFunction, info *types.Info) transportValue {
+	if field == "" {
+		return transportValueForExpression(expression, function, info)
+	}
+	name, rest := splitFieldPath(field)
+	switch value := unwrapTransportExpression(expression).(type) {
+	case *goast.CompositeLit:
+		return transportValueForLiteralField(value, name, rest, function, info)
+	case *goast.Ident:
+		object := expressionObject(value, info)
+		if object == nil {
+			break
+		}
+		if literal := function.packets[object]; literal != nil {
+			return transportValueForLiteralField(literal, name, rest, function, info)
+		}
+		if parameter, ok := function.parameters[object]; ok {
+			return transportValue{parameter: parameter, field: field}
+		}
+	}
+	return transportValue{parameter: -1}
+}
+
+func transportValueForLiteralField(literal *goast.CompositeLit, name, rest string,
+	function *transportFunction, info *types.Info) transportValue {
+	element := compositeLiteralField(literal, name)
+	if element == nil {
+		return transportValue{parameter: -1}
+	}
+	return transportValueForFieldPath(element, rest, function, info)
+}
+
+// compositeLiteralField returns the value keyed by name, or nil when the literal
+// omits it or is written positionally.
+func compositeLiteralField(literal *goast.CompositeLit, name string) goast.Expr {
+	for _, element := range literal.Elts {
+		pair, ok := element.(*goast.KeyValueExpr)
 		if !ok {
-			return true
+			continue
 		}
-		if _, matched := goENetAdapter.Match(callableTarget(call.Fun, pkg.TypesInfo, nil)); !matched {
-			return true
+		if key, ok := pair.Key.(*goast.Ident); ok && key.Name == name {
+			return pair.Value
 		}
-		if directIndex < len(function.direct) {
-			result = append(result, semanticTransportUse(function.name, function.direct[directIndex],
-				semanticLocation(function.path, pkg.Fset, call.Pos(), call.End())))
-			directIndex++
+	}
+	return nil
+}
+
+func compositeLiteral(expression goast.Expr) *goast.CompositeLit {
+	literal, _ := unwrapTransportExpression(expression).(*goast.CompositeLit)
+	return literal
+}
+
+// unwrapTransportExpression strips address-of and parentheses so that a packet
+// passed as &Packet{...} reads the same as one passed by value.
+func unwrapTransportExpression(expression goast.Expr) goast.Expr {
+	for {
+		switch value := expression.(type) {
+		case *goast.ParenExpr:
+			expression = value.X
+		case *goast.UnaryExpr:
+			if value.Op != token.AND {
+				return expression
+			}
+			expression = value.X
+		default:
+			return expression
 		}
-		return true
-	})
+	}
+}
+
+func splitFieldPath(field string) (string, string) {
+	if head, rest, found := strings.Cut(field, "."); found {
+		return head, rest
+	}
+	return field, ""
+}
+
+// directTransportUses emits the operations observed directly in the function
+// body. Each template carries the location of the call or field read that
+// anchors it, because goenet receive evidence is a field read rather than a call.
+func directTransportUses(function *transportFunction) []SemanticTransportUse {
+	result := make([]SemanticTransportUse, 0, len(function.direct))
+	for _, template := range function.direct {
+		result = append(result, semanticTransportUse(function.name, template, template.location))
+	}
 	return result
 }
 
@@ -454,6 +615,7 @@ func expressionObject(expression goast.Expr, info *types.Info) types.Object {
 
 func instantiateTransportTemplate(template transportTemplate, arguments []goast.Expr, caller *transportFunction, info *types.Info) transportTemplate {
 	result := template
+	result.location = graph.Location{}
 	result.channel = instantiateTransportValue(template.channel, arguments, caller, info)
 	result.payload = instantiateTransportValue(template.payload, arguments, caller, info)
 	result.reliability = instantiateTransportValue(template.reliability, arguments, caller, info)
@@ -464,7 +626,7 @@ func instantiateTransportValue(value transportValue, arguments []goast.Expr, cal
 	if value.parameter < 0 || value.parameter >= len(arguments) {
 		return value
 	}
-	return transportValueForExpression(arguments[value.parameter], caller, info)
+	return transportValueForFieldPath(arguments[value.parameter], value.field, caller, info)
 }
 
 func addTransportSummary(function *transportFunction, summary transportTemplate) bool {
@@ -486,7 +648,7 @@ func transportTemplateKey(summary transportTemplate) string {
 	values := []transportValue{summary.channel, summary.payload, summary.reliability}
 	parts := []string{summary.spec.API, string(summary.spec.Direction)}
 	for _, value := range values {
-		parts = append(parts, strconv.Itoa(value.parameter), value.constant, value.status, value.binding)
+		parts = append(parts, strconv.Itoa(value.parameter), value.field, value.constant, value.status, value.binding)
 	}
 	return strings.Join(parts, "\x00")
 }

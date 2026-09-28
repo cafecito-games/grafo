@@ -20,8 +20,15 @@ const (
 	Receive Direction = "receive"
 )
 
-// Spec describes one exact transport API. Argument positions are zero-based;
-// a negative position means that the API does not expose that value directly.
+// NoPosition marks a value that is not carried by any call argument.
+const NoPosition = -1
+
+// Spec describes one exact transport API and where it keeps its channel,
+// payload, and reliability evidence. Argument positions are zero-based;
+// NoPosition means the API does not expose that value as an argument. A
+// non-empty Field is a dotted path resolved through the value at that position,
+// which is how libraries that pass a packet struct rather than positional bytes
+// are modelled.
 type Spec struct {
 	Protocol            string
 	API                 string
@@ -29,6 +36,9 @@ type Spec struct {
 	ChannelPosition     int
 	PayloadPosition     int
 	ReliabilityPosition int
+	ChannelField        string
+	PayloadField        string
+	ReliabilityField    string
 }
 
 // Adapter recognizes exact API identities. Implementations must not fall back
@@ -76,6 +86,14 @@ func Emit(b *parserapi.Builder, sourceID string, operation Operation) string {
 		"reliability_position": strconv.Itoa(operation.ReliabilityPosition),
 		"proof":                status(operation.Proof),
 	}
+	for key, field := range map[string]string{
+		"channel_field": operation.ChannelField, "payload_field": operation.PayloadField,
+		"reliability_field": operation.ReliabilityField,
+	} {
+		if field != "" {
+			properties[key] = field
+		}
+	}
 	if operation.Channel != "" {
 		properties["channel"] = operation.Channel
 	}
@@ -96,6 +114,9 @@ func Emit(b *parserapi.Builder, sourceID string, operation Operation) string {
 		carry := map[string]string{
 			"protocol": operation.Protocol, "proof": status(operation.Proof),
 			"payload_position": strconv.Itoa(operation.PayloadPosition),
+		}
+		if operation.PayloadField != "" {
+			carry["payload_field"] = operation.PayloadField
 		}
 		if operation.Binding != "" {
 			carry["binding"] = operation.Binding
