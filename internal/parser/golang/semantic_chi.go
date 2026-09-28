@@ -30,16 +30,20 @@ type chiFunction struct {
 }
 
 type chiRouter struct {
-	endpoints []chiEndpointTemplate
-	mounts    []chiMount
-	mounted   bool
+	endpoints   []chiEndpointTemplate
+	mounts      []chiMount
+	mounted     bool
+	discardRoot bool
 }
 
 type chiState struct {
 	router     *chiRouter
+	chain      *chiChain
 	prefix     string
 	middleware []SemanticChiMiddleware
 }
+
+type chiChain struct{ marker byte }
 
 type chiEndpointTemplate struct {
 	function     string
@@ -271,7 +275,7 @@ func (a *chiAnalyzer) composeRoots() {
 		}
 		if len(routers) == 0 {
 			for _, router := range execution.created {
-				if !router.mounted {
+				if !router.mounted && !router.discardRoot {
 					routers = append(routers, router)
 				}
 			}
@@ -482,17 +486,22 @@ func (a *chiAnalyzer) executeCall(execution *chiExecution, function *chiFunction
 		location := a.location(function.path, call)
 		switch name {
 		case "Use":
+			original := cloneChiState(base)
 			base.middleware = append(base.middleware, a.middleware(call.Args, "use", function.path)...)
-			if identifier, ok := selector.X.(*goast.Ident); ok {
-				environment[a.pkg.TypesInfo.Uses[identifier]] = base
+			if !a.storeRouterState(selector.X, original, base, environment) {
+				a.diagnostic(a.location(function.path, selector.X),
+					"Chi router helper argument state could not be propagated; subsequent composition omitted")
 			}
 			return base, true
 		case "With":
+			base.chain = &chiChain{}
 			base.middleware = append(base.middleware, a.middleware(call.Args, "with", function.path)...)
 			return base, true
 		case "Group":
 			if len(call.Args) > 0 {
-				a.executeCallback(execution, function, call.Args[0], base, environment, conditional)
+				child := cloneChiState(base)
+				child.chain = &chiChain{}
+				a.executeCallback(execution, function, call.Args[0], child, environment, conditional)
 			}
 			return base, true
 		case "Route":
@@ -510,6 +519,7 @@ func (a *chiAnalyzer) executeCall(execution *chiExecution, function *chiFunction
 				return base, true
 			}
 			child := cloneChiState(base)
+			child.chain = &chiChain{}
 			child.prefix = joined
 			a.executeCallback(execution, function, call.Args[1], child, environment, conditional)
 			return base, true
@@ -604,11 +614,14 @@ func (a *chiAnalyzer) executeCall(execution *chiExecution, function *chiFunction
 			continue
 		}
 		if (index < len(reassigned) && reassigned[index]) || state.router != original.router || state.prefix != original.prefix {
+			if !containsChiRouter(returned, state.router) {
+				state.router.discardRoot = true
+			}
 			a.diagnostic(a.location(function.path, call.Args[index]),
 				"Chi router helper argument state could not be propagated after reassignment; subsequent composition omitted")
 			continue
 		}
-		if !a.storeRouterState(call.Args[index], state, environment) {
+		if !a.storeRouterState(call.Args[index], original, state, environment) {
 			a.diagnostic(a.location(function.path, call.Args[index]),
 				"Chi router helper argument state could not be propagated; subsequent composition omitted")
 		}
@@ -638,7 +651,7 @@ func (a *chiAnalyzer) evalRouter(execution *chiExecution, function *chiFunction,
 		if a.isChiNewRouter(value) {
 			router := &chiRouter{}
 			execution.created = append(execution.created, router)
-			return chiState{router: router, prefix: "/"}, true
+			return chiState{router: router, chain: &chiChain{}, prefix: "/"}, true
 		}
 		return a.executeCall(execution, function, value, environment, conditional)
 	}
@@ -665,7 +678,7 @@ func (a *chiAnalyzer) executeCallback(execution *chiExecution, function *chiFunc
 	}
 }
 
-func (a *chiAnalyzer) storeRouterState(expression goast.Expr, state chiState, environment map[types.Object]chiState) bool {
+func (a *chiAnalyzer) storeRouterState(expression goast.Expr, original, state chiState, environment map[types.Object]chiState) bool {
 	identifier, ok := expression.(*goast.Ident)
 	if !ok {
 		return false
@@ -674,11 +687,18 @@ func (a *chiAnalyzer) storeRouterState(expression goast.Expr, state chiState, en
 	if object == nil {
 		object = a.pkg.TypesInfo.Defs[identifier]
 	}
-	if object != nil {
-		environment[object] = cloneChiState(state)
-		return true
+	if object == nil {
+		return false
 	}
-	return false
+	if _, ok := environment[object]; !ok {
+		return false
+	}
+	for candidateObject, candidate := range environment {
+		if sameChiState(candidate, original) {
+			environment[candidateObject] = cloneChiState(state)
+		}
+	}
+	return true
 }
 
 func (a *chiAnalyzer) diagnoseConditionalRouterMutation(path string, node goast.Node,
@@ -947,7 +967,7 @@ func cloneChiState(state chiState) chiState {
 }
 
 func sameChiState(left, right chiState) bool {
-	if left.router != right.router || left.prefix != right.prefix || len(left.middleware) != len(right.middleware) {
+	if left.router != right.router || left.chain != right.chain || left.prefix != right.prefix || len(left.middleware) != len(right.middleware) {
 		return false
 	}
 	for index := range left.middleware {
@@ -956,6 +976,15 @@ func sameChiState(left, right chiState) bool {
 		}
 	}
 	return true
+}
+
+func containsChiRouter(states []chiState, router *chiRouter) bool {
+	for _, state := range states {
+		if state.router == router {
+			return true
+		}
+	}
+	return false
 }
 
 func cloneMiddleware(values []SemanticChiMiddleware) []SemanticChiMiddleware {

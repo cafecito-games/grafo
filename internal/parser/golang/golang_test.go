@@ -947,17 +947,6 @@ type Router interface {
 	HandleFunc(string, http.HandlerFunc)
 }
 
-func TestChiHelperEditInvalidatesEveryGoPackageView(t *testing.T) {
-	parser := golangparser.New()
-	got := parser.SemanticAffectedPaths(
-		[]string{"routes.go", "helpers.go", "nested/child.go", "README.md"},
-		[]string{"helpers.go"},
-	)
-	if !reflect.DeepEqual(got, []string{"routes.go", "helpers.go", "nested/child.go"}) {
-		t.Fatalf("affected paths = %v, want every Go package view", got)
-	}
-}
-
 type Mux struct{}
 func NewRouter() *Mux { return &Mux{} }
 func (*Mux) ServeHTTP(http.ResponseWriter, *http.Request) {}
@@ -1028,6 +1017,11 @@ func Routes(dynamic string) chi.Router {
 	applyHelper(helperRouter)
 	helperRouter.Get("/use", me)
 	r.Mount("/helper", helperRouter)
+	aliasRouter := chi.NewRouter()
+	alias := aliasRouter
+	applyHelper(alias)
+	aliasRouter.Get("/use", me)
+	r.Mount("/copied-helper", aliasRouter)
 	dynamicMethod(r, dynamic)
 	rebindHelper(r)
 	applyHelper(identity(r))
@@ -1042,6 +1036,8 @@ func Routes(dynamic string) chi.Router {
 	r.Route("/two", authRoutes)
 	r.Group(func(admin chi.Router) {
 		admin.Use(adminUse)
+		r.Get("/captured-outer", me)
+		admin.Get("/scoped", me)
 		admin.Mount("/admin", childRoutes())
 	})
 	r.Mount("/child", childRoutes())
@@ -1067,6 +1063,12 @@ func chooseRouter(first bool, left, right chi.Router) chi.Router {
 func cycleA(r chi.Router) { cycleB(r) }
 func cycleB(r chi.Router) { cycleA(r) }
 
+func VoidRoot() {
+	r := chi.NewRouter()
+	rebindHelper(r)
+	r.Get("/void-real", me)
+}
+
 type unrelated struct{}
 func (unrelated) Get(string, http.HandlerFunc) {}
 func NotARouter() { unrelated{}.Get("/invented", login) }
@@ -1082,20 +1084,24 @@ func NotARouter() { unrelated{}.Get("/invented", login) }
 	}
 
 	wantMiddleware := map[string][]string{
-		"POST /v1/auth/login":  {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
-		"POST /v1/auth/alias":  {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
-		"GET /v1/auth/me":      {"example.com/app.outer", "example.com/app.authUse"},
-		"GET /v1/auth/plain":   {"example.com/app.outer", "example.com/app.authUse"},
-		"POST /one/login":      {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
-		"POST /two/login":      {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
-		"GET /admin/items":     {"example.com/app.outer", "example.com/app.adminUse", "example.com/app.childUse"},
-		"GET /child/items":     {"example.com/app.outer", "example.com/app.childUse"},
-		"GET /factory/items":   {"example.com/app.outer", "example.com/app.childUse"},
-		"PATCH /method":        {"example.com/app.outer"},
-		"ANY /any":             {"example.com/app.outer"},
-		"GET /conditional":     {"example.com/app.outer"},
-		"GET /helper/use":      {"example.com/app.outer", "example.com/app.audit"},
-		"GET /after-uncertain": {"example.com/app.outer"},
+		"POST /v1/auth/login":    {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
+		"POST /v1/auth/alias":    {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
+		"GET /v1/auth/me":        {"example.com/app.outer", "example.com/app.authUse"},
+		"GET /v1/auth/plain":     {"example.com/app.outer", "example.com/app.authUse"},
+		"POST /one/login":        {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
+		"POST /two/login":        {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
+		"GET /admin/items":       {"example.com/app.outer", "example.com/app.adminUse", "example.com/app.childUse"},
+		"GET /captured-outer":    {"example.com/app.outer"},
+		"GET /scoped":            {"example.com/app.outer", "example.com/app.adminUse"},
+		"GET /child/items":       {"example.com/app.outer", "example.com/app.childUse"},
+		"GET /factory/items":     {"example.com/app.outer", "example.com/app.childUse"},
+		"PATCH /method":          {"example.com/app.outer"},
+		"ANY /any":               {"example.com/app.outer"},
+		"GET /conditional":       {"example.com/app.outer"},
+		"GET /helper/use":        {"example.com/app.outer", "example.com/app.audit"},
+		"GET /copied-helper/use": {"example.com/app.outer", "example.com/app.audit"},
+		"GET /after-uncertain":   {"example.com/app.outer"},
+		"GET /void-real":         {},
 	}
 	endpoints := map[string]graph.Node{}
 	for _, node := range result.Nodes {
@@ -1143,19 +1149,20 @@ func NotARouter() { unrelated{}.Get("/invented", login) }
 	}
 	foundDynamicDiagnostic, foundCycleDiagnostic, foundAmbiguousDiagnostic := false, false, false
 	foundDynamicMethodDiagnostic, foundRouterReceiverDiagnostic := false, false
-	foundArgumentDiagnostic, foundConditionalMutationDiagnostic := false, false
+	foundArgumentDiagnostic, foundReassignmentDiagnostic, foundConditionalMutationDiagnostic := false, false, false
 	for _, diagnostic := range result.Diagnostics {
 		foundDynamicDiagnostic = foundDynamicDiagnostic || strings.Contains(diagnostic.Message, "dynamic Chi route prefix")
 		foundCycleDiagnostic = foundCycleDiagnostic || strings.Contains(diagnostic.Message, "recursive Chi router composition")
 		foundAmbiguousDiagnostic = foundAmbiguousDiagnostic || strings.Contains(diagnostic.Message, "ambiguous Chi router helper result")
 		foundDynamicMethodDiagnostic = foundDynamicMethodDiagnostic || strings.Contains(diagnostic.Message, "dynamic Chi endpoint method")
 		foundRouterReceiverDiagnostic = foundRouterReceiverDiagnostic || strings.Contains(diagnostic.Message, "Chi router receiver could not be proven")
-		foundArgumentDiagnostic = foundArgumentDiagnostic || strings.Contains(diagnostic.Message, "Chi router helper argument state could not be propagated")
+		foundArgumentDiagnostic = foundArgumentDiagnostic || diagnostic.Message == "Chi router helper argument state could not be propagated; subsequent composition omitted"
+		foundReassignmentDiagnostic = foundReassignmentDiagnostic || diagnostic.Message == "Chi router helper argument state could not be propagated after reassignment; subsequent composition omitted"
 		foundConditionalMutationDiagnostic = foundConditionalMutationDiagnostic || strings.Contains(diagnostic.Message, "conditional Chi router state mutation")
 	}
 	if !foundDynamicDiagnostic || !foundCycleDiagnostic || !foundAmbiguousDiagnostic ||
 		!foundDynamicMethodDiagnostic || !foundRouterReceiverDiagnostic || !foundArgumentDiagnostic ||
-		!foundConditionalMutationDiagnostic {
+		!foundReassignmentDiagnostic || !foundConditionalMutationDiagnostic {
 		t.Fatalf("fail-closed Chi composition was not diagnosed: %#v", result.Diagnostics)
 	}
 	conditional := endpoints["GET /conditional"]
@@ -1163,6 +1170,17 @@ func NotARouter() { unrelated{}.Get("/invented", login) }
 		if fact.FromID == conditional.ID && fact.Kind == graph.EdgeHandledBy && fact.Properties["conditional"] != "true" {
 			t.Fatalf("conditional registration lost its evidence: %#v", fact)
 		}
+	}
+}
+
+func TestChiHelperEditInvalidatesEveryGoPackageView(t *testing.T) {
+	parser := golangparser.New()
+	got := parser.SemanticAffectedPaths(
+		[]string{"routes.go", "helpers.go", "nested/child.go", "README.md"},
+		[]string{"helpers.go"},
+	)
+	if !reflect.DeepEqual(got, []string{"routes.go", "helpers.go", "nested/child.go"}) {
+		t.Fatalf("affected paths = %v, want every Go package view", got)
 	}
 }
 
