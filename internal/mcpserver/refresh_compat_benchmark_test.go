@@ -2,6 +2,7 @@ package mcpserver_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
@@ -19,6 +21,60 @@ import (
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+func TestMCPUnconditionalRefreshCorpusSamples(t *testing.T) {
+	corpus := os.Getenv("GRAFO_MCP_BENCHMARK_CORPUS")
+	if corpus == "" {
+		t.Skip("set GRAFO_MCP_BENCHMARK_CORPUS")
+	}
+	ctx := context.Background()
+	root := compatPrepareCorpus(t, corpus)
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &compatCountingRepository{Repository: opened}
+	service := indexer.NewService(repository, parserdefaults.NewRegistry())
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	server, err := mcpserver.New(repository, project).WithRefresh(func(refreshContext context.Context) error {
+		_, refreshErr := service.Run(refreshContext, project, indexer.Options{})
+		return refreshErr
+	}).Server("benchmark").Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := mcp.NewClient(&mcp.Implementation{Name: "grafo-benchmark", Version: "benchmark"}, nil).
+		Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close(); _ = server.Close(); _ = repository.Close() }()
+	selector := compatExactSelector(t, ctx, client, "DiscoverProject")
+	compatExactNode(t, ctx, client, selector)
+	beforeMeta, beforeCounts := repository.meta.Load(), repository.counts.Load()
+	samples := make([]int64, 0, 100)
+	for range 100 {
+		started := time.Now()
+		compatExactNode(t, ctx, client, selector)
+		samples = append(samples, time.Since(started).Nanoseconds())
+	}
+	if repository.meta.Load()-beforeMeta < 100 || repository.counts.Load()-beforeCounts < 100 {
+		t.Fatalf("unconditional corpus control did not refresh every call: meta=%d counts=%d",
+			repository.meta.Load()-beforeMeta, repository.counts.Load()-beforeCounts)
+	}
+	encoded, err := json.Marshal(samples)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("BENCHMARK_SAMPLES_NS=%s", encoded)
+}
 
 // BenchmarkMCPUnconditionalRefreshCompat intentionally uses only APIs present
 // at the 60028383 baseline. The identical source is run there untracked and at
@@ -151,44 +207,44 @@ func (r *compatCountingRepository) Counts(ctx context.Context) (graph.Counts, er
 	return r.Repository.Counts(ctx)
 }
 
-func compatExactSelector(b *testing.B, ctx context.Context, client *mcp.ClientSession, name string) string {
-	b.Helper()
+func compatExactSelector(tb testing.TB, ctx context.Context, client *mcp.ClientSession, name string) string {
+	tb.Helper()
 	result, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "find_symbols", Arguments: map[string]any{"query": name}})
 	if err != nil || result.IsError {
-		b.Fatalf("find_symbols error=%v result=%#v", err, result)
+		tb.Fatalf("find_symbols error=%v result=%#v", err, result)
 	}
 	structured, ok := result.StructuredContent.(map[string]any)
 	if !ok {
-		b.Fatalf("find_symbols structured payload = %#v", result.StructuredContent)
+		tb.Fatalf("find_symbols structured payload = %#v", result.StructuredContent)
 	}
 	matches, ok := structured["matches"].([]any)
 	if !ok || len(matches) == 0 {
-		b.Fatalf("find_symbols matches = %#v", structured["matches"])
+		tb.Fatalf("find_symbols matches = %#v", structured["matches"])
 	}
 	node, ok := matches[0].(map[string]any)
 	if !ok {
-		b.Fatalf("find_symbols node = %#v", matches[0])
+		tb.Fatalf("find_symbols node = %#v", matches[0])
 	}
 	qualified, ok := node["qualified_name"].(string)
 	if !ok || qualified == "" {
-		b.Fatalf("find_symbols qualified_name = %#v", node["qualified_name"])
+		tb.Fatalf("find_symbols qualified_name = %#v", node["qualified_name"])
 	}
 	return qualified
 }
 
-func compatExactNode(b *testing.B, ctx context.Context, client *mcp.ClientSession, selector string) {
-	b.Helper()
+func compatExactNode(tb testing.TB, ctx context.Context, client *mcp.ClientSession, selector string) {
+	tb.Helper()
 	result, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "get_node", Arguments: map[string]any{"selector": selector}})
 	if err != nil || result.IsError {
-		b.Fatalf("get_node error=%v result=%#v", err, result)
+		tb.Fatalf("get_node error=%v result=%#v", err, result)
 	}
 	structured, ok := result.StructuredContent.(map[string]any)
 	if !ok {
-		b.Fatalf("get_node structured payload = %#v", result.StructuredContent)
+		tb.Fatalf("get_node structured payload = %#v", result.StructuredContent)
 	}
 	node, ok := structured["node"].(map[string]any)
 	if !ok || node["qualified_name"] != selector {
-		b.Fatalf("get_node node = %#v, want qualified_name %q", structured["node"], selector)
+		tb.Fatalf("get_node node = %#v, want qualified_name %q", structured["node"], selector)
 	}
 }
 

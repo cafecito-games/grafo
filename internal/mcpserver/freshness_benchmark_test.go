@@ -2,18 +2,69 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/cafecito-games/grafo/internal/indexer"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	parserdefaults "github.com/cafecito-games/grafo/internal/parser/defaults"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+func TestMCPFreshnessCorpusSamples(t *testing.T) {
+	corpus := os.Getenv("GRAFO_MCP_BENCHMARK_CORPUS")
+	if corpus == "" {
+		t.Skip("set GRAFO_MCP_BENCHMARK_CORPUS")
+	}
+	root := prepareBenchmarkCorpus(t, corpus)
+	ctx := context.Background()
+	coordinator, generation, err := NewFreshnessCoordinator(ctx, []string{root}, parserdefaults.NewRegistry(), FreshnessCoordinatorOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	server, err := NewFederated(generation.Repository, generation.Projects).WithFreshness(coordinator).
+		Server("benchmark").Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := mcp.NewClient(&mcp.Implementation{Name: "grafo-benchmark", Version: "benchmark"}, nil).
+		Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = client.Close(); _ = server.Close(); _ = coordinator.Close() }()
+	selector := benchmarkExactSelector(t, ctx, client, "DiscoverProject")
+	benchmarkExactNode(t, ctx, client, selector)
+	indexedAt, err := generation.Repository.Meta(ctx, "indexed_at")
+	if err != nil {
+		t.Fatal(err)
+	}
+	samples := make([]int64, 0, 100)
+	for range 100 {
+		started := time.Now()
+		benchmarkExactNode(t, ctx, client, selector)
+		samples = append(samples, time.Since(started).Nanoseconds())
+	}
+	if coordinator.current != generation {
+		t.Fatal("unchanged corpus samples replaced the query generation")
+	}
+	indexedAtAfter, err := generation.Repository.Meta(ctx, "indexed_at")
+	if err != nil || indexedAtAfter != indexedAt {
+		t.Fatalf("unchanged corpus samples wrote metadata: before=%q after=%q err=%v", indexedAt, indexedAtAfter, err)
+	}
+	encoded, err := json.Marshal(samples)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("BENCHMARK_SAMPLES_NS=%s", encoded)
+}
 
 // BenchmarkMCPFreshnessSession measures the persistent-session boundary with
 // real Git probes, SQLite generations, MCP encoding, and exact graph queries.
@@ -235,49 +286,49 @@ func (f *mcpBenchmarkFixture) assertUnchanged(b *testing.B) {
 	}
 }
 
-func benchmarkExactSelector(b *testing.B, ctx context.Context, client *mcp.ClientSession, name string) string {
-	b.Helper()
+func benchmarkExactSelector(tb testing.TB, ctx context.Context, client *mcp.ClientSession, name string) string {
+	tb.Helper()
 	result, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "find_symbols", Arguments: map[string]any{"query": name}})
 	if err != nil || result.IsError {
-		b.Fatalf("find_symbols error=%v result=%#v", err, result)
+		tb.Fatalf("find_symbols error=%v result=%#v", err, result)
 	}
 	structured, ok := result.StructuredContent.(map[string]any)
 	if !ok {
-		b.Fatalf("find_symbols structured payload = %#v", result.StructuredContent)
+		tb.Fatalf("find_symbols structured payload = %#v", result.StructuredContent)
 	}
 	matches, ok := structured["matches"].([]any)
 	if !ok || len(matches) == 0 {
-		b.Fatalf("find_symbols matches = %#v", structured["matches"])
+		tb.Fatalf("find_symbols matches = %#v", structured["matches"])
 	}
 	node, ok := matches[0].(map[string]any)
 	if !ok {
-		b.Fatalf("find_symbols node = %#v", matches[0])
+		tb.Fatalf("find_symbols node = %#v", matches[0])
 	}
 	qualified, ok := node["qualified_name"].(string)
 	if !ok || qualified == "" {
-		b.Fatalf("find_symbols qualified_name = %#v", node["qualified_name"])
+		tb.Fatalf("find_symbols qualified_name = %#v", node["qualified_name"])
 	}
 	return qualified
 }
 
-func benchmarkExactNode(b *testing.B, ctx context.Context, client *mcp.ClientSession, selector string) {
-	b.Helper()
+func benchmarkExactNode(tb testing.TB, ctx context.Context, client *mcp.ClientSession, selector string) {
+	tb.Helper()
 	result, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "get_node", Arguments: map[string]any{"selector": selector}})
 	if err != nil || result.IsError {
-		b.Fatalf("get_node error=%v result=%#v", err, result)
+		tb.Fatalf("get_node error=%v result=%#v", err, result)
 	}
-	benchmarkAssertNode(b, result.StructuredContent, selector)
+	benchmarkAssertNode(tb, result.StructuredContent, selector)
 }
 
-func benchmarkAssertNode(b *testing.B, content any, expected string) {
-	b.Helper()
+func benchmarkAssertNode(tb testing.TB, content any, expected string) {
+	tb.Helper()
 	structured, ok := content.(map[string]any)
 	if !ok {
-		b.Fatalf("get_node structured payload = %#v", content)
+		tb.Fatalf("get_node structured payload = %#v", content)
 	}
 	node, ok := structured["node"].(map[string]any)
 	if !ok || node["qualified_name"] != expected {
-		b.Fatalf("get_node node = %#v, want qualified_name %q", structured["node"], expected)
+		tb.Fatalf("get_node node = %#v, want qualified_name %q", structured["node"], expected)
 	}
 }
 
