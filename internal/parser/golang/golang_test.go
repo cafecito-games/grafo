@@ -264,10 +264,34 @@ func HelperMutation() {
 	_, _ = http.DefaultClient.Do(request)
 }
 
+func rebindRequest(request *http.Request) {
+	request, _ = http.NewRequest(http.MethodPost, "/swapped", nil)
+}
+
+func HelperRebind() {
+	request, _ := http.NewRequest(http.MethodGet, "/original", nil)
+	rebindRequest(request)
+	_, _ = http.DefaultClient.Do(request)
+}
+
 func URLThenPath() {
 	request, _ := http.NewRequest(http.MethodGet, "/stale-url", nil)
 	request.URL = &url.URL{}
 	request.URL.Path = "/actual-url"
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func DirectURLPath() {
+	request, _ := http.NewRequest(http.MethodGet, "/direct-stale", nil)
+	request.URL.Path = "/direct-fresh"
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func UnrelatedConditional(flag bool) {
+	request, _ := http.NewRequest(http.MethodGet, "/always", nil)
+	ignored := "left"
+	if flag { ignored = "right" }
+	_ = ignored
 	_, _ = http.DefaultClient.Do(request)
 }
 
@@ -326,6 +350,15 @@ func RequestFieldOverflow(flags [9]bool) {
 }
 
 type requestBox struct { request *http.Request }
+
+func mutateBox(box *requestBox) { box.request.Method = http.MethodPost }
+
+func HolderMutation() {
+	request, _ := http.NewRequest(http.MethodGet, "/holder-mutated", nil)
+	box := &requestBox{request: request}
+	mutateBox(box)
+	_, _ = http.DefaultClient.Do(box.request)
+}
 
 func URLAssignmentOverflow(flags [9]bool) {
 	target := &url.URL{Path: "/url-zero"}
@@ -451,7 +484,11 @@ func NotHTTP() {
 		"GET /branch-left":                       "example.com/client.BranchFields",
 		"POST /branch-right":                     "example.com/client.BranchFields",
 		"POST /helper-mutated":                   "example.com/client.HelperMutation",
+		"GET /original":                          "example.com/client.HelperRebind",
 		"GET /actual-url":                        "example.com/client.URLThenPath",
+		"GET /direct-fresh":                      "example.com/client.DirectURLPath",
+		"GET /always":                            "example.com/client.UnrelatedConditional",
+		"POST /holder-mutated":                   "example.com/client.HolderMutation",
 		"GET /alternative":                       "example.com/client.Alternatives",
 		"DELETE /alternative":                    "example.com/client.Alternatives",
 		"GET https://api.example.test/users/{_}": "example.com/client.External",
@@ -486,6 +523,9 @@ func NotHTTP() {
 			t.Fatalf("branch alternative %q lacks conditional provenance: %#v", target, found[target])
 		}
 	}
+	if found["GET /always"].Properties["conditional"] == "true" {
+		t.Fatalf("unrelated branch made an always-executed request conditional: %#v", found["GET /always"])
+	}
 	wrapped := found["POST /charge/{_}"]
 	if !strings.Contains(wrapped.Properties["http_wrapper_chain"], "example.com/client.invoke") ||
 		wrapped.Properties["http_query"] != "view=full" || wrapped.Location.Line != 28 {
@@ -507,7 +547,7 @@ func NotHTTP() {
 	if mutated.Properties["http_query"] != "mode=edit" {
 		t.Fatalf("mutated request URL query was not separated: %#v", mutated)
 	}
-	for _, forbidden := range []string{"GET /unsafe/{_}", "GET /synthetic", "GET /invented", "GET /cycle"} {
+	for _, forbidden := range []string{"POST /swapped", "GET /direct-stale", "GET /unsafe/{_}", "GET /synthetic", "GET /invented", "GET /cycle"} {
 		if _, ok := found[forbidden]; ok {
 			t.Fatalf("unproven or unrelated request %q was invented: %#v", forbidden, found[forbidden])
 		}

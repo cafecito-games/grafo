@@ -36,6 +36,7 @@ type httpStringValue struct {
 }
 
 type httpRequestValue struct {
+	identity         *httpRequestIdentity
 	method           httpStringValue
 	route            httpStringValue
 	sink             string
@@ -48,9 +49,14 @@ type httpRequestValue struct {
 	urlObject        *httpObjectValue
 }
 
+type httpRequestIdentity struct{ _ byte }
+
 type httpObjectValue struct {
-	fields map[types.Object]httpValue
+	identity *httpObjectIdentity
+	fields   map[types.Object]httpValue
 }
+
+type httpObjectIdentity struct{ _ byte }
 
 type httpValue struct {
 	strings       []httpStringValue
@@ -271,7 +277,9 @@ func (a *httpSemanticAnalyzer) executeFunction(execution *httpExecution, functio
 					environment[object] = cloneHTTPValue(arguments[argument])
 					bindings[argument] = object
 				} else if receiver {
-					environment[object] = httpValue{objects: []*httpObjectValue{{fields: map[types.Object]httpValue{}}}}
+					environment[object] = httpValue{objects: []*httpObjectValue{{
+						identity: &httpObjectIdentity{}, fields: map[types.Object]httpValue{},
+					}}}
 				} else if a.isHTTPClient(a.pkg.TypesInfo.TypeOf(item.Type)) {
 					environment[object] = httpValue{client: true}
 				}
@@ -671,7 +679,10 @@ func (a *httpSemanticAnalyzer) evaluateCall(execution *httpExecution, function *
 			!isHTTPMutableValue(updated) {
 			continue
 		}
-		a.assign(execution, function, argumentExpressions[index], updated, environment, conditional)
+		propagated, ok := propagateHTTPArgument(arguments[index], updated)
+		if ok {
+			a.assign(execution, function, argumentExpressions[index], propagated, environment, conditional)
+		}
 	}
 	result.arguments = nil
 	for valueIndex := range result.values {
@@ -740,7 +751,7 @@ func (a *httpSemanticAnalyzer) evaluateSprintf(execution *httpExecution, functio
 func (a *httpSemanticAnalyzer) evaluateComposite(execution *httpExecution, function *httpSemanticFunction,
 	literal *goast.CompositeLit, environment httpEnvironment, conditional bool,
 ) httpValue {
-	object := &httpObjectValue{fields: map[types.Object]httpValue{}}
+	object := &httpObjectValue{identity: &httpObjectIdentity{}, fields: map[types.Object]httpValue{}}
 	for _, element := range literal.Elts {
 		keyed, ok := element.(*goast.KeyValueExpr)
 		if !ok {
@@ -784,8 +795,12 @@ func (a *httpSemanticAnalyzer) evaluateSelector(execution *httpExecution, functi
 			if request.overflow {
 				return httpValue{overflow: true}
 			}
-			if request.urlObject != nil {
-				result.objects = appendUniqueHTTPObject(result.objects, request.urlObject)
+			object := request.urlObject
+			if object == nil {
+				object = httpURLObjectFromRoute(selection.Obj().Type(), request.route)
+			}
+			if object != nil {
+				result.objects = appendUniqueHTTPObject(result.objects, object)
 			}
 		}
 	}
@@ -829,26 +844,27 @@ func (a *httpSemanticAnalyzer) assign(execution *httpExecution, function *httpSe
 			return
 		}
 		base := firstHTTPValue(a.evaluateExpression(execution, function, target.X, environment, conditional).values)
+		changed := false
 		for _, object := range base.objects {
 			object.fields[selection.Obj()] = cloneHTTPValue(value)
+			changed = true
 		}
-		if identifier, ok := target.X.(*goast.Ident); ok {
-			object := a.pkg.TypesInfo.Uses[identifier]
-			current, exists := environment[object]
-			if !exists || len(current.requests) == 0 {
-				return
-			}
+		if len(base.requests) > 0 {
 			switch selection.Obj().Name() {
 			case "Method":
-				current.requests = replaceRequestMethods(current.requests, httpValueStrings(value))
+				base.requests = replaceRequestMethods(base.requests, httpValueStrings(value))
+				changed = true
 			case "URL":
 				if value.overflow {
-					current.requests = []httpRequestValue{{overflow: true}}
+					base.requests = []httpRequestValue{{overflow: true}}
 				} else {
-					current.requests = replaceRequestURLs(current.requests, value.objects)
+					base.requests = replaceRequestURLs(base.requests, value.objects)
 				}
+				changed = true
 			}
-			environment[object] = current
+		}
+		if changed {
+			a.assign(execution, function, target.X, base, environment, conditional)
 		}
 	}
 }
@@ -1048,12 +1064,13 @@ func crossHTTPRequests(methods, routes []httpStringValue, sink, source string) [
 		return []httpRequestValue{{sink: sink, source: source, overflow: true}}
 	}
 	var requests []httpRequestValue
+	identity := &httpRequestIdentity{}
 	for _, method := range methods {
 		for _, route := range routes {
 			if len(requests) >= httpAlternativeLimit {
 				return []httpRequestValue{{sink: sink, source: source, overflow: true}}
 			}
-			requests = append(requests, httpRequestValue{method: method, route: route, sink: sink, source: source,
+			requests = append(requests, httpRequestValue{identity: identity, method: method, route: route, sink: sink, source: source,
 				authorityUnknown: route.unknownBase, conditional: method.conditional || route.conditional})
 		}
 	}
@@ -1101,6 +1118,57 @@ func appendUniqueHTTPString(values []httpStringValue, candidate httpStringValue)
 
 func hasHTTPStringOverflow(values []httpStringValue) bool {
 	return len(values) == 1 && values[0].overflow
+}
+
+func httpURLObjectFromRoute(valueType types.Type, route httpStringValue) *httpObjectValue {
+	if route.overflow {
+		return nil
+	}
+	parsed, err := url.Parse(route.text)
+	if err != nil {
+		return nil
+	}
+	object := &httpObjectValue{identity: &httpObjectIdentity{}, fields: map[types.Object]httpValue{}}
+	set := func(name, text string, unknownBase bool) {
+		field := httpStructField(valueType, name)
+		if field == nil {
+			return
+		}
+		object.fields[field] = httpValue{strings: []httpStringValue{{
+			text: text, unknownBase: unknownBase, conditional: route.conditional,
+		}}}
+	}
+	set("Path", parsed.Path, route.unknownBase)
+	if parsed.Scheme != "" {
+		set("Scheme", parsed.Scheme, false)
+	}
+	if parsed.Host != "" {
+		set("Host", parsed.Host, false)
+	}
+	if parsed.RawQuery != "" {
+		set("RawQuery", parsed.RawQuery, false)
+	}
+	return object
+}
+
+func httpStructField(value types.Type, name string) types.Object {
+	value = types.Unalias(value)
+	if pointer, ok := value.(*types.Pointer); ok {
+		value = types.Unalias(pointer.Elem())
+	}
+	if named, ok := value.(*types.Named); ok {
+		value = named.Underlying()
+	}
+	structure, _ := value.(*types.Struct)
+	if structure == nil {
+		return nil
+	}
+	for index := 0; index < structure.NumFields(); index++ {
+		if field := structure.Field(index); field.Name() == name {
+			return field
+		}
+	}
+	return nil
 }
 
 func httpURLStrings(object *httpObjectValue) []httpStringValue {
@@ -1273,7 +1341,7 @@ func deepCloneHTTPObject(object *httpObjectValue, objects map[*httpObjectValue]*
 	if cloned, ok := objects[object]; ok {
 		return cloned
 	}
-	cloned := &httpObjectValue{fields: map[types.Object]httpValue{}}
+	cloned := &httpObjectValue{identity: object.identity, fields: map[types.Object]httpValue{}}
 	objects[object] = cloned
 	for field, fieldValue := range object.fields {
 		cloned.fields[field] = deepCloneHTTPValue(fieldValue, objects)
@@ -1283,23 +1351,31 @@ func deepCloneHTTPObject(object *httpObjectValue, objects map[*httpObjectValue]*
 
 func mergeHTTPEnvironments(target httpEnvironment, environments ...httpEnvironment) {
 	merged := httpEnvironment{}
+	objects := map[types.Object]bool{}
 	for _, environment := range environments {
-		markHTTPEnvironmentConditional(environment)
-		for object, value := range environment {
-			merged[object] = mergeHTTPValues(merged[object], value)
+		for object := range environment {
+			objects[object] = true
+		}
+	}
+	for object := range objects {
+		values := make([]httpValue, len(environments))
+		different := false
+		for index, environment := range environments {
+			values[index] = cloneHTTPValue(environment[object])
+			if index > 0 && !equalHTTPValues(values[0], values[index], map[httpObjectPair]bool{}) {
+				different = true
+			}
+		}
+		for index := range values {
+			if different {
+				markHTTPValueConditional(&values[index], map[*httpObjectValue]bool{})
+			}
+			merged[object] = mergeHTTPValues(merged[object], values[index])
 		}
 	}
 	clear(target)
 	for object, value := range merged {
 		target[object] = value
-	}
-}
-
-func markHTTPEnvironmentConditional(environment httpEnvironment) {
-	objects := map[*httpObjectValue]bool{}
-	for object, value := range environment {
-		markHTTPValueConditional(&value, objects)
-		environment[object] = value
 	}
 }
 
@@ -1316,6 +1392,73 @@ func markHTTPValueConditional(value *httpValue, objects map[*httpObjectValue]boo
 	for _, object := range value.objects {
 		markHTTPObjectConditional(object, objects)
 	}
+}
+
+type httpObjectPair struct {
+	left  *httpObjectValue
+	right *httpObjectValue
+}
+
+func equalHTTPValues(left, right httpValue, seen map[httpObjectPair]bool) bool {
+	if left.client != right.client || left.requestObject != right.requestObject || left.overflow != right.overflow ||
+		len(left.strings) != len(right.strings) || len(left.requests) != len(right.requests) ||
+		len(left.objects) != len(right.objects) {
+		return false
+	}
+	for index := range left.strings {
+		if left.strings[index] != right.strings[index] {
+			return false
+		}
+	}
+	for index := range left.requests {
+		first, second := left.requests[index], right.requests[index]
+		if first.identity != second.identity || first.method != second.method || first.route != second.route ||
+			first.sink != second.sink || first.source != second.source || first.conditional != second.conditional ||
+			first.authorityUnknown != second.authorityUnknown || first.overflow != second.overflow ||
+			!equalHTTPStringSlices(first.wrapperChain, second.wrapperChain) ||
+			!equalHTTPObjects(first.urlObject, second.urlObject, seen) {
+			return false
+		}
+	}
+	for index := range left.objects {
+		if !equalHTTPObjects(left.objects[index], right.objects[index], seen) {
+			return false
+		}
+	}
+	return true
+}
+
+func equalHTTPObjects(left, right *httpObjectValue, seen map[httpObjectPair]bool) bool {
+	if left == nil || right == nil {
+		return left == right
+	}
+	if !sameHTTPObjectIdentity(left, right) || len(left.fields) != len(right.fields) {
+		return false
+	}
+	pair := httpObjectPair{left: left, right: right}
+	if seen[pair] {
+		return true
+	}
+	seen[pair] = true
+	for field, first := range left.fields {
+		second, ok := right.fields[field]
+		if !ok || !equalHTTPValues(first, second, seen) {
+			return false
+		}
+	}
+	return true
+}
+
+func equalHTTPStringSlices(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func markHTTPObjectConditional(object *httpObjectValue, objects map[*httpObjectValue]bool) {
@@ -1342,8 +1485,9 @@ func mergeHTTPValues(left, right httpValue) httpValue {
 		}
 		duplicate := false
 		for index, current := range result.requests {
-			if current.method == request.method && current.route == request.route && current.source == request.source &&
-				current.urlObject == request.urlObject {
+			if current.identity == request.identity && current.method == request.method && current.route == request.route &&
+				current.source == request.source &&
+				equalHTTPObjects(current.urlObject, request.urlObject, map[httpObjectPair]bool{}) {
 				result.requests[index].conditional = current.conditional || request.conditional
 				duplicate = true
 			}
@@ -1359,7 +1503,7 @@ func mergeHTTPValues(left, right httpValue) httpValue {
 	for _, object := range right.objects {
 		found := false
 		for _, current := range result.objects {
-			found = found || current == object
+			found = found || equalHTTPObjects(current, object, map[httpObjectPair]bool{})
 		}
 		if !found {
 			if len(result.objects) >= httpAlternativeLimit {
@@ -1499,4 +1643,34 @@ func isPointerType(value types.Type) bool {
 
 func isHTTPMutableValue(value httpValue) bool {
 	return len(value.requests) > 0 || value.requestObject || len(value.objects) > 0 || value.overflow
+}
+
+func propagateHTTPArgument(original, updated httpValue) (httpValue, bool) {
+	result := cloneHTTPValue(updated)
+	result.requests = nil
+	for _, request := range updated.requests {
+		for _, initial := range original.requests {
+			if request.identity != nil && request.identity == initial.identity {
+				result.requests = append(result.requests, request)
+				break
+			}
+		}
+	}
+	result.objects = nil
+	for _, object := range updated.objects {
+		for _, initial := range original.objects {
+			if sameHTTPObjectIdentity(object, initial) {
+				result.objects = append(result.objects, object)
+				break
+			}
+		}
+	}
+	result.requestObject = updated.requestObject && original.requestObject
+	result.client = updated.client && original.client
+	ok := result.overflow || len(result.requests) > 0 || len(result.objects) > 0 || result.requestObject
+	return result, ok
+}
+
+func sameHTTPObjectIdentity(left, right *httpObjectValue) bool {
+	return left != nil && right != nil && (left == right || left.identity != nil && left.identity == right.identity)
 }
