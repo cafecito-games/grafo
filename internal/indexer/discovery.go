@@ -78,6 +78,18 @@ func discoverFilesWithCatalog(ctx context.Context, project Project, registry *pa
 		}
 	}
 	result := discoveredFiles{paths: make([]string, 0, len(candidates)), gitCommands: gitCommands}
+	if reuseKnown {
+		for _, path := range candidates {
+			if PathIgnored(path) {
+				continue
+			}
+			if _, ok := registry.For(path); ok {
+				result.paths = append(result.paths, path)
+			}
+		}
+		sort.Strings(result.paths)
+		return result, nil
+	}
 	seen := map[string]bool{}
 	for _, path := range candidates {
 		if seen[path] || PathIgnored(path) {
