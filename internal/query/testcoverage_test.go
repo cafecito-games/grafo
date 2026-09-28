@@ -35,6 +35,9 @@ func TestStructuralTestCoverageDirectAndBoundedHelperExpansion(t *testing.T) {
 			match.Nodes[0].Kind != graph.KindTest || match.Nodes[len(match.Nodes)-1].ID != match.Target.ID {
 			t.Fatalf("unexpected structural match: %#v", match)
 		}
+		if match.Target.QualifiedName == "pkg.Direct" && match.Edges[0].Kind != graph.EdgeTests {
+			t.Fatalf("persisted tests edge did not win direct evidence deduplication: %#v", match)
+		}
 		delete(want, match.Target.QualifiedName)
 	}
 	if len(want) != 0 {
@@ -110,6 +113,9 @@ func testCoverageRepository(t *testing.T) *sqlite.Repository {
 		testCoverageFact("helper-two-target", "helper-two", "two"),
 		testCoverageFact("cycle", "helper-two", "helper-one"),
 	}
+	// Even if raw evidence carries a federation marker, a persisted local tests
+	// edge for the same pair remains authoritative and must deduplicate it.
+	facts[0].Properties = map[string]string{"federated": "true"}
 	if err := repository.ReplaceOwner(ctx, "sample_test.go", graph.ParseResult{Nodes: nodes[:3], Facts: facts}); err != nil {
 		t.Fatal(err)
 	}

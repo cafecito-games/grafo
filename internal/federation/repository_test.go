@@ -122,6 +122,50 @@ func Routes() { router.Get("/charge", Handler) }
 	}
 }
 
+func TestRepositoryProjectsCrossRepositoryTestCoverage(t *testing.T) {
+	ctx := context.Background()
+	testRoot := t.TempDir()
+	productionRoot := t.TempDir()
+	write(t, filepath.Join(testRoot, "go.mod"), "module example.com/checkouttests\n\ngo 1.26\n\nrequire example.com/shop v0.0.0\n")
+	write(t, filepath.Join(testRoot, "checkout_test.go"), `package checkouttests
+import (
+	"testing"
+	"example.com/shop"
+)
+func TestCheckout(t *testing.T) { shop.Checkout() }
+`)
+	write(t, filepath.Join(productionRoot, "go.mod"), "module example.com/shop\n\ngo 1.26\n")
+	write(t, filepath.Join(productionRoot, "shop.go"), "package shop\nfunc Checkout() {}\n")
+	index(t, ctx, testRoot)
+	index(t, ctx, productionRoot)
+
+	repository, err := federation.Open(ctx, []string{testRoot, productionRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := query.NewService(repository)
+
+	coverage, err := service.TestCoverage(ctx, "example.com/checkouttests.TestCheckout", query.TestCoverageOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(coverage.Matches) != 1 || !coverage.Matches[0].Direct ||
+		coverage.Matches[0].Target.QualifiedName != "example.com/shop.Checkout" ||
+		coverage.Matches[0].Edges[0].Properties["federated"] != "true" {
+		t.Fatalf("cross-repository test coverage = %#v", coverage)
+	}
+	tests, err := service.FindTests(ctx, "example.com/shop.Checkout", query.TestCoverageOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tests.Matches) != 1 || !tests.Matches[0].Direct ||
+		tests.Matches[0].Test.QualifiedName != "example.com/checkouttests.TestCheckout" ||
+		tests.Matches[0].Edges[0].Properties["federated"] != "true" {
+		t.Fatalf("cross-repository reverse test coverage = %#v", tests)
+	}
+}
+
 type handlerEmbedder struct{}
 
 func (handlerEmbedder) Model() string { return "federation-test" }

@@ -318,7 +318,18 @@ func (e *extractor) extract(file *gdast.File) {
 	if qualified == "" {
 		qualified = className
 	}
+	hierarchy := scope{container: qualified, receiver: qualified, types: map[string]string{className: qualified}}
+	// Register the complete same-file class hierarchy before classifying any
+	// test scope. GDScript permits a script or inner class to extend a class
+	// declared later in the file, so a source-order walk would miss that chain.
+	e.prepareClassHierarchy(file.Statements, hierarchy)
 	base := fileBase(file.Statements)
+	if resolved := e.resolveType(base, hierarchy); resolved != "" {
+		base = resolved
+	}
+	if base != "" {
+		e.bases[qualified] = base
+	}
 	testBase := e.recognizedTestBase(base)
 	if testBase != "" {
 		if properties == nil {
@@ -350,15 +361,30 @@ func (e *extractor) extract(file *gdast.File) {
 	// field inference so bare inherited generated APIs such as from_bytes remain
 	// available to forward-declared fields without bypassing inner-class shadows.
 	e.prepareClassSymbols(file.Statements, root)
-	if base != "" {
-		if resolved := e.resolveType(base, root); resolved != "" {
-			base = resolved
-		}
-		e.bases[qualified] = base
-	}
 	e.prepareClassFields(file.Statements, root)
 	e.prepareTransportSummaries(file.Statements, root)
 	e.walkStatements(file.Statements, root)
+}
+
+func (e *extractor) prepareClassHierarchy(statements []gdast.Statement, current scope) {
+	for _, statement := range statements {
+		if node, ok := statement.(*gdast.ClassDeclaration); ok {
+			current.types[node.Name] = qualify(current.container, node.Name)
+		}
+	}
+	for _, statement := range statements {
+		node, ok := statement.(*gdast.ClassDeclaration)
+		if !ok {
+			continue
+		}
+		qualified := qualify(current.container, node.Name)
+		if base := e.resolveType(node.Extends, current); base != "" {
+			e.bases[qualified] = base
+		}
+		inner := scope{container: qualified, receiver: qualified, types: cloneMap(current.types)}
+		inner.types[node.Name] = qualified
+		e.prepareClassHierarchy(node.Body, inner)
+	}
 }
 
 func fileBase(statements []gdast.Statement) string {

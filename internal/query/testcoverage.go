@@ -145,6 +145,14 @@ func (s *Service) testCoverage(ctx context.Context, root graph.Node, outgoing bo
 			}
 			continue
 		}
+		authoritativeDirect := map[string]bool{}
+		if state.node.ID == root.ID {
+			for _, item := range page.Items {
+				if item.Edge.Kind == graph.EdgeTests {
+					authoritativeDirect[item.Counterpart.ID] = true
+				}
+			}
+		}
 		for _, item := range page.Items {
 			next := item.Counterpart
 			edges := append(append([]graph.Edge(nil), state.edges...), item.Edge)
@@ -174,18 +182,26 @@ func (s *Service) testCoverage(ctx context.Context, root graph.Node, outgoing bo
 					queue = append(queue, testCoverageNext(state, next, nodes, edges))
 					continue
 				}
-				// Direct production relationships are represented by the persisted
-				// tests edge. Only helper-expanded evidence is assembled here.
-				if state.node.ID != root.ID && !graph.IsTestSupportNode(next) {
-					appendCoverageMatch(&report, seenMatches, coverageMatch(root, next, nodes, edges, true, false), options.Limit)
+				// Local direct production relationships are represented by the
+				// persisted tests edge. A uniquely projected federated call/reference
+				// has no local tests edge to derive, so retain that explicit evidence.
+				if !graph.IsTestSupportNode(next) &&
+					(state.node.ID != root.ID ||
+						(item.Edge.Properties["federated"] == "true" && !authoritativeDirect[next.ID])) {
+					appendCoverageMatch(&report, seenMatches, coverageMatch(root, next, nodes, edges, true,
+						state.node.ID == root.ID), options.Limit)
 				}
 				continue
 			}
 			if next.Kind == graph.KindTest {
 				// Its persisted tests edge is the authoritative direct path. A
 				// test reached after at least one support node is helper-expanded.
-				if state.node.ID != root.ID {
-					appendCoverageMatch(&report, seenMatches, coverageMatch(root, next, nodes, edges, false, false), options.Limit)
+				// Federated raw evidence is direct because no member can persist a
+				// tests edge to a declaration that was external during indexing.
+				if state.node.ID != root.ID ||
+					(item.Edge.Properties["federated"] == "true" && !authoritativeDirect[next.ID]) {
+					appendCoverageMatch(&report, seenMatches, coverageMatch(root, next, nodes, edges, false,
+						state.node.ID == root.ID), options.Limit)
 				}
 				continue
 			}

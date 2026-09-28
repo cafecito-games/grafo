@@ -58,6 +58,36 @@ func helper() -> void:
 	}
 }
 
+func TestParserClassifiesTestsThroughLaterSameFileBaseDeclarations(t *testing.T) {
+	content := []byte(`extends RootSpec
+
+func test_root_late_base() -> void:
+	pass
+
+class DerivedSpec extends InnerSpec:
+	func test_inner_late_base() -> void:
+		pass
+
+class RootSpec extends GutTest:
+	pass
+
+class InnerSpec extends GutTest:
+	pass
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "tests/late_base_test.gd", Content: content, Repository: "sample", RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"test_root_late_base", "test_inner_late_base"} {
+		node := gdNodeNamed(t, result.Nodes, name)
+		if node.Kind != graph.KindTest || node.Properties["test_base"] == "" {
+			t.Fatalf("later-declared base did not classify %s: %#v", name, node)
+		}
+	}
+}
+
 func TestConfiguredGodotTestBasesAreValidatedAndSemantic(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "grafo.yaml", "tests:\n  gdscript_bases: [SpecBase]\n")
