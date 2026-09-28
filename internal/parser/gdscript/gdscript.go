@@ -387,27 +387,52 @@ func (e *extractor) walkStatement(statement gdast.Statement, current scope, anno
 	case *gdast.EnumDeclaration:
 		e.parseEnum(node, current)
 	case *gdast.IfStatement:
+		baseline := current
+		baseline.symbols = cloneMap(current.symbols)
+		baseline.types = cloneMap(current.types)
+		baseline.locked = cloneBoolMap(current.locked)
+		var alternatives []map[string]string
 		for _, branch := range node.Branches {
 			e.walkExpression(branch.Condition, current)
-			e.walkStatements(branch.Body, current)
+			branchScope := cloneFlowScope(baseline)
+			e.walkStatements(branch.Body, branchScope)
+			alternatives = append(alternatives, branchScope.types)
 		}
-		e.walkStatements(node.Else, current)
+		if len(node.Else) == 0 {
+			alternatives = append(alternatives, baseline.types)
+		} else {
+			elseScope := cloneFlowScope(baseline)
+			e.walkStatements(node.Else, elseScope)
+			alternatives = append(alternatives, elseScope.types)
+		}
+		mergeFlowTypes(current, alternatives)
 	case *gdast.WhileStatement:
 		e.walkExpression(node.Condition, current)
-		e.walkStatements(node.Body, current)
+		bodyScope := cloneFlowScope(current)
+		e.walkStatements(node.Body, bodyScope)
+		mergeFlowTypes(current, []map[string]string{current.types, bodyScope.types})
 	case *gdast.ForStatement:
 		e.walkExpression(node.Iterable, current)
-		e.declareLocal(node.Variable, node.Type, e.location(node), current)
-		e.walkStatements(node.Body, current)
+		bodyScope := cloneFlowScope(current)
+		e.declareLocal(node.Variable, node.Type, e.location(node), bodyScope)
+		e.walkStatements(node.Body, bodyScope)
+		mergeFlowTypes(current, []map[string]string{current.types, bodyScope.types})
 	case *gdast.MatchStatement:
 		e.walkExpression(node.Value, current)
+		var alternatives []map[string]string
 		for _, matchCase := range node.Cases {
+			caseScope := cloneFlowScope(current)
 			for _, pattern := range matchCase.Patterns {
-				e.walkExpression(pattern, current)
+				e.walkExpression(pattern, caseScope)
 			}
-			e.walkExpression(matchCase.Guard, current)
-			e.walkStatements(matchCase.Body, current)
+			e.walkExpression(matchCase.Guard, caseScope)
+			e.walkStatements(matchCase.Body, caseScope)
+			alternatives = append(alternatives, caseScope.types)
 		}
+		// A match may have no applicable arm. Keeping the incoming state as one
+		// alternative avoids claiming a type that only some patterns establish.
+		alternatives = append(alternatives, current.types)
+		mergeFlowTypes(current, alternatives)
 	}
 }
 
@@ -735,14 +760,15 @@ func (e *extractor) addProtobufUse(node *gdast.CallExpression, callee, fromID st
 	if !e.protobufEnabled || callee == "" {
 		return
 	}
-	if e.protobufAmbiguous[callee] {
-		if !e.protobufWarned[callee] {
-			e.protobufWarned[callee] = true
-			e.b.Diagnostic(loc.Line, "warning", "ambiguous generated Protobuf GDScript API: "+callee)
+	apiCallee := e.protobufCallee(callee, current)
+	if e.protobufAmbiguous[apiCallee] {
+		if !e.protobufWarned[apiCallee] {
+			e.protobufWarned[apiCallee] = true
+			e.b.Diagnostic(loc.Line, "warning", "ambiguous generated Protobuf GDScript API: "+apiCallee)
 		}
 		return
 	}
-	api, ok := e.protobufAPIs[callee]
+	api, ok := e.protobufAPIs[apiCallee]
 	if !ok || api.form == "" {
 		return
 	}
@@ -765,12 +791,43 @@ func (e *extractor) addProtobufUse(node *gdast.CallExpression, callee, fromID st
 	default:
 		return
 	}
-	staticType := strings.TrimSuffix(callee, "."+graph.SimpleName(callee))
+	staticType := current.receiver
+	if index := strings.LastIndexByte(callee, '.'); index >= 0 {
+		staticType = callee[:index]
+	}
 	e.b.AddFact(fromID, kind, api.targetID, api.target, api.targetKind, loc, map[string]string{
 		"protocol": "protobuf", "form": api.form, "api": api.symbol,
 		"static_type": staticType, "binding": api.symbol, "binding_id": api.bindingID,
 		"evidence": "gdscript_scope",
 	})
+}
+
+func (e *extractor) protobufCallee(callee string, current scope) string {
+	index := strings.LastIndexByte(callee, '.')
+	if index < 0 {
+		if base := e.protobufBase(current.receiver); base != "" {
+			return base + "." + callee
+		}
+		return callee
+	}
+	if base := e.protobufBase(callee[:index]); base != "" {
+		return base + callee[index:]
+	}
+	return callee
+}
+
+func (e *extractor) protobufBase(typeName string) string {
+	for depth := 0; typeName != "" && depth < 32; depth++ {
+		if e.protobufTypes[typeName] || e.protobufAmbiguous[typeName] {
+			return typeName
+		}
+		next, ok := e.bases[typeName]
+		if !ok {
+			return ""
+		}
+		typeName = next
+	}
+	return ""
 }
 
 func (e *extractor) untypedLocalReceiver(expression gdast.Expression, current scope) bool {
@@ -1147,8 +1204,9 @@ func (e *extractor) inferExpressionType(expression gdast.Expression, current sco
 		return ""
 	}
 	callee := e.resolveCallee(call.Callee, current)
-	if !e.untypedLocalReceiver(call.Callee, current) && !e.protobufAmbiguous[callee] {
-		if api, exists := e.protobufAPIs[callee]; exists && api.returns != "" {
+	apiCallee := e.protobufCallee(callee, current)
+	if !e.untypedLocalReceiver(call.Callee, current) && !e.protobufAmbiguous[apiCallee] {
+		if api, exists := e.protobufAPIs[apiCallee]; exists && api.returns != "" {
 			return api.returns
 		}
 	}
@@ -1221,6 +1279,11 @@ func (e *extractor) resolveExpression(expression gdast.Expression, current scope
 	case *gdast.TypeExpression:
 		return e.resolveType(node.Name, current)
 	case *gdast.MemberExpression:
+		if object, ok := node.Object.(*gdast.Identifier); ok && object.Name == "self" {
+			if resolved := current.types[node.Property]; resolved != "" {
+				return resolved
+			}
+		}
 		object := e.resolveExpression(node.Object, current)
 		if object == "" {
 			return node.Property
@@ -1331,6 +1394,40 @@ func cloneBoolMap(source map[string]bool) map[string]bool {
 		result[key] = value
 	}
 	return result
+}
+
+func cloneFlowScope(current scope) scope {
+	current.symbols = cloneMap(current.symbols)
+	current.types = cloneMap(current.types)
+	current.locked = cloneBoolMap(current.locked)
+	return current
+}
+
+func mergeFlowTypes(current scope, alternatives []map[string]string) {
+	if len(alternatives) == 0 {
+		return
+	}
+	merged := cloneMap(alternatives[0])
+	for name, value := range merged {
+		if _, declared := current.symbols[name]; !declared {
+			if _, incoming := current.types[name]; !incoming {
+				delete(merged, name)
+				continue
+			}
+		}
+		for _, alternative := range alternatives[1:] {
+			if alternative[name] != value {
+				delete(merged, name)
+				break
+			}
+		}
+	}
+	for name := range current.types {
+		delete(current.types, name)
+	}
+	for name, value := range merged {
+		current.types[name] = value
+	}
 }
 
 func cloneSignals(source map[string]signalRef) map[string]signalRef {

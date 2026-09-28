@@ -112,6 +112,12 @@ class Lookalike:
 	func to_bytes() -> PackedByteArray:
 		return PackedByteArray()
 
+var stored: AcmeV1EnvelopeEnvelope
+
+class Derived extends AcmeV1EnvelopeEnvelope:
+	func inherited() -> void:
+		set_text("inherited")
+
 func use(data: PackedByteArray, typed: AcmeV1EnvelopeEnvelope) -> String:
 	var envelope_type = AcmeV1EnvelopeEnvelope
 	var message = envelope_type.new()
@@ -141,6 +147,25 @@ func forbidden(dynamic, variant: Variant, local: Lookalike) -> void:
 func shadowed(AcmeV1EnvelopeEnvelope: Variant, data: PackedByteArray) -> void:
 	var decoded = AcmeV1EnvelopeEnvelope.from_bytes(data)
 	decoded.set_text("shadowed")
+
+func self_qualified() -> void:
+	self.stored.set_text("stored")
+
+func uncertain(cond: bool, dynamic, data: PackedByteArray) -> void:
+	var value
+	if cond:
+		value = dynamic
+	else:
+		value = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	value.set_text("not proven on every branch")
+
+func uncertain_swapped(cond: bool, dynamic, data: PackedByteArray) -> void:
+	var value
+	if cond:
+		value = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	else:
+		value = dynamic
+	value.set_text("still not proven on every branch")
 `)
 	writeFile(t, root, "client.gd", string(content))
 	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
@@ -165,9 +190,18 @@ func shadowed(AcmeV1EnvelopeEnvelope: Variant, data: PackedByteArray) -> void:
 
 	forbiddenID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.forbidden").ID
 	shadowedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.shadowed").ID
+	selfQualifiedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.self_qualified").ID
+	derivedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.Derived.inherited").ID
+	assertProtocolFact(t, result.Facts, selfQualifiedID, graph.EdgeWrites, "acme.v1.Envelope.text", "set")
+	assertProtocolFact(t, result.Facts, derivedID, graph.EdgeWrites, "acme.v1.Envelope.text", "set")
+	uncertainID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.uncertain").ID
+	uncertainSwappedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.uncertain_swapped").ID
 	for _, fact := range result.Facts {
 		if (fact.FromID == forbiddenID || fact.FromID == shadowedID) && fact.Properties["protocol"] == "protobuf" {
 			t.Fatalf("unproven or local lookalike receiver produced protocol usage: %#v", fact)
+		}
+		if (fact.FromID == uncertainID || fact.FromID == uncertainSwappedID) && fact.Kind == graph.EdgeWrites && fact.Properties["protocol"] == "protobuf" {
+			t.Fatalf("branch-dependent receiver produced protocol write: %#v", fact)
 		}
 	}
 }
