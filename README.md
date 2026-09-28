@@ -64,12 +64,22 @@ missing clients and say so. All of these accept `--json`.
 ### Installed agent guidance
 
 Registration alone does not teach an agent when to use the graph, so `grafo
-install` also installs one canonical, embedded guidance playbook: prefer graph
+install` also installs a canonical, embedded guidance playbook: prefer graph
 structure over content search for symbol, call, endpoint, event, data, and impact
 questions; check `get_index_status` before trusting the graph; search for reusable
 code before adding code; run bidirectional `get_blast_radius` before a
 behaviour-changing edit; and fall back to native tools deliberately when the
 content is not code or the branch has no index.
+
+Claude Code and Codex also receive a separate `grafo-setup` skill. Invoke it
+when onboarding or tuning a repository for Grafo (`/grafo-setup` in Claude Code
+or “use `$grafo-setup`” in Codex). It inspects monorepo boundaries,
+SQL ownership, GDScript HTTP wrappers and custom test bases, Protobuf
+serialization, and supported transport evidence; merges only supported
+`grafo.yaml` settings; indexes the repository; and verifies topology and message
+coverage. Built-in transport and serialization support is detected from source
+and code-generation evidence, so the skill reports unsupported integrations
+instead of inventing configuration keys.
 
 Guidance is installed only through documented, user-scoped surfaces: isolated
 Grafo-owned skill files for Claude Code and Codex, and one delimited managed

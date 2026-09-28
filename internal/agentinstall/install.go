@@ -27,7 +27,7 @@ type Status struct {
 // artifact of one client.
 type Action struct {
 	Client Client `json:"client"`
-	Kind   string `json:"kind"` // KindMCP, KindSkill, KindInstructions, KindHooks
+	Kind   string `json:"kind"` // KindMCP, KindSkill, KindSetupSkill, KindInstructions, KindHooks
 	Scope  string `json:"scope"`
 	Target string `json:"target"` // config path, artifact path, or client executable
 	Change string `json:"change"` // "installed", "updated", "removed", "unchanged", "skipped"

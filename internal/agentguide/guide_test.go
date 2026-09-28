@@ -40,6 +40,29 @@ func TestSkillCarriesFrontmatter(t *testing.T) {
 	}
 }
 
+func TestSetupSkillCoversRepositoryOnboarding(t *testing.T) {
+	skill := SetupSkill()
+	for _, fragment := range []string{
+		"name: grafo-setup", "grafo.yaml", "components:", "request_apis:",
+		"default_dialect:", "gdscript_bases:", "message-coverage", "message-flow",
+		"do not add transport or serialization keys",
+		setupVersionComment(),
+	} {
+		if !strings.Contains(skill, fragment) {
+			t.Errorf("setup skill is missing %q", fragment)
+		}
+	}
+	if !OwnsSetup(skill) {
+		t.Fatal("setup skill does not carry its ownership marker")
+	}
+	if OwnsSetup(Skill()) {
+		t.Fatal("structural guidance claims setup-skill ownership")
+	}
+	if !strings.HasSuffix(skill, "\n") {
+		t.Fatal("setup skill does not end with a newline")
+	}
+}
+
 func TestBlockIsDelimitedAndVersioned(t *testing.T) {
 	block := Block()
 	if !strings.HasPrefix(block, BeginMarker+"\n") || !strings.HasSuffix(block, EndMarker+"\n") {
@@ -162,7 +185,12 @@ func TestDigestIsStableAndPrefixed(t *testing.T) {
 // asserting on raw text: the description contains ": ", which is not a legal
 // YAML plain scalar, so it must be quoted for a client to load the skill.
 func TestSkillFrontmatterIsValidYAML(t *testing.T) {
-	skill := Skill()
+	assertSkillFrontmatter(t, Skill(), Name, Description)
+	assertSkillFrontmatter(t, SetupSkill(), SetupName, SetupDescription)
+}
+
+func assertSkillFrontmatter(t *testing.T, skill, wantName, wantDescription string) {
+	t.Helper()
 	rest, ok := strings.CutPrefix(skill, "---\n")
 	if !ok {
 		t.Fatal("skill has no frontmatter")
@@ -178,10 +206,10 @@ func TestSkillFrontmatterIsValidYAML(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(frontmatter+"\n"), &fields); err != nil {
 		t.Fatalf("frontmatter is not valid YAML: %v\n%s", err, frontmatter)
 	}
-	if fields.Name != Name {
-		t.Errorf("name = %q, want %q", fields.Name, Name)
+	if fields.Name != wantName {
+		t.Errorf("name = %q, want %q", fields.Name, wantName)
 	}
-	if fields.Description != Description {
-		t.Errorf("description = %q, want %q", fields.Description, Description)
+	if fields.Description != wantDescription {
+		t.Errorf("description = %q, want %q", fields.Description, wantDescription)
 	}
 }

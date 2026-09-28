@@ -16,6 +16,7 @@ import (
 const (
 	KindMCP          = "mcp"
 	KindSkill        = "skill"
+	KindSetupSkill   = "setup-skill"
 	KindInstructions = "instructions"
 	KindHooks        = "hooks"
 )
@@ -46,18 +47,40 @@ var guidanceRegistry = []clientGuidance{
 	// Claude Code loads personal skills from ~/.claude/skills/<name>/SKILL.md and
 	// personal hooks from ~/.claude/settings.json.
 	{client: "claude", artifacts: []guidanceArtifact{
-		skillFile{resolve: func(reader Reader) (string, error) {
-			return homePath(reader, ".claude", "skills", agentguide.Name, "SKILL.md")
-		}},
+		skillFile{
+			name: agentguide.Name, artifactKind: KindSkill,
+			content: agentguide.Skill, owns: agentguide.Owns,
+			resolve: func(reader Reader) (string, error) {
+				return homePath(reader, ".claude", "skills", agentguide.Name, "SKILL.md")
+			},
+		},
+		skillFile{
+			name: agentguide.SetupName, artifactKind: KindSetupSkill,
+			content: agentguide.SetupSkill, owns: agentguide.OwnsSetup,
+			resolve: func(reader Reader) (string, error) {
+				return homePath(reader, ".claude", "skills", agentguide.SetupName, "SKILL.md")
+			},
+		},
 		claudeHooks{},
 	}},
 	// Codex discovers personal skills from ~/.agents/skills. Keep the retired
 	// ~/.codex/AGENTS.md artifact as a best-effort cleanup step so upgrades remove
 	// the managed block written by guidance format 2 without following symlinks.
 	{client: "codex", artifacts: []guidanceArtifact{
-		skillFile{resolve: func(reader Reader) (string, error) {
-			return homePath(reader, ".agents", "skills", agentguide.Name, "SKILL.md")
-		}},
+		skillFile{
+			name: agentguide.Name, artifactKind: KindSkill,
+			content: agentguide.Skill, owns: agentguide.Owns,
+			resolve: func(reader Reader) (string, error) {
+				return homePath(reader, ".agents", "skills", agentguide.Name, "SKILL.md")
+			},
+		},
+		skillFile{
+			name: agentguide.SetupName, artifactKind: KindSetupSkill,
+			content: agentguide.SetupSkill, owns: agentguide.OwnsSetup,
+			resolve: func(reader Reader) (string, error) {
+				return homePath(reader, ".agents", "skills", agentguide.SetupName, "SKILL.md")
+			},
+		},
 		retiredInstructionBlock{instructionBlock{resolve: func(reader Reader) (string, error) {
 			return homePath(reader, ".codex", "AGENTS.md")
 		}}},
@@ -301,10 +324,16 @@ func configHomePath(reader Reader, elements ...string) (string, error) {
 // skillFile owns a whole file: its contents are generated, so a foreign file at
 // the same path is a conflict rather than something to merge.
 type skillFile struct {
-	resolve func(Reader) (string, error)
+	name         string
+	artifactKind string
+	content      func() string
+	owns         func(string) bool
+	resolve      func(Reader) (string, error)
 }
 
-func (skillFile) kind() string { return KindSkill }
+func (s skillFile) kind() string {
+	return s.artifactKind
+}
 
 func (skillFile) optIn() bool { return false }
 
@@ -315,7 +344,7 @@ func (s skillFile) planInstall(reader Reader, display, path, _ string, own owner
 	if err != nil {
 		return plan{}, err
 	}
-	desired := agentguide.Skill()
+	desired := s.content()
 	digest := agentguide.Digest(desired)
 	if !state.exists {
 		return plan{
@@ -325,15 +354,15 @@ func (s skillFile) planInstall(reader Reader, display, path, _ string, own owner
 		}, nil
 	}
 	if state.contents == desired {
-		return plan{change: changeUnchanged, detail: "grafo skill is current"}, nil
+		return plan{change: changeUnchanged, detail: s.name + " skill is current"}, nil
 	}
-	if !own.provesFile(path, state.contents) && !agentguide.Owns(state.contents) {
+	if !own.provesFile(path, state.contents) && !s.owns(state.contents) {
 		return plan{}, fmt.Errorf("refusing to replace %s skill file %s: it carries no Grafo ownership marker",
 			display, path)
 	}
 	return plan{
 		change: changeUpdated,
-		detail: "refreshed Grafo-owned skill",
+		detail: "refreshed Grafo-owned " + s.name + " skill",
 		write:  &fileWrite{path: path, data: []byte(desired), perm: state.perm},
 		digest: digest,
 	}, nil
@@ -349,7 +378,7 @@ func (s skillFile) planUninstall(reader Reader, display, path string, own owners
 		// must not linger and claim ownership of whatever appears next.
 		return plan{
 			change:      changeUnchanged,
-			detail:      "grafo skill is not installed",
+			detail:      s.name + " skill is not installed",
 			dropReceipt: own.provesPath(path),
 		}, nil
 	}
