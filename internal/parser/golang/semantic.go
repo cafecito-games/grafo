@@ -1183,6 +1183,9 @@ func isGoSemanticInput(path string) bool {
 		return true
 	}
 	base := filepath.Base(path)
+	if base == "modules.txt" && filepath.Base(filepath.Dir(path)) == "vendor" {
+		return true
+	}
 	for _, dependency := range semanticDependencies() {
 		if path == dependency || base == dependency {
 			return true

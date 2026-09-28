@@ -279,48 +279,52 @@ func TestFreshnessReprobeHashesRepeatedTypeScriptSemanticInput(t *testing.T) {
 }
 
 func TestFreshnessReprobeDetectsIgnoredVendorSemanticInputs(t *testing.T) {
-	root := t.TempDir()
-	runGit(t, root, "init", "-b", "main")
-	files := map[string]string{
-		".gitignore": "vendor/\n",
-		"go.mod":     "module example.invalid/app\n\ngo 1.26\n",
-		"main.go":    "package main\nfunc main() {}\n",
-	}
-	for path, content := range files {
-		if err := os.WriteFile(filepath.Join(root, path), []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	runGit(t, root, "add", ".")
-	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
-	registry := parserapi.NewRegistry(golangparser.New())
-	first, err := indexer.ProbeFreshness(context.Background(), root, registry, indexer.FreshnessOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	vendorPackage := filepath.Join(root, "vendor", "example.invalid", "lib")
-	if err := os.MkdirAll(vendorPackage, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "vendor", "modules.txt"), []byte("# example.invalid/lib v1.0.0\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(vendorPackage, "lib.go"), []byte("package lib\nconst Value = 1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	reprobe, err := indexer.ReprobeFreshness(context.Background(), first, registry, indexer.FreshnessOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	fresh, err := indexer.ProbeFreshness(context.Background(), root, registry, indexer.FreshnessOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.Token.Equal(reprobe.Token) {
-		t.Fatal("ignored vendor semantic inputs retained the published token")
-	}
-	if !reprobe.Token.Equal(fresh.Token) {
-		t.Fatal("reprobe and full probe disagree after ignored vendor semantic inputs")
+	for _, vendorPath := range []string{"vendor", "cmd/vendor"} {
+		t.Run(vendorPath, func(t *testing.T) {
+			root := t.TempDir()
+			runGit(t, root, "init", "-b", "main")
+			files := map[string]string{
+				".gitignore": "vendor/\n",
+				"go.mod":     "module example.invalid/app\n\ngo 1.26\n",
+				"main.go":    "package main\nfunc main() {}\n",
+			}
+			for path, content := range files {
+				if err := os.WriteFile(filepath.Join(root, path), []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			runGit(t, root, "add", ".")
+			runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+			registry := parserapi.NewRegistry(golangparser.New())
+			first, err := indexer.ProbeFreshness(context.Background(), root, registry, indexer.FreshnessOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			vendorPackage := filepath.Join(root, vendorPath, "example.invalid", "lib")
+			if err := os.MkdirAll(vendorPackage, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, vendorPath, "modules.txt"), []byte("# example.invalid/lib v1.0.0\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(vendorPackage, "lib.go"), []byte("package lib\nconst Value = 1\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			reprobe, err := indexer.ReprobeFreshness(context.Background(), first, registry, indexer.FreshnessOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			fresh, err := indexer.ProbeFreshness(context.Background(), root, registry, indexer.FreshnessOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if first.Token.Equal(reprobe.Token) {
+				t.Fatal("ignored vendor semantic inputs retained the published token")
+			}
+			if !reprobe.Token.Equal(fresh.Token) {
+				t.Fatal("reprobe and full probe disagree after ignored vendor semantic inputs")
+			}
+		})
 	}
 }
 

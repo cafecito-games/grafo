@@ -4,8 +4,9 @@ Issue #96 compares the unconditional per-tool refresh at baseline
 `60028383c88b0e1578ac3df31b8da396831543c3` with freshness generations at
 corrected implementation head `f831ebb9914bde045740729a53fe5cf02188f2ae`.
 
-The representative fixture is one immutable `git archive` of the implementation
-head. Its sorted path-and-content manifest hashes to
+The representative fixture is one immutable `git archive` of benchmark-candidate
+head `f7aa246a46f6e68462f794ee1175db5eaeb0df79`. The corrected implementation was
+then measured against this unchanged corpus. Its sorted path-and-content manifest hashes to
 `2f31814697653297045df9bf0e12813508e12c82a7ff412ef008c48f5fb9af7f`.
 Both revisions received that exact tree, created a fresh Git repository, warmed
 one in-memory MCP session, resolved `DiscoverProject` to an exact qualified
@@ -39,9 +40,10 @@ cost honestly. A syscall-delay profile attributed 90.9%
 of traced unchanged-call delay to the mandatory process-backed Git status probe
 (mostly `waitid`), so tiny repositories reach that strong-freshness floor before
 they can reach 10x. No TTL, watcher-only authority, or stale-success cache was
-introduced to improve this number. The final tiny-fixture rerun is recorded
-alongside the original comparison in `results.json`; host-contention outliers
-make the representative corpus the acceptance authority.
+introduced to improve this number. `results.json` retains the original tiny-fixture
+baseline samples and the final corrected current-side rerun; it does not retain the
+superseded current-side samples. Host-contention outliers make the representative
+corpus the acceptance authority.
 
 Raw nanosecond samples, min/max values, exact commands, fixture hashes, and
 machine/cgroup metadata are retained in [`results.json`](results.json). The
