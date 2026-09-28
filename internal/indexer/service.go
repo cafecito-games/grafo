@@ -129,7 +129,7 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 			}
 			branch := refreshed.Branch
 			if branch == "(detached)" {
-				branch = "detached-" + shortCommit(refreshed.Head)
+				branch = refreshed.DetachedBranch
 			}
 			if branch != project.Branch {
 				return Report{Project: project, Updated: []string{}, Removed: []string{}}, fmt.Errorf("git branch changed from %q to %q; rediscover the project before indexing", project.Branch, branch)
@@ -159,8 +159,12 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	if err != nil {
 		return report, fmt.Errorf("load repository identity: %w", err)
 	}
-	if storedRepositoryID != "" && storedRepositoryID != project.ID {
-		return report, fmt.Errorf("repository identity changed for %s: existing index belongs to %s, discovered %s; reindex explicitly", project.Root, storedRepositoryID, project.ID)
+	identityChanged := storedRepositoryID != "" && storedRepositoryID != project.ID
+	if identityChanged && !options.Force {
+		return report, fmt.Errorf("repository identity changed for %s: existing index belongs to %s, discovered %s; run grafo index --force %s to rebuild this branch index", project.Root, storedRepositoryID, project.ID, project.Root)
+	}
+	if identityChanged {
+		report.Rebuild = "repository identity changed"
 	}
 	indexedVersion, err := s.repository.Meta(ctx, "semantic_index_version")
 	if err != nil {
@@ -168,7 +172,9 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	}
 	schemaChanged := indexedVersion != SemanticIndexVersion
 	if schemaChanged {
-		report.Rebuild = "semantic schema changed"
+		if report.Rebuild == "" {
+			report.Rebuild = "semantic schema changed"
+		}
 	}
 	indexedCommit, err := s.repository.Meta(ctx, "commit")
 	if err != nil {

@@ -145,6 +145,69 @@ func TestParseGitStatusPorcelainV2FailsClosed(t *testing.T) {
 	}
 }
 
+func TestParseGitStatusPorcelainV2TreatsTypechangeAsMembershipChange(t *testing.T) {
+	snapshot, err := parseGitStatusPorcelainV2([]byte(
+		"# branch.oid aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\x00# branch.head main\x00" +
+			"1 .T N... 100644 100644 120000 abc def linked.snap\x00"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.MembershipStable {
+		t.Fatal("tracked typechange incorrectly proved stable membership")
+	}
+}
+
+func TestDiscoverProjectFallsBackToRootForEmptyRemote(t *testing.T) {
+	root := t.TempDir()
+	config := filepath.Join(root, "config")
+	if err := os.WriteFile(config, []byte("fixture"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &scriptedGitRunner{outputs: [][]byte{
+		[]byte(root + "\n"),
+		[]byte("file:" + config + "\x00\x00"),
+		[]byte("# branch.oid aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\x00# branch.head main\x00"),
+	}}
+	project, err := discoverProject(context.Background(), root, runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.ID != graph.StableID("repo", root) {
+		t.Fatalf("empty remote identity = %s, want root-derived identity", project.ID)
+	}
+}
+
+func TestDiscoverProjectRejectsMalformedRemoteOrigin(t *testing.T) {
+	root := t.TempDir()
+	runner := &scriptedGitRunner{outputs: [][]byte{[]byte(root + "\n"), []byte("malformed")}}
+	if _, err := discoverProject(context.Background(), root, runner); err == nil {
+		t.Fatal("malformed remote origin was accepted")
+	}
+}
+
+func TestDiscoverProjectUsesGitDetachedAbbreviation(t *testing.T) {
+	root := t.TempDir()
+	runner := &scriptedGitRunner{
+		outputs: [][]byte{
+			[]byte(root + "\n"), nil,
+			[]byte("# branch.oid aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbb\x00# branch.head (detached)\x00"),
+			[]byte("aaaaaaaaaaaab\n"),
+		},
+		errors: []error{nil, errors.New("no remote"), nil, nil},
+	}
+	project, err := discoverProject(context.Background(), root, runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Branch != "detached-aaaaaaaaaaaab" || project.gitSnapshot.Commands != 4 {
+		t.Fatalf("detached project = %#v", project)
+	}
+	want := recordedGitCall{directory: root, arguments: []string{"rev-parse", "--short=12", "HEAD"}}
+	if !reflect.DeepEqual(runner.calls[3], want) {
+		t.Fatalf("detached abbreviation call = %#v, want %#v", runner.calls[3], want)
+	}
+}
+
 func TestDiscoverProjectPropagatesCanceledGitProbe(t *testing.T) {
 	root := t.TempDir()
 	runner := &scriptedGitRunner{

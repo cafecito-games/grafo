@@ -233,6 +233,58 @@ func TestServiceRejectsRemoteIdentityChangeBeforeMutation(t *testing.T) {
 	if !reflect.DeepEqual(before, after) {
 		t.Fatalf("identity mismatch mutated graph: before=%#v after=%#v", before, after)
 	}
+	forced, err := indexer.NewService(repository, registry).Run(ctx, changed, indexer.Options{Force: true})
+	if err != nil {
+		t.Fatalf("force identity migration: %v", err)
+	}
+	if forced.Rebuild != "repository identity changed" || len(forced.Updated) != 1 {
+		t.Fatalf("force identity migration report = %#v", forced)
+	}
+	storedID, err := repository.Meta(ctx, "repository_id")
+	if err != nil || storedID != changed.ID {
+		t.Fatalf("migrated repository ID = %q, want %q, err=%v", storedID, changed.ID, err)
+	}
+}
+
+func TestServiceTrackedTypechangeUsesSafeSymlinkDiscovery(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	runGit(t, root, "init", "-b", "main")
+	write(t, filepath.Join(root, "README.md"), "# In repository\n")
+	runGit(t, root, "add", "README.md")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	registry := parserapi.NewRegistry(markdownparser.New())
+	service := indexer.NewService(repository, registry)
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	external := filepath.Join(t.TempDir(), "outside.md")
+	write(t, external, "# Outside secret\n")
+	if err := os.Remove(filepath.Join(root, "README.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(root, "README.md")); err != nil {
+		t.Fatal(err)
+	}
+	report, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(report.Skipped, []string{"README.md"}) || !reflect.DeepEqual(report.Removed, []string{"README.md"}) {
+		t.Fatalf("tracked symlink report = %#v", report)
+	}
+	if report.Counts.Files != 0 {
+		t.Fatalf("tracked symlink content was indexed: %#v", report.Counts)
+	}
 }
 
 func TestServiceGitSnapshotConvergesAcrossMembershipAndHeadChanges(t *testing.T) {

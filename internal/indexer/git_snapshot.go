@@ -52,6 +52,7 @@ type GitSnapshot struct {
 	Dirty            []string
 	Untracked        []string
 	MembershipStable bool
+	DetachedBranch   string
 	Commands         int
 	ProbeNS          int64
 	used             atomic.Bool
@@ -95,6 +96,9 @@ func inspectGit(ctx context.Context, start string, runner gitCommandRunner) (Git
 	snapshot.Root = root
 	snapshot.Identity = identity
 	snapshot.Commands = 2 + identityCommands
+	if err := populateDetachedBranch(ctx, root, &snapshot, runner); err != nil {
+		return GitSnapshot{}, false, err
+	}
 	snapshot.ProbeNS = time.Since(started).Nanoseconds()
 	snapshot.runner = runner
 	return snapshot, true, nil
@@ -119,8 +123,11 @@ func inspectGitIdentity(ctx context.Context, root string, runner gitCommandRunne
 		return root, 1, nil
 	}
 	parts := bytes.Split(output, []byte{0})
-	if len(parts) < 2 || strings.TrimSpace(string(parts[1])) == "" {
+	if len(parts) < 2 {
 		return "", 1, fmt.Errorf("git remote identity output is malformed")
+	}
+	if strings.TrimSpace(string(parts[1])) == "" {
+		return root, 1, nil
 	}
 	identity := strings.TrimSpace(string(parts[1]))
 	origin := strings.TrimPrefix(strings.TrimSpace(string(parts[0])), "file:")
@@ -155,10 +162,33 @@ func refreshGitSnapshot(ctx context.Context, previous *GitSnapshot, runner gitCo
 	snapshot.Root = previous.Root
 	snapshot.Identity = previous.Identity
 	snapshot.Commands = 1
+	if err := populateDetachedBranch(ctx, previous.Root, &snapshot, runner); err != nil {
+		return nil, err
+	}
 	snapshot.ProbeNS = time.Since(started).Nanoseconds()
 	snapshot.used.Store(true)
 	snapshot.runner = runner
 	return &snapshot, nil
+}
+
+func populateDetachedBranch(ctx context.Context, root string, snapshot *GitSnapshot, runner gitCommandRunner) error {
+	if snapshot.Branch != "(detached)" {
+		return nil
+	}
+	shortRaw, err := runner.Run(ctx, root, "rev-parse", "--short=12", "HEAD")
+	snapshot.Commands++
+	if err != nil {
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		return fmt.Errorf("resolve detached HEAD abbreviation: %w", err)
+	}
+	abbreviation := strings.TrimSpace(string(shortRaw))
+	if abbreviation == "" {
+		return fmt.Errorf("resolve detached HEAD abbreviation: empty result")
+	}
+	snapshot.DetachedBranch = "detached-" + abbreviation
+	return nil
 }
 
 func parseGitStatusPorcelainV2(raw []byte) (GitSnapshot, error) {
@@ -295,7 +325,7 @@ func parseGitStatusHeader(snapshot *GitSnapshot, line string) error {
 }
 
 func membershipStatus(status string) bool {
-	return strings.ContainsAny(status, "ADRC")
+	return strings.ContainsAny(status, "ADRCT")
 }
 
 func normalizedGitPath(value string) (string, error) {

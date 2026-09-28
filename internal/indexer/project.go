@@ -61,7 +61,7 @@ func discoverProject(ctx context.Context, start string, runner gitCommandRunner)
 		branch = snapshot.Branch
 		commit = snapshot.Head
 		if branch == "(detached)" {
-			branch = "detached-" + shortCommit(commit)
+			branch = snapshot.DetachedBranch
 		}
 		if commit == "(initial)" {
 			commit = ""
@@ -85,13 +85,6 @@ func discoverProject(ctx context.Context, start string, runner gitCommandRunner)
 		Commit: commit, GoModule: readGoModule(root), gitSnapshot: projectSnapshot,
 		IndexPath: filepath.Join(root, ".grafo", "indexes", indexName), GitManaged: gitManaged,
 	}, nil
-}
-
-func shortCommit(commit string) string {
-	if len(commit) > 12 {
-		return commit[:12]
-	}
-	return commit
 }
 
 func readGoModule(root string) string {
