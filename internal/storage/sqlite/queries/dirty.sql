@@ -72,6 +72,15 @@ WHERE fact_id IN (
 -- name: CountDirtyFacts :one
 SELECT COUNT(*) FROM dirty_facts;
 
+-- name: ReconciliationPending :one
+SELECT EXISTS (
+    SELECT 1 FROM dirty_owners
+    UNION ALL SELECT 1 FROM dirty_nodes
+    UNION ALL SELECT 1 FROM dirty_targets
+    UNION ALL SELECT 1 FROM dirty_facts
+    UNION ALL SELECT 1 FROM reconciliation_cleanup
+);
+
 -- name: MarkReconciliationCleanup :exec
 INSERT OR IGNORE INTO reconciliation_cleanup(id)
 SELECT 1 WHERE EXISTS (SELECT 1 FROM dirty_facts);

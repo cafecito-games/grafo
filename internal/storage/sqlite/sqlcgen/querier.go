@@ -72,6 +72,7 @@ type Querier interface {
 	MatchNodesBySubstring(ctx context.Context, arg MatchNodesBySubstringParams) ([]Node, error)
 	PruneDirtyFacts(ctx context.Context) error
 	ReconciliationCleanupPending(ctx context.Context) (bool, error)
+	ReconciliationPending(ctx context.Context) (bool, error)
 	SearchNodes(ctx context.Context, arg SearchNodesParams) ([]Node, error)
 	SetMeta(ctx context.Context, arg SetMetaParams) error
 	UpsertEmbedding(ctx context.Context, arg UpsertEmbeddingParams) error

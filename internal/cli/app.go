@@ -1833,7 +1833,7 @@ func openExisting(ctx context.Context, root string) (indexer.Project, graph.Repo
 	if err != nil {
 		return project, nil, err
 	}
-	if _, err := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{}); err != nil {
+	if _, err := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{ReportDetail: indexer.ReportWithoutCounts}); err != nil {
 		_ = repository.Close()
 		return project, nil, fmt.Errorf("refresh index: %w", err)
 	}
@@ -1871,7 +1871,7 @@ func refreshRead(ctx context.Context, repository graph.ReadRepository, projects 
 	if !ok || len(projects) != 1 {
 		return fmt.Errorf("repository does not support index refresh")
 	}
-	_, err := indexer.NewService(indexed, parserdefaults.NewRegistry()).Run(ctx, projects[0], indexer.Options{})
+	_, err := indexer.NewService(indexed, parserdefaults.NewRegistry()).Run(ctx, projects[0], indexer.Options{ReportDetail: indexer.ReportWithoutCounts})
 	return err
 }
 
