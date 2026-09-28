@@ -281,6 +281,67 @@ func TestRefreshUpdatesOnlyExistingArtifacts(t *testing.T) {
 	}
 }
 
+func TestInstallAndRefreshHandleSkillFreshnessIndependently(t *testing.T) {
+	type artifact struct {
+		name, path, kind, current, stale string
+	}
+	artifacts := []artifact{
+		{name: "structural", path: claudeSkill, kind: KindSkill, current: agentguide.Skill(),
+			stale: "---\nname: grafo\n---\n\n<!-- grafo-guidance version 0 -->\nold\n"},
+		{name: "setup", path: claudeSetup, kind: KindSetupSkill, current: agentguide.SetupSkill(),
+			stale: "---\nname: grafo-setup\n---\n\n<!-- grafo-setup version 0 -->\nold\n"},
+	}
+	for _, refresh := range []bool{false, true} {
+		mode := "install"
+		if refresh {
+			mode = "refresh"
+		}
+		for _, target := range artifacts {
+			for _, state := range []string{"stale", "current", "missing"} {
+				t.Run(mode+"/"+target.name+"/"+state, func(t *testing.T) {
+					environment := guidanceEnvironment()
+					for _, other := range artifacts {
+						environment.files[other.path] = other.current
+					}
+					switch state {
+					case "stale":
+						environment.files[target.path] = target.stale
+					case "missing":
+						delete(environment.files, target.path)
+					}
+					actions, err := Install(context.Background(), environment, grafoPath, Options{
+						Targets: []string{"claude"}, Refresh: refresh,
+					})
+					if err != nil {
+						t.Fatal(err)
+					}
+					action := findAction(t, actions, "claude", target.kind)
+					wantChange := changeUnchanged
+					switch state {
+					case "stale":
+						wantChange = changeUpdated
+					case "missing":
+						wantChange = changeInstalled
+						if refresh {
+							wantChange = changeSkipped
+						}
+					}
+					if action.Change != wantChange {
+						t.Fatalf("change = %q, want %q: %#v", action.Change, wantChange, action)
+					}
+					if state == "missing" && refresh {
+						if _, exists := environment.files[target.path]; exists {
+							t.Fatal("refresh created a missing artifact")
+						}
+					} else if got := environment.files[target.path]; got != target.current {
+						t.Fatalf("installed content differs from canonical %s skill", target.name)
+					}
+				})
+			}
+		}
+	}
+}
+
 func TestInstallRefusesForeignSkillFile(t *testing.T) {
 	cases := []struct {
 		name, path, contents string
