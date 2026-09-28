@@ -7,6 +7,11 @@ production query and federation services. The cases cover a local language
 matrix, cross-language paths within a monorepo, and an HTTP path across two
 federated repositories.
 
+The `federated-http` case includes both a Go client and a Godot client using an
+exact `http.request_apis` wrapper declaration. Its Godot-to-Go path proves that
+configured GDScript callsite/config provenance survives persistence and uses
+the same canonical HTTP federation contract as native language adapters.
+
 Run the gate with:
 
 ```sh

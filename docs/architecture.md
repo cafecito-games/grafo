@@ -612,3 +612,12 @@ validated `sql` section, and its semantic cache key includes only that section:
 changing a path mapping or default reparses unchanged SQL sources that may now
 select another dialect, while a component-only edit does not. Parser-contract
 changes also bump the semantic-index version.
+
+The same loader owns `http.request_apis`. GDScript includes only that validated
+HTTP subtree in its semantic key and declares repository-root `grafo.yaml` as a
+semantic dependency. A configured adapter names one exact qualified callable
+and its method/URL argument positions; parser scope and receiver evidence still
+decide whether a source call resolves to that identity. Built-in Godot
+`HTTPRequest.request` uses its fixed Godot 4 signature. Both paths feed the
+shared HTTP route model, so canonical request identity and topology matching do
+not acquire a GDScript-specific variant.

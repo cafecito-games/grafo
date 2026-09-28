@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -23,6 +24,7 @@ const FileName = "grafo.yaml"
 
 var (
 	componentNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	requestSymbolPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$`)
 	windowsAbsolutePath  = regexp.MustCompile(`^[A-Za-z]:/`)
 )
 
@@ -31,8 +33,58 @@ var (
 // interpret them.
 type Config struct {
 	Components      []Component
+	HTTP            HTTP
 	SQL             SQL
 	UnknownSections map[string][]yaml.Node
+}
+
+// HTTP is the shared, validated outbound-HTTP adapter configuration.
+type HTTP struct {
+	RequestAPIs []HTTPRequestAPI
+}
+
+// HTTPRequestAPI identifies one exact callable and its zero-based method and
+// URL argument positions. URLArgument also represents route_argument, whose
+// spelling is an equivalent configuration alias.
+type HTTPRequestAPI struct {
+	Language       string
+	Symbol         string
+	MethodArgument int
+	URLArgument    int
+	Line           int
+}
+
+// SemanticKey returns a deterministic digest of only the HTTP-owned subtree.
+func (h HTTP) SemanticKey() string {
+	type canonicalAPI struct {
+		Language       string `json:"language"`
+		Symbol         string `json:"symbol"`
+		MethodArgument int    `json:"method_argument"`
+		URLArgument    int    `json:"url_argument"`
+		Line           int    `json:"line"`
+	}
+	canonical := make([]canonicalAPI, 0, len(h.RequestAPIs))
+	for _, api := range h.RequestAPIs {
+		canonical = append(canonical, canonicalAPI(api))
+	}
+	sort.Slice(canonical, func(i, j int) bool {
+		if canonical[i].Language != canonical[j].Language {
+			return canonical[i].Language < canonical[j].Language
+		}
+		if canonical[i].Symbol != canonical[j].Symbol {
+			return canonical[i].Symbol < canonical[j].Symbol
+		}
+		if canonical[i].MethodArgument != canonical[j].MethodArgument {
+			return canonical[i].MethodArgument < canonical[j].MethodArgument
+		}
+		if canonical[i].URLArgument != canonical[j].URLArgument {
+			return canonical[i].URLArgument < canonical[j].URLArgument
+		}
+		return canonical[i].Line < canonical[j].Line
+	})
+	encoded, _ := json.Marshal(canonical)
+	digest := sha256.Sum256(encoded)
+	return "http-config-v1:" + hex.EncodeToString(digest[:])
 }
 
 // Component declares one explicitly named deployable boundary.
@@ -156,12 +208,150 @@ func Parse(content []byte) (Config, error) {
 			if err != nil {
 				return Config{}, err
 			}
+		case "http":
+			if seenOwned[key] {
+				return Config{}, fmt.Errorf("line %d: duplicate top-level section %q", keyNode.Line, key)
+			}
+			seenOwned[key] = true
+			result.HTTP, err = parseHTTP(valueNode)
+			if err != nil {
+				return Config{}, err
+			}
 		default:
 			value := *valueNode
 			result.UnknownSections[key] = append(result.UnknownSections[key], value)
 		}
 	}
 	return result, nil
+}
+
+func parseHTTP(node *yaml.Node) (HTTP, error) {
+	if isEmptyYAMLValue(node) {
+		return HTTP{}, nil
+	}
+	if node.Kind != yaml.MappingNode {
+		return HTTP{}, fmt.Errorf("line %d: http must be a mapping", node.Line)
+	}
+	var result HTTP
+	seenFields := map[string]bool{}
+	for index := 0; index < len(node.Content); index += 2 {
+		keyNode, valueNode := node.Content[index], node.Content[index+1]
+		key, err := stringScalar(keyNode)
+		if err != nil {
+			return HTTP{}, fmt.Errorf("line %d: http field name must be a string", keyNode.Line)
+		}
+		if seenFields[key] {
+			return HTTP{}, fmt.Errorf("line %d: duplicate http setting %q", keyNode.Line, key)
+		}
+		seenFields[key] = true
+		switch key {
+		case "request_apis":
+			if isEmptyYAMLValue(valueNode) {
+				continue
+			}
+			apis, err := parseHTTPRequestAPIs(valueNode)
+			if err != nil {
+				return HTTP{}, err
+			}
+			result.RequestAPIs = apis
+		default:
+			return HTTP{}, fmt.Errorf("line %d: unknown http setting %q", keyNode.Line, key)
+		}
+	}
+	return result, nil
+}
+
+func parseHTTPRequestAPIs(node *yaml.Node) ([]HTTPRequestAPI, error) {
+	if node.Kind != yaml.SequenceNode {
+		return nil, fmt.Errorf("line %d: request_apis must be a sequence", node.Line)
+	}
+	result := make([]HTTPRequestAPI, 0, len(node.Content))
+	seenSymbols := map[string]int{}
+	for _, item := range node.Content {
+		if item.Kind != yaml.MappingNode {
+			return nil, fmt.Errorf("line %d: request API must be a mapping", item.Line)
+		}
+		api := HTTPRequestAPI{MethodArgument: -1, URLArgument: -1, Line: item.Line}
+		seenFields := map[string]bool{}
+		routeField := ""
+		for index := 0; index < len(item.Content); index += 2 {
+			keyNode, valueNode := item.Content[index], item.Content[index+1]
+			key, err := stringScalar(keyNode)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: request API field name must be a string", keyNode.Line)
+			}
+			if seenFields[key] {
+				return nil, fmt.Errorf("line %d: duplicate request API field %q", keyNode.Line, key)
+			}
+			seenFields[key] = true
+			switch key {
+			case "language":
+				value, err := stringScalar(valueNode)
+				if err != nil {
+					return nil, fmt.Errorf("line %d: request API language must be a non-empty string", valueNode.Line)
+				}
+				api.Language = strings.ToLower(strings.TrimSpace(value))
+			case "symbol":
+				value, err := stringScalar(valueNode)
+				if err != nil {
+					return nil, fmt.Errorf("line %d: request API symbol must be a non-empty string", valueNode.Line)
+				}
+				api.Symbol = strings.TrimSpace(value)
+			case "method_argument":
+				api.MethodArgument, err = nonNegativeYAMLInteger(valueNode, key)
+				if err != nil {
+					return nil, err
+				}
+			case "url_argument", "route_argument":
+				if routeField != "" {
+					return nil, fmt.Errorf("line %d: only one of url_argument or route_argument may be set", keyNode.Line)
+				}
+				routeField = key
+				api.URLArgument, err = nonNegativeYAMLInteger(valueNode, key)
+				if err != nil {
+					return nil, err
+				}
+			default:
+				return nil, fmt.Errorf("line %d: unknown request API field %q", keyNode.Line, key)
+			}
+		}
+		if api.Language != "gdscript" {
+			return nil, fmt.Errorf("line %d: unsupported request API language %q", item.Line, api.Language)
+		}
+		if !requestSymbolPattern.MatchString(api.Symbol) {
+			return nil, fmt.Errorf("line %d: request API symbol %q must be an exact qualified symbol", item.Line, api.Symbol)
+		}
+		if api.MethodArgument < 0 {
+			return nil, fmt.Errorf("line %d: method_argument is required", item.Line)
+		}
+		if routeField == "" {
+			return nil, fmt.Errorf("line %d: one of url_argument or route_argument is required", item.Line)
+		}
+		if api.MethodArgument == api.URLArgument {
+			return nil, fmt.Errorf("line %d: method_argument and %s must use distinct indexes", item.Line, routeField)
+		}
+		if api.Symbol == "HTTPRequest.request" && (api.MethodArgument != 2 || api.URLArgument != 0) {
+			return nil, fmt.Errorf("line %d: configured signature for %q conflicts with built-in method_argument 2 and url_argument 0", item.Line, api.Symbol)
+		}
+		identity := api.Language + ":" + api.Symbol
+		if previous, exists := seenSymbols[identity]; exists {
+			return nil, fmt.Errorf("line %d: duplicate request API symbol %q (first declared on line %d)", item.Line, api.Symbol, previous)
+		}
+		seenSymbols[identity] = item.Line
+		result = append(result, api)
+	}
+	return result, nil
+}
+
+func nonNegativeYAMLInteger(node *yaml.Node, field string) (int, error) {
+	if node.Kind != yaml.ScalarNode || node.Tag != "!!int" {
+		return -1, fmt.Errorf("line %d: %s must be a non-negative integer", node.Line, field)
+	}
+	value, err := strconv.Atoi(node.Value)
+	if err != nil || value < 0 {
+		return -1, fmt.Errorf("line %d: %s must be a non-negative integer", node.Line, field)
+	}
+	return value, nil
 }
 
 func parseComponents(node *yaml.Node) ([]Component, error) {
