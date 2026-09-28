@@ -53,7 +53,7 @@ func TestAllowsResolutionKindCoversRestrictedEdges(t *testing.T) {
 		{graph.EdgeEncodes, graph.KindType, true},
 		{graph.EdgeEncodes, graph.KindField, false},
 		{graph.EdgeDecodes, graph.KindType, true},
-		{graph.EdgeReads, graph.KindField, true},
+		{graph.EdgeReads, graph.KindField, false},
 		{graph.EdgeReferences, graph.KindGodotSceneNode, true},
 		{graph.EdgeReferences, graph.KindModule, false},
 		{graph.EdgeImports, graph.KindGodotResource, true},

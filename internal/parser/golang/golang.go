@@ -284,18 +284,28 @@ func parseFunction(b *parserapi.Builder, fset *token.FileSet, input parserapi.In
 }
 
 func emitProtocolUses(b *parserapi.Builder, semantic SemanticView, registry protobufbinding.Registry) {
+	path := filepath.ToSlash(filepath.Clean(filepath.FromSlash(b.Input.Path)))
+	path = strings.TrimPrefix(path, "./")
+	if output, configured := registry.Outputs[path]; configured && output.Language == "go" {
+		// A configured generated output remains implementation code even when
+		// its corroborating header has drifted. Keep ordinary syntax nodes and
+		// the provenance diagnostic, but never count its internals as application
+		// protocol producers or consumers.
+		return
+	}
 	sources := map[string]string{"": b.FileID()}
 	for _, node := range b.Result.Nodes {
 		if node.Kind == graph.KindFunction || node.Kind == graph.KindMethod {
 			sources[node.QualifiedName] = node.ID
 		}
 	}
+	projections := indexProtocolProjections(registry)
 	for _, use := range semantic.ProtocolUses {
 		fromID := sources[use.Function]
 		if fromID == "" {
 			fromID = b.FileID()
 		}
-		projection, count := resolveProtocolProjection(registry, use.Binding)
+		projection, count := resolveProtocolProjection(projections, use.Binding)
 		if count == 0 {
 			continue
 		}
@@ -343,12 +353,20 @@ func emitProtocolUses(b *parserapi.Builder, semantic SemanticView, registry prot
 	}
 }
 
-func resolveProtocolProjection(registry protobufbinding.Registry, binding string) (protobufbinding.Projection, int) {
-	byCanonical := map[string]protobufbinding.Projection{}
+type protocolProjectionIndex map[string]map[string]protobufbinding.Projection
+
+func indexProtocolProjections(registry protobufbinding.Registry) protocolProjectionIndex {
+	index := protocolProjectionIndex{}
 	for _, config := range registry.Configs {
 		for _, projection := range config.Projections {
-			if projection.Node.Language != "go" || projection.Node.QualifiedName != binding {
+			if projection.Node.Language != "go" {
 				continue
+			}
+			binding := projection.Node.QualifiedName
+			byCanonical := index[binding]
+			if byCanonical == nil {
+				byCanonical = map[string]protobufbinding.Projection{}
+				index[binding] = byCanonical
 			}
 			key := projection.CanonicalID
 			if key == "" {
@@ -360,6 +378,11 @@ func resolveProtocolProjection(registry protobufbinding.Registry, binding string
 			}
 		}
 	}
+	return index
+}
+
+func resolveProtocolProjection(index protocolProjectionIndex, binding string) (protobufbinding.Projection, int) {
+	byCanonical := index[binding]
 	if len(byCanonical) != 1 {
 		return protobufbinding.Projection{}, len(byCanonical)
 	}
