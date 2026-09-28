@@ -2,6 +2,7 @@ package golang_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -167,6 +168,40 @@ func Direct(id string) {
 
 func Convenience() { _, _ = http.Get("/ready") }
 
+func ClientConvenience(client *http.Client) {
+	_, _ = client.Get("/client-get")
+	_, _ = client.Head("/client-head")
+	_, _ = client.Post("/client-post", "text/plain", nil)
+	_, _ = client.PostForm("/client-form", url.Values{"ok": {"true"}})
+	_, _ = http.DefaultClient.Get("/default-get")
+}
+
+func choose(flag bool) string {
+	if flag { return "/conditional-left" }
+	return "/conditional-right"
+}
+
+func chooseAll(flag bool) string {
+	if flag { return "/all-left" } else { return "/all-right" }
+}
+
+func ConditionalReturn(flag bool) {
+	_, _ = http.Get(choose(flag))
+	_, _ = http.Get(chooseAll(flag))
+}
+
+func BranchFields(flag bool) {
+	request := &http.Request{URL: &url.URL{}}
+	if flag {
+		request.Method = http.MethodGet
+		request.URL.Path = "/branch-left"
+	} else {
+		request.Method = http.MethodPost
+		request.URL.Path = "/branch-right"
+	}
+	_, _ = http.DefaultClient.Do(request)
+}
+
 func Alternatives(flag bool) {
 	method := http.MethodGet
 	if flag { method = http.MethodDelete }
@@ -264,6 +299,17 @@ func NotHTTP() {
 		"POST /charge/{_}":                       "example.com/client.Call",
 		"GET /orders/{_}":                        "example.com/client.Direct",
 		"GET /ready":                             "example.com/client.Convenience",
+		"GET /client-get":                        "example.com/client.ClientConvenience",
+		"HEAD /client-head":                      "example.com/client.ClientConvenience",
+		"POST /client-post":                      "example.com/client.ClientConvenience",
+		"POST /client-form":                      "example.com/client.ClientConvenience",
+		"GET /default-get":                       "example.com/client.ClientConvenience",
+		"GET /conditional-left":                  "example.com/client.ConditionalReturn",
+		"GET /conditional-right":                 "example.com/client.ConditionalReturn",
+		"GET /all-left":                          "example.com/client.ConditionalReturn",
+		"GET /all-right":                         "example.com/client.ConditionalReturn",
+		"GET /branch-left":                       "example.com/client.BranchFields",
+		"POST /branch-right":                     "example.com/client.BranchFields",
 		"GET /alternative":                       "example.com/client.Alternatives",
 		"DELETE /alternative":                    "example.com/client.Alternatives",
 		"GET https://api.example.test/users/{_}": "example.com/client.External",
@@ -272,16 +318,18 @@ func NotHTTP() {
 		"PATCH /mutable/{_}":                     "example.com/client.Mutated",
 	}
 	found := map[string]graph.Fact{}
+	requestCount := 0
 	for _, fact := range result.Facts {
 		if fact.Kind != graph.EdgeRequests {
 			continue
 		}
+		requestCount++
 		if source := nodes[fact.FromID]; source.QualifiedName != want[fact.Target] {
 			t.Fatalf("request %q belongs to %q, want %q: %#v", fact.Target, source.QualifiedName, want[fact.Target], fact)
 		}
 		found[fact.Target] = fact
 	}
-	if len(found) != len(want) {
+	if len(found) != len(want) || requestCount != len(want) {
 		t.Fatalf("outbound requests = %#v, want %#v; diagnostics = %#v", found, want, result.Diagnostics)
 	}
 	for target := range want {
@@ -329,6 +377,37 @@ func NotHTTP() {
 	if !foundBoundDiagnostic {
 		t.Fatalf("alternative bound was not diagnosed: %#v", result.Diagnostics)
 	}
+}
+
+func TestPackageSemanticLoaderBoundsHTTPExecution(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/bounded\n\ngo 1.26\n")
+	var body strings.Builder
+	body.WriteString("package bounded\nimport \"net/http\"\nfunc Call(flags []bool) {\nmethod := http.MethodGet\n")
+	for index := range 700 {
+		fmt.Fprintf(&body, "if flags[%d] { method = http.MethodPost }\n", index)
+	}
+	body.WriteString("request, _ := http.NewRequest(method, \"/bounded\", nil)\n_, _ = http.DefaultClient.Do(request)\n}\n")
+	content := []byte(body.String())
+	writeFile(t, filepath.Join(root, "client.go"), string(content))
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "client.go", Content: content, Repository: "bounded",
+		RepoID: "repo", GoModule: "example.com/bounded",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeRequests {
+			t.Fatalf("execution-budget exhaustion emitted a partial request: %#v", fact)
+		}
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if strings.Contains(diagnostic.Message, "HTTP execution exceeded") {
+			return
+		}
+	}
+	t.Fatalf("execution-budget exhaustion was not diagnosed: %#v", result.Diagnostics)
 }
 
 func TestCanonicalEndpointsAtSameLineRemainDistinct(t *testing.T) {

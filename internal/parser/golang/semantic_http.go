@@ -17,6 +17,7 @@ import (
 const (
 	httpSummaryLimit     = 32
 	httpAlternativeLimit = 8
+	httpExecutionLimit   = 2048
 )
 
 type httpSemanticFunction struct {
@@ -55,12 +56,16 @@ type httpValue struct {
 	objects       []*httpObjectValue
 	requestObject bool
 	client        bool
+	overflow      bool
 }
 
 type httpEnvironment map[types.Object]httpValue
 
 type httpExecution struct {
-	stack map[*types.Func]bool
+	stack     map[*types.Func]bool
+	remaining int
+	exhausted bool
+	diagnosed bool
 }
 
 type httpEvalResult struct {
@@ -124,7 +129,8 @@ func (a *httpSemanticAnalyzer) collectRelevantFunctions() {
 				return true
 			}
 			target := a.callTarget(call.Fun)
-			if isHTTPSemanticTarget(target) || a.isHTTPClientDo(call) {
+			_, _, convenience := a.httpConvenience(call)
+			if isHTTPSemanticTarget(target) || convenience || a.isHTTPClientDo(call) {
 				a.relevant[function.object] = true
 			}
 			return true
@@ -206,7 +212,11 @@ func (a *httpSemanticAnalyzer) composeRoots() {
 	sort.Slice(roots, func(i, j int) bool { return roots[i].qualified < roots[j].qualified })
 	seen := map[string]bool{}
 	for _, root := range roots {
-		result := a.executeFunction(&httpExecution{stack: map[*types.Func]bool{}}, root, nil, false)
+		execution := &httpExecution{stack: map[*types.Func]bool{}, remaining: httpExecutionLimit}
+		result := a.executeFunction(execution, root, nil, false)
+		if execution.exhausted {
+			continue
+		}
 		for _, request := range result.effects {
 			a.materialize(root, request, seen)
 		}
@@ -268,6 +278,25 @@ func (a *httpSemanticAnalyzer) executeFunction(execution *httpExecution, functio
 	return result
 }
 
+func (a *httpSemanticAnalyzer) consumeExecution(execution *httpExecution, function *httpSemanticFunction,
+	node goast.Node, cost int,
+) bool {
+	if execution == nil || execution.exhausted {
+		return false
+	}
+	if execution.remaining >= cost {
+		execution.remaining -= cost
+		return true
+	}
+	execution.exhausted = true
+	if !execution.diagnosed {
+		execution.diagnosed = true
+		a.diagnostic(a.location(function.path, node),
+			"outbound HTTP execution exceeded the bounded semantic summary; request omitted")
+	}
+	return false
+}
+
 func isHTTPSemanticTarget(target string) bool {
 	switch target {
 	case "net/http.NewRequest", "net/http.NewRequestWithContext", "net/http.Get", "net/http.Head", "net/http.Post", "net/http.PostForm":
@@ -282,6 +311,9 @@ func (a *httpSemanticAnalyzer) executeStatements(execution *httpExecution, funct
 ) (httpEvalResult, bool) {
 	result := httpEvalResult{}
 	for _, statement := range statements {
+		if !a.consumeExecution(execution, function, statement, 1) {
+			return result, false
+		}
 		switch value := statement.(type) {
 		case *goast.AssignStmt:
 			evaluated := a.evaluateExpressions(execution, function, value.Rhs, environment, conditional)
@@ -315,14 +347,14 @@ func (a *httpSemanticAnalyzer) executeStatements(execution *httpExecution, funct
 			result.effects = append(result.effects, evaluated.effects...)
 		case *goast.ReturnStmt:
 			evaluated := a.evaluateExpressions(execution, function, value.Results, environment, conditional)
-			result.values = append(result.values, evaluated.values...)
+			result.values = mergeHTTPReturnValues(result.values, evaluated.values)
 			result.effects = append(result.effects, evaluated.effects...)
 			return result, true
 		case *goast.BlockStmt:
 			child, stopped := a.executeStatements(execution, function, value.List, environment, conditional)
 			result.effects = append(result.effects, child.effects...)
 			if stopped {
-				result.values = append(result.values, child.values...)
+				result.values = mergeHTTPReturnValues(result.values, child.values)
 				return result, true
 			}
 		case *goast.IfStmt:
@@ -330,24 +362,46 @@ func (a *httpSemanticAnalyzer) executeStatements(execution *httpExecution, funct
 				initResult, _ := a.executeStatements(execution, function, []goast.Stmt{value.Init}, environment, conditional)
 				result.effects = append(result.effects, initResult.effects...)
 			}
+			if !a.consumeExecution(execution, function, value, 2) {
+				return result, false
+			}
 			left := cloneHTTPEnvironment(environment)
-			child, _ := a.executeStatements(execution, function, value.Body.List, left, true)
+			child, leftStopped := a.executeStatements(execution, function, value.Body.List, left, true)
 			markHTTPConditional(child.effects)
 			result.effects = append(result.effects, child.effects...)
+			result.values = mergeHTTPReturnValues(result.values, child.values)
 			right := cloneHTTPEnvironment(environment)
+			rightStopped := false
 			if value.Else != nil {
-				child, _ = a.executeStatements(execution, function, httpStatementList(value.Else), right, true)
+				child, rightStopped = a.executeStatements(execution, function, httpStatementList(value.Else), right, true)
 				markHTTPConditional(child.effects)
 				result.effects = append(result.effects, child.effects...)
+				result.values = mergeHTTPReturnValues(result.values, child.values)
 			}
-			mergeHTTPEnvironments(environment, left, right)
+			if leftStopped && value.Else != nil && rightStopped {
+				return result, true
+			}
+			continuing := []httpEnvironment{}
+			if !leftStopped {
+				continuing = append(continuing, left)
+			}
+			if value.Else == nil || !rightStopped {
+				continuing = append(continuing, right)
+			}
+			mergeHTTPEnvironments(environment, continuing...)
 		case *goast.ForStmt:
+			if !a.consumeExecution(execution, function, value, 1) {
+				return result, false
+			}
 			branch := cloneHTTPEnvironment(environment)
 			child, _ := a.executeStatements(execution, function, value.Body.List, branch, true)
 			markHTTPConditional(child.effects)
 			result.effects = append(result.effects, child.effects...)
 			mergeHTTPEnvironments(environment, environment, branch)
 		case *goast.RangeStmt:
+			if !a.consumeExecution(execution, function, value, 1) {
+				return result, false
+			}
 			branch := cloneHTTPEnvironment(environment)
 			child, _ := a.executeStatements(execution, function, value.Body.List, branch, true)
 			markHTTPConditional(child.effects)
@@ -413,6 +467,30 @@ func (a *httpSemanticAnalyzer) evaluateCall(execution *httpExecution, function *
 ) httpEvalResult {
 	target := a.callTarget(call.Fun)
 	location := a.location(function.path, call)
+	if sink, method, ok := a.httpConvenience(call); ok {
+		if len(call.Args) == 0 {
+			return emptyHTTPCallResult(a.pkg.TypesInfo.TypeOf(call))
+		}
+		routeResult := a.evaluateExpression(execution, function, call.Args[0], environment, conditional)
+		routes := firstHTTPValue(routeResult.values).strings
+		var effects []httpRequestValue
+		for _, route := range routes {
+			if route.overflow {
+				effects = append(effects, httpRequestValue{overflow: true, sink: sink, source: "convenience",
+					location: location, conditional: conditional})
+				continue
+			}
+			effects = append(effects, httpRequestValue{method: httpStringValue{text: method}, route: route,
+				sink: sink, source: "convenience", location: location, conditional: conditional,
+				authorityUnknown: route.unknownBase})
+		}
+		if len(effects) > 0 {
+			a.markHTTPRequestCall(call)
+		}
+		result := emptyHTTPCallResult(a.pkg.TypesInfo.TypeOf(call))
+		result.effects = append(routeResult.effects, effects...)
+		return result
+	}
 	switch target {
 	case "net/url.PathEscape":
 		if len(call.Args) == 0 {
@@ -446,32 +524,6 @@ func (a *httpSemanticAnalyzer) evaluateCall(execution *httpExecution, function *
 		routes := firstHTTPValue(a.evaluateExpression(execution, function, call.Args[routeIndex], environment, conditional).values).strings
 		requests := crossHTTPRequests(methods, routes, target, "constructor")
 		return httpEvalResult{values: []httpValue{{requests: requests}}, effects: nil}
-	case "net/http.Get", "net/http.Head", "net/http.Post", "net/http.PostForm":
-		if len(call.Args) == 0 {
-			return emptyHTTPCallResult(a.pkg.TypesInfo.TypeOf(call))
-		}
-		routes := firstHTTPValue(a.evaluateExpression(execution, function, call.Args[0], environment, conditional).values).strings
-		method := strings.ToUpper(strings.TrimPrefix(target, "net/http."))
-		if method == "POSTFORM" {
-			method = "POST"
-		}
-		var effects []httpRequestValue
-		for _, route := range routes {
-			if route.overflow {
-				effects = append(effects, httpRequestValue{overflow: true, sink: target, source: "convenience",
-					location: location, conditional: conditional})
-				continue
-			}
-			effects = append(effects, httpRequestValue{method: httpStringValue{text: method}, route: route,
-				sink: target, source: "convenience", location: location, conditional: conditional,
-				authorityUnknown: route.unknownBase})
-		}
-		if len(effects) > 0 {
-			a.markHTTPRequestCall(call)
-		}
-		result := emptyHTTPCallResult(a.pkg.TypesInfo.TypeOf(call))
-		result.effects = effects
-		return result
 	}
 	if a.isHTTPClientDo(call) {
 		if len(call.Args) == 0 {
@@ -480,6 +532,9 @@ func (a *httpSemanticAnalyzer) evaluateCall(execution *httpExecution, function *
 		requestResult := a.evaluateExpression(execution, function, call.Args[0], environment, conditional)
 		requestValue := firstHTTPValue(requestResult.values)
 		requests := append([]httpRequestValue(nil), requestValue.requests...)
+		if requestValue.overflow {
+			requests = []httpRequestValue{{overflow: true}}
+		}
 		if requestValue.requestObject {
 			for _, object := range requestValue.objects {
 				requests = append(requests, requestObjectRequests(object)...)
@@ -612,11 +667,17 @@ func (a *httpSemanticAnalyzer) evaluateSelector(execution *httpExecution, functi
 		return httpValue{}
 	}
 	base := firstHTTPValue(a.evaluateExpression(execution, function, selector.X, environment, conditional).values)
+	if base.overflow {
+		return httpValue{overflow: true}
+	}
 	result := httpValue{}
 	for _, object := range base.objects {
 		if field, ok := object.fields[selection.Obj()]; ok {
 			result = mergeHTTPValues(result, field)
 		}
+	}
+	if result.overflow {
+		return result
 	}
 	if len(result.strings) == 0 && len(result.requests) == 0 && len(result.objects) == 0 && !result.client {
 		if isStringType(selection.Obj().Type()) && isBaseURLField(selection.Obj().Name()) {
@@ -740,6 +801,52 @@ func (a *httpSemanticAnalyzer) isHTTPClientDo(call *goast.CallExpr) bool {
 	selection := a.pkg.TypesInfo.Selections[selector]
 	return selection != nil && selection.Obj().Pkg() != nil && selection.Obj().Pkg().Path() == "net/http" &&
 		selection.Obj().Name() == "Do"
+}
+
+func (a *httpSemanticAnalyzer) httpConvenience(call *goast.CallExpr) (string, string, bool) {
+	target := a.callTarget(call.Fun)
+	var name string
+	switch target {
+	case "net/http.Get":
+		name = "Get"
+	case "net/http.Head":
+		name = "Head"
+	case "net/http.Post":
+		name = "Post"
+	case "net/http.PostForm":
+		name = "PostForm"
+	default:
+		selector, ok := call.Fun.(*goast.SelectorExpr)
+		if !ok {
+			return "", "", false
+		}
+		selection := a.pkg.TypesInfo.Selections[selector]
+		function, _ := selectionObject(selection).(*types.Func)
+		if function == nil || function.Pkg() == nil || function.Pkg().Path() != "net/http" {
+			return "", "", false
+		}
+		signature, _ := function.Type().(*types.Signature)
+		if signature == nil || signature.Recv() == nil || !a.isHTTPClient(signature.Recv().Type()) {
+			return "", "", false
+		}
+		name = function.Name()
+		if name != "Get" && name != "Head" && name != "Post" && name != "PostForm" {
+			return "", "", false
+		}
+		target = objectTarget(function)
+	}
+	method := strings.ToUpper(name)
+	if name == "PostForm" {
+		method = "POST"
+	}
+	return target, method, true
+}
+
+func selectionObject(selection *types.Selection) types.Object {
+	if selection == nil {
+		return nil
+	}
+	return selection.Obj()
 }
 
 func (a *httpSemanticAnalyzer) isHTTPClient(value types.Type) bool {
@@ -878,7 +985,9 @@ func httpURLStrings(object *httpObjectValue) []httpStringValue {
 func urlObjectStrings(objects []*httpObjectValue) []httpStringValue {
 	var routes []httpStringValue
 	for _, object := range objects {
-		routes = append(routes, httpURLStrings(object)...)
+		for _, route := range httpURLStrings(object) {
+			routes = appendUniqueHTTPString(routes, route)
+		}
 	}
 	return routes
 }
@@ -954,22 +1063,46 @@ func cloneHTTPValue(value httpValue) httpValue {
 
 func cloneHTTPEnvironment(environment httpEnvironment) httpEnvironment {
 	result := make(httpEnvironment, len(environment))
+	objects := map[*httpObjectValue]*httpObjectValue{}
 	for object, value := range environment {
-		result[object] = cloneHTTPValue(value)
+		result[object] = deepCloneHTTPValue(value, objects)
+	}
+	return result
+}
+
+func deepCloneHTTPValue(value httpValue, objects map[*httpObjectValue]*httpObjectValue) httpValue {
+	result := cloneHTTPValue(value)
+	result.objects = make([]*httpObjectValue, 0, len(value.objects))
+	for _, object := range value.objects {
+		cloned, ok := objects[object]
+		if !ok {
+			cloned = &httpObjectValue{fields: map[types.Object]httpValue{}}
+			objects[object] = cloned
+			for field, fieldValue := range object.fields {
+				cloned.fields[field] = deepCloneHTTPValue(fieldValue, objects)
+			}
+		}
+		result.objects = append(result.objects, cloned)
 	}
 	return result
 }
 
 func mergeHTTPEnvironments(target httpEnvironment, environments ...httpEnvironment) {
+	merged := httpEnvironment{}
 	for _, environment := range environments {
 		for object, value := range environment {
-			target[object] = mergeHTTPValues(target[object], value)
+			merged[object] = mergeHTTPValues(merged[object], value)
 		}
+	}
+	clear(target)
+	for object, value := range merged {
+		target[object] = value
 	}
 }
 
 func mergeHTTPValues(left, right httpValue) httpValue {
 	result := cloneHTTPValue(left)
+	result.overflow = result.overflow || right.overflow
 	for _, value := range right.strings {
 		result.strings = appendUniqueHTTPString(result.strings, value)
 	}
@@ -996,12 +1129,39 @@ func mergeHTTPValues(left, right httpValue) httpValue {
 		for _, current := range result.objects {
 			found = found || current == object
 		}
-		if !found && len(result.objects) < httpAlternativeLimit {
+		if !found {
+			if len(result.objects) >= httpAlternativeLimit {
+				result.objects = nil
+				result.overflow = true
+				break
+			}
 			result.objects = append(result.objects, object)
 		}
 	}
 	result.client = result.client || right.client
 	result.requestObject = result.requestObject || right.requestObject
+	return result
+}
+
+func mergeHTTPReturnValues(left, right []httpValue) []httpValue {
+	if len(left) == 0 {
+		result := make([]httpValue, len(right))
+		for index := range right {
+			result[index] = cloneHTTPValue(right[index])
+		}
+		return result
+	}
+	result := make([]httpValue, len(left))
+	for index := range left {
+		result[index] = cloneHTTPValue(left[index])
+	}
+	for index, value := range right {
+		if index >= len(result) {
+			result = append(result, cloneHTTPValue(value))
+			continue
+		}
+		result[index] = mergeHTTPValues(result[index], value)
+	}
 	return result
 }
 
