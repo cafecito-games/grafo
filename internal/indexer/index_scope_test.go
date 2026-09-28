@@ -37,6 +37,9 @@ func TestServiceScopeNarrowingAndBroadeningConvergeWithoutChangingHead(t *testin
 	if err := os.WriteFile(configPath, config("index:\n  exclude: [internal/eval/testdata/**]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("grafo.yaml\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	runGit(t, root, "init", "-b", "main")
 	runGit(t, root, "config", "user.email", "test@example.com")
 	runGit(t, root, "config", "user.name", "Grafo Test")

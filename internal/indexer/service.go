@@ -324,6 +324,15 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		untrackedPaths = detectedChanges.untracked
 		if !options.Force && !schemaChanged && indexedCommit != "" && previousDirtyValid && previousUntrackedValid {
 			selected = selectChangedPaths(paths, known, detectedChanges.changed, previousDirty, s.parsers)
+			// grafo.yaml may intentionally be ignored by Git while remaining the
+			// authoritative control-plane input. Hash it on every selected pass so
+			// an ignore rule cannot make its indexed evidence stale.
+			for _, path := range paths {
+				if path == projectconfig.FileName {
+					selected[path] = true
+					break
+				}
+			}
 		}
 	}
 	if selected != nil && len(changedSemanticLanguages) > 0 {

@@ -79,6 +79,13 @@ func discoverFilesWithCatalog(ctx context.Context, project Project, registry *pa
 			return discoveredFiles{}, err
 		}
 	}
+	// The root project configuration is a control-plane input even when Git
+	// excludes it from the ordinary candidate set. Keep the same regular-file
+	// and symlink safety boundary used for all other source membership.
+	if info, err := os.Lstat(filepath.Join(project.Root, projectconfig.FileName)); err == nil &&
+		info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+		candidates = append(candidates, projectconfig.FileName)
+	}
 	result := discoveredFiles{paths: make([]string, 0, len(candidates)), gitCommands: gitCommands}
 	if reuseKnown {
 		for _, path := range candidates {
