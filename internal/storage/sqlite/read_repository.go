@@ -110,6 +110,7 @@ func (c *readStatementCache) Close() error {
 var _ graph.ReadRepository = (*ReadRepository)(nil)
 var _ graph.CatalogRepository = (*ReadRepository)(nil)
 var _ graph.TopologyRepository = (*ReadRepository)(nil)
+var _ graph.CanonicalMessageRepository = (*ReadRepository)(nil)
 var _ graph.FileCatalog = (*ReadRepository)(nil)
 var _ graph.ExternalEdgeRepository = (*ReadRepository)(nil)
 var _ graph.ExternalNodeRepository = (*ReadRepository)(nil)
@@ -333,6 +334,9 @@ func (r *ReadRepository) Repositories(ctx context.Context) ([]string, error) {
 }
 func (r *ReadRepository) ListNodesByKind(ctx context.Context, request graph.NodeListQuery) ([]graph.ScopedNode, error) {
 	return r.reader.ListNodesByKind(ctx, request)
+}
+func (r *ReadRepository) CanonicalMessages(ctx context.Context, request graph.CanonicalMessageQuery) (graph.CanonicalMessagePage, error) {
+	return r.reader.CanonicalMessages(ctx, request)
 }
 func (r *ReadRepository) RelationEdges(ctx context.Context, request graph.RelationEdgeQuery) (graph.RelationEdgePage, error) {
 	return r.reader.RelationEdges(ctx, request)

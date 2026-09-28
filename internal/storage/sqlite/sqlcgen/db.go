@@ -117,6 +117,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.insertEdgeStmt, err = db.PrepareContext(ctx, insertEdge); err != nil {
 		return nil, fmt.Errorf("error preparing query InsertEdge: %w", err)
 	}
+	if q.listCanonicalMessagesStmt, err = db.PrepareContext(ctx, listCanonicalMessages); err != nil {
+		return nil, fmt.Errorf("error preparing query ListCanonicalMessages: %w", err)
+	}
 	if q.listDirtyFactBatchStmt, err = db.PrepareContext(ctx, listDirtyFactBatch); err != nil {
 		return nil, fmt.Errorf("error preparing query ListDirtyFactBatch: %w", err)
 	}
@@ -367,6 +370,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing insertEdgeStmt: %w", cerr)
 		}
 	}
+	if q.listCanonicalMessagesStmt != nil {
+		if cerr := q.listCanonicalMessagesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listCanonicalMessagesStmt: %w", cerr)
+		}
+	}
 	if q.listDirtyFactBatchStmt != nil {
 		if cerr := q.listDirtyFactBatchStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listDirtyFactBatchStmt: %w", cerr)
@@ -587,6 +595,7 @@ type Queries struct {
 	getMetaStmt                         *sql.Stmt
 	getNodeStmt                         *sql.Stmt
 	insertEdgeStmt                      *sql.Stmt
+	listCanonicalMessagesStmt           *sql.Stmt
 	listDirtyFactBatchStmt              *sql.Stmt
 	listEdgesFromStmt                   *sql.Stmt
 	listEdgesToStmt                     *sql.Stmt
@@ -654,6 +663,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getMetaStmt:                         q.getMetaStmt,
 		getNodeStmt:                         q.getNodeStmt,
 		insertEdgeStmt:                      q.insertEdgeStmt,
+		listCanonicalMessagesStmt:           q.listCanonicalMessagesStmt,
 		listDirtyFactBatchStmt:              q.listDirtyFactBatchStmt,
 		listEdgesFromStmt:                   q.listEdgesFromStmt,
 		listEdgesToStmt:                     q.listEdgesToStmt,
