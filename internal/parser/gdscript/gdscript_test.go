@@ -83,6 +83,450 @@ func reset() -> void:
 	}
 }
 
+func TestParserExtractsCanonicalProtobufUsageWithoutGeneratedBindings(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, ".gitignore", "generated/\n")
+	writeFile(t, root, "buf.yaml", "version: v2\nmodules:\n  - path: proto\n")
+	writeFile(t, root, "buf.gen.yaml", `version: v2
+plugins:
+  - local: protoc-gen-gdscript
+    out: generated
+`)
+	writeFile(t, root, "proto/envelope.proto", `syntax = "proto3";
+package acme.v1;
+message Envelope {
+  string text = 1;
+  repeated string tags = 2;
+  Child child = 3;
+  oneof payload { string raw = 4; }
+}
+message Child { string name = 1; }
+`)
+	content := []byte(`class_name Client extends Middle
+
+class Middle extends AcmeV1EnvelopeEnvelope:
+	pass
+
+class Lookalike:
+	func set_text(_value: String) -> void:
+		pass
+	func get_text() -> String:
+		return ""
+	func to_bytes() -> PackedByteArray:
+		return PackedByteArray()
+
+var stored: AcmeV1EnvelopeEnvelope
+var ordinary: Node
+var assigned_field
+var assigned_self
+var branch_field
+var branch_swapped_field
+var missing_else_field
+var while_field
+var for_field
+var match_field
+var shadow_field
+var compound_field
+
+class Derived extends AcmeV1EnvelopeEnvelope:
+	func inherited() -> void:
+		set_text("inherited")
+
+class Override extends AcmeV1EnvelopeEnvelope:
+	func set_text(_value: String) -> void:
+		pass
+	func get_child() -> Variant:
+		return null
+	func helper() -> Variant:
+		return null
+	func use_override() -> void:
+		set_text("local override")
+		var child = get_child()
+		child.set_name("not a generated child")
+		self.set_text("self local override")
+		self.get_child().set_text("not an Envelope receiver")
+		self.helper().set_text("unresolved Variant receiver")
+
+func use(data: PackedByteArray, typed: AcmeV1EnvelopeEnvelope) -> String:
+	var envelope_type = AcmeV1EnvelopeEnvelope
+	var message = envelope_type.new()
+	message.set_text("hello")
+	message.add_tags("tag")
+	var child = message.new_child()
+	child.set_name("nested")
+	var nested_name = message.get_child().get_name()
+	if typed.has_raw():
+		var raw = typed.get_raw()
+		typed.set_raw(raw)
+	var assigned
+	assigned = typed
+	var copied = assigned.get_text()
+	var encoded = assigned.to_bytes()
+	var decoded = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	decoded.set_text(copied)
+	return nested_name
+
+func forbidden(dynamic, variant: Variant, local: Lookalike) -> void:
+	dynamic.set_text("unknown")
+	variant.get_text()
+	local.set_text("local")
+	local.get_text()
+	local.to_bytes()
+
+func shadowed(AcmeV1EnvelopeEnvelope: Variant, data: PackedByteArray) -> void:
+	var decoded = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	decoded.set_text("shadowed")
+
+func self_qualified() -> void:
+	self.stored.set_text("stored")
+
+func self_shadowed(ordinary: AcmeV1EnvelopeEnvelope) -> void:
+	self.ordinary.set_text("field remains Node")
+
+func assigned_fields(data: PackedByteArray) -> void:
+	assigned_field = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	self.assigned_field.set_text("bare assignment, self use")
+	self.assigned_self = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	assigned_self.set_text("self assignment, bare use")
+
+func assigned_field_agreed(cond: bool, data: PackedByteArray) -> void:
+	if cond:
+		self.assigned_field = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	else:
+		self.assigned_field = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	self.assigned_field.set_text("field proven on every branch")
+
+func uncertain_fields(cond: bool, dynamic, data: PackedByteArray, items: Array) -> void:
+	if cond:
+		self.branch_field = dynamic
+	else:
+		self.branch_field = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	self.branch_field.set_text("branches disagree")
+	if cond:
+		self.branch_swapped_field = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	else:
+		self.branch_swapped_field = dynamic
+	self.branch_swapped_field.set_text("swapped branches disagree")
+	if cond:
+		self.missing_else_field = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	self.missing_else_field.set_text("else path has no proof")
+	while items.is_empty():
+		self.while_field = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	self.while_field.set_text("loop may not run")
+	for item in items:
+		self.for_field = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	self.for_field.set_text("iteration may not run")
+	match items.size():
+		1:
+			self.match_field = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	self.match_field.set_text("pattern may not match")
+	var shadow_field
+	shadow_field = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	self.shadow_field.set_text("local assignment must not prove field")
+	self.compound_field += AcmeV1EnvelopeEnvelope.from_bytes(data)
+	self.compound_field.set_text("compound assignment is not type proof")
+
+func uncertain(cond: bool, dynamic, data: PackedByteArray) -> void:
+	var value
+	if cond:
+		value = dynamic
+	else:
+		value = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	value.set_text("not proven on every branch")
+
+func uncertain_swapped(cond: bool, dynamic, data: PackedByteArray) -> void:
+	var value
+	if cond:
+		value = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	else:
+		value = dynamic
+	value.set_text("still not proven on every branch")
+
+func agreed(cond: bool, data: PackedByteArray) -> void:
+	var value
+	if cond:
+		value = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	else:
+		value = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	value.set_text("proven on every branch")
+
+func uncertain_loops(items: Array, data: PackedByteArray) -> void:
+	var while_value
+	while items.is_empty():
+		while_value = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	while_value.set_text("loop may not run")
+	var for_value
+	for item in items:
+		for_value = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	for_value.set_text("iteration may not run")
+	var match_value
+	match items.size():
+		1:
+			match_value = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	match_value.set_text("pattern may not match")
+
+func exhaustive_match(value: int, data: PackedByteArray) -> void:
+	var message
+	match value:
+		1:
+			message = AcmeV1EnvelopeEnvelope.from_bytes(data)
+		_:
+			message = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	message.set_text("every arm proves the type")
+
+func inherited_chain() -> void:
+	set_text("inherited through inner base")
+
+func shadow_parameter(stored) -> void:
+	stored.set_text("untyped parameter")
+
+func shadow_local() -> void:
+	var stored
+	stored.set_text("untyped local")
+
+func shadow_for(items: Array) -> void:
+	for stored in items:
+		stored.set_text("untyped loop variable")
+
+func shadow_lambda() -> void:
+	var callback = func(stored):
+		stored.set_text("untyped lambda parameter")
+	callback.call(null)
+
+func shadow_branch(cond: bool) -> void:
+	var value: AcmeV1EnvelopeEnvelope
+	if cond:
+		var value
+		value.set_text("untyped branch local")
+
+func invalid_static_accessors() -> void:
+	AcmeV1EnvelopeEnvelope.set_text("class object")
+	AcmeV1EnvelopeEnvelope.to_bytes()
+	var child = AcmeV1EnvelopeEnvelope.get_child()
+	child.set_name("unproven return")
+`)
+	writeFile(t, root, "client.gd", string(content))
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "client.gd", Content: content, Repository: "protobuf-gdscript", RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	useID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.use").ID
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeWrites, "acme.v1.Envelope.text", "set")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeWrites, "acme.v1.Envelope.tags", "add")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeWrites, "acme.v1.Envelope.child", "new")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeWrites, "acme.v1.Child.name", "set")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeReads, "acme.v1.Envelope.child", "get")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeReads, "acme.v1.Child.name", "get")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeReads, "acme.v1.Envelope.raw", "has")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeReads, "acme.v1.Envelope.raw", "get")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeWrites, "acme.v1.Envelope.raw", "set")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeEncodes, "acme.v1.Envelope", "to_bytes")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeDecodes, "acme.v1.Envelope", "from_bytes")
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "AcmeV1EnvelopeEnvelope.set_text")
+
+	forbiddenID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.forbidden").ID
+	shadowedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.shadowed").ID
+	selfQualifiedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.self_qualified").ID
+	derivedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.Derived.inherited").ID
+	selfFact := assertProtocolFact(t, result.Facts, selfQualifiedID, graph.EdgeWrites, "acme.v1.Envelope.text", "set")
+	if selfFact.Properties["static_type"] != "AcmeV1EnvelopeEnvelope" {
+		t.Fatalf("self-qualified field static type = %q", selfFact.Properties["static_type"])
+	}
+	derivedFact := assertProtocolFact(t, result.Facts, derivedID, graph.EdgeWrites, "acme.v1.Envelope.text", "set")
+	if derivedFact.Properties["static_type"] != "Client.Derived" {
+		t.Fatalf("derived receiver static type = %q", derivedFact.Properties["static_type"])
+	}
+	agreedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.agreed").ID
+	assertProtocolFact(t, result.Facts, agreedID, graph.EdgeWrites, "acme.v1.Envelope.text", "set")
+	assignedFieldsID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.assigned_fields").ID
+	assertProtocolFactCount(t, result.Facts, assignedFieldsID, graph.EdgeWrites, "acme.v1.Envelope.text", "set", 2)
+	assignedFieldAgreedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.assigned_field_agreed").ID
+	assertProtocolFact(t, result.Facts, assignedFieldAgreedID, graph.EdgeWrites, "acme.v1.Envelope.text", "set")
+	exhaustiveMatchID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.exhaustive_match").ID
+	assertProtocolFact(t, result.Facts, exhaustiveMatchID, graph.EdgeWrites, "acme.v1.Envelope.text", "set")
+	inheritedChainID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.inherited_chain").ID
+	assertProtocolFact(t, result.Facts, inheritedChainID, graph.EdgeWrites, "acme.v1.Envelope.text", "set")
+	uncertainID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.uncertain").ID
+	uncertainSwappedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.uncertain_swapped").ID
+	uncertainLoopsID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.uncertain_loops").ID
+	uncertainFieldsID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.uncertain_fields").ID
+	selfShadowedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.self_shadowed").ID
+	overrideID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.Override.use_override").ID
+	negativeMethods := map[string]bool{}
+	for _, qualified := range []string{"Client.shadow_parameter", "Client.shadow_local", "Client.shadow_for", "Client.shadow_lambda", "Client.shadow_branch", "Client.invalid_static_accessors"} {
+		negativeMethods[findQualifiedNode(t, result.Nodes, graph.KindMethod, qualified).ID] = true
+	}
+	for _, fact := range result.Facts {
+		if (fact.FromID == forbiddenID || fact.FromID == shadowedID || fact.FromID == selfShadowedID || fact.FromID == overrideID || negativeMethods[fact.FromID]) && fact.Properties["protocol"] == "protobuf" {
+			t.Fatalf("unproven or local lookalike receiver produced protocol usage: %#v", fact)
+		}
+		if (fact.FromID == uncertainID || fact.FromID == uncertainSwappedID || fact.FromID == uncertainLoopsID || fact.FromID == uncertainFieldsID) && fact.Kind == graph.EdgeWrites && fact.Properties["protocol"] == "protobuf" {
+			t.Fatalf("branch-dependent receiver produced protocol write: %#v", fact)
+		}
+	}
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "Client.Override.set_text")
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "Node.set_text")
+}
+
+func TestParserInfersForwardFieldThroughGeneratedBase(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "buf.gen.yaml", "version: v2\nplugins:\n  - local: protoc-gen-gdscript\n    out: generated\n")
+	writeFile(t, root, "envelope.proto", "syntax = \"proto3\"; package acme.v1; message Envelope { string text = 1; }\n")
+	content := []byte(`class_name Forward extends AcmeV1EnvelopeEnvelope
+
+func use() -> void:
+	cached.set_text("forward")
+
+var cached = from_bytes(PackedByteArray())
+`)
+	writeFile(t, root, "forward.gd", string(content))
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "forward.gd", Content: content, RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	useID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Forward.use").ID
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeWrites, "acme.v1.Envelope.text", "set")
+}
+
+func TestParserRejectsShadowedGeneratedBaseForForwardField(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "buf.gen.yaml", "version: v2\nplugins:\n  - local: protoc-gen-gdscript\n    out: generated\n")
+	writeFile(t, root, "envelope.proto", "syntax = \"proto3\"; package acme.v1; message Envelope { string text = 1; }\n")
+	content := []byte(`class_name Shadow extends AcmeV1EnvelopeEnvelope
+
+class AcmeV1EnvelopeEnvelope:
+	pass
+
+func use() -> void:
+	cached.set_text("not a generated message")
+
+var cached = from_bytes(PackedByteArray())
+`)
+	writeFile(t, root, "shadow.gd", string(content))
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "shadow.gd", Content: content, RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	useID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Shadow.use").ID
+	for _, fact := range result.Facts {
+		if fact.FromID == useID && fact.Properties["protocol"] == "protobuf" {
+			t.Fatalf("shadowed generated base produced protocol usage: %#v", fact)
+		}
+	}
+}
+
+func TestParserInfersForwardFieldThroughInnerGeneratedBase(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "buf.gen.yaml", "version: v2\nplugins:\n  - local: protoc-gen-gdscript\n    out: generated\n")
+	writeFile(t, root, "envelope.proto", "syntax = \"proto3\"; package acme.v1; message Envelope { string text = 1; }\n")
+	content := []byte(`class_name Multi extends Mid
+
+class Mid extends AcmeV1EnvelopeEnvelope:
+	pass
+
+func use() -> void:
+	cached.set_text("forward through inner base")
+
+var cached = from_bytes(PackedByteArray())
+`)
+	writeFile(t, root, "multi.gd", string(content))
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "multi.gd", Content: content, RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	useID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Multi.use").ID
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeWrites, "acme.v1.Envelope.text", "set")
+}
+
+func TestParserRejectsAmbiguousProtobufGDScriptBindings(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "buf.yaml", "version: v2\nmodules:\n  - path: proto\n")
+	writeFile(t, root, "buf.gen.yaml", "version: v2\nplugins:\n  - local: protoc-gen-gdscript\n    out: generated\n")
+	writeFile(t, root, "proto/one/envelope.proto", "syntax = \"proto3\"; package acme.v1; message Envelope { string text = 1; }\n")
+	// gdproto's class-name normalization makes acme.v1 and acme_v1 collide.
+	writeFile(t, root, "proto/two/envelope.proto", "syntax = \"proto3\"; package acme_v1; message Envelope { string other = 1; }\n")
+	content := []byte("class_name Client\nclass Derived extends AcmeV1EnvelopeEnvelope:\n\tfunc use() -> void:\n\t\tset_text(\"ambiguous base\")\nfunc use(typed: AcmeV1EnvelopeEnvelope) -> void:\n\ttyped.set_text(\"first schema\")\n\ttyped.set_other(\"second schema\")\n\tvar inferred = AcmeV1EnvelopeEnvelope.new()\n\tinferred.set_text(\"constructor fallback\")\n")
+	writeFile(t, root, "client.gd", string(content))
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "client.gd", Content: content, RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fact := range result.Facts {
+		if fact.Properties["protocol"] == "protobuf" {
+			t.Fatalf("ambiguous generated API produced protocol usage: %#v", fact)
+		}
+	}
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "AcmeV1EnvelopeEnvelope.set_text")
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "AcmeV1EnvelopeEnvelope.set_other")
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "inferred.set_text")
+	for _, diagnostic := range result.Diagnostics {
+		if strings.Contains(diagnostic.Message, "ambiguous generated Protobuf GDScript API") {
+			return
+		}
+	}
+	t.Fatalf("missing ambiguous binding diagnostic: %#v", result.Diagnostics)
+}
+
+func TestParserSuppressesProtocolUseInConfiguredGDScriptOutputWithRejectedHeader(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "buf.gen.yaml", "version: v2\nplugins:\n  - local: protoc-gen-gdscript\n    out: generated\n")
+	writeFile(t, root, "schema.proto", "syntax = \"proto3\"; message Message { string value = 1; }\n")
+	content := []byte("class_name SchemaMessage\n# Generated by an unsupported tool\nfunc use(value: SchemaMessage) -> void:\n\tvalue.set_value(\"generated implementation\")\n")
+	path := "generated/SchemaMessage.pb.gd"
+	writeFile(t, root, path, string(content))
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{Root: root, Path: path, Content: content, RepoID: "repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "SchemaMessage.set_value")
+	for _, fact := range result.Facts {
+		if fact.Properties["protocol"] == "protobuf" {
+			t.Fatalf("configured generated implementation produced protocol usage: %#v", fact)
+		}
+	}
+}
+
+func assertProtocolFact(t *testing.T, facts []graph.Fact, fromID string, kind graph.EdgeKind, target, form string) graph.Fact {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.FromID != fromID || fact.Kind != kind || fact.Target != target || fact.Properties["form"] != form {
+			continue
+		}
+		if fact.TargetID == "" || fact.Location.Path == "" || fact.Location.Line == 0 ||
+			fact.Properties["protocol"] != "protobuf" || fact.Properties["api"] == "" ||
+			fact.Properties["static_type"] == "" || fact.Properties["binding"] == "" ||
+			fact.Properties["binding_id"] == "" || fact.Properties["evidence"] != "gdscript_scope" {
+			t.Fatalf("protocol fact lost canonical evidence: %#v", fact)
+		}
+		return fact
+	}
+	t.Fatalf("missing %s protocol fact from %q to %q with form %q", kind, fromID, target, form)
+	return graph.Fact{}
+}
+
+func assertProtocolFactCount(t *testing.T, facts []graph.Fact, fromID string, kind graph.EdgeKind, target, form string, want int) {
+	t.Helper()
+	count := 0
+	for _, fact := range facts {
+		if fact.FromID == fromID && fact.Kind == kind && fact.Target == target && fact.Properties["form"] == form {
+			count++
+		}
+	}
+	if count != want {
+		t.Fatalf("%s protocol fact count from %q to %q with form %q = %d, want %d", kind, fromID, target, form, count, want)
+	}
+}
+
 func TestParserCreatesImplicitScriptClassAndInnerTypes(t *testing.T) {
 	content := []byte(`extends Node
 

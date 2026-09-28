@@ -109,7 +109,26 @@ type scope struct {
 	classBody bool
 	symbols   map[string]string
 	types     map[string]string
-	signals   map[string]signalRef
+	// fields retains class-member types separately from shadowable locals and
+	// parameters so self.<field> always resolves the field declaration.
+	fields       map[string]string
+	fieldSymbols map[string]string
+	fieldLocked  map[string]bool
+	// locked marks declarations whose explicit annotation controls their type.
+	// In particular, a Variant must not become a generated message merely
+	// because its initializer happens to be one.
+	locked  map[string]bool
+	signals map[string]signalRef
+}
+
+type protobufAPI struct {
+	bindingID  string
+	targetID   string
+	target     string
+	targetKind graph.NodeKind
+	form       string
+	returns    string
+	symbol     string
 }
 
 type extractor struct {
@@ -131,16 +150,23 @@ type extractor struct {
 	// the only inheritance evidence a single-file parser holds. It is what lets a
 	// receiver typed as a locally declared subclass of an input class still be
 	// recognized as one.
-	bases map[string]string
+	bases             map[string]string
+	protobufAPIs      map[string]protobufAPI
+	protobufAmbiguous map[string]bool
+	protobufTypes     map[string]bool
+	protobufEnabled   bool
+	protobufWarned    map[string]bool
 }
 
 func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseResult, error) {
 	b := parserapi.NewBuilder(input, "gdscript")
+	registry := protobufbinding.Registry{}
+	protobufEnabled := true
 	if p.bindings != nil && input.Root != "" {
-		registry, bindingErr := p.bindings.Load(ctx, input)
+		loaded, bindingErr := p.bindings.Load(ctx, input)
 		if bindingErr != nil {
 			b.Diagnostic(0, "warning", "load Protobuf binding registry: "+bindingErr.Error())
-		} else if generated, ok, reason := registry.GeneratedFile(input.Path, "gdscript", input.Content); ok {
+		} else if generated, ok, reason := loaded.GeneratedFile(input.Path, "gdscript", input.Content); ok {
 			b.Result.Nodes[0].Properties = map[string]string{
 				"generated": "true", "generator": generated.Generator,
 				"generator_version": generated.Version, "source_proto": generated.Source,
@@ -149,6 +175,8 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 		} else if reason != "" {
 			b.Diagnostic(1, "warning", "Protobuf generated-file provenance rejected: "+reason)
 		}
+		registry = loaded
+		protobufEnabled = !registry.ConfiguredOutput(input.Path, "gdscript")
 	}
 	if err := ctx.Err(); err != nil {
 		return b.Finish(), err
@@ -160,9 +188,12 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 	if err := ctx.Err(); err != nil {
 		return b.Finish(), err
 	}
+	protobufAPIs, protobufAmbiguous, protobufTypes := gdscriptProtobufBindings(registry)
 	e := &extractor{b: b, input: input, module: parserapi.ModuleName(input.Path),
 		methods: map[string]string{}, autoloads: map[gdast.Node]bool{},
-		projectKnown: true, bases: map[string]string{}}
+		projectKnown: true, bases: map[string]string{}, protobufAPIs: protobufAPIs,
+		protobufAmbiguous: protobufAmbiguous, protobufTypes: protobufTypes,
+		protobufEnabled: protobufEnabled, protobufWarned: map[string]bool{}}
 	project, projectErr := godotid.LoadProject(input.Root, input.Path)
 	if projectErr != nil {
 		// The owning project is unknown rather than absent, so res:// references
@@ -173,6 +204,56 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 	e.project = project
 	e.extract(file)
 	return b.Finish(), nil
+}
+
+func gdscriptProtobufBindings(registry protobufbinding.Registry) (map[string]protobufAPI, map[string]bool, map[string]bool) {
+	apis := map[string]protobufAPI{}
+	ambiguous := map[string]bool{}
+	types := map[string]bool{}
+	typeTargets := map[string]string{}
+	for _, config := range registry.Configs {
+		for _, projection := range config.Projections {
+			if projection.Node.Language != "gdscript" {
+				continue
+			}
+			symbol := projection.Node.QualifiedName
+			if projection.Node.Kind == graph.KindClass && projection.Properties["projection"] == "message" {
+				if previous, ok := typeTargets[symbol]; ok && previous != projection.CanonicalID {
+					delete(types, symbol)
+					ambiguous[symbol] = true
+				} else if !ambiguous[symbol] {
+					typeTargets[symbol] = projection.CanonicalID
+					types[symbol] = true
+				}
+			}
+			if projection.Node.Kind != graph.KindMethod {
+				continue
+			}
+			candidate := protobufAPI{bindingID: projection.Node.ID, targetID: projection.CanonicalID,
+				target: projection.Canonical, targetKind: projection.CanonicalKind,
+				form: projection.Properties["accessor"], returns: projection.Properties["returns"], symbol: symbol}
+			if candidate.form == "" {
+				candidate.form = projection.Properties["codec"]
+			}
+			if previous, ok := apis[symbol]; ok && (previous.targetID != candidate.targetID || previous.form != candidate.form || previous.returns != candidate.returns) {
+				delete(apis, symbol)
+				ambiguous[symbol] = true
+			} else if !ambiguous[symbol] {
+				apis[symbol] = candidate
+			}
+		}
+	}
+	// A projected class is the authority for every member beneath it. Even when
+	// a field exists in only one colliding schema, its receiver is still not
+	// proven, so cascade class ambiguity to all generated member APIs.
+	for symbol := range apis {
+		owner := strings.TrimSuffix(symbol, "."+graph.SimpleName(symbol))
+		if ambiguous[owner] {
+			delete(apis, symbol)
+			ambiguous[symbol] = true
+		}
+	}
+	return apis, ambiguous, types
 }
 
 func (e *extractor) extract(file *gdast.File) {
@@ -209,39 +290,63 @@ func (e *extractor) extract(file *gdast.File) {
 	classID := e.b.Declare(moduleID, graph.Node{Kind: graph.KindClass, Name: className,
 		QualifiedName: qualified, Location: loc, Properties: properties})
 	root := scope{currentID: classID, parentID: classID, container: qualified, receiver: qualified,
-		classID: classID, classBody: true, symbols: map[string]string{}, types: map[string]string{}, signals: map[string]signalRef{}}
+		classID: classID, classBody: true, symbols: map[string]string{}, types: map[string]string{}, fields: map[string]string{},
+		fieldSymbols: map[string]string{}, fieldLocked: map[string]bool{}, locked: map[string]bool{}, signals: map[string]signalRef{}}
 	root.types[className] = qualified
-	// The base class is recorded before anything is walked, because a method body
-	// earlier in the file may already call through a receiver typed by it.
-	for _, statement := range file.Statements {
+	base := fileBase(file.Statements)
+	// Register inner class names before resolving the file base, because a script
+	// may extend a class declared later in the same file. Resolve that base before
+	// field inference so bare inherited generated APIs such as from_bytes remain
+	// available to forward-declared fields without bypassing inner-class shadows.
+	e.prepareClassSymbols(file.Statements, root)
+	if base != "" {
+		if resolved := e.resolveType(base, root); resolved != "" {
+			base = resolved
+		}
+		e.bases[qualified] = base
+	}
+	e.prepareClassFields(file.Statements, root)
+	e.walkStatements(file.Statements, root)
+}
+
+func fileBase(statements []gdast.Statement) string {
+	base := ""
+	for _, statement := range statements {
 		directive, ok := statement.(*gdast.Directive)
 		if !ok {
 			continue
 		}
-		base := ""
 		switch {
 		case directive.Name == "extends":
 			base = expressionName(directive.Value)
 		case directive.Name == "class_name" && directive.Extends != nil:
 			base = expressionName(directive.Extends)
 		}
-		if base != "" {
-			e.bases[qualified] = base
-		}
 	}
-	e.prepareClass(file.Statements, root)
-	e.walkStatements(file.Statements, root)
+	return base
 }
 
 func (e *extractor) prepareClass(statements []gdast.Statement, current scope) {
+	e.prepareClassSymbols(statements, current)
+	e.prepareClassFields(statements, current)
+}
+
+func (e *extractor) prepareClassSymbols(statements []gdast.Statement, current scope) {
 	for _, statement := range statements {
 		switch node := statement.(type) {
 		case *gdast.VariableDeclaration:
 			qualified := qualify(current.container, node.Name)
-			current.symbols[node.Name] = graph.NodeID(graph.KindField, qualified, e.input.RepoID, e.input.Path)
+			fieldID := graph.NodeID(graph.KindField, qualified, e.input.RepoID, e.input.Path)
+			current.symbols[node.Name] = fieldID
+			current.fieldSymbols[node.Name] = fieldID
+			current.fieldLocked[node.Name] = node.Type != ""
+			delete(current.types, node.Name)
+			delete(current.fields, node.Name)
 			if resolved := e.resolveType(node.Type, current); resolved != "" {
 				current.types[node.Name] = resolved
+				current.fields[node.Name] = resolved
 			}
+			current.locked[node.Name] = node.Type != ""
 		case *gdast.SignalDeclaration:
 			qualified := qualify(current.container, node.Name)
 			ref := signalRef{id: graph.NodeID(graph.KindEvent, qualified, e.input.RepoID, e.input.Path), qualified: qualified}
@@ -253,20 +358,32 @@ func (e *extractor) prepareClass(statements []gdast.Statement, current scope) {
 		case *gdast.ClassDeclaration:
 			qualified := qualify(current.container, node.Name)
 			current.types[node.Name] = qualified
-			if node.Extends != "" {
-				e.bases[qualified] = node.Extends
-			}
 		case *gdast.EnumDeclaration:
 			if node.Name != "" {
 				current.types[node.Name] = qualify(current.container, node.Name)
 			}
 		}
 	}
+}
+
+func (e *extractor) prepareClassFields(statements []gdast.Statement, current scope) {
+	// Establish every declared inner-class base before inferring fields so a
+	// forward initializer can follow the complete local inheritance chain.
 	for _, statement := range statements {
-		if node, ok := statement.(*gdast.VariableDeclaration); ok && current.types[node.Name] == "" {
-			if inferred := e.inferExpressionType(node.Value, current); inferred != "" {
-				current.types[node.Name] = inferred
-			}
+		node, ok := statement.(*gdast.ClassDeclaration)
+		if ok && node.Extends != "" {
+			qualified := qualify(current.container, node.Name)
+			e.bases[qualified] = e.resolveType(node.Extends, current)
+		}
+	}
+	for _, statement := range statements {
+		node, ok := statement.(*gdast.VariableDeclaration)
+		if !ok || node.Type != "" || current.types[node.Name] != "" {
+			continue
+		}
+		if inferred := e.inferExpressionType(node.Value, current); inferred != "" {
+			current.types[node.Name] = inferred
+			current.fields[node.Name] = inferred
 		}
 	}
 }
@@ -310,27 +427,70 @@ func (e *extractor) walkStatement(statement gdast.Statement, current scope, anno
 	case *gdast.EnumDeclaration:
 		e.parseEnum(node, current)
 	case *gdast.IfStatement:
+		baseline := current
+		baseline.symbols = cloneMap(current.symbols)
+		baseline.types = cloneMap(current.types)
+		baseline.fields = cloneMap(current.fields)
+		baseline.fieldSymbols = cloneMap(current.fieldSymbols)
+		baseline.fieldLocked = cloneBoolMap(current.fieldLocked)
+		baseline.locked = cloneBoolMap(current.locked)
+		var alternatives, fieldAlternatives []map[string]string
 		for _, branch := range node.Branches {
 			e.walkExpression(branch.Condition, current)
-			e.walkStatements(branch.Body, current)
+			branchScope := cloneFlowScope(baseline)
+			e.walkStatements(branch.Body, branchScope)
+			alternatives = append(alternatives, branchScope.types)
+			fieldAlternatives = append(fieldAlternatives, branchScope.fields)
 		}
-		e.walkStatements(node.Else, current)
+		if len(node.Else) == 0 {
+			alternatives = append(alternatives, baseline.types)
+			fieldAlternatives = append(fieldAlternatives, baseline.fields)
+		} else {
+			elseScope := cloneFlowScope(baseline)
+			e.walkStatements(node.Else, elseScope)
+			alternatives = append(alternatives, elseScope.types)
+			fieldAlternatives = append(fieldAlternatives, elseScope.fields)
+		}
+		mergeFlowTypes(current, alternatives)
+		mergeFlowFields(current, fieldAlternatives)
 	case *gdast.WhileStatement:
 		e.walkExpression(node.Condition, current)
-		e.walkStatements(node.Body, current)
+		bodyScope := cloneFlowScope(current)
+		e.walkStatements(node.Body, bodyScope)
+		mergeFlowTypes(current, []map[string]string{current.types, bodyScope.types})
+		mergeFlowFields(current, []map[string]string{current.fields, bodyScope.fields})
 	case *gdast.ForStatement:
 		e.walkExpression(node.Iterable, current)
-		e.declareLocal(node.Variable, node.Type, e.location(node), current)
-		e.walkStatements(node.Body, current)
+		bodyScope := cloneFlowScope(current)
+		e.declareLocal(node.Variable, node.Type, e.location(node), bodyScope)
+		e.walkStatements(node.Body, bodyScope)
+		mergeFlowTypes(current, []map[string]string{current.types, bodyScope.types})
+		mergeFlowFields(current, []map[string]string{current.fields, bodyScope.fields})
 	case *gdast.MatchStatement:
 		e.walkExpression(node.Value, current)
+		var alternatives, fieldAlternatives []map[string]string
+		exhaustive := false
 		for _, matchCase := range node.Cases {
+			caseScope := cloneFlowScope(current)
 			for _, pattern := range matchCase.Patterns {
-				e.walkExpression(pattern, current)
+				e.walkExpression(pattern, caseScope)
+				if identifier, ok := pattern.(*gdast.Identifier); ok && identifier.Name == "_" && matchCase.Guard == nil {
+					exhaustive = true
+				}
 			}
-			e.walkExpression(matchCase.Guard, current)
-			e.walkStatements(matchCase.Body, current)
+			e.walkExpression(matchCase.Guard, caseScope)
+			e.walkStatements(matchCase.Body, caseScope)
+			alternatives = append(alternatives, caseScope.types)
+			fieldAlternatives = append(fieldAlternatives, caseScope.fields)
 		}
+		if !exhaustive {
+			// A non-exhaustive match may have no applicable arm. Keep the incoming
+			// state as an alternative rather than claiming branch-only evidence.
+			alternatives = append(alternatives, current.types)
+			fieldAlternatives = append(fieldAlternatives, current.fields)
+		}
+		mergeFlowTypes(current, alternatives)
+		mergeFlowFields(current, fieldAlternatives)
 	}
 }
 
@@ -367,7 +527,8 @@ func (e *extractor) parseFunction(node *gdast.FunctionDeclaration, current scope
 	id := e.b.Declare(current.parentID, graph.Node{Kind: graph.KindMethod, Name: node.Name,
 		QualifiedName: qualified, Location: e.location(node), Properties: properties})
 	functionScope := scope{currentID: id, parentID: id, container: qualified, receiver: current.receiver,
-		classID: current.classID, symbols: cloneMap(current.symbols), types: cloneMap(current.types), signals: cloneSignals(current.signals)}
+		classID: current.classID, symbols: cloneMap(current.symbols), types: cloneMap(current.types), fields: cloneMap(current.fields),
+		fieldSymbols: cloneMap(current.fieldSymbols), fieldLocked: cloneBoolMap(current.fieldLocked), locked: cloneBoolMap(current.locked), signals: cloneSignals(current.signals)}
 	for _, parameter := range node.Parameters {
 		parameterProperties := map[string]string{}
 		if parameter.Type != "" {
@@ -376,6 +537,8 @@ func (e *extractor) parseFunction(node *gdast.FunctionDeclaration, current scope
 		parameterID := e.b.Declare(id, graph.Node{Kind: graph.KindParameter, Name: parameter.Name,
 			QualifiedName: qualified + "." + parameter.Name, Location: e.location(node), Properties: parameterProperties})
 		functionScope.symbols[parameter.Name] = parameterID
+		functionScope.locked[parameter.Name] = parameter.Type != ""
+		delete(functionScope.types, parameter.Name)
 		if resolved := e.resolveType(parameter.Type, current); resolved != "" {
 			functionScope.types[parameter.Name] = resolved
 		}
@@ -392,7 +555,8 @@ func (e *extractor) parseClass(node *gdast.ClassDeclaration, current scope) {
 		e.b.AddFact(id, graph.EdgeExtends, "", e.resolveType(node.Extends, current), graph.KindClass, e.location(node), nil)
 	}
 	inner := scope{currentID: id, parentID: id, container: qualified, receiver: qualified, classID: id,
-		classBody: true, symbols: map[string]string{}, types: cloneMap(current.types), signals: map[string]signalRef{}}
+		classBody: true, symbols: map[string]string{}, types: cloneMap(current.types), fields: map[string]string{},
+		fieldSymbols: map[string]string{}, fieldLocked: map[string]bool{}, locked: cloneBoolMap(current.locked), signals: map[string]signalRef{}}
 	inner.types[node.Name] = qualified
 	e.prepareClass(node.Body, inner)
 	e.walkStatements(node.Body, inner)
@@ -431,10 +595,24 @@ func (e *extractor) parseVariable(node *gdast.VariableDeclaration, current scope
 		id = e.b.Declare(current.currentID, graphNode)
 	}
 	current.symbols[node.Name] = id
+	current.locked[node.Name] = node.Type != ""
+	delete(current.types, node.Name)
+	if current.classBody {
+		current.fieldSymbols[node.Name] = id
+		current.fieldLocked[node.Name] = node.Type != ""
+	}
 	if resolved := e.resolveType(node.Type, current); resolved != "" {
 		current.types[node.Name] = resolved
-	} else if inferred := e.inferExpressionType(node.Value, current); inferred != "" {
-		current.types[node.Name] = inferred
+		if current.classBody {
+			current.fields[node.Name] = resolved
+		}
+	} else if node.Type == "" {
+		if inferred := e.inferExpressionType(node.Value, current); inferred != "" {
+			current.types[node.Name] = inferred
+			if current.classBody {
+				current.fields[node.Name] = inferred
+			}
+		}
 	}
 	for _, sourceID := range e.referencedVariables(node.Value, current) {
 		if sourceID != id {
@@ -459,6 +637,8 @@ func (e *extractor) declareLocal(name, typeName string, loc graph.Location, curr
 	id := e.b.Declare(current.currentID, graph.Node{Kind: graph.KindVariable, Name: name,
 		QualifiedName: fmt.Sprintf("%s.%s@%d", current.container, name, loc.Line), Location: loc, Properties: properties})
 	current.symbols[name] = id
+	current.locked[name] = typeName != ""
+	delete(current.types, name)
 	if resolved := e.resolveType(typeName, current); resolved != "" {
 		current.types[name] = resolved
 	}
@@ -469,6 +649,26 @@ func (e *extractor) parseAssignment(node *gdast.Assignment, current scope) {
 	if targetID != "" {
 		for _, sourceID := range e.referencedVariables(node.Value, current) {
 			e.b.AddFact(sourceID, graph.EdgeAssigns, targetID, "", graph.KindVariable, e.location(node), nil)
+		}
+	}
+	targetName, selfField := "", false
+	if target, ok := node.Target.(*gdast.Identifier); ok {
+		targetName = target.Name
+	} else if target, ok := node.Target.(*gdast.MemberExpression); ok {
+		if object, ok := target.Object.(*gdast.Identifier); ok && object.Name == "self" {
+			targetName, selfField = target.Property, true
+		}
+	}
+	if targetName != "" && (node.Operator == "" || node.Operator == "=") {
+		inferred := e.inferExpressionType(node.Value, current)
+		fieldID, isField := current.fieldSymbols[targetName]
+		actualField := isField && (selfField || current.symbols[targetName] == fieldID)
+		updatesBareType := !selfField || actualField && current.symbols[targetName] == fieldID
+		if updatesBareType && !current.locked[targetName] {
+			setInferredType(current.types, targetName, inferred)
+		}
+		if actualField && !current.fieldLocked[targetName] {
+			setInferredType(current.fields, targetName, inferred)
 		}
 	}
 	e.walkExpression(node.Target, current)
@@ -538,6 +738,10 @@ func (e *extractor) walkExpression(expression gdast.Expression, current scope) {
 		lambdaScope := current
 		lambdaScope.symbols = cloneMap(current.symbols)
 		lambdaScope.types = cloneMap(current.types)
+		lambdaScope.fields = cloneMap(current.fields)
+		lambdaScope.fieldSymbols = cloneMap(current.fieldSymbols)
+		lambdaScope.fieldLocked = cloneBoolMap(current.fieldLocked)
+		lambdaScope.locked = cloneBoolMap(current.locked)
 		for _, parameter := range node.Parameters {
 			e.declareLocal(parameter.Name, parameter.Type, e.location(node), lambdaScope)
 		}
@@ -560,6 +764,7 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 		fromID = e.b.FileID()
 	}
 	loc := e.location(node)
+	e.addProtobufUse(node, callee, fromID, current, loc)
 	if member, ok := node.Callee.(*gdast.MemberExpression); ok {
 		if object, ok := member.Object.(*gdast.Identifier); ok {
 			e.addAutoloadUse(object, object.Name, "autoload_call", member.Property, current)
@@ -638,6 +843,127 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 		}
 	}
 	e.b.AddFact(fromID, graph.EdgeCalls, "", callee, "", loc, nil)
+}
+
+func (e *extractor) addProtobufUse(node *gdast.CallExpression, callee, fromID string, current scope, loc graph.Location) {
+	if !e.protobufEnabled || callee == "" {
+		return
+	}
+	// A locally declared override is application behavior even when its class
+	// extends a generated message. Only inherited generated APIs canonicalize.
+	if e.localCall(node.Callee, current) {
+		return
+	}
+	if e.unresolvedMemberReceiver(node.Callee, current) {
+		return
+	}
+	apiCallee := e.protobufCallee(callee, current)
+	if e.protobufAmbiguous[apiCallee] {
+		if !e.protobufWarned[apiCallee] {
+			e.protobufWarned[apiCallee] = true
+			e.b.Diagnostic(loc.Line, "warning", "ambiguous generated Protobuf GDScript API: "+apiCallee)
+		}
+		return
+	}
+	api, ok := e.protobufAPIs[apiCallee]
+	if !ok || api.form == "" {
+		return
+	}
+	if e.protobufClassReceiver(node.Callee, current) && api.form != "from_bytes" {
+		return
+	}
+	// A local symbol without proven type information can spell the same name as
+	// a generated class. It is application code, not evidence of generated API
+	// use. Typed aliases and parameters have an entry in current.types.
+	if e.untypedLocalReceiver(node.Callee, current) {
+		return
+	}
+	var kind graph.EdgeKind
+	switch api.form {
+	case "get", "has":
+		kind = graph.EdgeReads
+	case "set", "new", "add":
+		kind = graph.EdgeWrites
+	case "to_bytes":
+		kind = graph.EdgeEncodes
+	case "from_bytes":
+		kind = graph.EdgeDecodes
+	default:
+		return
+	}
+	staticType := current.receiver
+	if index := strings.LastIndexByte(callee, '.'); index >= 0 {
+		staticType = callee[:index]
+	}
+	e.b.AddFact(fromID, kind, api.targetID, api.target, api.targetKind, loc, map[string]string{
+		"protocol": "protobuf", "form": api.form, "api": api.symbol,
+		"static_type": staticType, "binding": api.symbol, "binding_id": api.bindingID,
+		"evidence": "gdscript_scope",
+	})
+}
+
+func (e *extractor) protobufClassReceiver(expression gdast.Expression, current scope) bool {
+	member, ok := expression.(*gdast.MemberExpression)
+	if !ok {
+		return false
+	}
+	identifier, ok := member.Object.(*gdast.Identifier)
+	if !ok {
+		return false
+	}
+	if _, shadowed := current.symbols[identifier.Name]; shadowed {
+		return false
+	}
+	return e.protobufTypes[identifier.Name]
+}
+
+func (e *extractor) protobufCallee(callee string, current scope) string {
+	index := strings.LastIndexByte(callee, '.')
+	if index < 0 {
+		if base := e.protobufBase(current.receiver); base != "" {
+			return base + "." + callee
+		}
+		return callee
+	}
+	if base := e.protobufBase(callee[:index]); base != "" {
+		return base + callee[index:]
+	}
+	return callee
+}
+
+func (e *extractor) protobufBase(typeName string) string {
+	for depth := 0; typeName != "" && depth < 32; depth++ {
+		if e.protobufTypes[typeName] || e.protobufAmbiguous[typeName] {
+			return typeName
+		}
+		next, ok := e.bases[typeName]
+		if !ok {
+			return ""
+		}
+		typeName = next
+	}
+	return ""
+}
+
+func (e *extractor) untypedLocalReceiver(expression gdast.Expression, current scope) bool {
+	member, ok := expression.(*gdast.MemberExpression)
+	if !ok {
+		return false
+	}
+	identifier, ok := member.Object.(*gdast.Identifier)
+	if !ok {
+		return false
+	}
+	_, local := current.symbols[identifier.Name]
+	return local && current.types[identifier.Name] == ""
+}
+
+func (e *extractor) unresolvedMemberReceiver(expression gdast.Expression, current scope) bool {
+	member, ok := expression.(*gdast.MemberExpression)
+	if !ok {
+		return false
+	}
+	return e.resolveExpression(member.Object, current) == ""
 }
 
 func isNodeLookup(method string) bool {
@@ -989,11 +1315,27 @@ func (e *extractor) inferExpressionType(expression gdast.Expression, current sco
 	call, ok := expression.(*gdast.CallExpression)
 	if !ok {
 		if identifier, ok := expression.(*gdast.Identifier); ok {
-			return current.types[identifier.Name]
+			if resolved := current.types[identifier.Name]; resolved != "" {
+				return resolved
+			}
+			if e.protobufTypes[identifier.Name] {
+				if _, shadowed := current.symbols[identifier.Name]; !shadowed {
+					return identifier.Name
+				}
+			}
 		}
 		return ""
 	}
 	callee := e.resolveCallee(call.Callee, current)
+	apiCallee := e.protobufCallee(callee, current)
+	if !e.localCall(call.Callee, current) && !e.unresolvedMemberReceiver(call.Callee, current) &&
+		!e.untypedLocalReceiver(call.Callee, current) && !e.protobufAmbiguous[apiCallee] {
+		if api, exists := e.protobufAPIs[apiCallee]; exists && api.returns != "" {
+			if !e.protobufClassReceiver(call.Callee, current) || api.form == "" || api.form == "from_bytes" {
+				return api.returns
+			}
+		}
+	}
 	if callee == "preload" || callee == "load" {
 		if len(call.Arguments) > 0 {
 			if resource, ok := literalString(call.Arguments[0]); ok {
@@ -1003,9 +1345,16 @@ func (e *extractor) inferExpressionType(expression gdast.Expression, current sco
 		return ""
 	}
 	if strings.HasSuffix(callee, ".new") {
-		return strings.TrimSuffix(callee, ".new")
+		result := strings.TrimSuffix(callee, ".new")
+		if !e.protobufTypes[result] && !e.protobufAmbiguous[result] {
+			return result
+		}
+		return ""
 	}
 	if last := graph.SimpleName(callee); last != "" && unicode.IsUpper([]rune(last)[0]) {
+		if e.protobufTypes[callee] {
+			return ""
+		}
 		return callee
 	}
 	return ""
@@ -1056,6 +1405,11 @@ func (e *extractor) resolveExpression(expression gdast.Expression, current scope
 	case *gdast.TypeExpression:
 		return e.resolveType(node.Name, current)
 	case *gdast.MemberExpression:
+		if object, ok := node.Object.(*gdast.Identifier); ok && object.Name == "self" {
+			if resolved := current.fields[node.Property]; resolved != "" {
+				return resolved
+			}
+		}
 		object := e.resolveExpression(node.Object, current)
 		if object == "" {
 			return node.Property
@@ -1158,6 +1512,84 @@ func cloneMap(source map[string]string) map[string]string {
 		result[key] = value
 	}
 	return result
+}
+
+func cloneBoolMap(source map[string]bool) map[string]bool {
+	result := make(map[string]bool, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
+}
+
+func cloneFlowScope(current scope) scope {
+	current.symbols = cloneMap(current.symbols)
+	current.types = cloneMap(current.types)
+	current.fields = cloneMap(current.fields)
+	current.fieldSymbols = cloneMap(current.fieldSymbols)
+	current.fieldLocked = cloneBoolMap(current.fieldLocked)
+	current.locked = cloneBoolMap(current.locked)
+	return current
+}
+
+func setInferredType(types map[string]string, name, inferred string) {
+	if inferred == "" {
+		delete(types, name)
+		return
+	}
+	types[name] = inferred
+}
+
+func mergeFlowTypes(current scope, alternatives []map[string]string) {
+	if len(alternatives) == 0 {
+		return
+	}
+	merged := cloneMap(alternatives[0])
+	for name, value := range merged {
+		if _, declared := current.symbols[name]; !declared {
+			if _, incoming := current.types[name]; !incoming {
+				delete(merged, name)
+				continue
+			}
+		}
+		for _, alternative := range alternatives[1:] {
+			if alternative[name] != value {
+				delete(merged, name)
+				break
+			}
+		}
+	}
+	for name := range current.types {
+		delete(current.types, name)
+	}
+	for name, value := range merged {
+		current.types[name] = value
+	}
+}
+
+func mergeFlowFields(current scope, alternatives []map[string]string) {
+	if len(alternatives) == 0 {
+		return
+	}
+	merged := cloneMap(alternatives[0])
+	for name, value := range merged {
+		if _, field := current.fieldSymbols[name]; !field {
+			delete(merged, name)
+			continue
+		}
+		for _, alternative := range alternatives[1:] {
+			if alternative[name] != value {
+				delete(merged, name)
+				break
+			}
+		}
+	}
+	for name := range current.fields {
+		delete(current.fields, name)
+	}
+	for name, value := range merged {
+		current.fields[name] = value
+	}
 }
 
 func cloneSignals(source map[string]signalRef) map[string]signalRef {
