@@ -497,11 +497,13 @@ func (a *App) status(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		if !renderer.hasTerminal() {
 			state := indexer.ProgressError
+			message := "status refresh failed"
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
 				state = indexer.ProgressCanceled
+				message = "status refresh canceled"
 			}
 			observeErr := renderer.Observe(indexer.ProgressEvent{
-				Schema: indexer.ProgressSchemaV1, Phase: indexer.ProgressComplete, State: state, Error: err.Error(),
+				Schema: indexer.ProgressSchemaV1, Phase: indexer.ProgressComplete, State: state, Error: message,
 			})
 			if observeErr != nil {
 				err = errors.Join(err, observeErr)
@@ -509,7 +511,7 @@ func (a *App) status(ctx context.Context, args parsedArguments) error {
 		}
 		closeErr := renderer.Close()
 		if closeErr != nil {
-			return closeErr
+			return errors.Join(err, closeErr)
 		}
 		if renderer.terminalRendered() {
 			return &progressRenderedError{err}

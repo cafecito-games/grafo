@@ -35,18 +35,19 @@ func parseProgressMode(raw string) (progressMode, error) {
 // progressRenderer serializes timer and indexing callbacks so stderr always
 // contains whole human lines or whole NDJSON objects.
 type progressRenderer struct {
-	mu       sync.Mutex
-	wg       sync.WaitGroup
-	writer   io.Writer
-	mode     progressMode
-	delay    time.Duration
-	timer    *time.Timer
-	visible  bool
-	closed   bool
-	last     indexer.ProgressEvent
-	err      error
-	terminal bool
-	active   bool
+	mu               sync.Mutex
+	wg               sync.WaitGroup
+	writer           io.Writer
+	mode             progressMode
+	delay            time.Duration
+	timer            *time.Timer
+	visible          bool
+	closed           bool
+	last             indexer.ProgressEvent
+	err              error
+	terminal         bool
+	renderedTerminal bool
+	active           bool
 }
 
 func newProgressRenderer(writer io.Writer, mode progressMode, terminal bool, delay time.Duration) *progressRenderer {
@@ -67,6 +68,9 @@ func newProgressRenderer(writer io.Writer, mode progressMode, terminal bool, del
 			renderer.visible = true
 			if renderer.last.Schema != "" {
 				renderer.err = renderer.renderLocked(renderer.last)
+				if renderer.err == nil && isTerminalProgressEvent(renderer.last) {
+					renderer.renderedTerminal = true
+				}
 			}
 		})
 	}
@@ -99,7 +103,17 @@ func (r *progressRenderer) Observe(event indexer.ProgressEvent) error {
 		}
 	}
 	r.err = r.renderLocked(event)
+	if r.err == nil && isTerminalProgressEvent(event) {
+		r.renderedTerminal = true
+	}
 	return r.err
+}
+
+func isTerminalProgressEvent(event indexer.ProgressEvent) bool {
+	if event.Phase != indexer.ProgressComplete {
+		return false
+	}
+	return event.State == indexer.ProgressCompleted || event.State == indexer.ProgressError || event.State == indexer.ProgressCanceled
 }
 
 func (r *progressRenderer) renderLocked(event indexer.ProgressEvent) error {
@@ -146,7 +160,7 @@ func (r *progressRenderer) Close() error {
 func (r *progressRenderer) terminalRendered() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.terminal && r.mode == progressJSON && r.err == nil
+	return r.renderedTerminal && r.err == nil
 }
 
 func (r *progressRenderer) hasTerminal() bool {

@@ -71,11 +71,11 @@ func TestAutoProgressPublishesCachedPhaseAndStopsBeforeReturn(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(30 * time.Millisecond)
-	if !strings.Contains(stderr.String(), "sample parse: started") {
-		t.Fatalf("cached active phase was not rendered: %q", stderr.String())
-	}
 	if err := renderer.Close(); err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), "sample parse: started") {
+		t.Fatalf("cached active phase was not rendered: %q", stderr.String())
 	}
 	stable := stderr.String()
 	time.Sleep(20 * time.Millisecond)
@@ -210,5 +210,24 @@ func TestStatusJSONProgressOwnsTerminalError(t *testing.T) {
 	var terminal indexer.ProgressEvent
 	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &terminal); err != nil || terminal.State != indexer.ProgressCanceled {
 		t.Fatalf("terminal progress = %#v, %v; stderr=%q", terminal, err, stderr.String())
+	}
+}
+
+func TestStatusProgressErrorsArePathFreeAndHumanErrorsAreNotDuplicated(t *testing.T) {
+	missing := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := New(&stdout, &stderr).Run(context.Background(), []string{"status", "--progress=json", missing})
+	if code != 1 || stdout.Len() != 0 || strings.Contains(stderr.String(), missing) || strings.Contains(stderr.String(), "grafo:") {
+		t.Fatalf("missing-index JSON: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+
+	root := indexedRepository(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	stdout.Reset()
+	stderr.Reset()
+	code = New(&stdout, &stderr).Run(ctx, []string{"status", "--progress=human", root})
+	if code != 1 || stdout.Len() != 0 || strings.Count(strings.TrimSpace(stderr.String()), "\n") != 0 || strings.Contains(stderr.String(), "grafo:") {
+		t.Fatalf("human cancellation duplicated terminal error: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 }

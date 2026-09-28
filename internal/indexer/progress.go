@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -85,10 +86,25 @@ func (e *progressEmitter) terminal(ctx context.Context, runErr error) error {
 	message := ""
 	if runErr != nil {
 		state = ProgressError
-		message = runErr.Error()
+		message = boundedProgressError(runErr, e.project)
 		if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			state = ProgressCanceled
 		}
 	}
 	return e.emit(ProgressComplete, state, "", 0, 0, message)
+}
+
+func boundedProgressError(err error, project Project) string {
+	message := strings.NewReplacer("\r", " ", "\n", " ").Replace(err.Error())
+	for _, sensitive := range []string{project.IndexPath, project.Root} {
+		if sensitive != "" {
+			message = strings.ReplaceAll(message, sensitive, "<repository>")
+		}
+	}
+	const limit = 512
+	runes := []rune(message)
+	if len(runes) > limit {
+		message = string(runes[:limit-1]) + "…"
+	}
+	return message
 }

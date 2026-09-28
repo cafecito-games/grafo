@@ -240,6 +240,29 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		project.gitSnapshot.Head == indexedCommit && project.gitSnapshot.MembershipStable &&
 		previousUntrackedValid && equalPaths(previousUntracked, project.gitSnapshot.Untracked) &&
 		!schemaChanged && previousDirtyValid && !options.Force && options.Boundary == nil
+	var detectedChanges gitChanges
+	changesValid := false
+	var dirtyPaths []string
+	var untrackedPaths []string
+	dirtyPathsValid := false
+	if err := progress.emit(ProgressChangeProbe, ProgressStarted, "files", 0, 0, ""); err != nil {
+		return report, err
+	}
+	if project.GitManaged && project.Commit != "" {
+		baseCommit := indexedCommit
+		if baseCommit == "" {
+			baseCommit = project.Commit
+		}
+		changeStarted := time.Now()
+		var changeErr error
+		detectedChanges, changeErr = detectGitChanges(ctx, project.Root, baseCommit, project.gitSnapshot)
+		report.Phases.ChangeProbeNS += time.Since(changeStarted).Nanoseconds()
+		report.GitCommands += detectedChanges.gitCommands
+		changesValid = changeErr == nil
+	}
+	if err := progress.emit(ProgressChangeProbe, ProgressCompleted, "files", 0, 0, ""); err != nil {
+		return report, err
+	}
 	if err := progress.emit(ProgressDiscovery, ProgressStarted, "files", 0, 0, ""); err != nil {
 		return report, err
 	}
@@ -287,31 +310,12 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		}
 	}
 	var selected map[string]bool
-	var dirtyPaths []string
-	var untrackedPaths []string
-	dirtyPathsValid := false
-	if err := progress.emit(ProgressChangeProbe, ProgressStarted, "files", 0, 0, ""); err != nil {
-		return report, err
-	}
-	if project.GitManaged && project.Commit != "" {
-		baseCommit := indexedCommit
-		if baseCommit == "" {
-			baseCommit = project.Commit
+	if changesValid {
+		dirtyPaths, dirtyPathsValid = detectedChanges.dirty, true
+		untrackedPaths = detectedChanges.untracked
+		if !options.Force && !schemaChanged && indexedCommit != "" && previousDirtyValid && previousUntrackedValid {
+			selected = selectChangedPaths(paths, known, detectedChanges.changed, previousDirty, s.parsers)
 		}
-		changeStarted := time.Now()
-		changes, changeErr := detectGitChanges(ctx, project.Root, baseCommit, project.gitSnapshot)
-		report.Phases.ChangeProbeNS += time.Since(changeStarted).Nanoseconds()
-		report.GitCommands += changes.gitCommands
-		if changeErr == nil {
-			dirtyPaths, dirtyPathsValid = changes.dirty, true
-			untrackedPaths = changes.untracked
-			if !options.Force && !schemaChanged && indexedCommit != "" && previousDirtyValid && previousUntrackedValid {
-				selected = selectChangedPaths(paths, known, changes.changed, previousDirty, s.parsers)
-			}
-		}
-	}
-	if err := progress.emit(ProgressChangeProbe, ProgressCompleted, "files", 0, 0, ""); err != nil {
-		return report, err
 	}
 	if selected != nil && len(changedSemanticLanguages) > 0 {
 		for _, path := range paths {

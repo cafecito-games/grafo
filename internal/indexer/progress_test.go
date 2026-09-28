@@ -101,8 +101,8 @@ func TestServiceProgressObserverIsOrderedAndObservational(t *testing.T) {
 			t.Fatalf("progress leaked source detail: %s", encoded)
 		}
 	}
-	ordered := []indexer.ProgressPhase{indexer.ProgressGitProbe, indexer.ProgressMembership, indexer.ProgressDiscovery,
-		indexer.ProgressChangeProbe, indexer.ProgressReadHash, indexer.ProgressParse, indexer.ProgressPersistence,
+	ordered := []indexer.ProgressPhase{indexer.ProgressGitProbe, indexer.ProgressMembership, indexer.ProgressChangeProbe,
+		indexer.ProgressDiscovery, indexer.ProgressReadHash, indexer.ProgressParse, indexer.ProgressPersistence,
 		indexer.ProgressReconciliation}
 	for index := 1; index < len(ordered); index++ {
 		if firstStart[ordered[index-1]] >= firstStart[ordered[index]] {
@@ -198,6 +198,45 @@ func TestServiceProgressCancellationIsTerminalAndRetryable(t *testing.T) {
 	report, err := indexer.NewService(repository, registry).Run(ctx, project, indexer.Options{})
 	if err != nil || len(report.Updated) != 1 {
 		t.Fatalf("retry report=%#v err=%v", report, err)
+	}
+}
+
+func TestServiceTerminalProgressRedactsRepositoryPaths(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	path := filepath.Join(root, "sample.progress")
+	if err := os.WriteFile(path, []byte("work"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	var terminal indexer.ProgressEvent
+	_, err = indexer.NewService(repository, parserapi.NewRegistry(progressParser{})).Run(ctx, project, indexer.Options{
+		Boundary: func(boundary indexer.Boundary) error {
+			if boundary.Kind == indexer.BoundaryFilePersisted {
+				return errors.New("failed near " + path)
+			}
+			return nil
+		},
+		ProgressObserver: func(event indexer.ProgressEvent) error {
+			if event.State == indexer.ProgressError {
+				terminal = event
+			}
+			return nil
+		},
+	})
+	if err == nil || terminal.State != indexer.ProgressError {
+		t.Fatalf("error=%v terminal=%#v", err, terminal)
+	}
+	if strings.Contains(terminal.Error, root) || strings.Contains(terminal.Error, path) {
+		t.Fatalf("terminal event leaked repository path: %#v", terminal)
 	}
 }
 
