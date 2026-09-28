@@ -7,6 +7,7 @@ import (
 	"fmt"
 	goast "go/ast"
 	"go/build"
+	"go/token"
 	"go/types"
 	"io/fs"
 	"os"
@@ -34,6 +35,19 @@ type SemanticLoader interface {
 type SemanticCall struct {
 	Target string
 	Ignore bool
+}
+
+// SemanticProtocolUse is compact go/types evidence for one possible protocol
+// operation. Binding names a generated Go symbol; the parser maps it through
+// the Protobuf binding registry before any canonical fact is emitted.
+type SemanticProtocolUse struct {
+	Function   string
+	Kind       graph.EdgeKind
+	Binding    string
+	Form       string
+	API        string
+	StaticType string
+	Location   graph.Location
 }
 
 type SemanticImplementation struct {
@@ -81,6 +95,7 @@ type SemanticView struct {
 	PackagePath       string
 	BuildContext      string
 	Calls             map[int]SemanticCall
+	ProtocolUses      []SemanticProtocolUse
 	Implementations   []SemanticImplementation
 	Functions         map[string]SemanticFunction
 	ErrorDeclarations []SemanticErrorDeclaration
@@ -252,6 +267,7 @@ func cloneSemanticView(view SemanticView) SemanticView {
 		copyView.Calls[offset] = call
 	}
 	copyView.Implementations = append([]SemanticImplementation(nil), view.Implementations...)
+	copyView.ProtocolUses = append([]SemanticProtocolUse(nil), view.ProtocolUses...)
 	copyView.Functions = make(map[string]SemanticFunction, len(view.Functions))
 	for name, function := range view.Functions {
 		function.ErrorResults = append([]SemanticErrorResult(nil), function.ErrorResults...)
@@ -359,10 +375,216 @@ func collectPackageViews(root, buildContext string, pkg *packages.Package, views
 			view.Calls = map[int]SemanticCall{}
 		}
 		collectCalls(pkg, file, view.Calls)
+		// Protocol facts require a fully type-checked package. Other semantic
+		// evidence remains useful for partially checked packages, but protocol
+		// classification must never fill gaps with symbol spelling.
+		if len(pkg.Errors) == 0 {
+			collectProtocolUses(pkg, file, path, &view)
+		}
 		collectFailureView(root, pkg, file, path, &view)
 		views[path] = view
 	}
 	collectPackageDiagnostics(root, pkg, views, buildContext)
+}
+
+func collectProtocolUses(pkg *packages.Package, file *goast.File, path string, view *SemanticView) {
+	if pkg.TypesInfo == nil || pkg.Fset == nil {
+		return
+	}
+	for _, declaration := range file.Decls {
+		switch value := declaration.(type) {
+		case *goast.FuncDecl:
+			function := objectTarget(pkg.TypesInfo.Defs[value.Name])
+			if value.Body != nil {
+				collectProtocolUsesInNode(pkg, path, function, value.Body, &view.ProtocolUses)
+			}
+		case *goast.GenDecl:
+			collectProtocolUsesInNode(pkg, path, "", value, &view.ProtocolUses)
+		}
+	}
+	sort.Slice(view.ProtocolUses, func(i, j int) bool {
+		left, right := view.ProtocolUses[i], view.ProtocolUses[j]
+		if left.Location.Line != right.Location.Line {
+			return left.Location.Line < right.Location.Line
+		}
+		if left.Location.Column != right.Location.Column {
+			return left.Location.Column < right.Location.Column
+		}
+		if left.Kind != right.Kind {
+			return left.Kind < right.Kind
+		}
+		if left.Binding != right.Binding {
+			return left.Binding < right.Binding
+		}
+		return left.Form < right.Form
+	})
+}
+
+func collectProtocolUsesInNode(pkg *packages.Package, path, function string, node goast.Node, uses *[]SemanticProtocolUse) {
+	info := pkg.TypesInfo
+	writes := map[token.Pos]bool{}
+	callBindings := map[types.Object]string{}
+	callBindingWrites := map[types.Object]int{}
+	goast.Inspect(node, func(current goast.Node) bool {
+		switch value := current.(type) {
+		case *goast.AssignStmt:
+			for _, expression := range value.Lhs {
+				markProtocolWrites(expression, writes)
+			}
+			for index, lhs := range value.Lhs {
+				if index >= len(value.Rhs) {
+					break
+				}
+				identifier, ok := lhs.(*goast.Ident)
+				if !ok {
+					continue
+				}
+				target := callableTarget(value.Rhs[index], info, callBindings)
+				object := info.Defs[identifier]
+				if object == nil {
+					object = info.Uses[identifier]
+				}
+				if object != nil {
+					callBindingWrites[object]++
+					if target != "" {
+						callBindings[object] = target
+					}
+				}
+			}
+		case *goast.IncDecStmt:
+			markProtocolWrites(value.X, writes)
+		case *goast.ValueSpec:
+			for index, name := range value.Names {
+				if index >= len(value.Values) {
+					break
+				}
+				if target := callableTarget(value.Values[index], info, callBindings); target != "" {
+					if object := info.Defs[name]; object != nil {
+						callBindingWrites[object]++
+						callBindings[object] = target
+					}
+				} else if object := info.Defs[name]; object != nil {
+					callBindingWrites[object]++
+				}
+			}
+		}
+		return true
+	})
+	for object, count := range callBindingWrites {
+		if count != 1 {
+			delete(callBindings, object)
+		}
+	}
+	add := func(kind graph.EdgeKind, binding, form, api string, static types.Type, start, end token.Pos) {
+		if binding == "" || static == nil {
+			return
+		}
+		*uses = append(*uses, SemanticProtocolUse{
+			Function: function, Kind: kind, Binding: binding, Form: form, API: api,
+			StaticType: semanticTypeString(static), Location: semanticLocation(path, pkg.Fset, start, end),
+		})
+	}
+	goast.Inspect(node, func(current goast.Node) bool {
+		switch value := current.(type) {
+		case *goast.CallExpr:
+			target := callableTarget(value.Fun, info, callBindings)
+			switch target {
+			case "google.golang.org/protobuf/proto.Marshal":
+				if len(value.Args) > 0 {
+					typeValue := info.TypeOf(value.Args[0])
+					add(graph.EdgeEncodes, semanticNamedType(typeValue), "marshal", target, typeValue, value.Pos(), value.End())
+				}
+			case "google.golang.org/protobuf/proto.Unmarshal":
+				if len(value.Args) > 1 {
+					typeValue := info.TypeOf(value.Args[1])
+					add(graph.EdgeDecodes, semanticNamedType(typeValue), "unmarshal", target, typeValue, value.Pos(), value.End())
+				}
+			default:
+				selector, ok := value.Fun.(*goast.SelectorExpr)
+				if !ok || info.Selections[selector] == nil {
+					break
+				}
+				if _, ok := info.Selections[selector].Obj().(*types.Func); ok {
+					typeValue := info.TypeOf(selector.X)
+					add(graph.EdgeReads, target, "getter", target, typeValue, value.Pos(), value.End())
+				}
+			}
+		case *goast.CompositeLit:
+			typeValue := info.TypeOf(value)
+			owner := semanticNamedType(typeValue)
+			add(graph.EdgeWrites, owner, "composite_literal_type", "go.composite_literal", typeValue, value.Pos(), value.End())
+			for _, element := range value.Elts {
+				keyed, ok := element.(*goast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				identifier, ok := keyed.Key.(*goast.Ident)
+				if !ok {
+					continue
+				}
+				field, ok := info.Uses[identifier].(*types.Var)
+				if !ok || !field.IsField() {
+					continue
+				}
+				add(graph.EdgeWrites, owner+"."+field.Name(), "composite_literal", "go.composite_literal", typeValue, keyed.Pos(), keyed.End())
+			}
+		case *goast.SelectorExpr:
+			selection := info.Selections[value]
+			if selection == nil {
+				break
+			}
+			field, ok := selection.Obj().(*types.Var)
+			if !ok || !field.IsField() {
+				break
+			}
+			typeValue := info.TypeOf(value.X)
+			kind := graph.EdgeReads
+			if writes[value.Pos()] {
+				kind = graph.EdgeWrites
+			}
+			add(kind, semanticNamedType(selection.Recv())+"."+field.Name(), "field_selection", "go.field", typeValue, value.Pos(), value.End())
+		case *goast.TypeSwitchStmt:
+			for _, statement := range value.Body.List {
+				clause, ok := statement.(*goast.CaseClause)
+				if !ok {
+					continue
+				}
+				for _, expression := range clause.List {
+					typeValue := info.TypeOf(expression)
+					add(graph.EdgeReads, semanticNamedType(typeValue), "type_switch", "go.type_switch", typeValue, expression.Pos(), expression.End())
+				}
+			}
+		}
+		return true
+	})
+}
+
+func markProtocolWrites(expression goast.Expr, writes map[token.Pos]bool) {
+	switch value := expression.(type) {
+	case *goast.SelectorExpr:
+		writes[value.Pos()] = true
+	case *goast.IndexExpr:
+		markProtocolWrites(value.X, writes)
+	case *goast.ParenExpr:
+		markProtocolWrites(value.X, writes)
+	}
+}
+
+func semanticNamedType(value types.Type) string {
+	named := namedType(value)
+	if named == nil || named.Obj().Pkg() == nil {
+		return ""
+	}
+	return named.Obj().Pkg().Path() + "." + named.Obj().Name()
+}
+
+func semanticTypeString(value types.Type) string {
+	return types.TypeString(value, func(pkg *types.Package) string { return pkg.Path() })
+}
+
+func semanticLocation(path string, fset *token.FileSet, start, end token.Pos) graph.Location {
+	from, to := fset.Position(start), fset.Position(end)
+	return graph.Location{Path: path, Line: from.Line, Column: from.Column, EndLine: to.Line}
 }
 
 func workspacePackagePatterns(root string) ([]string, error) {

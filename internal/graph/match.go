@@ -132,6 +132,8 @@ func AllowsResolutionKind(edge EdgeKind, kind NodeKind) bool {
 		return kind == KindFunction || kind == KindMethod
 	case EdgeReads, EdgeWrites:
 		return kind == KindTable || kind == KindView
+	case EdgeEncodes, EdgeDecodes:
+		return kind == KindType
 	case EdgeReferences:
 		return kind == KindConfigKey || kind == KindTable || kind == KindView ||
 			kind == KindGodotAutoload || kind == KindGodotScene ||

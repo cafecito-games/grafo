@@ -476,6 +476,247 @@ func (*Message) GetValue() string { return "" }
 	assertHasNode(t, result.Nodes, graph.KindFunction, "Keep")
 }
 
+func TestPackageSemanticLoaderExtractsCanonicalProtobufUsage(t *testing.T) {
+	root := protobufUsageFixture(t)
+	content, err := os.ReadFile(filepath.Join(root, "app.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "app.go", Content: content, Repository: "protobuf-usage",
+		RepoID: "repo", GoModule: "example.com/app",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	useID := nodeIDByQualified(t, result.Nodes, "example.com/app.Use")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeEncodes, "acme.v1.Envelope", "marshal")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeDecodes, "acme.v1.Envelope", "unmarshal")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeWrites, "acme.v1.Envelope.title", "composite_literal")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeWrites, "acme.v1.Envelope.text", "oneof_wrapper")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeReads, "acme.v1.Envelope.title", "getter")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeReads, "acme.v1.Envelope.title", "field_selection")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeWrites, "acme.v1.Envelope.title", "field_selection")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeReads, "acme.v1.Envelope.text", "type_switch")
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "google.golang.org/protobuf/proto.Marshal")
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "google.golang.org/protobuf/proto.Unmarshal")
+
+	falsePositiveID := nodeIDByQualified(t, result.Nodes, "example.com/app.FalsePositive")
+	for _, fact := range result.Facts {
+		if fact.FromID == falsePositiveID && (fact.Kind == graph.EdgeEncodes || fact.Kind == graph.EdgeDecodes ||
+			fact.Kind == graph.EdgeReads || fact.Kind == graph.EdgeWrites) && fact.Properties["protocol"] == "protobuf" {
+			t.Fatalf("ordinary same-name API produced protocol usage: %#v", fact)
+		}
+	}
+}
+
+func TestPackageSemanticLoaderFailsClosedForIllTypedProtobufUsage(t *testing.T) {
+	root := protobufUsageFixture(t)
+	content := []byte(`package app
+import (
+	generated "example.com/app/gen"
+	wire "google.golang.org/protobuf/proto"
+)
+func Broken() { _, _ = wire.Marshal(&generated.Envelope{Title: "x"}); missing() }
+`)
+	writeFile(t, filepath.Join(root, "app.go"), string(content))
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "app.go", Content: content, Repository: "protobuf-usage",
+		RepoID: "repo", GoModule: "example.com/app",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Diagnostics) == 0 {
+		t.Fatal("ill-typed package produced no diagnostic")
+	}
+	for _, fact := range result.Facts {
+		if fact.Properties["protocol"] == "protobuf" {
+			t.Fatalf("ill-typed package produced protocol usage: %#v", fact)
+		}
+	}
+}
+
+func TestParserSuppressesProtocolUseFromConfiguredGeneratedOutputWithDriftedHeader(t *testing.T) {
+	root := protobufUsageFixture(t)
+	path := filepath.Join(root, "gen", "schema.pb.go")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content = []byte(strings.Replace(string(content), "source: schema.proto", "source: drifted.proto", 1))
+	writeFile(t, path, string(content))
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "gen/schema.pb.go", Content: content, Repository: "protobuf-usage",
+		RepoID: "repo", GoModule: "example.com/app",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasNode(t, result.Nodes, graph.KindMethod, "GetTitle")
+	if len(result.Diagnostics) == 0 || !strings.Contains(result.Diagnostics[len(result.Diagnostics)-1].Message, "provenance rejected") {
+		t.Fatalf("drifted generated header was not diagnosed: %#v", result.Diagnostics)
+	}
+	for _, fact := range result.Facts {
+		if fact.Properties["protocol"] == "protobuf" {
+			t.Fatalf("configured generated implementation became an application consumer: %#v", fact)
+		}
+	}
+}
+
+func TestParserRejectsAmbiguousProtocolBinding(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/app\n\ngo 1.26\n")
+	for _, side := range []string{"left", "right"} {
+		writeFile(t, filepath.Join(root, side, "buf.yaml"), "version: v2\nmodules:\n  - path: proto\n")
+		writeFile(t, filepath.Join(root, side, "buf.gen.yaml"), `version: v2
+plugins:
+  - remote: buf.build/protocolbuffers/go:v1.36.11
+    out: ../gen
+    opt: paths=source_relative
+`)
+		writeFile(t, filepath.Join(root, side, "proto", "schema.proto"), `syntax = "proto3";
+package `+side+`;
+option go_package = "example.com/app/gen;generated";
+message Envelope { string value = 1; }
+`+map[string]string{"left": "message Unique { string value = 2; }\n"}[side])
+	}
+	writeFile(t, filepath.Join(root, "gen", "schema.pb.go"), `// Code generated by protoc-gen-go. DO NOT EDIT.
+// source: schema.proto
+package generated
+type Envelope struct { Value string }
+func (value *Envelope) GetValue() string { return value.Value }
+type Unique struct { Value string }
+func (value *Unique) GetValue() string { return value.Value }
+`)
+	content := []byte(`package app
+import generated "example.com/app/gen"
+func Read(value *generated.Envelope) string { return value.GetValue() }
+`)
+	writeFile(t, filepath.Join(root, "app.go"), string(content))
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "app.go", Content: content, Repository: "ambiguous",
+		RepoID: "repo", GoModule: "example.com/app",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundDiagnostic := false
+	for _, diagnostic := range result.Diagnostics {
+		foundDiagnostic = foundDiagnostic || strings.Contains(diagnostic.Message, "ambiguous Protobuf binding")
+	}
+	if !foundDiagnostic {
+		t.Fatalf("ambiguous binding produced no diagnostic: %#v", result.Diagnostics)
+	}
+	for _, fact := range result.Facts {
+		if fact.Properties["protocol"] == "protobuf" {
+			t.Fatalf("ambiguous binding produced canonical usage: %#v", fact)
+		}
+	}
+	generatedContent, err := os.ReadFile(filepath.Join(root, "gen", "schema.pb.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	generatedResult, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "gen/schema.pb.go", Content: generatedContent, Repository: "ambiguous",
+		RepoID: "repo", GoModule: "example.com/app",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fact := range generatedResult.Facts {
+		if fact.Properties["protocol"] == "protobuf" {
+			t.Fatalf("conflicted generated output became an application consumer: %#v", fact)
+		}
+	}
+}
+
+func protobufUsageFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), `module example.com/app
+
+go 1.26
+
+require google.golang.org/protobuf v0.0.0
+replace google.golang.org/protobuf => ./third_party/protobuf
+`)
+	writeFile(t, filepath.Join(root, "third_party", "protobuf", "go.mod"), "module google.golang.org/protobuf\n\ngo 1.26\n")
+	writeFile(t, filepath.Join(root, "third_party", "protobuf", "proto", "proto.go"), `package proto
+type Message interface{}
+func Marshal(Message) ([]byte, error) { return nil, nil }
+func Unmarshal([]byte, Message) error { return nil }
+`)
+	writeFile(t, filepath.Join(root, "buf.gen.yaml"), `version: v2
+plugins:
+  - remote: buf.build/protocolbuffers/go:v1.36.11
+    out: gen
+    opt: paths=source_relative
+`)
+	writeFile(t, filepath.Join(root, "schema.proto"), `syntax = "proto3";
+package acme.v1;
+option go_package = "example.com/app/gen;generated";
+message Envelope {
+  string title = 1;
+  oneof payload { string text = 2; }
+}
+`)
+	writeFile(t, filepath.Join(root, "gen", "schema.pb.go"), `// Code generated by protoc-gen-go. DO NOT EDIT.
+// source: schema.proto
+package generated
+type Envelope struct { Title string; Payload isEnvelope_Payload }
+func (value *Envelope) GetTitle() string { return value.Title }
+type isEnvelope_Payload interface { isEnvelope_Payload() }
+type Envelope_Text struct { Text string }
+func (*Envelope_Text) isEnvelope_Payload() {}
+`)
+	writeFile(t, filepath.Join(root, "app.go"), `package app
+import (
+	generated "example.com/app/gen"
+	wire "google.golang.org/protobuf/proto"
+)
+type EnvelopeAlias = generated.Envelope
+type Ordinary struct { Title string }
+func (*Ordinary) GetTitle() string { return "" }
+func Use(data []byte, input *generated.Envelope) {
+	value := &EnvelopeAlias{Title: "hello", Payload: &generated.Envelope_Text{Text: "world"}}
+	encode := wire.Marshal
+	_, _ = encode(value)
+	_ = wire.Unmarshal(data, input)
+	_ = input.GetTitle()
+	_ = input.Title
+	input.Title = "updated"
+	switch input.Payload.(type) {
+	case *generated.Envelope_Text:
+	}
+}
+func FalsePositive(value *Ordinary) {
+	_ = value.GetTitle()
+	_ = value.Title
+	_, _ = wire.Marshal(value)
+}
+`)
+	return root
+}
+
+func assertProtocolFact(t *testing.T, facts []graph.Fact, fromID string, kind graph.EdgeKind, target, form string) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.FromID != fromID || fact.Kind != kind || fact.Target != target || fact.Properties["form"] != form {
+			continue
+		}
+		if fact.TargetID == "" || fact.TargetKind == "" || fact.Location.Path == "" || fact.Location.Line == 0 ||
+			fact.Properties["protocol"] != "protobuf" || fact.Properties["api"] == "" || fact.Properties["binding"] == "" ||
+			fact.Properties["binding_id"] == "" || fact.Properties["static_type"] == "" ||
+			fact.Properties["evidence"] != "go/types" {
+			t.Fatalf("protocol fact lost canonical evidence: %#v", fact)
+		}
+		return
+	}
+	t.Fatalf("missing %s protocol fact from %q to %q with form %q", kind, fromID, target, form)
+}
+
 func TestPackageSemanticLoaderRetainsProvenFactsForBrokenPackage(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/broken\n\ngo 1.26\n")

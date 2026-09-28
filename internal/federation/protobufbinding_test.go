@@ -25,3 +25,22 @@ func TestGeneratedFromFederationRequiresCanonicalProtobufDeclaration(t *testing.
 		})
 	}
 }
+
+func TestProtocolUsageFederationRequiresCanonicalProtobufDeclaration(t *testing.T) {
+	tests := []struct {
+		relation graph.EdgeKind
+		node     graph.Node
+		want     bool
+	}{
+		{graph.EdgeEncodes, graph.Node{Kind: graph.KindType, Language: "protobuf"}, true},
+		{graph.EdgeDecodes, graph.Node{Kind: graph.KindType, Language: "go"}, false},
+		{graph.EdgeReads, graph.Node{Kind: graph.KindField, Language: "protobuf"}, true},
+		{graph.EdgeWrites, graph.Node{Kind: graph.KindField, Language: "go"}, false},
+		{graph.EdgeReads, graph.Node{Kind: graph.KindTable, Language: "sql"}, true},
+	}
+	for _, test := range tests {
+		if got := candidateAllowed(test.relation, test.node); got != test.want {
+			t.Errorf("candidateAllowed(%s, %#v) = %v, want %v", test.relation, test.node, got, test.want)
+		}
+	}
+}

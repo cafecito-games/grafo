@@ -56,6 +56,8 @@ var impactRelations = []graph.EdgeKind{
 	graph.EdgeReferences,
 	graph.EdgeReads,
 	graph.EdgeWrites,
+	graph.EdgeEncodes,
+	graph.EdgeDecodes,
 	graph.EdgeAssigns,
 	graph.EdgeReturns,
 	graph.EdgePasses,
