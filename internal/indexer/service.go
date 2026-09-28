@@ -256,7 +256,7 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		if changeErr == nil {
 			dirtyPaths, dirtyPathsValid = changes.dirty, true
 			untrackedPaths = changes.untracked
-			if !options.Force && !schemaChanged && indexedCommit != "" && previousDirtyValid {
+			if !options.Force && !schemaChanged && indexedCommit != "" && previousDirtyValid && previousUntrackedValid {
 				selected = selectChangedPaths(paths, known, changes.changed, previousDirty, s.parsers)
 			}
 		}
@@ -408,7 +408,7 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		}
 		report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
 	}
-	shouldReconcile := graphDirtied || !previousDirtyValid
+	shouldReconcile := graphDirtied || !previousDirtyValid || !previousUntrackedValid
 	if !shouldReconcile {
 		if status, ok := s.repository.(graph.ReconciliationStatusRepository); ok {
 			shouldReconcile, err = status.ReconciliationPending(ctx)

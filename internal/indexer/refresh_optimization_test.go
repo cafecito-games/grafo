@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -146,6 +148,90 @@ func TestServiceRepositoryWithoutCleanProofReconciles(t *testing.T) {
 	}
 	if fallback.reconciles != 1 {
 		t.Fatalf("repository without clean proof reconciled %d times, want 1", fallback.reconciles)
+	}
+}
+
+func TestServiceCorruptPriorGitEvidenceFailsClosedAndRepairs(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	runGit(t, root, "init", "-b", "main")
+	write(t, filepath.Join(root, "README.md"), "# Sample\n")
+	runGit(t, root, "add", "README.md")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	registry := parserapi.NewRegistry(markdownparser.New())
+	service := indexer.NewService(repository, registry)
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"git_dirty_paths", "git_untracked_paths"} {
+		t.Run(key, func(t *testing.T) {
+			if err := repository.SetMeta(ctx, key, "{malformed"); err != nil {
+				t.Fatal(err)
+			}
+			spy := &indexRepositorySpy{IndexRepository: repository}
+			report, err := indexer.NewService(spy, registry).Run(ctx, project, indexer.Options{ReportDetail: indexer.ReportWithoutCounts})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if report.Checked != 1 || spy.reconcileCalls != 1 {
+				t.Fatalf("corrupt %s did not use safe path: report=%#v reconciles=%d", key, report, spy.reconcileCalls)
+			}
+			repaired, err := repository.Meta(ctx, key)
+			if err != nil || repaired != "[]" {
+				t.Fatalf("repaired %s = %q, err=%v", key, repaired, err)
+			}
+		})
+	}
+}
+
+func TestServiceRejectsRemoteIdentityChangeBeforeMutation(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	runGit(t, root, "init", "-b", "main")
+	runGit(t, root, "remote", "add", "origin", "git@example.invalid:team/first.git")
+	write(t, filepath.Join(root, "README.md"), "# Sample\n")
+	runGit(t, root, "add", "README.md")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	registry := parserapi.NewRegistry(markdownparser.New())
+	if _, err := indexer.NewService(repository, registry).Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "remote", "set-url", "origin", "git@example.invalid:team/longer-second.git")
+	changed, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := indexer.NewService(repository, registry).Run(ctx, changed, indexer.Options{}); err == nil || !strings.Contains(err.Error(), "repository identity changed") {
+		t.Fatalf("remote identity change error = %v", err)
+	}
+	after, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("identity mismatch mutated graph: before=%#v after=%#v", before, after)
 	}
 }
 
