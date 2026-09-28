@@ -112,6 +112,8 @@ func (s *Service) Server(version string) *mcp.Server {
 		mcp.AddTool(server, &mcp.Tool{Name: "list_outbound_requests", Title: "List outbound requests", Description: "List outbound HTTP facts and resolve each to the strongest compatible endpoint when available. Equal-best declarations remain ambiguous and unknown targets remain external.", Annotations: annotations}, s.listOutboundRequests)
 		mcp.AddTool(server, &mcp.Tool{Name: "find_handler", Title: "Find handler", Description: "Find HTTP and event handlers only from handled_by graph evidence, preserving ambiguous, missing, and unresolved targets.", Annotations: annotations}, s.findHandler)
 		mcp.AddTool(server, &mcp.Tool{Name: "get_service_topology", Title: "Get service topology", Description: "Return component-backed service nodes, repository fallbacks for unassigned files, and evidence-backed synchronous HTTP and asynchronous event links. Every link retains its endpoint or event node IDs and underlying edge IDs.", Annotations: annotations}, s.getServiceTopology)
+	}
+	if s.messageFlow != nil {
 		mcp.AddTool(server, &mcp.Tool{Name: "get_message_flow", Title: "Get message flow", Description: "Trace a canonical protocol message through generated bindings, field producers and consumers, codecs, transport operations, channels, and handlers. Missing and uncertain evidence remain explicit; ambiguous selectors are never guessed.", Annotations: annotations}, s.getMessageFlow)
 		mcp.AddTool(server, &mcp.Tool{Name: "list_message_coverage", Title: "List message coverage", Description: "List protocol message-flow coverage and proven gaps, with package, message, oneof, direction, component, repository, and status filters.", Annotations: annotations}, s.listMessageCoverage)
 	}
@@ -731,7 +733,7 @@ func (s *Service) getServiceTopology(ctx context.Context, _ *mcp.CallToolRequest
 type MessageFlowInput struct {
 	Selector   string   `json:"selector,omitempty" jsonschema:"canonical message name, qualified name, or stable canonical node ID"`
 	Selectors  []string `json:"selectors,omitempty" jsonschema:"batch of canonical message selectors resolved in caller order"`
-	Repository string   `json:"repository,omitempty" jsonschema:"restrict resolution and evidence to one indexed repository"`
+	Repository string   `json:"repository,omitempty" jsonschema:"restrict canonical message resolution to one indexed repository; federated peer evidence is retained"`
 	Component  string   `json:"component,omitempty" jsonschema:"restrict application evidence to one exact component name or stable component ID"`
 	Direction  string   `json:"direction,omitempty" jsonschema:"outgoing, incoming, or both; defaults to both"`
 	Limit      int      `json:"limit,omitempty" jsonschema:"maximum evidence sites per exact relation; defaults to 100 and may not exceed 1000"`
@@ -752,15 +754,23 @@ func (s *Service) getMessageFlow(ctx context.Context, _ *mcp.CallToolRequest, in
 	}
 	options := query.MessageFlowOptions{Repository: input.Repository, Component: input.Component,
 		Direction: query.Direction(input.Direction), Limit: input.Limit}
-	results := runBatch(ctx, selectors, namingCandidates(func(flowContext context.Context, selector string) (query.MessageFlow, error) {
-		return s.messageFlow.Flow(flowContext, selector, options)
-	}))
+	attempts := s.messageFlow.Flows(ctx, selectors, options)
+	results := make([]ResultEnvelope[query.MessageFlow], 0, len(attempts))
+	for index, attempt := range attempts {
+		envelope := ResultEnvelope[query.MessageFlow]{Index: index, Input: selectors[index]}
+		if err := withCandidates(attempt.Error); err != nil {
+			envelope.Error = err.Error()
+		} else {
+			envelope.Value = &attempt.Flow
+		}
+		results = append(results, envelope)
+	}
 	flow, err := firstValue(results, batched)
 	return nil, MessageFlowOutput{MessageFlow: flow, Results: results}, err
 }
 
 type MessageCoverageInput struct {
-	Repository string `json:"repository,omitempty" jsonschema:"restrict messages and evidence to one indexed repository"`
+	Repository string `json:"repository,omitempty" jsonschema:"restrict canonical messages to one indexed repository; federated peer evidence is retained"`
 	Package    string `json:"package,omitempty" jsonschema:"exact canonical protocol package"`
 	Message    string `json:"message,omitempty" jsonschema:"exact message name or qualified canonical message name"`
 	Oneof      string `json:"oneof,omitempty" jsonschema:"exact oneof name; each selected arm is evaluated independently"`

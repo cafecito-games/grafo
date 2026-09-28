@@ -9,3 +9,6 @@ message Envelope {
     string receipt = 4;
   }
 }
+message EncodedOnly {
+  string value = 1;
+}

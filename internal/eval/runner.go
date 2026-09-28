@@ -453,7 +453,8 @@ func evaluateMessageCoverage(ctx context.Context, repository graph.TopologyRepos
 func summarizeMessageFlow(flow query.MessageFlow, origins map[string]map[string]bool) MessageFlowResult {
 	result := MessageFlowResult{Message: resourceNodeRef(flow.Message, origins), Status: flow.Status, Bindings: evidenceIDs(flow.Bindings),
 		Members: summarizeMembers(flow.Members, origins), Encoders: evidenceIDs(flow.Encoders), Decoders: evidenceIDs(flow.Decoders),
-		Sends: []MessageTransportResult{}, Receives: []MessageTransportResult{}, Gaps: gapNames(flow.Gaps),
+		Sends: []MessageTransportResult{}, Receives: []MessageTransportResult{}, Handlers: []MessageHandlerResult{},
+		ChannelMismatches: []MessageChannelConflict{}, Gaps: gapNames(flow.Gaps),
 		UnknownEvidence: evidenceIDs(flow.UnknownEvidence), Truncated: flow.Truncated}
 	result.Uncertainties = uncertaintyReasons(flow.Uncertainties)
 	for _, item := range flow.Sends {
@@ -461,6 +462,14 @@ func summarizeMessageFlow(flow query.MessageFlow, origins map[string]map[string]
 	}
 	for _, item := range flow.Receives {
 		result.Receives = append(result.Receives, summarizeTransport(item, origins))
+	}
+	for _, item := range flow.Handlers {
+		result.Handlers = append(result.Handlers, MessageHandlerResult{Handler: resourceNodeRef(item.Evidence.Node, origins),
+			Evidence: item.Evidence.EdgeID, Callers: evidenceIDs(item.Callers)})
+	}
+	for _, item := range flow.ChannelMismatches {
+		result.ChannelMismatches = append(result.ChannelMismatches, MessageChannelConflict{
+			Send: summarizeTransport(item.Send, origins), Receive: summarizeTransport(item.Receive, origins)})
 	}
 	return result
 }

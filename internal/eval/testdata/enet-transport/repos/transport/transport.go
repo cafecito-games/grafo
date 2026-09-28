@@ -26,6 +26,10 @@ func SendEnvelope(peer enet.Peer, message *generated.Envelope) {
 	send(peer, payload)
 }
 
+func EncodeOnly(message *generated.EncodedOnly) {
+	_, _ = wire.Marshal(message)
+}
+
 func ReceiveEnvelope(event enet.Event, message *generated.Envelope) {
 	packet := event.GetPacket()
 	payload := packet.GetData()

@@ -140,22 +140,50 @@ type MessageFlowService struct {
 	repository graph.TopologyRepository
 }
 
+// MessageFlowAttempt preserves one selector's result or error in batch order.
+// Error stays adapter-neutral so callers can retain typed ambiguity candidates.
+type MessageFlowAttempt struct {
+	Flow  MessageFlow
+	Error error
+}
+
 func NewMessageFlow(repository graph.TopologyRepository) *MessageFlowService {
 	return &MessageFlowService{repository: repository}
 }
 
 func (s *MessageFlowService) Flow(ctx context.Context, selector string, options MessageFlowOptions) (MessageFlow, error) {
+	attempts := s.Flows(ctx, []string{selector}, options)
+	return attempts[0].Flow, attempts[0].Error
+}
+
+// Flows evaluates several selectors against one bounded component snapshot.
+// Results preserve selector order and isolate errors per selector.
+func (s *MessageFlowService) Flows(ctx context.Context, selectors []string, options MessageFlowOptions) []MessageFlowAttempt {
+	result := make([]MessageFlowAttempt, len(selectors))
+	initializeError := func(err error) []MessageFlowAttempt {
+		for index := range result {
+			result[index].Error = err
+		}
+		return result
+	}
 	if _, err := messageFlowLimit(options.Limit); err != nil {
-		return MessageFlow{}, err
+		return initializeError(err)
 	}
 	if options.Direction != "" && options.Direction != Both && options.Direction != Incoming && options.Direction != Outgoing {
-		return MessageFlow{}, fmt.Errorf("unknown message-flow direction %q", options.Direction)
+		return initializeError(fmt.Errorf("unknown message-flow direction %q", options.Direction))
 	}
 	components, truncated, err := s.componentIndex(ctx, "")
 	if err != nil {
-		return MessageFlow{}, err
+		return initializeError(err)
 	}
-	return s.flow(ctx, selector, options, components, truncated)
+	for index, selector := range selectors {
+		if err := ctx.Err(); err != nil {
+			result[index].Error = err
+			continue
+		}
+		result[index].Flow, result[index].Error = s.flow(ctx, selector, options, components, truncated)
+	}
+	return result
 }
 
 func (s *MessageFlowService) flow(ctx context.Context, selector string, options MessageFlowOptions,
@@ -241,8 +269,8 @@ func (s *MessageFlowService) flow(ctx context.Context, selector string, options 
 				member.Consumers = append(member.Consumers, evidence)
 			}
 		}
-		filterEvidenceByDirection(&member, options.Direction)
 		classifyMember(&member, flow.Truncated)
+		filterEvidenceByDirection(&member, options.Direction)
 		flow.Members = append(flow.Members, member)
 	}
 	carriers, err := load(graph.IncomingRelations, graph.EdgeCarries)
@@ -699,7 +727,7 @@ func filterFlowComponent(flow *MessageFlow, component string) {
 	flow.UnknownEvidence = filter(flow.UnknownEvidence)
 	uncertainties := flow.Uncertainties[:0]
 	for _, uncertainty := range flow.Uncertainties {
-		if len(uncertainty.Evidence) == 0 {
+		if len(uncertainty.Evidence) == 0 || messageWideUncertainty(uncertainty.Reason) {
 			uncertainties = append(uncertainties, uncertainty)
 			continue
 		}
@@ -731,6 +759,15 @@ func filterFlowComponent(flow *MessageFlow, component string) {
 	})
 	flow.ChannelMismatches = channelConflicts(flow.Sends, flow.Receives)
 	classifyFlow(flow)
+}
+
+func messageWideUncertainty(reason string) bool {
+	switch reason {
+	case "binding_evidence_missing", "unresolved_binding", "unsupported_generator", "truncated":
+		return true
+	default:
+		return false
+	}
 }
 
 func hasApplicationEvidence(flow MessageFlow) bool {

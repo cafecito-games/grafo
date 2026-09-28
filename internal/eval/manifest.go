@@ -52,18 +52,20 @@ type MessageFlowSpec struct {
 }
 
 type MessageFlowResult struct {
-	Message         NodeRef                  `json:"message"`
-	Status          query.CoverageStatus     `json:"status"`
-	Bindings        []string                 `json:"bindings"`
-	Members         []MessageMemberResult    `json:"members"`
-	Encoders        []string                 `json:"encoders"`
-	Decoders        []string                 `json:"decoders"`
-	Sends           []MessageTransportResult `json:"sends"`
-	Receives        []MessageTransportResult `json:"receives"`
-	Gaps            []string                 `json:"gaps"`
-	UnknownEvidence []string                 `json:"unknown_evidence"`
-	Uncertainties   []string                 `json:"uncertainties"`
-	Truncated       bool                     `json:"truncated"`
+	Message           NodeRef                  `json:"message"`
+	Status            query.CoverageStatus     `json:"status"`
+	Bindings          []string                 `json:"bindings"`
+	Members           []MessageMemberResult    `json:"members"`
+	Encoders          []string                 `json:"encoders"`
+	Decoders          []string                 `json:"decoders"`
+	Sends             []MessageTransportResult `json:"sends"`
+	Receives          []MessageTransportResult `json:"receives"`
+	Handlers          []MessageHandlerResult   `json:"handlers"`
+	ChannelMismatches []MessageChannelConflict `json:"channel_mismatches"`
+	Gaps              []string                 `json:"gaps"`
+	UnknownEvidence   []string                 `json:"unknown_evidence"`
+	Uncertainties     []string                 `json:"uncertainties"`
+	Truncated         bool                     `json:"truncated"`
 }
 
 type MessageMemberResult struct {
@@ -81,6 +83,17 @@ type MessageTransportResult struct {
 	Channel     string               `json:"channel,omitempty"`
 	Reliability string               `json:"reliability,omitempty"`
 	Sources     []string             `json:"sources"`
+}
+
+type MessageHandlerResult struct {
+	Handler  NodeRef  `json:"handler"`
+	Evidence string   `json:"evidence"`
+	Callers  []string `json:"callers"`
+}
+
+type MessageChannelConflict struct {
+	Send    MessageTransportResult `json:"send"`
+	Receive MessageTransportResult `json:"receive"`
 }
 
 type MessageCoverageSpec struct {
@@ -466,12 +479,35 @@ func validateMessageFlowResult(result MessageFlowResult, repositories map[string
 		}
 	}
 	for _, transport := range append(append([]MessageTransportResult{}, result.Sends...), result.Receives...) {
-		if err := validateNodeRef(transport.Operation, repositories); err != nil {
+		if err := validateMessageTransport(transport, repositories); err != nil {
 			return err
 		}
-		if !validCoverageStatus(transport.Status) {
-			return fmt.Errorf("unknown transport status %q", transport.Status)
+	}
+	for _, handler := range result.Handlers {
+		if err := validateNodeRef(handler.Handler, repositories); err != nil {
+			return err
 		}
+		if handler.Evidence == "" {
+			return fmt.Errorf("handler evidence is required")
+		}
+	}
+	for _, conflict := range result.ChannelMismatches {
+		if err := validateMessageTransport(conflict.Send, repositories); err != nil {
+			return fmt.Errorf("channel mismatch send: %w", err)
+		}
+		if err := validateMessageTransport(conflict.Receive, repositories); err != nil {
+			return fmt.Errorf("channel mismatch receive: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateMessageTransport(transport MessageTransportResult, repositories map[string]bool) error {
+	if err := validateNodeRef(transport.Operation, repositories); err != nil {
+		return err
+	}
+	if !validCoverageStatus(transport.Status) {
+		return fmt.Errorf("unknown transport status %q", transport.Status)
 	}
 	return nil
 }

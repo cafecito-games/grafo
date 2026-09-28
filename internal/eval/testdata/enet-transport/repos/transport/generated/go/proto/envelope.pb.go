@@ -3,8 +3,12 @@
 package generated
 
 type Envelope struct {
-	Text   string
-	Image  []byte
-	Unused string
+	Text    string
+	Image   []byte
+	Unused  string
 	Receipt string
+}
+
+type EncodedOnly struct {
+	Value string
 }

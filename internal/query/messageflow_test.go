@@ -148,6 +148,19 @@ func TestMessageFlowPreservesAmbiguityAndRepositoryScope(t *testing.T) {
 	}
 }
 
+func TestMessageFlowBatchReusesOneComponentSnapshotAndIsolatesErrors(t *testing.T) {
+	repository := newMessageFlowFixture()
+	attempts := query.NewMessageFlow(repository).Flows(context.Background(),
+		[]string{"acme.v1.Envelope", "missing", "acme.v1.Mismatch"}, query.MessageFlowOptions{Limit: 20})
+	if len(attempts) != 3 || attempts[0].Error != nil || attempts[0].Flow.Message.QualifiedName != "acme.v1.Envelope" ||
+		attempts[1].Error == nil || attempts[2].Error != nil || attempts[2].Flow.Message.QualifiedName != "acme.v1.Mismatch" {
+		t.Fatalf("batch order/error isolation = %#v", attempts)
+	}
+	if repository.componentScans != 1 {
+		t.Fatalf("batch rebuilt component snapshot %d times", repository.componentScans)
+	}
+}
+
 func TestMessageCoverageClassifiesCodecAndTransportPipelineGaps(t *testing.T) {
 	repository := newMessageFlowFixture()
 	addMessage := func(id, name string) graph.Node {
@@ -210,7 +223,37 @@ func TestMessageFlowDowngradesUnsupportedAndUnresolvedBindings(t *testing.T) {
 		if flow.Status != query.CoverageUnknown || !hasUncertainty(flow.Uncertainties, test.reason) {
 			t.Fatalf("%s binding did not fail closed: %#v", test.reason, flow)
 		}
+		componentFlow, err := query.NewMessageFlow(repository).Flow(context.Background(), messageID,
+			query.MessageFlowOptions{Component: "client", Limit: 20})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if componentFlow.Status != query.CoverageUnknown || !hasUncertainty(componentFlow.Uncertainties, test.reason) {
+			t.Fatalf("component filter discarded message-wide %s uncertainty: %#v", test.reason, componentFlow)
+		}
 	}
+}
+
+func TestMessageFlowDirectionDoesNotRelabelKnownUseAsUnused(t *testing.T) {
+	service := query.NewMessageFlow(newMessageFlowFixture())
+	flow, err := service.Flow(context.Background(), "acme.v1.Envelope", query.MessageFlowOptions{Direction: query.Outgoing, Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, member := range flow.Members {
+		if member.Field.Name != "receipt" {
+			continue
+		}
+		if hasCoverageCategory(member.Gaps, query.UnusedMessageMember) ||
+			!hasCoverageCategory(member.Gaps, string(query.ConsumedWithoutProducer)) {
+			t.Fatalf("direction filter changed global member coverage: %#v", member)
+		}
+		if len(member.Consumers) != 0 {
+			t.Fatalf("outgoing presentation retained consumers: %#v", member.Consumers)
+		}
+		return
+	}
+	t.Fatal("receipt member missing")
 }
 
 func addMessageFlowEdge(repository *catalogRepository, id, from, to string, kind graph.EdgeKind, properties map[string]string) {
