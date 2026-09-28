@@ -71,9 +71,15 @@ type httpEnvironment map[types.Object]httpValue
 
 type httpExecution struct {
 	stack     map[*types.Func]bool
+	frames    []*httpCallFrame
 	remaining int
 	exhausted bool
 	diagnosed bool
+}
+
+type httpCallFrame struct {
+	bindings map[types.Object]bool
+	escaped  map[types.Object]httpValue
 }
 
 type httpEvalResult struct {
@@ -263,6 +269,9 @@ func (a *httpSemanticAnalyzer) executeFunction(execution *httpExecution, functio
 	}
 	execution.stack[function.object] = true
 	defer delete(execution.stack, function.object)
+	frame := &httpCallFrame{bindings: map[types.Object]bool{}, escaped: map[types.Object]httpValue{}}
+	execution.frames = append(execution.frames, frame)
+	defer func() { execution.frames = execution.frames[:len(execution.frames)-1] }()
 	environment := httpEnvironment{}
 	bindings := make([]types.Object, len(arguments))
 	argument := 0
@@ -276,6 +285,7 @@ func (a *httpSemanticAnalyzer) executeFunction(execution *httpExecution, functio
 				if argument < len(arguments) {
 					environment[object] = cloneHTTPValue(arguments[argument])
 					bindings[argument] = object
+					frame.bindings[object] = true
 				} else if receiver {
 					environment[object] = httpValue{objects: []*httpObjectValue{{
 						identity: &httpObjectIdentity{}, fields: map[types.Object]httpValue{},
@@ -293,7 +303,7 @@ func (a *httpSemanticAnalyzer) executeFunction(execution *httpExecution, functio
 	result.arguments = make([]httpValue, len(arguments))
 	for index, object := range bindings {
 		if object != nil {
-			result.arguments[index] = cloneHTTPValue(environment[object])
+			result.arguments[index] = mergeHTTPValues(frame.escaped[object], environment[object])
 		}
 	}
 	return result
@@ -791,17 +801,24 @@ func (a *httpSemanticAnalyzer) evaluateSelector(execution *httpExecution, functi
 	}
 	result := httpValue{}
 	if selection.Obj().Name() == "URL" {
-		for _, request := range base.requests {
+		attached := false
+		for index := range base.requests {
+			request := &base.requests[index]
 			if request.overflow {
 				return httpValue{overflow: true}
 			}
 			object := request.urlObject
 			if object == nil {
 				object = httpURLObjectFromRoute(selection.Obj().Type(), request.route)
+				request.urlObject = object
+				attached = attached || object != nil
 			}
 			if object != nil {
 				result.objects = appendUniqueHTTPObject(result.objects, object)
 			}
+		}
+		if attached {
+			a.assign(execution, function, selector.X, base, environment, conditional)
 		}
 	}
 	for _, object := range base.objects {
@@ -836,6 +853,13 @@ func (a *httpSemanticAnalyzer) assign(execution *httpExecution, function *httpSe
 			object = a.pkg.TypesInfo.Uses[target]
 		}
 		if object != nil {
+			if current, exists := environment[object]; exists && isHTTPMutableValue(current) {
+				if shareHTTPMutableIdentity(current, value) {
+					propagateHTTPRequestAliases(environment, current, value)
+				} else {
+					captureHTTPArgumentRebind(execution, object, current)
+				}
+			}
 			environment[object] = cloneHTTPValue(value)
 		}
 	case *goast.SelectorExpr:
@@ -1138,7 +1162,7 @@ func httpURLObjectFromRoute(valueType types.Type, route httpStringValue) *httpOb
 			text: text, unknownBase: unknownBase, conditional: route.conditional,
 		}}}
 	}
-	set("Path", parsed.Path, route.unknownBase)
+	set("Path", parsed.EscapedPath(), route.unknownBase)
 	if parsed.Scheme != "" {
 		set("Scheme", parsed.Scheme, false)
 	}
@@ -1665,7 +1689,7 @@ func propagateHTTPArgument(original, updated httpValue) (httpValue, bool) {
 			}
 		}
 	}
-	result.requestObject = updated.requestObject && original.requestObject
+	result.requestObject = updated.requestObject && original.requestObject && len(result.objects) > 0
 	result.client = updated.client && original.client
 	ok := result.overflow || len(result.requests) > 0 || len(result.objects) > 0 || result.requestObject
 	return result, ok
@@ -1673,4 +1697,89 @@ func propagateHTTPArgument(original, updated httpValue) (httpValue, bool) {
 
 func sameHTTPObjectIdentity(left, right *httpObjectValue) bool {
 	return left != nil && right != nil && (left == right || left.identity != nil && left.identity == right.identity)
+}
+
+func shareHTTPMutableIdentity(left, right httpValue) bool {
+	for _, first := range left.requests {
+		for _, second := range right.requests {
+			if first.identity != nil && first.identity == second.identity {
+				return true
+			}
+		}
+	}
+	for _, first := range left.objects {
+		for _, second := range right.objects {
+			if sameHTTPObjectIdentity(first, second) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func captureHTTPArgumentRebind(execution *httpExecution, object types.Object, current httpValue) {
+	for index := len(execution.frames) - 1; index >= 0; index-- {
+		frame := execution.frames[index]
+		if !frame.bindings[object] {
+			continue
+		}
+		frame.escaped[object] = mergeHTTPValues(frame.escaped[object], current)
+		return
+	}
+}
+
+func propagateHTTPRequestAliases(environment httpEnvironment, previous, updated httpValue) {
+	previousIdentities := map[*httpRequestIdentity]bool{}
+	for _, request := range previous.requests {
+		if request.identity != nil {
+			previousIdentities[request.identity] = true
+		}
+	}
+	updates := map[*httpRequestIdentity][]httpRequestValue{}
+	for _, request := range updated.requests {
+		if previousIdentities[request.identity] {
+			updates[request.identity] = append(updates[request.identity], request)
+		}
+	}
+	if len(updates) == 0 {
+		return
+	}
+	seen := map[*httpObjectValue]bool{}
+	for object, value := range environment {
+		replaceHTTPRequestAliases(&value, updates, seen)
+		environment[object] = value
+	}
+}
+
+func replaceHTTPRequestAliases(value *httpValue, updates map[*httpRequestIdentity][]httpRequestValue,
+	seen map[*httpObjectValue]bool,
+) {
+	var requests []httpRequestValue
+	for _, request := range value.requests {
+		if replacements := updates[request.identity]; len(replacements) > 0 {
+			requests = append(requests, replacements...)
+		} else {
+			requests = append(requests, request)
+		}
+	}
+	value.requests = requests
+	for _, request := range value.requests {
+		replaceHTTPRequestAliasesInObject(request.urlObject, updates, seen)
+	}
+	for _, object := range value.objects {
+		replaceHTTPRequestAliasesInObject(object, updates, seen)
+	}
+}
+
+func replaceHTTPRequestAliasesInObject(object *httpObjectValue, updates map[*httpRequestIdentity][]httpRequestValue,
+	seen map[*httpObjectValue]bool,
+) {
+	if object == nil || seen[object] {
+		return
+	}
+	seen[object] = true
+	for field, value := range object.fields {
+		replaceHTTPRequestAliases(&value, updates, seen)
+		object.fields[field] = value
+	}
 }

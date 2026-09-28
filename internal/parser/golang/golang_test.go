@@ -274,6 +274,27 @@ func HelperRebind() {
 	_, _ = http.DefaultClient.Do(request)
 }
 
+func mutateThenRebind(request *http.Request) {
+	request.Method = http.MethodPost
+	request, _ = http.NewRequest(http.MethodGet, "/mutate-swapped", nil)
+}
+
+func MutateThenRebind() {
+	request, _ := http.NewRequest(http.MethodGet, "/mutate-original", nil)
+	mutateThenRebind(request)
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func rebindLiteral(request *http.Request) {
+	request = &http.Request{Method: http.MethodTrace, URL: &url.URL{Path: "/literal-swapped"}}
+}
+
+func CompositeRebind() {
+	request := &http.Request{Method: http.MethodGet, URL: &url.URL{Path: "/literal-original"}}
+	rebindLiteral(request)
+	_, _ = http.DefaultClient.Do(request)
+}
+
 func URLThenPath() {
 	request, _ := http.NewRequest(http.MethodGet, "/stale-url", nil)
 	request.URL = &url.URL{}
@@ -284,6 +305,21 @@ func URLThenPath() {
 func DirectURLPath() {
 	request, _ := http.NewRequest(http.MethodGet, "/direct-stale", nil)
 	request.URL.Path = "/direct-fresh"
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func URLAlias() {
+	request, _ := http.NewRequest(http.MethodGet, "/alias-old", nil)
+	alias := request.URL
+	alias.Path = "/alias-new"
+	alias.RawQuery = "mode=alias"
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func RequestAlias() {
+	request, _ := http.NewRequest(http.MethodGet, "/request-alias", nil)
+	alias := request
+	alias.Method = http.MethodPost
 	_, _ = http.DefaultClient.Do(request)
 }
 
@@ -485,8 +521,12 @@ func NotHTTP() {
 		"POST /branch-right":                     "example.com/client.BranchFields",
 		"POST /helper-mutated":                   "example.com/client.HelperMutation",
 		"GET /original":                          "example.com/client.HelperRebind",
+		"POST /mutate-original":                  "example.com/client.MutateThenRebind",
+		"GET /literal-original":                  "example.com/client.CompositeRebind",
 		"GET /actual-url":                        "example.com/client.URLThenPath",
 		"GET /direct-fresh":                      "example.com/client.DirectURLPath",
+		"GET /alias-new":                         "example.com/client.URLAlias",
+		"POST /request-alias":                    "example.com/client.RequestAlias",
 		"GET /always":                            "example.com/client.UnrelatedConditional",
 		"POST /holder-mutated":                   "example.com/client.HolderMutation",
 		"GET /alternative":                       "example.com/client.Alternatives",
@@ -547,7 +587,10 @@ func NotHTTP() {
 	if mutated.Properties["http_query"] != "mode=edit" {
 		t.Fatalf("mutated request URL query was not separated: %#v", mutated)
 	}
-	for _, forbidden := range []string{"POST /swapped", "GET /direct-stale", "GET /unsafe/{_}", "GET /synthetic", "GET /invented", "GET /cycle"} {
+	if alias := found["GET /alias-new"]; alias.Properties["http_query"] != "mode=alias" {
+		t.Fatalf("URL alias mutation lost its query: %#v", alias)
+	}
+	for _, forbidden := range []string{"POST /swapped", "GET /mutate-original", "GET /mutate-swapped", "TRACE /literal-swapped", "GET /alias-old", "GET /request-alias", "GET /direct-stale", "GET /unsafe/{_}", "GET /synthetic", "GET /invented", "GET /cycle"} {
 		if _, ok := found[forbidden]; ok {
 			t.Fatalf("unproven or unrelated request %q was invented: %#v", forbidden, found[forbidden])
 		}
