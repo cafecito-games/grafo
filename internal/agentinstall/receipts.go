@@ -158,7 +158,12 @@ func (s *receiptStore) record(client Client, kind, target, resolvedTarget, diges
 		Grafo:          version.Value,
 		Updated:        now().Format(time.RFC3339),
 	}
-	if kind != KindMCP {
+	switch kind {
+	case KindSetupSkill:
+		entry.Marker = agentguide.SetupMarker
+		entry.Guidance = agentguide.SetupVersion
+	case KindMCP:
+	default:
 		entry.Marker = agentguide.BeginMarker
 		entry.Guidance = agentguide.Version
 	}

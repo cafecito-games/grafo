@@ -392,21 +392,23 @@ macOS, Linux, and Windows layouts are all testable anywhere. File-backed
 adapters parse structurally, preserve unknown keys and ordering, and replace
 files atomically; uninstall removes only a registration Grafo owns.
 
-Agent guidance is a second artifact kind on the same seam. `internal/agentguide`
-owns one embedded playbook, one format version, and the exact begin/end markers
-that make an installed copy provably Grafo-owned; it renders either an isolated
-skill file or a delimited managed block and never touches bytes outside its
-markers. Claude Code and Codex receive isolated personal skills; Codex upgrades
-also remove the retired managed block from `~/.codex/AGENTS.md` when that direct
-target is safe to mutate. `internal/agentinstall` declares, per client, which
-documented user-scoped surfaces exist, refuses targets that are symlinks, non-regular,
-world-writable, or outside the user configuration roots, and treats a conflicting
-or unowned file as a reported conflict rather than something to repair. Advisory
-hooks are opt-in, capability-gated to a client whose hook API is documented, and
-fail open because the hook command always exits 0. Every mutation is followed by
-a receipt under the Grafo configuration directory recording target, digest,
-guidance version, and marker, so uninstall and upgrade prove ownership from
-receipts plus exact markers instead of substring matching.
+Agent guidance uses additional artifact kinds on the same seam.
+`internal/agentguide` owns the structural graph-usage playbook and the separate
+repository-setup playbook, with independent format versions and ownership
+markers so either skill can evolve without making the other stale. The graph
+playbook renders either an isolated skill file or a delimited managed block; the
+setup workflow is an isolated `grafo-setup` skill. Claude Code and Codex receive
+both personal skills; Codex upgrades also remove the retired managed block from
+`~/.codex/AGENTS.md` when that direct target is safe to mutate.
+`internal/agentinstall` declares, per client, which documented user-scoped
+surfaces exist, refuses targets that are symlinks, non-regular, world-writable,
+or outside the user configuration roots, and treats a conflicting or unowned
+file as a reported conflict rather than something to repair. Advisory hooks are
+opt-in, capability-gated to a client whose hook API is documented, and fail open
+because the hook command always exits 0. Every mutation is followed by a receipt
+under the Grafo configuration directory recording target, digest, artifact
+version, and marker, so uninstall and upgrade prove ownership from receipts plus
+exact markers instead of substring matching.
 
 ## Background service and diagnostics
 
