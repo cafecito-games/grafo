@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -17,19 +16,24 @@ import (
 )
 
 type Project struct {
-	Root       string `json:"root"`
-	Name       string `json:"name"`
-	ID         string `json:"id"`
-	Branch     string `json:"branch"`
-	Commit     string `json:"commit,omitempty"`
-	GoModule   string `json:"go_module,omitempty"`
-	IndexPath  string `json:"index_path"`
-	GitManaged bool   `json:"git_managed"`
+	Root        string `json:"root"`
+	Name        string `json:"name"`
+	ID          string `json:"id"`
+	Branch      string `json:"branch"`
+	Commit      string `json:"commit,omitempty"`
+	GoModule    string `json:"go_module,omitempty"`
+	IndexPath   string `json:"index_path"`
+	GitManaged  bool   `json:"git_managed"`
+	gitSnapshot *GitSnapshot
 }
 
 var safeNamePattern = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 
 func DiscoverProject(ctx context.Context, start string) (Project, error) {
+	return discoverProject(ctx, start, execGitRunner{})
+}
+
+func discoverProject(ctx context.Context, start string, runner gitCommandRunner) (Project, error) {
 	abs, err := filepath.Abs(start)
 	if err != nil {
 		return Project{}, err
@@ -37,30 +41,31 @@ func DiscoverProject(ctx context.Context, start string) (Project, error) {
 	if info, err := os.Stat(abs); err == nil && !info.IsDir() {
 		abs = filepath.Dir(abs)
 	}
-	root := abs
-	gitManaged := false
-	if value, err := git(ctx, abs, "rev-parse", "--show-toplevel"); err == nil && value != "" {
-		root = value
-		gitManaged = true
-	}
-	root, err = filepath.EvalSymlinks(root)
+	root, err := filepath.EvalSymlinks(abs)
 	if err != nil {
 		return Project{}, fmt.Errorf("resolve project root: %w", err)
+	}
+	snapshot, gitManaged, err := inspectGit(ctx, root, runner)
+	if err != nil {
+		return Project{}, err
+	}
+	if gitManaged {
+		root = snapshot.Root
 	}
 	name := filepath.Base(root)
 	identity := root
 	branch := "working-tree"
 	commit := ""
 	if gitManaged {
-		if remote, err := git(ctx, root, "config", "--get", "remote.origin.url"); err == nil && remote != "" {
-			identity = remote
+		identity = snapshot.Identity
+		branch = snapshot.Branch
+		commit = snapshot.Head
+		if branch == "(detached)" {
+			branch = snapshot.DetachedBranch
 		}
-		if value, err := git(ctx, root, "symbolic-ref", "--quiet", "--short", "HEAD"); err == nil && value != "" {
-			branch = value
-		} else if value, err := git(ctx, root, "rev-parse", "--short=12", "HEAD"); err == nil && value != "" {
-			branch = "detached-" + value
+		if commit == "(initial)" {
+			commit = ""
 		}
-		commit, _ = git(ctx, root, "rev-parse", "HEAD")
 	}
 	branchHash := sha256.Sum256([]byte(branch))
 	safeBranch := strings.Trim(safeNamePattern.ReplaceAllString(branch, "-"), "-")
@@ -71,18 +76,15 @@ func DiscoverProject(ctx context.Context, start string) (Project, error) {
 		safeBranch = safeBranch[:48]
 	}
 	indexName := safeBranch + "-" + hex.EncodeToString(branchHash[:])[:10] + ".sqlite"
+	var projectSnapshot *GitSnapshot
+	if gitManaged {
+		projectSnapshot = &snapshot
+	}
 	return Project{
 		Root: root, Name: name, ID: graph.StableID("repo", identity), Branch: branch,
-		Commit: commit, GoModule: readGoModule(root),
+		Commit: commit, GoModule: readGoModule(root), gitSnapshot: projectSnapshot,
 		IndexPath: filepath.Join(root, ".grafo", "indexes", indexName), GitManaged: gitManaged,
 	}, nil
-}
-
-func git(ctx context.Context, directory string, args ...string) (string, error) {
-	commandArgs := append([]string{"-C", directory}, args...)
-	command := exec.CommandContext(ctx, "git", commandArgs...)
-	output, err := command.Output()
-	return strings.TrimSpace(string(output)), err
 }
 
 func readGoModule(root string) string {

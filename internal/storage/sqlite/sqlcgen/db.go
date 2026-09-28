@@ -186,6 +186,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.reconciliationCleanupPendingStmt, err = db.PrepareContext(ctx, reconciliationCleanupPending); err != nil {
 		return nil, fmt.Errorf("error preparing query ReconciliationCleanupPending: %w", err)
 	}
+	if q.reconciliationPendingStmt, err = db.PrepareContext(ctx, reconciliationPending); err != nil {
+		return nil, fmt.Errorf("error preparing query ReconciliationPending: %w", err)
+	}
 	if q.searchNodesStmt, err = db.PrepareContext(ctx, searchNodes); err != nil {
 		return nil, fmt.Errorf("error preparing query SearchNodes: %w", err)
 	}
@@ -479,6 +482,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing reconciliationCleanupPendingStmt: %w", cerr)
 		}
 	}
+	if q.reconciliationPendingStmt != nil {
+		if cerr := q.reconciliationPendingStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing reconciliationPendingStmt: %w", cerr)
+		}
+	}
 	if q.searchNodesStmt != nil {
 		if cerr := q.searchNodesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing searchNodesStmt: %w", cerr)
@@ -602,6 +610,7 @@ type Queries struct {
 	matchNodesBySubstringStmt           *sql.Stmt
 	pruneDirtyFactsStmt                 *sql.Stmt
 	reconciliationCleanupPendingStmt    *sql.Stmt
+	reconciliationPendingStmt           *sql.Stmt
 	searchNodesStmt                     *sql.Stmt
 	setMetaStmt                         *sql.Stmt
 	upsertEmbeddingStmt                 *sql.Stmt
@@ -668,6 +677,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		matchNodesBySubstringStmt:           q.matchNodesBySubstringStmt,
 		pruneDirtyFactsStmt:                 q.pruneDirtyFactsStmt,
 		reconciliationCleanupPendingStmt:    q.reconciliationCleanupPendingStmt,
+		reconciliationPendingStmt:           q.reconciliationPendingStmt,
 		searchNodesStmt:                     q.searchNodesStmt,
 		setMetaStmt:                         q.setMetaStmt,
 		upsertEmbeddingStmt:                 q.upsertEmbeddingStmt,

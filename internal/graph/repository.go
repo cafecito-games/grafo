@@ -58,6 +58,13 @@ type InstrumentedWriteRepository interface {
 	WriteStats() WriteStats
 }
 
+// ReconciliationStatusRepository is the optional, narrow capability used by
+// indexing to prove that no resolver work remains. Absence of this capability
+// is deliberately treated as unknown, never as clean.
+type ReconciliationStatusRepository interface {
+	ReconciliationPending(context.Context) (bool, error)
+}
+
 // QueryRepository is the read-only port used by graph traversal use cases.
 type QueryRepository interface {
 	SearchNodes(context.Context, string, int) ([]Node, error)
