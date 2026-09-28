@@ -53,11 +53,9 @@ func Open(ctx context.Context, path string) (*Repository, error) {
 		return nil, fmt.Errorf("open graph: %w", err)
 	}
 	db.SetMaxOpenConns(1)
-	for _, pragma := range []string{"PRAGMA journal_mode=WAL", "PRAGMA synchronous=NORMAL", "PRAGMA busy_timeout=5000", "PRAGMA wal_autocheckpoint=1000"} {
-		if _, err := db.ExecContext(ctx, pragma); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("configure SQLite: %w", err)
-		}
+	if err := configureWritableConnection(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
 	}
 	provider, err := goose.NewProvider(goose.DialectSQLite3, db, migrations.Files)
 	if err != nil {
@@ -91,6 +89,15 @@ func Open(ctx context.Context, path string) (*Repository, error) {
 		return nil, err
 	}
 	return repository, nil
+}
+
+func configureWritableConnection(ctx context.Context, db *sql.DB) error {
+	for _, pragma := range []string{"PRAGMA journal_mode=WAL", "PRAGMA synchronous=NORMAL", "PRAGMA busy_timeout=5000", "PRAGMA wal_autocheckpoint=1000"} {
+		if _, err := db.ExecContext(ctx, pragma); err != nil {
+			return fmt.Errorf("configure SQLite: %w", err)
+		}
+	}
+	return nil
 }
 
 func (r *Repository) Close() error { return errors.Join(r.queries.Close(), r.db.Close()) }

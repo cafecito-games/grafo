@@ -39,19 +39,26 @@ type CompactionResult struct {
 	Counts graph.Counts   `json:"counts"`
 }
 
+// MaintenanceRepository is the narrow writable capability required by current
+// index lifecycle orchestration.
+type MaintenanceRepository interface {
+	Compact(context.Context) (CompactionResult, error)
+	Close() error
+}
+
 // OpenMaintenance opens an existing compatible index for bounded maintenance.
 // It never creates the file, runs migrations, or changes compatibility metadata.
-func OpenMaintenance(ctx context.Context, path string) (*Repository, error) {
+func OpenMaintenance(ctx context.Context, path string) (MaintenanceRepository, error) {
 	db, err := openExistingIndex(ctx, path, "rw")
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.ExecContext(ctx, "PRAGMA busy_timeout=5000"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("configure SQLite maintenance timeout: %w", err)
-	}
 	reader := &Repository{db: db, queries: sqlcgen.New(db), path: path}
 	if err := validateReadCompatibility(ctx, reader); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := configureWritableConnection(ctx, db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}

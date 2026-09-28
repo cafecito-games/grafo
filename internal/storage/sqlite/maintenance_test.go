@@ -157,6 +157,28 @@ func TestOpenMaintenanceDoesNotCreateOrMigrate(t *testing.T) {
 	}
 }
 
+func TestOpenMaintenanceUsesNormalWritableSettings(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "settings.sqlite")
+	repository := openMaintenanceFixture(t, path)
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+	maintenance, err := OpenMaintenance(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened := maintenance.(*Repository)
+	defer func() { _ = opened.Close() }()
+	settings, err := readMaintenanceSettings(ctx, opened.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ToLower(settings.JournalMode) != "wal" || settings.Synchronous != 1 {
+		t.Fatalf("maintenance settings = %#v, want WAL/NORMAL", settings)
+	}
+}
+
 func openMaintenanceFixture(t *testing.T, path string) *Repository {
 	t.Helper()
 	ctx := context.Background()

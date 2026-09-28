@@ -147,7 +147,7 @@ type manager struct {
 	tryLock         func(string) (lifeservice.Unlock, bool, error)
 	checkpoint      func(context.Context, string, sqlite.IndexMetadata) error
 	lock            func(string, time.Duration) (lifeservice.Unlock, error)
-	openMaintenance func(context.Context, string) (*sqlite.Repository, error)
+	openMaintenance func(context.Context, string) (sqlite.MaintenanceRepository, error)
 	readDir         func(string) ([]fs.DirEntry, error)
 	lstat           func(string) (fs.FileInfo, error)
 	remove          func(string) error
