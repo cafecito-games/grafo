@@ -33,6 +33,7 @@ type Edge struct {
 	ColumnNo   int64  `json:"column_no"`
 	EndLine    int64  `json:"end_line"`
 	Properties string `json:"properties"`
+	Producer   string `json:"producer"`
 }
 
 type Embedding struct {
@@ -59,6 +60,7 @@ type Fact struct {
 	OwnerFile  string `json:"owner_file"`
 	Source     string `json:"source"`
 	SourceKind string `json:"source_kind"`
+	Producer   string `json:"producer"`
 }
 
 type File struct {

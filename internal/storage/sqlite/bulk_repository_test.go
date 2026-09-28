@@ -23,11 +23,11 @@ func TestBulkWritesAreExactlyEquivalentToSingleRowQueries(t *testing.T) {
 		{ID: "caller", Kind: "method", Name: "Caller2", QualifiedName: "pkg.Caller2", Language: "go", Path: "updated.go", Line: 7, ColumnNo: 8, EndLine: 9, Properties: `{"updated":"true"}`, OwnerFile: "updated.go"},
 	}
 	facts := []sqlcgen.UpsertFactParams{
-		{ID: "fact", FromID: "caller", Kind: "calls", TargetID: "target", Path: "a.go", Line: 5, Properties: `{"proof":"direct"}`, OwnerFile: "a.go"},
-		{ID: "fact", Source: "pkg.Caller", SourceKind: "method", Kind: "references", Target: "pkg.Target", TargetKind: "function", Path: "updated.go", Line: 11, ColumnNo: 2, EndLine: 12, Properties: `{"proof":"name"}`, OwnerFile: "updated.go"},
+		{ID: "fact", FromID: "caller", Kind: "calls", Producer: "go", TargetID: "target", Path: "a.go", Line: 5, Properties: `{"proof":"direct"}`, OwnerFile: "a.go"},
+		{ID: "fact", Source: "pkg.Caller", SourceKind: "method", Kind: "references", Producer: "gdscript", Target: "pkg.Target", TargetKind: "function", Path: "updated.go", Line: 11, ColumnNo: 2, EndLine: 12, Properties: `{"proof":"name"}`, OwnerFile: "updated.go"},
 	}
 	edges := []sqlcgen.InsertEdgeParams{
-		{ID: "edge-1", FactID: "fact", FromID: "caller", ToID: "target", Kind: "references", Path: "updated.go", Line: 11, ColumnNo: 2, EndLine: 12, Properties: `{"proof":"name"}`},
+		{ID: "edge-1", FactID: "fact", FromID: "caller", ToID: "target", Kind: "references", Producer: "gdscript", Path: "updated.go", Line: 11, ColumnNo: 2, EndLine: 12, Properties: `{"proof":"name"}`},
 		{ID: "edge-2", FactID: "other", FromID: "target", ToID: "caller", Kind: "calls", Properties: `{}`},
 	}
 
@@ -113,7 +113,7 @@ func TestBulkLimitsAndCommittedInstrumentation(t *testing.T) {
 		t.Fatal(err)
 	}
 	stats := repository.WriteStats()
-	if stats.Nodes.Batches != 3 || stats.Nodes.Rows != 5 || stats.Facts.Batches != 3 || stats.Facts.Rows != 5 {
+	if stats.Nodes.Batches != 3 || stats.Nodes.Rows != 5 || stats.Facts.Batches != 5 || stats.Facts.Rows != 5 {
 		t.Fatalf("unexpected write stats: %#v", stats)
 	}
 

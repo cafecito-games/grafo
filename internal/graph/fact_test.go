@@ -1,6 +1,10 @@
 package graph
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestFactValidatesExactlyOneSourceLocator(t *testing.T) {
 	tests := []struct {
@@ -22,5 +26,29 @@ func TestFactValidatesExactlyOneSourceLocator(t *testing.T) {
 				t.Fatalf("ValidateSourceLocator() error = %v, want error %v", err, test.wantErr)
 			}
 		})
+	}
+}
+
+func TestProducerIsExplicitJSONEvidence(t *testing.T) {
+	for name, value := range map[string]any{
+		"fact": Fact{ID: "fact", Producer: ProducerGDScript},
+		"edge": Edge{ID: "edge", Producer: ProducerGodot},
+	} {
+		t.Run(name, func(t *testing.T) {
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(encoded), `"producer"`) {
+				t.Fatalf("producer missing from JSON: %s", encoded)
+			}
+		})
+	}
+	encoded, err := json.Marshal(Edge{ID: "unknown"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), `"producer"`) {
+		t.Fatalf("empty producer must remain omittable: %s", encoded)
 	}
 }

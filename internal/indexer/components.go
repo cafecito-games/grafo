@@ -29,7 +29,7 @@ func componentWorkspace(project Project, declared []projectconfig.Component, pat
 		})
 		result.Facts = append(result.Facts, graph.Fact{
 			ID:     stableWorkspaceFactID(project.ID, graph.EdgeContains, componentID),
-			FromID: project.ID, Kind: graph.EdgeContains, TargetID: componentID,
+			FromID: project.ID, Kind: graph.EdgeContains, Producer: graph.ProducerIndexer, TargetID: componentID,
 			Location: componentLocation, OwnerFile: workspaceOwner,
 		})
 		roots := append([]projectconfig.ComponentRoot(nil), component.Roots...)
@@ -44,7 +44,7 @@ func componentWorkspace(project Project, declared []projectconfig.Component, pat
 			fileID := graph.NodeID(graph.KindFile, project.ID+":"+filePath)
 			result.Facts = append(result.Facts, graph.Fact{
 				ID:     stableWorkspaceFactID(componentID, graph.EdgeContains, fileID),
-				FromID: componentID, Kind: graph.EdgeContains, TargetID: fileID,
+				FromID: componentID, Kind: graph.EdgeContains, Producer: graph.ProducerIndexer, TargetID: fileID,
 				Location:   graph.Location{Path: projectconfig.FileName, Line: root.Line, Column: root.Column},
 				Properties: map[string]string{"root": root.Path}, OwnerFile: workspaceOwner,
 			})

@@ -28,17 +28,17 @@ func interactionGraph() (*fakeRepository, map[string]graph.Node) {
 		group.ID: group, missing.ID: missing, method.ID: method, event.ID: event, configKey.ID: configKey}
 	edges := []graph.Edge{
 		{ID: "e-declares", FromID: scene.ID, ToID: sceneNode.ID, Kind: graph.EdgeDeclares},
-		{ID: "e-member", FromID: sceneNode.ID, ToID: group.ID, Kind: graph.EdgeInGroup,
+		{ID: "e-member", FromID: sceneNode.ID, ToID: group.ID, Kind: graph.EdgeInGroup, Producer: graph.ProducerGodot,
 			Properties: map[string]string{"form": "declared", "group": "enemies"}},
-		{ID: "e-subscribes", FromID: sceneNode.ID, ToID: event.ID, Kind: graph.EdgeSubscribes,
+		{ID: "e-subscribes", FromID: sceneNode.ID, ToID: event.ID, Kind: graph.EdgeSubscribes, Producer: graph.ProducerGodot,
 			Properties: map[string]string{"form": "connect", "declared": "true"}},
-		{ID: "e-action", FromID: method.ID, ToID: action.ID, Kind: graph.EdgeUsesInputAction,
+		{ID: "e-action", FromID: method.ID, ToID: action.ID, Kind: graph.EdgeUsesInputAction, Producer: graph.ProducerGDScript,
 			Properties: map[string]string{"form": "query", "action": "jump"}},
-		{ID: "e-dispatch", FromID: method.ID, ToID: group.ID, Kind: graph.EdgeUsesGroup,
+		{ID: "e-dispatch", FromID: method.ID, ToID: group.ID, Kind: graph.EdgeUsesGroup, Producer: graph.ProducerGDScript,
 			Properties: map[string]string{"form": "call", "group": "enemies", "method": "die"}},
-		{ID: "e-missing", FromID: method.ID, ToID: missing.ID, Kind: graph.EdgeUsesGroup,
+		{ID: "e-missing", FromID: method.ID, ToID: missing.ID, Kind: graph.EdgeUsesGroup, Producer: graph.ProducerGDScript,
 			Properties: map[string]string{"form": "lookup", "group": "ghosts"}},
-		{ID: "e-defines", FromID: configKey.ID, ToID: action.ID, Kind: graph.EdgeDefines},
+		{ID: "e-defines", FromID: configKey.ID, ToID: action.ID, Kind: graph.EdgeDefines, Producer: graph.ProducerGodot},
 		// A generic configuration read of the same key must not show up as an
 		// action interaction: the far side is a configuration key, not an action.
 		{ID: "e-reads", FromID: method.ID, ToID: configKey.ID, Kind: graph.EdgeReadsConfig},
@@ -182,10 +182,14 @@ func TestGodotInteractionsRefusesNonGodotEventWiring(t *testing.T) {
 	repository := &fakeRepository{nodes: nodes, edges: []graph.Edge{
 		// Exactly what the Go, Python, and TypeScript extractors emit: no
 		// properties at all.
-		{ID: "e-publish", FromID: goMethod.ID, ToID: event.ID, Kind: graph.EdgePublishes},
-		{ID: "e-subscribe", FromID: pythonFunction.ID, ToID: event.ID, Kind: graph.EdgeSubscribes},
-		{ID: "e-handled", FromID: event.ID, ToID: pythonFunction.ID, Kind: graph.EdgeHandledBy},
-		{ID: "e-reference", FromID: goMethod.ID, ToID: event.ID, Kind: graph.EdgeReferences},
+		{ID: "e-publish", FromID: goMethod.ID, ToID: event.ID, Kind: graph.EdgePublishes, Producer: "go",
+			Properties: map[string]string{"form": "emit"}},
+		{ID: "e-subscribe", FromID: pythonFunction.ID, ToID: event.ID, Kind: graph.EdgeSubscribes, Producer: "python",
+			Properties: map[string]string{"form": "connect"}},
+		{ID: "e-handled", FromID: event.ID, ToID: pythonFunction.ID, Kind: graph.EdgeHandledBy, Producer: "typescript",
+			Properties: map[string]string{"form": "signal_connection_test"}},
+		{ID: "e-reference", FromID: goMethod.ID, ToID: event.ID, Kind: graph.EdgeReferences, Producer: "go",
+			Properties: map[string]string{"form": "signal_disconnect"}},
 	}}
 	service := query.NewService(repository)
 	ctx := context.Background()
@@ -211,7 +215,8 @@ func TestGodotInteractionsRefusesNonGodotEventWiring(t *testing.T) {
 	withForm := &fakeRepository{
 		nodes: map[string]graph.Node{godotEvent.ID: godotEvent, method.ID: method},
 		edges: []graph.Edge{{ID: "e-connect", FromID: method.ID, ToID: godotEvent.ID,
-			Kind: graph.EdgeSubscribes, Properties: map[string]string{"form": "connect"}}},
+			Kind: graph.EdgeSubscribes, Producer: graph.ProducerGDScript,
+			Properties: map[string]string{"form": "connect"}}},
 	}
 	report, err := query.NewService(withForm).GodotInteractions(ctx, "Hud.on_ready",
 		query.GodotInteractionsOptions{})
@@ -220,5 +225,83 @@ func TestGodotInteractionsRefusesNonGodotEventWiring(t *testing.T) {
 	}
 	if len(report.Outbound) != 1 || report.Outbound[0].Category != query.GodotSignalInteraction {
 		t.Fatalf("a Godot-produced route must still be reported: %#v", report.Outbound)
+	}
+}
+
+func TestGodotInteractionsRequiresAcceptedProducerForEveryCategory(t *testing.T) {
+	targets := map[graph.NodeKind]graph.Node{
+		graph.KindGodotInputAction: godotNode(graph.KindGodotInputAction, "godot:input_action:project.godot:jump", nil),
+		graph.KindGodotNodeGroup:   godotNode(graph.KindGodotNodeGroup, "godot:node_group:project.godot:enemies", nil),
+		graph.KindEvent:            godotNode(graph.KindEvent, "Hud.ready", nil),
+	}
+	source := godotNode(graph.KindMethod, "Hud.poll", nil)
+	tests := []struct {
+		name       string
+		kind       graph.EdgeKind
+		targetKind graph.NodeKind
+		form       string
+	}{
+		{name: "action", kind: graph.EdgeUsesInputAction, targetKind: graph.KindGodotInputAction, form: "query"},
+		{name: "group", kind: graph.EdgeUsesGroup, targetKind: graph.KindGodotNodeGroup, form: "call"},
+		{name: "membership", kind: graph.EdgeInGroup, targetKind: graph.KindGodotNodeGroup, form: "declared"},
+		{name: "defines", kind: graph.EdgeDefines, targetKind: graph.KindGodotInputAction},
+		{name: "references", kind: graph.EdgeReferences, targetKind: graph.KindGodotNodeGroup},
+		{name: "publish", kind: graph.EdgePublishes, targetKind: graph.KindEvent, form: "emit"},
+		{name: "subscribe", kind: graph.EdgeSubscribes, targetKind: graph.KindEvent, form: "connect"},
+		{name: "handled", kind: graph.EdgeHandledBy, targetKind: graph.KindEvent, form: "signal_connection_test"},
+		{name: "signal reference", kind: graph.EdgeReferences, targetKind: graph.KindEvent, form: "signal_disconnect"},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			target := targets[testCase.targetKind]
+			for _, producer := range []string{"", "go", "unknown"} {
+				repository := &fakeRepository{nodes: map[string]graph.Node{source.ID: source, target.ID: target},
+					edges: []graph.Edge{{ID: "candidate", FromID: source.ID, ToID: target.ID,
+						Kind: testCase.kind, Producer: producer, Properties: map[string]string{"form": testCase.form}}}}
+				report, err := query.NewService(repository).GodotInteractions(context.Background(), source.QualifiedName,
+					query.GodotInteractionsOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(report.Outbound) != 0 {
+					t.Fatalf("producer %q fabricated %s interaction: %#v", producer, testCase.name, report.Outbound)
+				}
+			}
+		})
+	}
+}
+
+func TestGodotInteractionsRequiresProducerAndKnownFormForSignals(t *testing.T) {
+	source := godotNode(graph.KindMethod, "Hud.poll", nil)
+	event := godotNode(graph.KindEvent, "Hud.ready", nil)
+	for _, form := range []string{"connect", "emit", "signal_disconnect", "signal_connection_test"} {
+		t.Run(form, func(t *testing.T) {
+			for _, producer := range []string{graph.ProducerGDScript, graph.ProducerGodot} {
+				repository := &fakeRepository{nodes: map[string]graph.Node{source.ID: source, event.ID: event},
+					edges: []graph.Edge{{ID: "signal", FromID: source.ID, ToID: event.ID,
+						Kind: graph.EdgePublishes, Producer: producer, Properties: map[string]string{"form": form}}}}
+				report, err := query.NewService(repository).GodotInteractions(context.Background(), source.QualifiedName,
+					query.GodotInteractionsOptions{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(report.Outbound) != 1 || report.Outbound[0].Form != form {
+					t.Fatalf("accepted producer %q form %q = %#v", producer, form, report.Outbound)
+				}
+			}
+		})
+	}
+	for _, form := range []string{"", "unknown"} {
+		repository := &fakeRepository{nodes: map[string]graph.Node{source.ID: source, event.ID: event},
+			edges: []graph.Edge{{ID: "signal", FromID: source.ID, ToID: event.ID,
+				Kind: graph.EdgePublishes, Producer: graph.ProducerGDScript, Properties: map[string]string{"form": form}}}}
+		report, err := query.NewService(repository).GodotInteractions(context.Background(), source.QualifiedName,
+			query.GodotInteractionsOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(report.Outbound) != 0 {
+			t.Fatalf("accepted producer with malformed form %q = %#v", form, report.Outbound)
+		}
 	}
 }

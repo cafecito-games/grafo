@@ -378,7 +378,8 @@ func (r *Repository) reconcileBatch(ctx context.Context) (int, graph.WriteStats,
 			}
 			for _, target := range targets {
 				edge := graph.Edge{ID: graph.EdgeID(item.fact.ID, target), FactID: item.fact.ID, FromID: item.fact.FromID,
-					ToID: target, Kind: item.fact.Kind, Location: item.fact.Location, Properties: item.fact.Properties}
+					ToID: target, Kind: item.fact.Kind, Producer: item.fact.Producer,
+					Location: item.fact.Location, Properties: item.fact.Properties}
 				encoded, err := putEdge(tx, edge)
 				if err != nil {
 					return err
