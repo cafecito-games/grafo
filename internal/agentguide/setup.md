@@ -47,7 +47,11 @@ Do not create `grafo.yaml` when the repository needs no supported setting.
 Before editing configuration, record a baseline successful index and the
 relevant `grafo events`, `grafo orphaned-events`, `grafo godot interactions`,
 `grafo outbound-requests`, or `grafo service-topology` result. Inspect existing
-root `grafo.yaml` adapters and current diagnostics as well as source.
+root `grafo.yaml` adapters and current diagnostics as well as source. Existing
+HTTP coverage may use the legacy `http.request_apis` compatibility alias;
+prefer `adapters` for new declarations, preserve a proven legacy declaration,
+and never declare the same symbol through both forms because configuration
+validation rejects the duplicate.
 
 The installed V1 adapter matrix is deliberately closed: only `gdscript` with
 `event.publish`, `event.subscribe`, `event.unsubscribe`,

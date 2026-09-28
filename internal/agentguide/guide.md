@@ -69,9 +69,10 @@ change is safe. State the impact findings before editing, not afterwards.
 
 When a negative event or HTTP result conflicts with visible calls through a
 repository abstraction, inspect current index diagnostics and the root
-`grafo.yaml` `adapters` coverage before concluding that the relationship is
-absent. Use native source inspection to prove the exact wrapper boundary:
-Grafo cannot model evidence that is absent from its current index.
+`grafo.yaml` `adapters` coverage—including the legacy `http.request_apis`
+compatibility alias—before concluding that the relationship is absent. Use
+native source inspection to prove the exact wrapper boundary: Grafo cannot
+model evidence that is absent from its current index.
 
 A read-only structural question does not authorize a configuration edit. Report
 the limitation and recommend or invoke the `grafo-setup` workflow only when the

@@ -49,6 +49,8 @@ func TestSetupSkillCoversRepositoryOnboarding(t *testing.T) {
 		"event.publish", "event.subscribe", "event.unsubscribe", "event.connection_test",
 		"http.request", "the `event` role", "`method` and `url`", "exact qualified symbol",
 		"baseline", "reindex",
+		"name, comment, or popularity is\n  never proof", "do not use wildcards",
+		"legacy `http.request_apis` compatibility alias", "same symbol through both forms",
 		"do not add transport or serialization keys", "not a wildcard plugin mechanism",
 		setupVersionComment(),
 	} {
@@ -71,7 +73,7 @@ func TestStructuralGuidanceTreatsAdaptersAsAnUncertaintyBoundary(t *testing.T) {
 	text := Text()
 	for _, fragment := range []string{
 		"repository abstraction", "grafo.yaml", "adapters", "native source inspection",
-		"read-only", "grafo-setup", "reindex",
+		"http.request_apis", "read-only", "grafo-setup", "reindex",
 	} {
 		if !strings.Contains(text, fragment) {
 			t.Errorf("structural guidance is missing %q", fragment)
