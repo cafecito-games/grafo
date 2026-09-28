@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/indexversion"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	"github.com/cafecito-games/grafo/internal/projectconfig"
 )
@@ -21,7 +22,7 @@ const workspaceOwner = "__workspace__"
 const workspaceSemanticKeysMeta = "parser_workspace_semantic_keys"
 const workspaceStateDigestMeta = "workspace_state_digest"
 const gitUntrackedPathsMeta = "git_untracked_paths"
-const SemanticIndexVersion = "29"
+const SemanticIndexVersion = indexversion.Semantic
 
 type Options struct {
 	Force        bool

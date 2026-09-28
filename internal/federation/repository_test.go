@@ -122,6 +122,54 @@ func Routes() { router.Get("/charge", Handler) }
 	}
 }
 
+func TestOpenReadOnlyFederatesCompatibleIndexesWithoutWriteCapabilities(t *testing.T) {
+	ctx := context.Background()
+	clientRoot := t.TempDir()
+	serverRoot := t.TempDir()
+	write(t, filepath.Join(clientRoot, "go.mod"), "module example.com/client\n")
+	write(t, filepath.Join(clientRoot, "client.go"), `package client
+import "net/http"
+func Call() { http.Get("/charge") }
+`)
+	write(t, filepath.Join(serverRoot, "go.mod"), "module example.com/server\n")
+	write(t, filepath.Join(serverRoot, "server.go"), `package server
+func Handler() {}
+func Routes() { router.Get("/charge", Handler) }
+`)
+	index(t, ctx, clientRoot)
+	index(t, ctx, serverRoot)
+
+	repository, err := federation.OpenReadOnly(ctx, []string{clientRoot, serverRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	var capability any = repository
+	if _, ok := capability.(graph.ReadRepository); !ok {
+		t.Fatal("read-only federation lacks graph reads")
+	}
+	if _, ok := capability.(graph.CatalogRepository); !ok {
+		t.Fatal("read-only federation lacks catalog reads")
+	}
+	if _, ok := capability.(semantic.ReadRepository); !ok {
+		t.Fatal("read-only federation lacks semantic reads")
+	}
+	if _, ok := capability.(graph.IndexRepository); ok {
+		t.Fatal("read-only federation exposes index writes")
+	}
+	if _, ok := capability.(semantic.Repository); ok {
+		t.Fatal("read-only federation exposes semantic writes")
+	}
+	result, err := query.NewService(repository).Neighborhood(ctx, "example.com/client.Call", "", 1,
+		query.Outgoing, []graph.EdgeKind{graph.EdgeRequests}, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Edges) != 1 || result.Edges[0].Properties["federated"] != "true" {
+		t.Fatalf("read-only federation result = %#v", result)
+	}
+}
+
 func TestRepositoryProjectsCrossRepositoryTestCoverage(t *testing.T) {
 	ctx := context.Background()
 	testRoot := t.TempDir()

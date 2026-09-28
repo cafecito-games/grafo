@@ -67,6 +67,10 @@ func Open(ctx context.Context, path string) (*Repository, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate graph database: %w", err)
 	}
+	if err := validateStorageCompatibility(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("validate migrated graph database: %w", err)
+	}
 	queries, err := sqlcgen.Prepare(ctx, db)
 	if err != nil {
 		_ = db.Close()
