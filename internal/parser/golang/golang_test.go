@@ -297,6 +297,18 @@ func RebindThenMutateAlias() {
 	_, _ = http.DefaultClient.Do(request)
 }
 
+func conditionalRebindAlias(request *http.Request, flag bool) {
+	alias := request
+	request, _ = http.NewRequest(http.MethodGet, "/conditional-swapped", nil)
+	if flag { alias.Method = http.MethodPut }
+}
+
+func ConditionalRebindAlias(flag bool) {
+	request, _ := http.NewRequest(http.MethodGet, "/conditional-original", nil)
+	conditionalRebindAlias(request, flag)
+	_, _ = http.DefaultClient.Do(request)
+}
+
 func rebindLiteral(request *http.Request) {
 	request = &http.Request{Method: http.MethodTrace, URL: &url.URL{Path: "/literal-swapped"}}
 }
@@ -342,6 +354,18 @@ func URLAliasSpace() {
 	alias := request.URL
 	alias.RawQuery = "q=1"
 	_, _ = http.DefaultClient.Do(request)
+}
+
+func URLReadForms() {
+	uppercase, _ := http.NewRequest(http.MethodGet, "HTTP://api.example.test/upper", nil)
+	_ = uppercase.URL.Path
+	_, _ = http.DefaultClient.Do(uppercase)
+	authority, _ := http.NewRequest(http.MethodGet, "//cdn.example.test/asset", nil)
+	_ = authority.URL.Path
+	_, _ = http.DefaultClient.Do(authority)
+	fragment, _ := http.NewRequest(http.MethodGet, "/section#frag", nil)
+	_ = fragment.URL.Path
+	_, _ = http.DefaultClient.Do(fragment)
 }
 
 func RequestAlias() {
@@ -551,12 +575,17 @@ func NotHTTP() {
 		"GET /original":                          "example.com/client.HelperRebind",
 		"POST /mutate-original":                  "example.com/client.MutateThenRebind",
 		"POST /late-original":                    "example.com/client.RebindThenMutateAlias",
+		"GET /conditional-original":              "example.com/client.ConditionalRebindAlias",
+		"PUT /conditional-original":              "example.com/client.ConditionalRebindAlias",
 		"GET /literal-original":                  "example.com/client.CompositeRebind",
 		"GET /actual-url":                        "example.com/client.URLThenPath",
 		"GET /direct-fresh":                      "example.com/client.DirectURLPath",
 		"GET /alias-new":                         "example.com/client.URLAlias",
 		"GET /alias-alt-final":                   "example.com/client.AlternativeURLAlias",
 		"GET /space direct":                      "example.com/client.URLAliasSpace",
+		"GET http://api.example.test/upper":      "example.com/client.URLReadForms",
+		"GET //cdn.example.test/asset":           "example.com/client.URLReadForms",
+		"GET /section":                           "example.com/client.URLReadForms",
 		"POST /request-alias":                    "example.com/client.RequestAlias",
 		"GET /always":                            "example.com/client.UnrelatedConditional",
 		"POST /holder-mutated":                   "example.com/client.HolderMutation",
@@ -594,6 +623,11 @@ func NotHTTP() {
 			t.Fatalf("branch alternative %q lacks conditional provenance: %#v", target, found[target])
 		}
 	}
+	for _, target := range []string{"GET /conditional-original", "PUT /conditional-original"} {
+		if found[target].Properties["conditional"] != "true" {
+			t.Fatalf("conditional helper alias alternative %q lacks provenance: %#v", target, found[target])
+		}
+	}
 	if found["GET /always"].Properties["conditional"] == "true" {
 		t.Fatalf("unrelated branch made an always-executed request conditional: %#v", found["GET /always"])
 	}
@@ -624,13 +658,17 @@ func NotHTTP() {
 	if alias := found["GET /space direct"]; alias.Properties["http_query"] != "q=1" {
 		t.Fatalf("URL alias attachment changed its raw path or lost its query: %#v", alias)
 	}
-	for _, forbidden := range []string{"POST /swapped", "GET /mutate-original", "GET /mutate-swapped", "GET /late-original", "GET /late-swapped", "TRACE /literal-swapped", "GET /alias-old", "GET /alias-alt-left", "GET /alias-alt-right", "GET /space%20direct", "GET /request-alias", "GET /direct-stale", "GET /unsafe/{_}", "GET /synthetic", "GET /invented", "GET /cycle"} {
+	if fragment := found["GET /section"]; fragment.Properties["http_raw_route"] != "/section#frag" {
+		t.Fatalf("URL read lost raw fragment evidence: %#v", fragment)
+	}
+	for _, forbidden := range []string{"POST /swapped", "GET /mutate-original", "GET /mutate-swapped", "GET /late-original", "GET /late-swapped", "GET /conditional-swapped", "TRACE /literal-swapped", "GET /alias-old", "GET /alias-alt-left", "GET /alias-alt-right", "GET /space%20direct", "GET /request-alias", "GET /direct-stale", "GET /unsafe/{_}", "GET /synthetic", "GET /invented", "GET /cycle"} {
 		if _, ok := found[forbidden]; ok {
 			t.Fatalf("unproven or unrelated request %q was invented: %#v", forbidden, found[forbidden])
 		}
 	}
 	foundCycleDiagnostics := 0
 	foundBoundDiagnostics := 0
+	foundAuthorityDiagnostic := false
 	for _, diagnostic := range result.Diagnostics {
 		if strings.Contains(diagnostic.Message, "recursive HTTP wrapper") {
 			foundCycleDiagnostics++
@@ -638,12 +676,16 @@ func NotHTTP() {
 		if strings.Contains(diagnostic.Message, "HTTP alternatives exceeded") {
 			foundBoundDiagnostics++
 		}
+		foundAuthorityDiagnostic = foundAuthorityDiagnostic || strings.Contains(diagnostic.Message, "//cdn.example.test/asset")
 	}
 	if foundCycleDiagnostics != 1 {
 		t.Fatalf("recursive wrapper was not diagnosed: %#v", result.Diagnostics)
 	}
 	if foundBoundDiagnostics < 6 {
 		t.Fatalf("alternative bound was not diagnosed: %#v", result.Diagnostics)
+	}
+	if !foundAuthorityDiagnostic {
+		t.Fatalf("authority-form URL was not kept fail-closed: %#v", result.Diagnostics)
 	}
 }
 
