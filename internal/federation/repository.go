@@ -186,7 +186,7 @@ func (r *Repository) DeleteStaleEmbeddings(ctx context.Context, model string) (i
 
 func (r *Repository) Refresh(ctx context.Context, parsers *parserapi.Registry) error {
 	for _, item := range r.members {
-		if _, err := indexer.NewService(item.repository, parsers).Run(ctx, item.project, indexer.Options{}); err != nil {
+		if _, err := indexer.NewService(item.repository, parsers).Run(ctx, item.project, indexer.Options{ReportDetail: indexer.ReportWithoutCounts}); err != nil {
 			return fmt.Errorf("refresh %s: %w", item.project.Name, err)
 		}
 	}

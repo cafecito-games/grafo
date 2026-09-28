@@ -5,11 +5,11 @@ import (
 	"context"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 )
 
@@ -23,15 +23,30 @@ var ignoredFiles = map[string]bool{
 }
 
 type discoveredFiles struct {
-	paths   []string
-	skipped []string
+	paths       []string
+	skipped     []string
+	gitCommands int
 }
 
 func discoverFiles(ctx context.Context, project Project, registry *parserapi.Registry) (discoveredFiles, error) {
+	return discoverFilesWithCatalog(ctx, project, registry, nil, false)
+}
+
+func discoverFilesWithCatalog(ctx context.Context, project Project, registry *parserapi.Registry, known map[string]graph.FileRecord, reuseKnown bool) (discoveredFiles, error) {
 	var candidates []string
-	if project.GitManaged {
-		command := exec.CommandContext(ctx, "git", "-C", project.Root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
-		output, err := command.Output()
+	gitCommands := 0
+	if reuseKnown {
+		candidates = make([]string, 0, len(known))
+		for path := range known {
+			candidates = append(candidates, path)
+		}
+	} else if project.GitManaged {
+		gitCommands++
+		runner := gitCommandRunner(execGitRunner{})
+		if project.gitSnapshot != nil && project.gitSnapshot.runner != nil {
+			runner = project.gitSnapshot.runner
+		}
+		output, err := runner.Run(ctx, project.Root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
 		if err == nil {
 			for _, raw := range bytes.Split(output, []byte{0}) {
 				if len(raw) > 0 {
@@ -62,7 +77,19 @@ func discoverFiles(ctx context.Context, project Project, registry *parserapi.Reg
 			return discoveredFiles{}, err
 		}
 	}
-	result := discoveredFiles{paths: make([]string, 0, len(candidates))}
+	result := discoveredFiles{paths: make([]string, 0, len(candidates)), gitCommands: gitCommands}
+	if reuseKnown {
+		for _, path := range candidates {
+			if PathIgnored(path) {
+				continue
+			}
+			if _, ok := registry.For(path); ok {
+				result.paths = append(result.paths, path)
+			}
+		}
+		sort.Strings(result.paths)
+		return result, nil
+	}
 	seen := map[string]bool{}
 	for _, path := range candidates {
 		if seen[path] || PathIgnored(path) {

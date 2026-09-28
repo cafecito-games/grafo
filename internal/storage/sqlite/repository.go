@@ -286,6 +286,13 @@ func (r *Repository) Reconcile(ctx context.Context) error {
 	return err
 }
 
+// ReconciliationPending reports whether any durable resolver queue contains
+// work. The indexer uses this adapter-owned proof to skip reconciliation; it
+// never reaches into SQLite-specific tables itself.
+func (r *Repository) ReconciliationPending(ctx context.Context) (bool, error) {
+	return r.queries.ReconciliationPending(ctx)
+}
+
 func (r *Repository) ReconcileWithStats(ctx context.Context, observer graph.ReconciliationObserver) (graph.ReconciliationStats, error) {
 	var stats graph.ReconciliationStats
 	if err := r.queueDirtyFacts(ctx); err != nil {

@@ -205,3 +205,20 @@ func (q *Queries) ReconciliationCleanupPending(ctx context.Context) (bool, error
 	err := row.Scan(&exists)
 	return exists, err
 }
+
+const reconciliationPending = `-- name: ReconciliationPending :one
+SELECT EXISTS (
+    SELECT 1 FROM dirty_owners
+    UNION ALL SELECT 1 FROM dirty_nodes
+    UNION ALL SELECT 1 FROM dirty_targets
+    UNION ALL SELECT 1 FROM dirty_facts
+    UNION ALL SELECT 1 FROM reconciliation_cleanup
+)
+`
+
+func (q *Queries) ReconciliationPending(ctx context.Context) (bool, error) {
+	row := q.queryRow(ctx, q.reconciliationPendingStmt, reconciliationPending)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
