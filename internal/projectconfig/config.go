@@ -280,6 +280,9 @@ func Parse(content []byte) (Config, error) {
 }
 
 func parseAdapters(node *yaml.Node) ([]calleffect.Adapter, error) {
+	if isEmptyYAMLValue(node) {
+		return nil, nil
+	}
 	if node.Kind != yaml.SequenceNode {
 		return nil, fmt.Errorf("line %d: adapters must be a sequence", node.Line)
 	}
@@ -320,6 +323,16 @@ func parseAdapters(node *yaml.Node) ([]calleffect.Adapter, error) {
 		}
 		if len(adapter.Effects) == 0 {
 			return nil, fmt.Errorf("line %d: adapter effects must contain at least one effect", item.Line)
+		}
+		if adapter.Language == "gdscript" && adapter.Symbol == "HTTPRequest.request" {
+			for _, effect := range adapter.Effects {
+				if effect.Kind != calleffect.HTTPRequest {
+					continue
+				}
+				if effect.Roles[calleffect.RoleMethod].Argument != 2 || effect.Roles[calleffect.RoleURL].Argument != 0 {
+					return nil, fmt.Errorf("line %d: configured signature for %q conflicts with built-in method argument 2 and URL argument 0", effect.Line, adapter.Symbol)
+				}
+			}
 		}
 		result = append(result, adapter)
 	}

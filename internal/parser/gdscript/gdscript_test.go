@@ -1870,6 +1870,35 @@ func run():
 	}
 }
 
+func TestConfiguredEffectRetainsOrdinaryCallAcrossBuiltinEarlyReturn(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "grafo.yaml", `adapters:
+  - match: {language: gdscript, symbol: Assets.load}
+    effects:
+      - kind: event.publish
+        roles: {event: {argument: 0}}
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "scripts/loader.gd", Repository: "sample", RepoID: "repo:sample",
+		Content: []byte(`class_name Loader extends Node
+signal completed
+func run() -> void:
+	Assets.load(completed)
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "Assets.load")
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgePublishes && fact.Properties["signal"] == "Loader.completed" &&
+			fact.Properties["adapter_symbol"] == "Assets.load" {
+			return
+		}
+	}
+	t.Fatalf("configured early-return call did not publish: %#v", result.Facts)
+}
+
 // TestParserRecordsHandlerWhenSignalOwnerIsAnotherFile is the case the smoke run
 // exposed: nearly every real connect names a signal another file declares, so no
 // handled_by edge is emitted with a named source when this parser cannot see the

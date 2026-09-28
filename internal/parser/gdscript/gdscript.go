@@ -1011,7 +1011,7 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 		fromID = e.b.FileID()
 	}
 	loc := e.location(node)
-	effects := e.configuredCallEffects(node.Callee, callee, current, loc)
+	effects, configuredCall := e.configuredCallEffects(node.Callee, callee, current, loc)
 	e.addProtobufUse(node, callee, fromID, current, loc)
 	e.addTransportUse(node, callee, fromID, current, loc)
 	e.addHTTPRequest(node, callee, effects, fromID, current, loc)
@@ -1036,11 +1036,13 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 				}
 			}
 		}
+		e.addConfiguredOrdinaryCall(configuredCall, fromID, callee, loc)
 		return
 	}
 	if callee == "OS.get_environment" && len(node.Arguments) > 0 {
 		if key, ok := literalString(node.Arguments[0]); ok && key != "" {
 			e.b.AddFact(fromID, graph.EdgeReadsConfig, "", key, graph.KindConfigKey, loc, nil)
+			e.addConfiguredOrdinaryCall(configuredCall, fromID, callee, loc)
 			return
 		}
 	}
@@ -1048,6 +1050,7 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 		if key, ok := literalString(node.Arguments[0]); ok && key != "" {
 			e.b.AddFact(fromID, graph.EdgeReadsConfig, "", key, graph.KindConfigKey, loc,
 				map[string]string{"source": "project.godot"})
+			e.addConfiguredOrdinaryCall(configuredCall, fromID, callee, loc)
 			return
 		}
 	}
@@ -1078,12 +1081,14 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 		if name, ok := literalString(node.Arguments[0]); ok {
 			e.addSignalFact(fromID, graph.EdgePublishes, "emit", name,
 				qualify(current.receiver, name), current, loc, nil)
+			e.addConfiguredOrdinaryCall(configuredCall, fromID, callee, loc)
 			return
 		}
 	}
 	if _, ok := signalOperations[method]; ok {
 		if member, ok := node.Callee.(*gdast.MemberExpression); ok {
 			if e.addSignalOperation(node, member, fromID, method, current, loc) {
+				e.addConfiguredOrdinaryCall(configuredCall, fromID, callee, loc)
 				return
 			}
 		}
@@ -1096,13 +1101,13 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 	e.b.AddFact(fromID, graph.EdgeCalls, "", callee, "", loc, nil)
 }
 
-func (e *extractor) configuredCallEffects(expression gdast.Expression, callee string, current scope, loc graph.Location) []calleffect.Effect {
+func (e *extractor) configuredCallEffects(expression gdast.Expression, callee string, current scope, loc graph.Location) ([]calleffect.Effect, bool) {
 	effects := e.callEffects.Lookup(graph.ProducerGDScript, callee)
 	if len(effects) == 0 {
-		return nil
+		return nil, false
 	}
 	if !e.untypedLocalReceiver(expression, current) && !e.unresolvedMemberReceiver(expression, current) {
-		return effects
+		return effects, true
 	}
 	if !e.adapterWarned[callee] {
 		e.adapterWarned[callee] = true
@@ -1112,7 +1117,13 @@ func (e *extractor) configuredCallEffects(expression gdast.Expression, callee st
 		}
 		e.b.Diagnostic(loc.Line, "warning", message)
 	}
-	return nil
+	return nil, true
+}
+
+func (e *extractor) addConfiguredOrdinaryCall(configured bool, fromID, callee string, loc graph.Location) {
+	if configured {
+		e.b.AddFact(fromID, graph.EdgeCalls, "", callee, "", loc, nil)
+	}
 }
 
 func (e *extractor) addHTTPRequest(node *gdast.CallExpression, callee string, effects []calleffect.Effect, fromID string, current scope, loc graph.Location) {

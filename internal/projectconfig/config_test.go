@@ -101,6 +101,7 @@ func TestParseRejectsInvalidCallEffectAdapters(t *testing.T) {
 		{"duplicate role", "adapters:\n- match: {language: gdscript, symbol: Signals.wire}\n  effects:\n  - kind: event.subscribe\n    roles:\n      event: {argument: 0}\n      event: {argument: 1}\n      handler: {argument: 2}\n", "duplicate adapter role"},
 		{"selector fields", "adapters:\n- match: {language: gdscript, symbol: Signals.emit}\n  effects: [{kind: event.publish, roles: {event: {argument: 0, fallback: 1}}}]\n", "exactly one argument selector"},
 		{"conflicting selector", "adapters:\n- match: {language: gdscript, symbol: Signals.wire}\n  effects: [{kind: event.subscribe, roles: {event: {argument: 0}, handler: {argument: 0}}}]\n", "distinct argument indexes"},
+		{"builtin HTTP conflict", "adapters:\n- match: {language: gdscript, symbol: HTTPRequest.request}\n  effects: [{kind: http.request, roles: {method: {argument: 3}, url: {argument: 0}}}]\n", "conflicts with built-in"},
 		{"duplicate effect", "adapters:\n- match: {language: gdscript, symbol: Signals.emit}\n  effects:\n  - {kind: event.publish, roles: {event: {argument: 0}}}\n  - {kind: event.publish, roles: {event: {argument: 1}}}\n", "duplicate effect"},
 		{"duplicate symbol", "adapters:\n- match: {language: gdscript, symbol: Signals.emit}\n  effects: [{kind: event.publish, roles: {event: {argument: 0}}}]\n- match: {language: gdscript, symbol: Signals.emit}\n  effects: [{kind: event.publish, roles: {event: {argument: 1}}}]\n", "duplicate adapter symbol"},
 		{"duplicate top level", "adapters: []\nadapters: []\n", "duplicate top-level section"},
@@ -113,6 +114,22 @@ func TestParseRejectsInvalidCallEffectAdapters(t *testing.T) {
 				t.Fatalf("error = %v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestNullAdaptersIsAnEmptyRegistry(t *testing.T) {
+	nullConfig, err := projectconfig.Parse([]byte("adapters:\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyConfig, err := projectconfig.Parse([]byte("adapters: []\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nullConfig.Adapters.SemanticKey() != emptyConfig.Adapters.SemanticKey() ||
+		len(nullConfig.Adapters.Lookup("gdscript", "Signals.wire")) != 0 {
+		t.Fatalf("null adapters did not normalize to empty: null=%q empty=%q",
+			nullConfig.Adapters.SemanticKey(), emptyConfig.Adapters.SemanticKey())
 	}
 }
 
