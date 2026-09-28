@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -171,15 +170,7 @@ func OpenReadOnly(ctx context.Context, path string) (*ReadRepository, error) {
 }
 
 func readOnlyDSN(absolute string) string {
-	uriPath := filepath.ToSlash(absolute)
-	// net/url treats a leading Windows drive letter as a URI authority unless
-	// the slash-form path is rooted. SQLite expects file:///C:/... instead.
-	if len(uriPath) >= 3 && uriPath[1] == ':' && uriPath[2] == '/' && uriPath[0] != '/' {
-		uriPath = "/" + uriPath
-	}
-	query := url.Values{}
-	query.Set("mode", "ro")
-	return (&url.URL{Scheme: "file", Path: uriPath, RawQuery: query.Encode()}).String()
+	return sqliteFileDSN(absolute, "ro")
 }
 
 func incompatibleIndex(reason string) error {

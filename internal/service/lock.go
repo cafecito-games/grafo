@@ -1,7 +1,9 @@
 package service
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -47,4 +49,40 @@ func Lock(path string, wait time.Duration) (Unlock, error) {
 // The lock lives beside the index inside .grafo, which is never committed.
 func IndexLock(indexPath string, wait time.Duration) (Unlock, error) {
 	return Lock(indexPath+".lock", wait)
+}
+
+// TryIndexLock attempts to serialize a branch-index mutation without waiting.
+// A false acquired result is ordinary contention, not an operation error. The
+// zero-byte lock anchor intentionally remains after unlock so waiters can never
+// race a replacement inode.
+func TryIndexLock(indexPath string) (unlock Unlock, acquired bool, err error) {
+	path := indexPath + ".lock"
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, false, fmt.Errorf("create lock directory %s: %w", filepath.Dir(path), err)
+	}
+	return tryLock(path)
+}
+
+// tryPortableLock is the non-flock fallback. The stable anchor remains at
+// path; exclusive creation and removal use a separate transient sentinel so
+// unlocking can never replace the inode named by the public lock anchor.
+func tryPortableLock(path string) (Unlock, bool, error) {
+	anchor, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, false, fmt.Errorf("open lock anchor %s: %w", path, err)
+	}
+	if err := anchor.Close(); err != nil {
+		return nil, false, fmt.Errorf("close lock anchor %s: %w", path, err)
+	}
+	heldPath := path + ".held"
+	file, err := os.OpenFile(heldPath, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	if err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("open lock sentinel %s: %w", heldPath, err)
+	}
+	return func() error {
+		return errors.Join(file.Close(), os.Remove(heldPath))
+	}, true, nil
 }
