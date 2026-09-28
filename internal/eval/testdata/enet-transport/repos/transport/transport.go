@@ -2,7 +2,7 @@ package transport
 
 import (
 	generated "example.com/transport/generated/go/proto"
-	enet "github.com/codecat/go-enet"
+	goenet "github.com/cafecito-games/goenet/pkg"
 	wire "google.golang.org/protobuf/proto"
 )
 
@@ -11,17 +11,17 @@ const gameplayChannel = 3
 type localPeer struct{}
 type localMessage struct{ Text string }
 
-func (*localPeer) SendBytes([]byte, int, int) error { return nil }
+func (*localPeer) Send(uint8, *goenet.Packet) error { return nil }
 func sameNameOnly(peer *localPeer, message *localMessage) {
 	message.Text = "not protobuf"
-	_ = peer.SendBytes([]byte(message.Text), gameplayChannel, 1)
+	_ = peer.Send(gameplayChannel, &goenet.Packet{Data: []byte(message.Text), Flags: goenet.PacketFlagReliable})
 }
 
-func send(peer enet.Peer, payload []byte) {
-	_ = peer.SendBytes(payload, gameplayChannel, enet.PacketFlagReliable)
+func send(peer *goenet.Peer, payload []byte) {
+	_ = peer.Send(gameplayChannel, &goenet.Packet{Data: payload, Flags: goenet.PacketFlagReliable})
 }
 
-func SendEnvelope(peer enet.Peer, message *generated.Envelope) {
+func SendEnvelope(peer *goenet.Peer, message *generated.Envelope) {
 	payload, _ := wire.Marshal(message)
 	send(peer, payload)
 }
@@ -30,13 +30,12 @@ func EncodeOnly(message *generated.EncodedOnly) {
 	_, _ = wire.Marshal(message)
 }
 
-func ReceiveEnvelope(event enet.Event, message *generated.Envelope) {
-	packet := event.GetPacket()
-	payload := packet.GetData()
-	_ = event.GetChannelID()
+func ReceiveEnvelope(event goenet.Event, message *generated.Envelope) {
+	payload := event.Packet.Data
+	_ = event.ChannelID
 	_ = wire.Unmarshal(payload, message)
 }
 
-func DispatchEnvelope(event enet.Event, message *generated.Envelope) {
+func DispatchEnvelope(event goenet.Event, message *generated.Envelope) {
 	ReceiveEnvelope(event, message)
 }
