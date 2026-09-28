@@ -28,6 +28,8 @@ func TestRepositoryResolvesHTTPAcrossIndexes(t *testing.T) {
 	write(t, filepath.Join(clientRoot, "client.go"), `package client
 import "net/http"
 func Call() { http.Get("/charge") }
+type API struct { baseURL string }
+func (api *API) Unknown() { http.Get(api.baseURL + "/charge") }
 `)
 	write(t, filepath.Join(serverRoot, "go.mod"), "module example.com/server\n\ngo 1.26\n")
 	write(t, filepath.Join(serverRoot, "server.go"), `package server
@@ -76,6 +78,20 @@ func Routes() { router.Get("/charge", Handler) }
 	}
 	if !foundIncoming {
 		t.Fatalf("incoming federated edge missing: %#v", incoming)
+	}
+	unknown, err := query.NewService(repository).Neighborhood(ctx, "example.com/client.API.Unknown", "", 1,
+		query.Outgoing, []graph.EdgeKind{graph.EdgeRequests}, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unknown.Edges) != 1 || unknown.Edges[0].Properties["http_authority_unknown"] != "true" ||
+		unknown.Edges[0].Properties["federated"] == "true" || len(unknown.Nodes) != 2 || !unknown.Nodes[1].Node.External {
+		t.Fatalf("unknown receiver authority crossed the federation boundary: %#v", unknown)
+	}
+	for _, edge := range incoming {
+		if edge.FromID == unknown.Root.ID {
+			t.Fatalf("incoming federation invented an unknown-authority request: %#v", incoming)
+		}
 	}
 	dependency, err := query.NewService(repository).Neighborhood(ctx, "example.com/client", "", 1,
 		query.Outgoing, []graph.EdgeKind{graph.EdgeDependsOn}, 20)

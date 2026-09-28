@@ -2,6 +2,7 @@ package golang_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -124,6 +125,604 @@ func Routes() {
 			t.Fatalf("malformed endpoint was not kept fail-closed: %#v", node)
 		}
 	}
+}
+
+func TestPackageSemanticLoaderExtractsOutboundHTTPThroughWrappers(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/client\n\ngo 1.26\n")
+	content := []byte(`package client
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+)
+
+const orders = "/orders/"
+
+func build(ctx context.Context, method, target string) (*http.Request, error) {
+	return http.NewRequestWithContext(ctx, method, target, nil)
+}
+
+func send(client *http.Client, request *http.Request) (*http.Response, error) {
+	return client.Do(request)
+}
+
+func invoke(ctx context.Context, client *http.Client, method, target string) (*http.Response, error) {
+	request, err := build(ctx, method, target)
+	if err != nil { return nil, err }
+	return send(client, request)
+}
+
+func Call(ctx context.Context, id string) {
+	_, _ = invoke(ctx, http.DefaultClient, http.MethodPost,
+		fmt.Sprintf("/charge/%s?view=full", url.PathEscape(id)))
+}
+
+func Direct(id string) {
+	request, _ := http.NewRequest(http.MethodGet, orders+url.PathEscape(id)+"?expand=true", nil)
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func Convenience() { _, _ = http.Get("/ready") }
+
+func ClientConvenience(client *http.Client) {
+	_, _ = client.Get("/client-get")
+	_, _ = client.Head("/client-head")
+	_, _ = client.Post("/client-post", "text/plain", nil)
+	_, _ = client.PostForm("/client-form", url.Values{"ok": {"true"}})
+	_, _ = http.DefaultClient.Get("/default-get")
+}
+
+func choose(flag bool) string {
+	if flag { return "/conditional-left" }
+	return "/conditional-right"
+}
+
+func chooseAll(flag bool) string {
+	if flag { return "/all-left" } else { return "/all-right" }
+}
+
+func ConditionalReturn(flag bool) {
+	_, _ = http.Get(choose(flag))
+	_, _ = http.Get(chooseAll(flag))
+}
+
+func loopRoute(flag bool) string {
+	for flag { return "/loop-body" }
+	return "/loop-after"
+}
+
+func rangeRoute(values []string) string {
+	for range values { return "/range-body" }
+	return "/range-after"
+}
+
+func switchRoute(value int) string {
+	switch value {
+	case 1: return "/switch-one"
+	default: return "/switch-default"
+	}
+}
+
+func typeSwitchRoute(value any) string {
+	switch value.(type) {
+	case string: return "/type-string"
+	default: return "/type-default"
+	}
+}
+
+func selectRoute(ch <-chan struct{}) string {
+	select {
+	case <-ch: return "/select-case"
+	default: return "/select-default"
+	}
+}
+
+func ControlReturns(flag bool, values []string, value any, ch <-chan struct{}) {
+	_, _ = http.Get(loopRoute(flag))
+	_, _ = http.Get(rangeRoute(values))
+	_, _ = http.Get(switchRoute(1))
+	_, _ = http.Get(typeSwitchRoute(value))
+	_, _ = http.Get(selectRoute(ch))
+}
+
+func ClauseEffects(value any, ch <-chan struct{}) {
+	switch value {
+	case "left": _, _ = http.Get("/switch-effect-left")
+	default: _, _ = http.Get("/switch-effect-default")
+	}
+	switch value.(type) {
+	case string: _, _ = http.Get("/type-effect-string")
+	default: _, _ = http.Get("/type-effect-default")
+	}
+	select {
+	case <-ch: _, _ = http.Get("/select-effect-case")
+	default: _, _ = http.Get("/select-effect-default")
+	}
+}
+
+func BranchFields(flag bool) {
+	request := &http.Request{URL: &url.URL{}}
+	if flag {
+		request.Method = http.MethodGet
+		request.URL.Path = "/branch-left"
+	} else {
+		request.Method = http.MethodPost
+		request.URL.Path = "/branch-right"
+	}
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func mutateRequest(request *http.Request) { request.Method = http.MethodPost }
+
+func HelperMutation() {
+	request, _ := http.NewRequest(http.MethodGet, "/helper-mutated", nil)
+	mutateRequest(request)
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func rebindRequest(request *http.Request) {
+	request, _ = http.NewRequest(http.MethodPost, "/swapped", nil)
+}
+
+func HelperRebind() {
+	request, _ := http.NewRequest(http.MethodGet, "/original", nil)
+	rebindRequest(request)
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func mutateThenRebind(request *http.Request) {
+	request.Method = http.MethodPost
+	request, _ = http.NewRequest(http.MethodGet, "/mutate-swapped", nil)
+}
+
+func MutateThenRebind() {
+	request, _ := http.NewRequest(http.MethodGet, "/mutate-original", nil)
+	mutateThenRebind(request)
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func rebindThenMutateAlias(request *http.Request) {
+	alias := request
+	request, _ = http.NewRequest(http.MethodGet, "/late-swapped", nil)
+	alias.Method = http.MethodPost
+}
+
+func RebindThenMutateAlias() {
+	request, _ := http.NewRequest(http.MethodGet, "/late-original", nil)
+	rebindThenMutateAlias(request)
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func conditionalRebindAlias(request *http.Request, flag bool) {
+	alias := request
+	request, _ = http.NewRequest(http.MethodGet, "/conditional-swapped", nil)
+	if flag { alias.Method = http.MethodPut }
+}
+
+func ConditionalRebindAlias(flag bool) {
+	request, _ := http.NewRequest(http.MethodGet, "/conditional-original", nil)
+	conditionalRebindAlias(request, flag)
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func rebindLiteral(request *http.Request) {
+	request = &http.Request{Method: http.MethodTrace, URL: &url.URL{Path: "/literal-swapped"}}
+}
+
+func CompositeRebind() {
+	request := &http.Request{Method: http.MethodGet, URL: &url.URL{Path: "/literal-original"}}
+	rebindLiteral(request)
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func URLThenPath() {
+	request, _ := http.NewRequest(http.MethodGet, "/stale-url", nil)
+	request.URL = &url.URL{}
+	request.URL.Path = "/actual-url"
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func DirectURLPath() {
+	request, _ := http.NewRequest(http.MethodGet, "/direct-stale", nil)
+	request.URL.Path = "/direct-fresh"
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func URLAlias() {
+	request, _ := http.NewRequest(http.MethodGet, "/alias-old", nil)
+	alias := request.URL
+	alias.Path = "/alias-new"
+	alias.RawQuery = "mode=alias"
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func AlternativeURLAlias(flag bool) {
+	target := "/alias-alt-left"
+	if flag { target = "/alias-alt-right" }
+	request, _ := http.NewRequest(http.MethodGet, target, nil)
+	alias := request
+	alias.URL.Path = "/alias-alt-final"
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func URLAliasSpace() {
+	request, _ := http.NewRequest(http.MethodGet, "/space direct", nil)
+	alias := request.URL
+	alias.RawQuery = "q=1"
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func URLReadForms() {
+	uppercase, _ := http.NewRequest(http.MethodGet, "HTTP://api.example.test/upper", nil)
+	_ = uppercase.URL.Path
+	_, _ = http.DefaultClient.Do(uppercase)
+	authority, _ := http.NewRequest(http.MethodGet, "//cdn.example.test/asset", nil)
+	_ = authority.URL.Path
+	_, _ = http.DefaultClient.Do(authority)
+	fragment, _ := http.NewRequest(http.MethodGet, "/section#frag", nil)
+	_ = fragment.URL.Path
+	_, _ = http.DefaultClient.Do(fragment)
+}
+
+func RequestAlias() {
+	request, _ := http.NewRequest(http.MethodGet, "/request-alias", nil)
+	alias := request
+	alias.Method = http.MethodPost
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func UnrelatedConditional(flag bool) {
+	request, _ := http.NewRequest(http.MethodGet, "/always", nil)
+	ignored := "left"
+	if flag { ignored = "right" }
+	_ = ignored
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func Alternatives(flag bool) {
+	method := http.MethodGet
+	if flag { method = http.MethodDelete }
+	request, _ := http.NewRequest(method, "/alternative", nil)
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func TooManyAlternatives(flags [9]bool) {
+	method := http.MethodGet
+	if flags[0] { method = http.MethodPost }
+	if flags[1] { method = http.MethodPut }
+	if flags[2] { method = http.MethodPatch }
+	if flags[3] { method = http.MethodDelete }
+	if flags[4] { method = http.MethodHead }
+	if flags[5] { method = http.MethodOptions }
+	if flags[6] { method = http.MethodConnect }
+	if flags[7] { method = http.MethodTrace }
+	request, _ := http.NewRequest(method, "/bounded", nil)
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func ObjectOverflow(flags [9]bool) {
+	api := &API{baseURL: "/base-zero"}
+	if flags[0] { api = &API{baseURL: "/base-one"} }
+	if flags[1] { api = &API{baseURL: "/base-two"} }
+	if flags[2] { api = &API{baseURL: "/base-three"} }
+	if flags[3] { api = &API{baseURL: "/base-four"} }
+	if flags[4] { api = &API{baseURL: "/base-five"} }
+	if flags[5] { api = &API{baseURL: "/base-six"} }
+	if flags[6] { api = &API{baseURL: "/base-seven"} }
+	if flags[7] { api = &API{baseURL: "/base-eight"} }
+	if flags[8] { api = &API{baseURL: "/base-nine"} }
+	_, _ = http.Get(api.baseURL + "/object-overflow")
+}
+
+func RequestFieldOverflow(flags [9]bool) {
+	api := &API{baseURL: http.MethodGet}
+	if flags[0] { api = &API{baseURL: http.MethodPost} }
+	if flags[1] { api = &API{baseURL: http.MethodPut} }
+	if flags[2] { api = &API{baseURL: http.MethodPatch} }
+	if flags[3] { api = &API{baseURL: http.MethodDelete} }
+	if flags[4] { api = &API{baseURL: http.MethodHead} }
+	if flags[5] { api = &API{baseURL: http.MethodOptions} }
+	if flags[6] { api = &API{baseURL: http.MethodConnect} }
+	if flags[7] { api = &API{baseURL: http.MethodTrace} }
+	if flags[8] { api = &API{baseURL: "CUSTOM"} }
+	constructed, _ := http.NewRequest(http.MethodGet, "/field-overflow", nil)
+	constructed.Method = api.baseURL
+	_, _ = http.DefaultClient.Do(constructed)
+	literal := &http.Request{Method: http.MethodGet, URL: &url.URL{}}
+	literal.URL.Path = api.baseURL
+	_, _ = http.DefaultClient.Do(literal)
+}
+
+type requestBox struct { request *http.Request }
+
+func mutateBox(box *requestBox) { box.request.Method = http.MethodPost }
+
+func HolderMutation() {
+	request, _ := http.NewRequest(http.MethodGet, "/holder-mutated", nil)
+	box := &requestBox{request: request}
+	mutateBox(box)
+	_, _ = http.DefaultClient.Do(box.request)
+}
+
+func URLAssignmentOverflow(flags [9]bool) {
+	target := &url.URL{Path: "/url-zero"}
+	if flags[0] { target = &url.URL{Path: "/url-one"} }
+	if flags[1] { target = &url.URL{Path: "/url-two"} }
+	if flags[2] { target = &url.URL{Path: "/url-three"} }
+	if flags[3] { target = &url.URL{Path: "/url-four"} }
+	if flags[4] { target = &url.URL{Path: "/url-five"} }
+	if flags[5] { target = &url.URL{Path: "/url-six"} }
+	if flags[6] { target = &url.URL{Path: "/url-seven"} }
+	if flags[7] { target = &url.URL{Path: "/url-eight"} }
+	if flags[8] { target = &url.URL{Path: "/url-nine"} }
+	direct, _ := http.NewRequest(http.MethodGet, "/direct-url-overflow", nil)
+	direct.URL = target
+	_, _ = http.DefaultClient.Do(direct)
+	box := &requestBox{request: &http.Request{Method: http.MethodGet, URL: &url.URL{Path: "/holder-url-overflow"}}}
+	box.request.URL = target
+	_, _ = http.DefaultClient.Do(box.request)
+}
+
+type API struct {
+	baseURL string
+	client *http.Client
+}
+
+func (api *API) fetch(id string) {
+	request, _ := http.NewRequest(http.MethodGet, api.baseURL+"/users/"+url.PathEscape(id), nil)
+	_, _ = api.client.Do(request)
+}
+
+func External(id string) {
+	api := &API{baseURL: "https://api.example.test", client: http.DefaultClient}
+	api.fetch(id)
+}
+
+func (api *API) UnknownAuthority(id string) {
+	request, _ := http.NewRequest(http.MethodGet, api.baseURL+"/unknown/"+url.PathEscape(id), nil)
+	_, _ = api.client.Do(request)
+}
+
+func Composite(id string) {
+	request := &http.Request{Method: http.MethodPut, URL: &url.URL{
+		Path: "/items/"+url.PathEscape(id), RawQuery: "mode=full",
+	}}
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func Mutated(id string) {
+	request := &http.Request{}
+	request.Method = http.MethodPatch
+	request.URL = &url.URL{}
+	request.URL.Path = "/mutable/"+url.PathEscape(id)
+	request.URL.RawQuery = "mode=edit"
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func Unsafe(id string) {
+	request, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("/unsafe/%s", id), nil)
+	_, _ = http.DefaultClient.Do(request)
+	request = httptest.NewRequest(http.MethodGet, "/synthetic", nil)
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func cycleA(path string) { cycleB(path) }
+func cycleB(path string) {
+	cycleA(path)
+	_, _ = http.Get(fmt.Sprintf("/cycle/%s", path))
+}
+func Cyclic(path string) { cycleA(path) }
+func CyclicAgain(path string) { cycleA(path) }
+
+type unrelated struct{}
+func (unrelated) NewRequest(string, string, any) *http.Request { return nil }
+func (unrelated) Do(*http.Request) {}
+func NotHTTP() {
+	var other unrelated
+	request := other.NewRequest(http.MethodGet, "/invented", nil)
+	other.Do(request)
+}
+`)
+	writeFile(t, filepath.Join(root, "client.go"), string(content))
+
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "client.go", Content: content, Repository: "client",
+		RepoID: "repo", GoModule: "example.com/client",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := map[string]graph.Node{}
+	for _, node := range result.Nodes {
+		nodes[node.ID] = node
+	}
+	want := map[string]string{
+		"POST /charge/{_}":                       "example.com/client.Call",
+		"GET /orders/{_}":                        "example.com/client.Direct",
+		"GET /ready":                             "example.com/client.Convenience",
+		"GET /client-get":                        "example.com/client.ClientConvenience",
+		"HEAD /client-head":                      "example.com/client.ClientConvenience",
+		"POST /client-post":                      "example.com/client.ClientConvenience",
+		"POST /client-form":                      "example.com/client.ClientConvenience",
+		"GET /default-get":                       "example.com/client.ClientConvenience",
+		"GET /conditional-left":                  "example.com/client.ConditionalReturn",
+		"GET /conditional-right":                 "example.com/client.ConditionalReturn",
+		"GET /all-left":                          "example.com/client.ConditionalReturn",
+		"GET /all-right":                         "example.com/client.ConditionalReturn",
+		"GET /loop-body":                         "example.com/client.ControlReturns",
+		"GET /loop-after":                        "example.com/client.ControlReturns",
+		"GET /range-body":                        "example.com/client.ControlReturns",
+		"GET /range-after":                       "example.com/client.ControlReturns",
+		"GET /switch-one":                        "example.com/client.ControlReturns",
+		"GET /switch-default":                    "example.com/client.ControlReturns",
+		"GET /type-string":                       "example.com/client.ControlReturns",
+		"GET /type-default":                      "example.com/client.ControlReturns",
+		"GET /select-case":                       "example.com/client.ControlReturns",
+		"GET /select-default":                    "example.com/client.ControlReturns",
+		"GET /switch-effect-left":                "example.com/client.ClauseEffects",
+		"GET /switch-effect-default":             "example.com/client.ClauseEffects",
+		"GET /type-effect-string":                "example.com/client.ClauseEffects",
+		"GET /type-effect-default":               "example.com/client.ClauseEffects",
+		"GET /select-effect-case":                "example.com/client.ClauseEffects",
+		"GET /select-effect-default":             "example.com/client.ClauseEffects",
+		"GET /branch-left":                       "example.com/client.BranchFields",
+		"POST /branch-right":                     "example.com/client.BranchFields",
+		"POST /helper-mutated":                   "example.com/client.HelperMutation",
+		"GET /original":                          "example.com/client.HelperRebind",
+		"POST /mutate-original":                  "example.com/client.MutateThenRebind",
+		"POST /late-original":                    "example.com/client.RebindThenMutateAlias",
+		"GET /conditional-original":              "example.com/client.ConditionalRebindAlias",
+		"PUT /conditional-original":              "example.com/client.ConditionalRebindAlias",
+		"GET /literal-original":                  "example.com/client.CompositeRebind",
+		"GET /actual-url":                        "example.com/client.URLThenPath",
+		"GET /direct-fresh":                      "example.com/client.DirectURLPath",
+		"GET /alias-new":                         "example.com/client.URLAlias",
+		"GET /alias-alt-final":                   "example.com/client.AlternativeURLAlias",
+		"GET /space direct":                      "example.com/client.URLAliasSpace",
+		"GET http://api.example.test/upper":      "example.com/client.URLReadForms",
+		"GET //cdn.example.test/asset":           "example.com/client.URLReadForms",
+		"GET /section":                           "example.com/client.URLReadForms",
+		"POST /request-alias":                    "example.com/client.RequestAlias",
+		"GET /always":                            "example.com/client.UnrelatedConditional",
+		"POST /holder-mutated":                   "example.com/client.HolderMutation",
+		"GET /alternative":                       "example.com/client.Alternatives",
+		"DELETE /alternative":                    "example.com/client.Alternatives",
+		"GET https://api.example.test/users/{_}": "example.com/client.External",
+		"GET /unknown/{_}":                       "example.com/client.API.UnknownAuthority",
+		"PUT /items/{_}":                         "example.com/client.Composite",
+		"PATCH /mutable/{_}":                     "example.com/client.Mutated",
+	}
+	found := map[string]graph.Fact{}
+	requestCount := 0
+	for _, fact := range result.Facts {
+		if fact.Kind != graph.EdgeRequests {
+			continue
+		}
+		requestCount++
+		if source := nodes[fact.FromID]; source.QualifiedName != want[fact.Target] {
+			t.Fatalf("request %q belongs to %q, want %q: %#v", fact.Target, source.QualifiedName, want[fact.Target], fact)
+		}
+		found[fact.Target] = fact
+	}
+	if len(found) != len(want) || requestCount != len(want) {
+		t.Fatalf("outbound requests = %#v, want %#v; diagnostics = %#v", found, want, result.Diagnostics)
+	}
+	for target := range want {
+		fact, ok := found[target]
+		if !ok || fact.Properties["resolution"] != "go/types" || fact.Properties["http_sink"] == "" ||
+			fact.Properties["http_source"] == "" {
+			t.Fatalf("request %q lacks semantic provenance: %#v", target, fact)
+		}
+	}
+	for _, target := range []string{"GET /alternative", "DELETE /alternative", "GET /branch-left", "POST /branch-right"} {
+		if found[target].Properties["conditional"] != "true" {
+			t.Fatalf("branch alternative %q lacks conditional provenance: %#v", target, found[target])
+		}
+	}
+	for _, target := range []string{"GET /conditional-original", "PUT /conditional-original"} {
+		if found[target].Properties["conditional"] != "true" {
+			t.Fatalf("conditional helper alias alternative %q lacks provenance: %#v", target, found[target])
+		}
+	}
+	if found["GET /always"].Properties["conditional"] == "true" {
+		t.Fatalf("unrelated branch made an always-executed request conditional: %#v", found["GET /always"])
+	}
+	wrapped := found["POST /charge/{_}"]
+	if !strings.Contains(wrapped.Properties["http_wrapper_chain"], "example.com/client.invoke") ||
+		wrapped.Properties["http_query"] != "view=full" || wrapped.Location.Line != 28 {
+		t.Fatalf("wrapper request lost its highest callsite, query, or chain: %#v", wrapped)
+	}
+	external := found["GET https://api.example.test/users/{_}"]
+	if external.Properties["http_authority"] != "api.example.test" {
+		t.Fatalf("external authority was not preserved: %#v", external)
+	}
+	unknown := found["GET /unknown/{_}"]
+	if unknown.Properties["http_authority_unknown"] != "true" {
+		t.Fatalf("receiver base URL uncertainty was not explicit: %#v", unknown)
+	}
+	composite := found["PUT /items/{_}"]
+	if composite.Properties["http_query"] != "mode=full" {
+		t.Fatalf("request URL query was not separated: %#v", composite)
+	}
+	mutated := found["PATCH /mutable/{_}"]
+	if mutated.Properties["http_query"] != "mode=edit" {
+		t.Fatalf("mutated request URL query was not separated: %#v", mutated)
+	}
+	if alias := found["GET /alias-new"]; alias.Properties["http_query"] != "mode=alias" {
+		t.Fatalf("URL alias mutation lost its query: %#v", alias)
+	}
+	if alias := found["GET /space direct"]; alias.Properties["http_query"] != "q=1" {
+		t.Fatalf("URL alias attachment changed its raw path or lost its query: %#v", alias)
+	}
+	if fragment := found["GET /section"]; fragment.Properties["http_raw_route"] != "/section#frag" {
+		t.Fatalf("URL read lost raw fragment evidence: %#v", fragment)
+	}
+	for _, forbidden := range []string{"POST /swapped", "GET /mutate-original", "GET /mutate-swapped", "GET /late-original", "GET /late-swapped", "GET /conditional-swapped", "TRACE /literal-swapped", "GET /alias-old", "GET /alias-alt-left", "GET /alias-alt-right", "GET /space%20direct", "GET /request-alias", "GET /direct-stale", "GET /unsafe/{_}", "GET /synthetic", "GET /invented", "GET /cycle"} {
+		if _, ok := found[forbidden]; ok {
+			t.Fatalf("unproven or unrelated request %q was invented: %#v", forbidden, found[forbidden])
+		}
+	}
+	foundCycleDiagnostics := 0
+	foundBoundDiagnostics := 0
+	foundAuthorityDiagnostic := false
+	for _, diagnostic := range result.Diagnostics {
+		if strings.Contains(diagnostic.Message, "recursive HTTP wrapper") {
+			foundCycleDiagnostics++
+		}
+		if strings.Contains(diagnostic.Message, "HTTP alternatives exceeded") {
+			foundBoundDiagnostics++
+		}
+		foundAuthorityDiagnostic = foundAuthorityDiagnostic || strings.Contains(diagnostic.Message, "//cdn.example.test/asset")
+	}
+	if foundCycleDiagnostics != 1 {
+		t.Fatalf("recursive wrapper was not diagnosed: %#v", result.Diagnostics)
+	}
+	if foundBoundDiagnostics < 6 {
+		t.Fatalf("alternative bound was not diagnosed: %#v", result.Diagnostics)
+	}
+	if !foundAuthorityDiagnostic {
+		t.Fatalf("authority-form URL was not kept fail-closed: %#v", result.Diagnostics)
+	}
+}
+
+func TestPackageSemanticLoaderBoundsHTTPExecution(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/bounded\n\ngo 1.26\n")
+	var body strings.Builder
+	body.WriteString("package bounded\nimport \"net/http\"\nfunc Call(flags []bool) {\nmethod := http.MethodGet\n")
+	for index := range 700 {
+		fmt.Fprintf(&body, "if flags[%d] { method = http.MethodPost }\n", index)
+	}
+	body.WriteString("request, _ := http.NewRequest(method, \"/bounded\", nil)\n_, _ = http.DefaultClient.Do(request)\n}\n")
+	body.WriteString("func AfterBudget(flags []bool) {\nmethod := http.MethodGet\n")
+	for index := range 700 {
+		fmt.Fprintf(&body, "if flags[%d] { method = http.MethodPost }\n", index)
+	}
+	body.WriteString("_, _ = http.Get(\"/root-after\")\n_ = method\n}\n")
+	content := []byte(body.String())
+	writeFile(t, filepath.Join(root, "client.go"), string(content))
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "client.go", Content: content, Repository: "bounded",
+		RepoID: "repo", GoModule: "example.com/bounded",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeRequests {
+			t.Fatalf("execution-budget exhaustion emitted a partial request: %#v", fact)
+		}
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if strings.Contains(diagnostic.Message, "HTTP execution exceeded") {
+			return
+		}
+	}
+	t.Fatalf("execution-budget exhaustion was not diagnosed: %#v", result.Diagnostics)
 }
 
 func TestCanonicalEndpointsAtSameLineRemainDistinct(t *testing.T) {

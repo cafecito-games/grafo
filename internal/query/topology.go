@@ -821,7 +821,7 @@ func (t *Topology) collectOutboundRequests(ctx context.Context, options Topology
 		request.Target.Method, request.Target.Route = method, route
 		candidates := []graph.ScopedNode{}
 		bestRank := httpmodel.RankNone
-		if validRoute && request.Authority == "" {
+		if validRoute && request.Authority == "" && base.Properties["http_authority_unknown"] != "true" {
 			for _, declaration := range declarations {
 				if declaration.method != method {
 					continue
