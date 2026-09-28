@@ -433,7 +433,11 @@ func (b instructionBlock) planUninstall(reader Reader, display, path string, own
 		return plan{}, fmt.Errorf("%s instructions %s: %w", display, path, err)
 	}
 	if change == agentguide.Unchanged {
-		return plan{change: changeUnchanged, detail: "grafo guidance block is not installed"}, nil
+		return plan{
+			change:      changeUnchanged,
+			detail:      "grafo guidance block is not installed",
+			dropReceipt: own.provesPath(path),
+		}, nil
 	}
 	// The file is deleted only when Grafo's own receipt claims it and nothing but
 	// the managed block remained; otherwise the emptied file is left in place.

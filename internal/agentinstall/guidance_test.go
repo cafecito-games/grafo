@@ -87,6 +87,37 @@ func TestInstallWritesPersonalSkillsAndMigratesManagedBlock(t *testing.T) {
 	}
 }
 
+func TestCodexMigrationDropsReceiptAfterManagedBlockWasRemoved(t *testing.T) {
+	environment := guidanceEnvironment()
+	environment.files[codexAgents] = "# My rules\n"
+	ledger, err := json.Marshal(receiptFile{Format: receiptFormat, Receipts: []Receipt{{
+		Client: "codex", Kind: KindInstructions, Target: codexAgents,
+		ResolvedTarget: codexAgents, Digest: agentguide.Digest("stale managed contents"),
+		Grafo: "0.1.0", Updated: "2026-01-01T00:00:00Z",
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment.files[receiptLedger] = string(ledger)
+
+	actions, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"codex"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := findAction(t, actions, "codex", KindInstructions); got.Change != changeUnchanged {
+		t.Fatalf("legacy instructions action = %#v", got)
+	}
+	receipts, err := Receipts(environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, receipt := range receipts {
+		if receipt.Client == "codex" && receipt.Kind == KindInstructions {
+			t.Fatalf("stale legacy receipt survived migration: %#v", receipt)
+		}
+	}
+}
+
 func slicesContainsPath(paths []string, want string) bool {
 	for _, path := range paths {
 		if path == want {
