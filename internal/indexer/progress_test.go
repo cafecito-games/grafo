@@ -240,6 +240,18 @@ func TestServiceTerminalProgressRedactsRepositoryPaths(t *testing.T) {
 	}
 }
 
+func TestProgressErrorMessageIsActionableBoundedAndPathFree(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "nested", "file.go")
+	message := indexer.ProgressErrorMessage(errors.New("open "+nested+": permission denied\n"+strings.Repeat("界", 600)), root)
+	if strings.Contains(message, root) || strings.ContainsAny(message, "\r\n") {
+		t.Fatalf("message leaked a path or line break: %q", message)
+	}
+	if !strings.Contains(message, "<repository>/nested/file.go: permission denied") || len([]rune(message)) > 512 || !strings.HasSuffix(message, "…") {
+		t.Fatalf("message lost remediation or bound: %q", message)
+	}
+}
+
 func TestServiceReportCapturesPendingReconciliationAtStart(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

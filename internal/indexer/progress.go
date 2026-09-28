@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -86,7 +88,7 @@ func (e *progressEmitter) terminal(ctx context.Context, runErr error) error {
 	message := ""
 	if runErr != nil {
 		state = ProgressError
-		message = boundedProgressError(runErr, e.project)
+		message = ProgressErrorMessage(runErr, e.project.IndexPath, e.project.Root)
 		if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.Canceled) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			state = ProgressCanceled
 		}
@@ -94,12 +96,23 @@ func (e *progressEmitter) terminal(ctx context.Context, runErr error) error {
 	return e.emit(ProgressComplete, state, "", 0, 0, message)
 }
 
-func boundedProgressError(err error, project Project) string {
+// ProgressErrorMessage retains an actionable bounded error while removing
+// caller-supplied repository paths from machine and human progress output.
+func ProgressErrorMessage(err error, sensitivePaths ...string) string {
 	message := strings.NewReplacer("\r", " ", "\n", " ").Replace(err.Error())
-	for _, sensitive := range []string{project.IndexPath, project.Root} {
-		if sensitive != "" {
-			message = strings.ReplaceAll(message, sensitive, "<repository>")
+	sensitive := make([]string, 0, len(sensitivePaths)*3)
+	seen := map[string]bool{}
+	for _, path := range sensitivePaths {
+		for _, candidate := range progressSensitivePathCandidates(path) {
+			if candidate != "" && candidate != "." && !seen[candidate] {
+				seen[candidate] = true
+				sensitive = append(sensitive, candidate)
+			}
 		}
+	}
+	sort.Slice(sensitive, func(i, j int) bool { return len(sensitive[i]) > len(sensitive[j]) })
+	for _, path := range sensitive {
+		message = strings.ReplaceAll(message, path, "<repository>")
 	}
 	const limit = 512
 	runes := []rune(message)
@@ -107,4 +120,18 @@ func boundedProgressError(err error, project Project) string {
 		message = string(runes[:limit-1]) + "…"
 	}
 	return message
+}
+
+func progressSensitivePathCandidates(path string) []string {
+	if path == "" {
+		return nil
+	}
+	result := []string{filepath.Clean(path)}
+	if absolute, err := filepath.Abs(path); err == nil {
+		result = append(result, absolute)
+	}
+	if canonical, err := filepath.EvalSymlinks(path); err == nil {
+		result = append(result, canonical)
+	}
+	return result
 }

@@ -217,7 +217,10 @@ func TestStatusProgressErrorsArePathFreeAndHumanErrorsAreNotDuplicated(t *testin
 	missing := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	code := New(&stdout, &stderr).Run(context.Background(), []string{"status", "--progress=json", missing})
-	if code != 1 || stdout.Len() != 0 || strings.Contains(stderr.String(), missing) || strings.Contains(stderr.String(), "grafo:") {
+	var missingEvent indexer.ProgressEvent
+	decodeErr := json.Unmarshal(bytes.TrimSpace(stderr.Bytes()), &missingEvent)
+	if code != 1 || stdout.Len() != 0 || decodeErr != nil || strings.Contains(stderr.String(), missing) || strings.Contains(stderr.String(), "grafo:") ||
+		!strings.Contains(missingEvent.Error, "has no index") || !strings.Contains(missingEvent.Error, "run 'grafo index <repository>'") {
 		t.Fatalf("missing-index JSON: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 

@@ -497,10 +497,13 @@ func (a *App) status(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		if !renderer.hasTerminal() {
 			state := indexer.ProgressError
-			message := "status refresh failed"
+			sensitivePaths := []string{repoPath(args)}
+			if raw := args.values["repos"]; raw != "" {
+				sensitivePaths = append(sensitivePaths, splitList(raw)...)
+			}
+			message := indexer.ProgressErrorMessage(err, sensitivePaths...)
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
 				state = indexer.ProgressCanceled
-				message = "status refresh canceled"
 			}
 			observeErr := renderer.Observe(indexer.ProgressEvent{
 				Schema: indexer.ProgressSchemaV1, Phase: indexer.ProgressComplete, State: state, Error: message,
