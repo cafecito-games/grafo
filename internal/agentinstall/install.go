@@ -232,8 +232,8 @@ func planSteps(ctx context.Context, reader Reader, options Options, install bool
 		mcpOwnership := receipts.lookup(identity.Name, KindMCP)
 		if planErr == nil && identity.Method == methodConfig && place.registered &&
 			intended.change != changeUnchanged && mcpOwnership.found && !mcpOwnership.provesPath(place.target) {
-			planErr = fmt.Errorf("refusing to mutate %s MCP configuration %s: its install receipt belongs to a different resolved target",
-				identity.Display, place.target)
+			planErr = fmt.Errorf("refusing to mutate %s MCP configuration %s: its install receipt belongs to a different resolved target; inspect %s and reconcile the current registration manually",
+				identity.Display, place.target, receipts.path)
 		}
 		if planErr == nil && identity.Method == methodConfig {
 			planErr = intended.bindUserConfigTargets(reader)

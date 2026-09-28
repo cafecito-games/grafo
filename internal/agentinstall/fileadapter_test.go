@@ -237,9 +237,14 @@ func TestFileAdapterRecordsAndRequiresResolvedReceiptTarget(t *testing.T) {
 	environment.symlinks[linuxHome+"/.cursor"] = linuxHome + "/dotfiles/other-cursor"
 	environment.dirs[linuxHome+"/dotfiles/other-cursor"] = true
 	before := environment.files[cursorFile]
+	receiptLedger, pathErr := receiptPath(environment)
+	if pathErr != nil {
+		t.Fatal(pathErr)
+	}
 	environment.writes = nil
 	_, err = Uninstall(context.Background(), environment, Options{Targets: []string{"cursor"}, MCPOnly: true})
-	if err == nil || !strings.Contains(err.Error(), "different resolved target") {
+	if err == nil || !strings.Contains(err.Error(), "different resolved target") ||
+		!strings.Contains(err.Error(), receiptLedger) || !strings.Contains(err.Error(), "manually") {
 		t.Fatalf("error = %v", err)
 	}
 	if environment.files[cursorFile] != before || len(configWrites(environment)) != 0 {
