@@ -67,6 +67,8 @@ func (*Parser) WorkspaceSemanticEvidenceKey(context.Context, parserapi.Input) (s
 	return "typescript-worktree-v1", nil
 }
 
+func (*Parser) IsSemanticInput(path string) bool { return isTypeScriptSemanticInput(path) }
+
 func (*Parser) SemanticAffectedPaths(allPaths, changedPaths []string) []string {
 	affected := false
 	for _, path := range changedPaths {

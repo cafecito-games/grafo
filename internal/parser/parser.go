@@ -53,6 +53,13 @@ type SemanticDependencyProvider interface {
 	SemanticDependencies() []string
 }
 
+// SemanticInputProvider recognizes repository files that contribute to a
+// parser's semantic model without necessarily being parsed as graph sources.
+// It covers dynamic dependency names that cannot be expressed as a fixed list.
+type SemanticInputProvider interface {
+	IsSemanticInput(string) bool
+}
+
 // SemanticChangeProvider expands incremental invalidation when a source or
 // configuration edit can change otherwise untouched parser output.
 type SemanticChangeProvider interface {
@@ -151,6 +158,9 @@ func (r *Registry) IsSemanticDependency(path string) bool {
 	path = filepath.ToSlash(strings.TrimPrefix(path, "./"))
 	base := filepath.Base(path)
 	for _, languageParser := range r.parsers {
+		if provider, ok := languageParser.(SemanticInputProvider); ok && provider.IsSemanticInput(path) {
+			return true
+		}
 		provider, ok := languageParser.(SemanticDependencyProvider)
 		if !ok {
 			continue

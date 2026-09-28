@@ -42,6 +42,8 @@ func (*Parser) WorkspaceSemanticEvidenceKey(context.Context, parserapi.Input) (s
 	return "godot-worktree-v1", nil
 }
 
+func (p *Parser) IsSemanticInput(path string) bool { return p.Supports(path) }
+
 func (*Parser) Supports(path string) bool {
 	if isConfigFile(path) {
 		return true

@@ -9,6 +9,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	"github.com/cafecito-games/grafo/internal/parser/typescript"
 )
 
 type freshnessParser struct{ semantic *string }
@@ -220,6 +221,59 @@ func TestFreshnessProbeRejectsOversizedDirtyInput(t *testing.T) {
 	}
 	if !probe.Supported {
 		t.Fatalf("bounded oversized state should remain deterministic: %#v", probe)
+	}
+}
+
+func TestFreshnessReprobeHashesRepeatedTypeScriptSemanticInput(t *testing.T) {
+	root := t.TempDir()
+	runGit(t, root, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(root, "sample.ts"), []byte("export const value = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "tsconfig.json"), []byte(`{"strict":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+	registry := parserapi.NewRegistry(typescript.New())
+	first, err := indexer.ProbeFreshness(context.Background(), root, registry, indexer.FreshnessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "tsconfig.json")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"strict":null}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	second, err := indexer.ReprobeFreshness(context.Background(), first, registry, indexer.FreshnessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Token.Equal(second.Token) {
+		t.Fatal("TypeScript semantic input edit retained freshness")
+	}
+	secondInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"strict":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, secondInfo.ModTime(), secondInfo.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	third, err := indexer.ReprobeFreshness(context.Background(), second, registry, indexer.FreshnessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Token.Equal(third.Token) {
+		t.Fatal("same-path same-mtime TypeScript semantic input edit retained freshness")
 	}
 }
 
