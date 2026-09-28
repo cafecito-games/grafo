@@ -195,6 +195,66 @@ func send() -> void:
 	}
 }
 
+func TestParserExtractsHTTPRequestFromTypedSelfField(t *testing.T) {
+	content := []byte(`class_name Client
+
+var http: HTTPRequest
+
+func send() -> void:
+	self.http.request("/field", [], HTTPClient.METHOD_GET)
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "client.gd", Content: content, Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasFact(t, result.Facts, graph.EdgeRequests, "GET /field")
+}
+
+func TestParserDiagnosesRejectedConfiguredIdentityAndUnsupportedKnownFormat(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "grafo.yaml", `http:
+  request_apis:
+    - language: gdscript
+      symbol: AuthAPI.request_json
+      method_argument: 0
+      url_argument: 1
+`)
+	content := []byte(`extends Node
+
+func send() -> void:
+	var AuthAPI = get_node("API")
+	AuthAPI.request_json(HTTPClient.METHOD_GET, "/shadowed")
+	AuthAPI.request_json(HTTPClient.METHOD_GET, "/shadowed-again")
+	var http = HTTPRequest.new()
+	http.request("/precision/%.3f" % 1.25, [], HTTPClient.METHOD_GET)
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "client.gd", Content: content, Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identityWarnings, formatWarnings := 0, 0
+	for _, diagnostic := range result.Diagnostics {
+		if strings.Contains(diagnostic.Message, "configured HTTP request API") && strings.Contains(diagnostic.Message, "AuthAPI.request_json") {
+			identityWarnings++
+		}
+		if strings.Contains(diagnostic.Message, "unsupported GDScript HTTP route percent formatting") {
+			formatWarnings++
+		}
+	}
+	if identityWarnings != 1 || formatWarnings != 1 {
+		t.Fatalf("diagnostics = %#v, want one identity and one format warning", result.Diagnostics)
+	}
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeRequests {
+			t.Fatalf("rejected identity/format emitted request edge: %#v", fact)
+		}
+	}
+}
+
 func TestHTTPSemanticKeyAndDependencyTrackOnlyHTTPConfiguration(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "grafo.yaml", "components:\n  - name: client\n    roots: [client]\n")

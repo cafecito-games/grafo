@@ -172,6 +172,7 @@ type extractor struct {
 	protobufWarned     map[string]bool
 	transportSummaries map[string][]gdTransportTemplate
 	requestAPIs        map[string]projectconfig.HTTPRequestAPI
+	httpWarned         map[string]bool
 }
 
 func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseResult, error) {
@@ -214,7 +215,8 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 		projectKnown: true, bases: map[string]string{}, protobufAPIs: protobufAPIs,
 		protobufAmbiguous: protobufAmbiguous, protobufTypes: protobufTypes,
 		protobufEnabled: protobufEnabled, protobufWarned: map[string]bool{},
-		transportSummaries: map[string][]gdTransportTemplate{}, requestAPIs: map[string]projectconfig.HTTPRequestAPI{}}
+		transportSummaries: map[string][]gdTransportTemplate{}, requestAPIs: map[string]projectconfig.HTTPRequestAPI{},
+		httpWarned: map[string]bool{}}
 	for _, api := range configuration.HTTP.RequestAPIs {
 		if api.Language == "gdscript" {
 			e.requestAPIs[api.Symbol] = api
@@ -1022,16 +1024,23 @@ func (e *extractor) addHTTPRequest(node *gdast.CallExpression, callee, fromID st
 		builtin, methodIndex, routeIndex, apiSymbol = true, 2, 0, "HTTPRequest.request"
 	}
 	configuredAPI, hasConfigured := e.requestAPIs[callee]
-	if hasConfigured && !e.untypedLocalReceiver(node.Callee, current) && !e.unresolvedMemberReceiver(node.Callee, current) {
-		configured = true
-		if !builtin {
-			methodIndex, routeIndex, apiSymbol = configuredAPI.MethodArgument, configuredAPI.URLArgument, configuredAPI.Symbol
-		} else if configuredAPI.MethodArgument != methodIndex || configuredAPI.URLArgument != routeIndex {
-			// One call cannot safely satisfy two conflicting signatures. The shared
-			// loader prevents duplicate configured symbols; a configured override of
-			// the built-in adapter is equally ambiguous at the source callsite.
-			e.b.Diagnostic(loc.Line, "warning", "configured HTTP request signature conflicts with built-in HTTPRequest.request")
-			return
+	if hasConfigured {
+		if e.untypedLocalReceiver(node.Callee, current) || e.unresolvedMemberReceiver(node.Callee, current) {
+			if !e.httpWarned[callee] {
+				e.httpWarned[callee] = true
+				e.b.Diagnostic(loc.Line, "warning", "configured HTTP request API could not be resolved uniquely: "+callee)
+			}
+		} else {
+			configured = true
+			if !builtin {
+				methodIndex, routeIndex, apiSymbol = configuredAPI.MethodArgument, configuredAPI.URLArgument, configuredAPI.Symbol
+			} else if configuredAPI.MethodArgument != methodIndex || configuredAPI.URLArgument != routeIndex {
+				// One call cannot safely satisfy two conflicting signatures. The shared
+				// loader prevents duplicate configured symbols; a configured override of
+				// the built-in adapter is equally ambiguous at the source callsite.
+				e.b.Diagnostic(loc.Line, "warning", "configured HTTP request signature conflicts with built-in HTTPRequest.request")
+				return
+			}
 		}
 	}
 	if !builtin && !configured {
@@ -1043,6 +1052,9 @@ func (e *extractor) addHTTPRequest(node *gdast.CallExpression, callee, fromID st
 	routeExpression := node.Arguments[routeIndex]
 	route, routeOK := e.scalarString(routeExpression, current)
 	if !routeOK {
+		if e.hasUnsupportedKnownPercentFormat(routeExpression, current) {
+			e.b.Diagnostic(loc.Line, "warning", "unsupported GDScript HTTP route percent formatting")
+		}
 		return
 	}
 	method, methodExpression := "", "<default>"
@@ -1803,31 +1815,59 @@ func (e *extractor) scalarString(expression gdast.Expression, current scope) (st
 				return left + right, true
 			}
 		case "%":
-			format, formatOK := e.scalarString(node.Left, current)
-			if !formatOK {
-				return "", false
-			}
-			arguments := []string{}
-			if array, ok := node.Right.(*gdast.ArrayLiteral); ok {
-				if len(array.Elements) > 16 {
-					return "", false
-				}
-				for _, element := range array.Elements {
-					value, ok := e.scalarFormatValue(element, current)
-					if !ok {
-						return "", false
-					}
-					arguments = append(arguments, value)
-				}
-			} else if value, ok := e.scalarFormatValue(node.Right, current); ok {
-				arguments = append(arguments, value)
-			} else {
+			format, arguments, ok := e.percentFormatOperands(node, current)
+			if !ok {
 				return "", false
 			}
 			return boundedPercentFormat(format, arguments)
 		}
 	}
 	return "", false
+}
+
+func (e *extractor) percentFormatOperands(expression *gdast.BinaryExpression, current scope) (string, []string, bool) {
+	format, formatOK := e.scalarString(expression.Left, current)
+	if !formatOK {
+		return "", nil, false
+	}
+	arguments := []string{}
+	if array, ok := expression.Right.(*gdast.ArrayLiteral); ok {
+		if len(array.Elements) > 16 {
+			return "", nil, false
+		}
+		for _, element := range array.Elements {
+			value, ok := e.scalarFormatValue(element, current)
+			if !ok {
+				return "", nil, false
+			}
+			arguments = append(arguments, value)
+		}
+	} else if value, ok := e.scalarFormatValue(expression.Right, current); ok {
+		arguments = append(arguments, value)
+	} else {
+		return "", nil, false
+	}
+	return format, arguments, true
+}
+
+func (e *extractor) hasUnsupportedKnownPercentFormat(expression gdast.Expression, current scope) bool {
+	unsupported := false
+	gdast.Inspect(expression, func(node gdast.Node) bool {
+		binary, ok := node.(*gdast.BinaryExpression)
+		if !ok || binary.Operator != "%" {
+			return true
+		}
+		format, arguments, known := e.percentFormatOperands(binary, current)
+		if !known {
+			return true
+		}
+		if _, supported := boundedPercentFormat(format, arguments); !supported {
+			unsupported = true
+			return false
+		}
+		return true
+	})
+	return unsupported
 }
 
 func (e *extractor) scalarFormatValue(expression gdast.Expression, current scope) (string, bool) {
@@ -2295,6 +2335,13 @@ func (e *extractor) receiverType(object gdast.Expression, current scope) (string
 			return resolved, true
 		}
 		return node.Name, node.Name != ""
+	case *gdast.MemberExpression:
+		identifier, ok := node.Object.(*gdast.Identifier)
+		if !ok || identifier.Name != "self" {
+			return "", false
+		}
+		resolved := current.fields[node.Property]
+		return resolved, resolved != ""
 	default:
 		return "", false
 	}
