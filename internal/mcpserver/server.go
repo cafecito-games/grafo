@@ -17,17 +17,25 @@ import (
 )
 
 type Service struct {
-	repository  graph.ReadRepository
-	query       *query.Service
-	projects    []indexer.Project
-	refresh     func(context.Context) error
-	reusable    func(context.Context, string, int) (semantic.SearchResult, error)
-	source      func(context.Context, string, graph.NodeKind, int, int) (sourcecontext.Excerpt, error)
-	search      *search.Service
-	catalog     *query.Catalog
-	topology    *query.Topology
-	messageFlow *query.MessageFlowService
-	refreshMu   sync.Mutex
+	repository      graph.ReadRepository
+	query           *query.Service
+	projects        []indexer.Project
+	refresh         func(context.Context) error
+	reusable        func(context.Context, string, int) (semantic.SearchResult, error)
+	reusableFactory func(graph.ReadRepository, []indexer.Project) func(context.Context, string, int) (semantic.SearchResult, error)
+	source          func(context.Context, string, graph.NodeKind, int, int) (sourcecontext.Excerpt, error)
+	search          *search.Service
+	catalog         *query.Catalog
+	topology        *query.Topology
+	messageFlow     *query.MessageFlowService
+	refreshMu       sync.Mutex
+	freshness       interface {
+		Acquire(context.Context) (*FreshnessGeneration, func(), error)
+	}
+	generationKey string
+	generationMu  sync.Mutex
+	sourceFactory func(graph.ReadRepository, []indexer.Project) (func(context.Context, string, graph.NodeKind, int, int) (sourcecontext.Excerpt, error), error)
+	searchFactory func(graph.ReadRepository, []indexer.Project) (*search.Service, error)
 }
 
 func New(repository graph.Repository, project indexer.Project) *Service {
@@ -53,8 +61,23 @@ func (s *Service) WithRefresh(refresh func(context.Context) error) *Service {
 	return s
 }
 
+// WithFreshness configures generation-bound acquisition for every complete
+// tool invocation. It supersedes the legacy error-only refresh hook.
+func (s *Service) WithFreshness(coordinator *FreshnessCoordinator) *Service {
+	s.freshness = coordinator
+	return s
+}
+
 func (s *Service) WithReusable(search func(context.Context, string, int) (semantic.SearchResult, error)) *Service {
 	s.reusable = search
+	return s
+}
+
+// WithReusableFactory keeps embedding work bound to the source generation
+// acquired for the tool call while retaining its separate writable lifecycle.
+func (s *Service) WithReusableFactory(factory func(graph.ReadRepository, []indexer.Project) func(context.Context, string, int) (semantic.SearchResult, error)) *Service {
+	s.reusableFactory = factory
+	s.reusable = factory(s.repository, s.projects)
 	return s
 }
 
@@ -66,19 +89,95 @@ func (s *Service) WithSource(read func(context.Context, string, graph.NodeKind, 
 	return s
 }
 
+// WithSourceFactory rebuilds the source reader whenever a new query-only
+// generation is published.
+func (s *Service) WithSourceFactory(factory func(graph.ReadRepository, []indexer.Project) (func(context.Context, string, graph.NodeKind, int, int) (sourcecontext.Excerpt, error), error)) *Service {
+	s.sourceFactory = factory
+	read, err := factory(s.repository, s.projects)
+	if err == nil {
+		s.WithSource(read)
+	}
+	return s
+}
+
 // WithSearch enables bounded content search over the refreshed indexes.
 func (s *Service) WithSearch(service *search.Service) *Service {
 	s.search = service
 	return s
 }
 
-func (s *Service) ready(ctx context.Context) error {
-	if s.refresh == nil {
-		return nil
+// WithSearchFactory rebuilds bounded source search for each generation.
+func (s *Service) WithSearchFactory(factory func(graph.ReadRepository, []indexer.Project) (*search.Service, error)) *Service {
+	s.searchFactory = factory
+	service, err := factory(s.repository, s.projects)
+	if err == nil {
+		s.search = service
 	}
-	s.refreshMu.Lock()
-	defer s.refreshMu.Unlock()
-	return s.refresh(ctx)
+	return s
+}
+
+func (s *Service) ready(ctx context.Context) (func(), error) {
+	if s.freshness != nil {
+		generation, release, err := s.freshness.Acquire(ctx)
+		if err != nil {
+			return nil, err
+		}
+		s.generationMu.Lock()
+		if s.generationKey != generation.Key {
+			err = s.bindGeneration(generation)
+		}
+		s.generationMu.Unlock()
+		if err != nil {
+			release()
+			return nil, err
+		}
+		return release, nil
+	}
+	if s.refresh != nil {
+		s.refreshMu.Lock()
+		err := s.refresh(ctx)
+		s.refreshMu.Unlock()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return func() {}, nil
+}
+
+func (s *Service) bindGeneration(generation *FreshnessGeneration) error {
+	s.repository = generation.Repository
+	s.projects = append([]indexer.Project(nil), generation.Projects...)
+	s.query = query.NewService(generation.Repository)
+	s.catalog = nil
+	if repository, ok := generation.Repository.(graph.CatalogRepository); ok {
+		s.catalog = query.NewCatalog(repository)
+	}
+	s.topology = nil
+	s.messageFlow = nil
+	if repository, ok := generation.Repository.(graph.TopologyRepository); ok {
+		s.topology = query.NewTopology(repository)
+		s.messageFlow = query.NewMessageFlow(repository)
+	}
+	if s.sourceFactory != nil {
+		read, err := s.sourceFactory(generation.Repository, generation.Projects)
+		if err != nil {
+			return err
+		}
+		s.source = read
+		s.query = s.query.WithSourceReader(sourcecontext.ReaderFunc(read))
+	}
+	if s.searchFactory != nil {
+		service, err := s.searchFactory(generation.Repository, generation.Projects)
+		if err != nil {
+			return err
+		}
+		s.search = service
+	}
+	if s.reusableFactory != nil {
+		s.reusable = s.reusableFactory(generation.Repository, generation.Projects)
+	}
+	s.generationKey = generation.Key
+	return nil
 }
 
 func (s *Service) Server(version string) *mcp.Server {
@@ -143,9 +242,11 @@ type FindSymbolsOutput struct {
 }
 
 func (s *Service) findSymbols(ctx context.Context, _ *mcp.CallToolRequest, input FindSymbolsInput) (*mcp.CallToolResult, FindSymbolsOutput, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, FindSymbolsOutput{}, err
 	}
+	defer release()
 	queries, batched, err := batchInputs("query", input.Query, input.Queries)
 	if err != nil {
 		return nil, FindSymbolsOutput{}, err
@@ -185,9 +286,11 @@ func (s *Service) getTestCoverage(ctx context.Context, _ *mcp.CallToolRequest, i
 }
 
 func (s *Service) runTestCoverage(ctx context.Context, input TestCoverageInput, find bool) (*mcp.CallToolResult, TestCoverageOutput, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, TestCoverageOutput{}, err
 	}
+	defer release()
 	selectors, batched, err := batchInputs("selector", input.Selector, input.Selectors)
 	if err != nil {
 		return nil, TestCoverageOutput{}, err
@@ -219,9 +322,11 @@ type SourceOutput struct {
 }
 
 func (s *Service) getSource(ctx context.Context, _ *mcp.CallToolRequest, input SourceInput) (*mcp.CallToolResult, SourceOutput, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, SourceOutput{}, err
 	}
+	defer release()
 	selectors, batched, err := batchInputs("selector", input.Selector, input.Selectors)
 	if err != nil {
 		return nil, SourceOutput{}, err
@@ -240,9 +345,11 @@ type NodeOutput struct {
 }
 
 func (s *Service) getNode(ctx context.Context, _ *mcp.CallToolRequest, input SelectorInput) (*mcp.CallToolResult, NodeOutput, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, NodeOutput{}, err
 	}
+	defer release()
 	selectors, batched, err := batchInputs("selector", input.Selector, input.Selectors)
 	if err != nil {
 		return nil, NodeOutput{}, err
@@ -276,9 +383,11 @@ type TraversalOutput struct {
 // callees, and blast radius differ only in their defaults and relation set.
 func (s *Service) traverse(ctx context.Context, input TraversalInput, depthDefault int,
 	direction query.Direction, relations []graph.EdgeKind) (TraversalOutput, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return TraversalOutput{}, err
 	}
+	defer release()
 	selectors, batched, err := batchInputs("selector", input.Selector, input.Selectors)
 	if err != nil {
 		return TraversalOutput{}, err
@@ -361,9 +470,11 @@ func pathInputs(input PathInput) ([]PathPair, bool, error) {
 }
 
 func (s *Service) findPath(ctx context.Context, _ *mcp.CallToolRequest, input PathInput) (*mcp.CallToolResult, PathOutput, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, PathOutput{}, err
 	}
+	defer release()
 	pairs, batched, err := pathInputs(input)
 	if err != nil {
 		return nil, PathOutput{}, err
@@ -463,9 +574,11 @@ type GodotCompositionOutput struct {
 }
 
 func (s *Service) getGodotComposition(ctx context.Context, _ *mcp.CallToolRequest, input GodotCompositionInput) (*mcp.CallToolResult, GodotCompositionOutput, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, GodotCompositionOutput{}, err
 	}
+	defer release()
 	selectors, batched, err := batchInputs("selector", input.Selector, input.Selectors)
 	if err != nil {
 		return nil, GodotCompositionOutput{}, err
@@ -501,9 +614,11 @@ type GodotInteractionsOutput struct {
 }
 
 func (s *Service) getGodotInteractions(ctx context.Context, _ *mcp.CallToolRequest, input GodotInteractionsInput) (*mcp.CallToolResult, GodotInteractionsOutput, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, GodotInteractionsOutput{}, err
 	}
+	defer release()
 	selectors, batched, err := batchInputs("selector", input.Selector, input.Selectors)
 	if err != nil {
 		return nil, GodotInteractionsOutput{}, err
@@ -556,9 +671,11 @@ type FailureFlowOutput struct {
 }
 
 func (s *Service) getFailureFlow(ctx context.Context, _ *mcp.CallToolRequest, input FailureFlowInput) (*mcp.CallToolResult, FailureFlowOutput, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, FailureFlowOutput{}, err
 	}
+	defer release()
 	selectors, batched, err := batchInputs("selector", input.Selector, input.Selectors)
 	if err != nil {
 		return nil, FailureFlowOutput{}, err
@@ -585,9 +702,11 @@ func (s *Service) getFailureFlow(ctx context.Context, _ *mcp.CallToolRequest, in
 }
 
 func (s *Service) getBlastRadius(ctx context.Context, _ *mcp.CallToolRequest, input ImpactInput) (*mcp.CallToolResult, ImpactOutput, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, ImpactOutput{}, err
 	}
+	defer release()
 	selectors, batched, err := batchInputs("selector", input.Selector, input.Selectors)
 	if err != nil {
 		return nil, ImpactOutput{}, err
@@ -616,9 +735,11 @@ type SearchSourceInput struct {
 }
 
 func (s *Service) searchSource(ctx context.Context, _ *mcp.CallToolRequest, input SearchSourceInput) (*mcp.CallToolResult, search.Result, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, search.Result{}, err
 	}
+	defer release()
 	patterns, _, err := batchInputs("pattern", input.Pattern, input.Patterns)
 	if err != nil {
 		return nil, search.Result{}, err
@@ -649,9 +770,11 @@ type DataResourceInput struct {
 }
 
 func (s *Service) listDataResources(ctx context.Context, _ *mcp.CallToolRequest, input DataResourceInput) (*mcp.CallToolResult, query.DataResourceList, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, query.DataResourceList{}, err
 	}
+	defer release()
 	kinds, err := nodeKinds(input.Kinds)
 	if err != nil {
 		return nil, query.DataResourceList{}, err
@@ -669,34 +792,42 @@ type DataResourceUsageInput struct {
 }
 
 func (s *Service) getDataResourceUsage(ctx context.Context, _ *mcp.CallToolRequest, input DataResourceUsageInput) (*mcp.CallToolResult, query.DataResourceUsage, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, query.DataResourceUsage{}, err
 	}
+	defer release()
 	options := query.CatalogOptions{Repository: input.Repository, Limit: input.Limit}
 	result, err := s.catalog.DataResourceUsage(ctx, input.Selector, options)
 	return nil, result, withCandidates(err)
 }
 
 func (s *Service) listConfigKeys(ctx context.Context, _ *mcp.CallToolRequest, input CatalogInput) (*mcp.CallToolResult, query.ConfigKeyList, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, query.ConfigKeyList{}, err
 	}
+	defer release()
 	result, err := s.catalog.ConfigKeys(ctx, input.options())
 	return nil, result, err
 }
 
 func (s *Service) listEvents(ctx context.Context, _ *mcp.CallToolRequest, input CatalogInput) (*mcp.CallToolResult, query.EventList, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, query.EventList{}, err
 	}
+	defer release()
 	result, err := s.catalog.Events(ctx, input.options())
 	return nil, result, err
 }
 
 func (s *Service) findOrphanedEvents(ctx context.Context, _ *mcp.CallToolRequest, input CatalogInput) (*mcp.CallToolResult, query.OrphanedEventList, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, query.OrphanedEventList{}, err
 	}
+	defer release()
 	result, err := s.catalog.OrphanedEvents(ctx, input.options())
 	return nil, result, err
 }
@@ -741,33 +872,41 @@ func (i ServiceTopologyInput) options() query.TopologyOptions {
 }
 
 func (s *Service) listEndpoints(ctx context.Context, _ *mcp.CallToolRequest, input EndpointInput) (*mcp.CallToolResult, query.EndpointList, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, query.EndpointList{}, err
 	}
+	defer release()
 	result, err := s.topology.Endpoints(ctx, input.options())
 	return nil, result, err
 }
 
 func (s *Service) listOutboundRequests(ctx context.Context, _ *mcp.CallToolRequest, input EndpointInput) (*mcp.CallToolResult, query.OutboundRequestList, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, query.OutboundRequestList{}, err
 	}
+	defer release()
 	result, err := s.topology.OutboundRequests(ctx, input.options())
 	return nil, result, err
 }
 
 func (s *Service) findHandler(ctx context.Context, _ *mcp.CallToolRequest, input HandlerInput) (*mcp.CallToolResult, query.HandlerList, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, query.HandlerList{}, err
 	}
+	defer release()
 	result, err := s.topology.Handlers(ctx, input.options())
 	return nil, result, err
 }
 
 func (s *Service) getServiceTopology(ctx context.Context, _ *mcp.CallToolRequest, input ServiceTopologyInput) (*mcp.CallToolResult, query.ServiceTopology, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, query.ServiceTopology{}, err
 	}
+	defer release()
 	result, err := s.topology.ServiceTopology(ctx, input.options())
 	return nil, result, err
 }
@@ -787,9 +926,11 @@ type MessageFlowOutput struct {
 }
 
 func (s *Service) getMessageFlow(ctx context.Context, _ *mcp.CallToolRequest, input MessageFlowInput) (*mcp.CallToolResult, MessageFlowOutput, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, MessageFlowOutput{}, err
 	}
+	defer release()
 	selectors, batched, err := batchInputs("selector", input.Selector, input.Selectors)
 	if err != nil {
 		return nil, MessageFlowOutput{}, err
@@ -823,9 +964,11 @@ type MessageCoverageInput struct {
 }
 
 func (s *Service) listMessageCoverage(ctx context.Context, _ *mcp.CallToolRequest, input MessageCoverageInput) (*mcp.CallToolResult, query.MessageCoverageList, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, query.MessageCoverageList{}, err
 	}
+	defer release()
 	result, err := s.messageFlow.Coverage(ctx, query.MessageCoverageOptions{Repository: input.Repository,
 		Package: input.Package, Message: input.Message, Oneof: input.Oneof, Direction: query.Direction(input.Direction),
 		Component: input.Component, Status: query.CoverageStatus(input.Status), Limit: input.Limit})
@@ -840,9 +983,11 @@ type FindReusableCodeInput struct {
 }
 
 func (s *Service) findReusableCode(ctx context.Context, _ *mcp.CallToolRequest, input FindReusableCodeInput) (*mcp.CallToolResult, semantic.SearchResult, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, semantic.SearchResult{}, err
 	}
+	defer release()
 	if strings.TrimSpace(input.Query) == "" {
 		return nil, semantic.SearchResult{}, fmt.Errorf("query is required")
 	}
@@ -858,9 +1003,11 @@ type StatusOutput struct {
 }
 
 func (s *Service) getIndexStatus(ctx context.Context, _ *mcp.CallToolRequest, _ StatusInput) (*mcp.CallToolResult, StatusOutput, error) {
-	if err := s.ready(ctx); err != nil {
+	release, err := s.ready(ctx)
+	if err != nil {
 		return nil, StatusOutput{}, err
 	}
+	defer release()
 	counts, err := s.repository.Counts(ctx)
 	if err != nil {
 		return nil, StatusOutput{}, err

@@ -98,8 +98,11 @@ and a real run prints every target and action before mutating anything.
 The generated MCP configuration uses the absolute path of the installed Grafo
 binary, so agents do not depend on their launch environment's `PATH`. Re-run
 the command after moving the binary. Each repository still needs an initial
-`grafo index .`; subsequent MCP queries refresh its active branch index
-incrementally.
+`grafo index .`. An MCP session then performs one synchronous startup refresh
+and serves unchanged calls through a persistent query-only generation. Before
+each tool call it compares an opaque source-freshness token; only changed
+projects reopen a short-lived writer and refresh before a new generation is
+published. Non-Git projects conservatively retain a full refresh per call.
 
 ### Background indexing and diagnostics
 

@@ -53,6 +53,10 @@ func discoverProject(ctx context.Context, start string, runner gitCommandRunner)
 		root = snapshot.Root
 	}
 	name := filepath.Base(root)
+	return projectFromSnapshot(root, name, readGoModule(root), snapshot, gitManaged), nil
+}
+
+func projectFromSnapshot(root, name, goModule string, snapshot GitSnapshot, gitManaged bool) Project {
 	identity := root
 	branch := "working-tree"
 	commit := ""
@@ -82,9 +86,9 @@ func discoverProject(ctx context.Context, start string, runner gitCommandRunner)
 	}
 	return Project{
 		Root: root, Name: name, ID: graph.StableID("repo", identity), Branch: branch,
-		Commit: commit, GoModule: readGoModule(root), gitSnapshot: projectSnapshot,
+		Commit: commit, GoModule: goModule, gitSnapshot: projectSnapshot,
 		IndexPath: filepath.Join(root, ".grafo", "indexes", indexName), GitManaged: gitManaged,
-	}, nil
+	}
 }
 
 func readGoModule(root string) string {

@@ -3,11 +3,13 @@ package indexer
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,8 +33,7 @@ func (execGitRunner) Run(ctx context.Context, directory string, arguments ...str
 type cachedGitIdentity struct {
 	identity string
 	origin   string
-	size     int64
-	modified int64
+	digest   [sha256.Size]byte
 }
 
 var gitIdentityCache = struct {
@@ -55,8 +56,14 @@ type GitSnapshot struct {
 	DetachedBranch   string
 	Commands         int
 	ProbeNS          int64
+	statusRecords    []gitStatusRecord
 	used             *atomic.Bool
 	runner           gitCommandRunner
+}
+
+type gitStatusRecord struct {
+	encoded string
+	paths   []string
 }
 
 func inspectGit(ctx context.Context, start string, runner gitCommandRunner) (GitSnapshot, bool, error) {
@@ -109,8 +116,7 @@ func inspectGitIdentity(ctx context.Context, root string, runner gitCommandRunne
 	cached, exists := gitIdentityCache.byRoot[root]
 	gitIdentityCache.Unlock()
 	if exists {
-		if info, err := os.Stat(cached.origin); err == nil && info.Mode().IsRegular() &&
-			info.Size() == cached.size && info.ModTime().UnixNano() == cached.modified {
+		if content, err := os.ReadFile(cached.origin); err == nil && sha256.Sum256(content) == cached.digest {
 			return cached.identity, 0, nil
 		}
 	}
@@ -135,10 +141,10 @@ func inspectGitIdentity(ctx context.Context, root string, runner gitCommandRunne
 		origin = filepath.Join(root, filepath.FromSlash(origin))
 	}
 	if origin != "" {
-		if info, statErr := os.Stat(origin); statErr == nil && info.Mode().IsRegular() {
+		if content, readErr := os.ReadFile(origin); readErr == nil {
 			gitIdentityCache.Lock()
 			gitIdentityCache.byRoot[root] = cachedGitIdentity{
-				identity: identity, origin: origin, size: info.Size(), modified: info.ModTime().UnixNano(),
+				identity: identity, origin: origin, digest: sha256.Sum256(content),
 			}
 			gitIdentityCache.Unlock()
 		}
@@ -235,6 +241,9 @@ func parseGitStatusPorcelainV2(raw []byte) (GitSnapshot, error) {
 				return GitSnapshot{}, err
 			}
 			paths = append(paths, path)
+			snapshot.statusRecords = append(snapshot.statusRecords, gitStatusRecord{
+				encoded: strings.Join(fields[:8], " ") + " " + path, paths: []string{path},
+			})
 			if membershipStatus(fields[1]) && !PathIgnored(path) {
 				snapshot.MembershipStable = false
 			}
@@ -253,6 +262,9 @@ func parseGitStatusPorcelainV2(raw []byte) (GitSnapshot, error) {
 			}
 			index++
 			paths = append(paths, path, original)
+			snapshot.statusRecords = append(snapshot.statusRecords, gitStatusRecord{
+				encoded: strings.Join(fields[:9], " ") + " " + path + "\x00" + original, paths: []string{path, original},
+			})
 			if !PathIgnored(path) || !PathIgnored(original) {
 				snapshot.MembershipStable = false
 			}
@@ -266,6 +278,9 @@ func parseGitStatusPorcelainV2(raw []byte) (GitSnapshot, error) {
 				return GitSnapshot{}, err
 			}
 			paths = append(paths, path)
+			snapshot.statusRecords = append(snapshot.statusRecords, gitStatusRecord{
+				encoded: strings.Join(fields[:10], " ") + " " + path, paths: []string{path},
+			})
 			if !PathIgnored(path) {
 				snapshot.MembershipStable = false
 			}
@@ -278,6 +293,7 @@ func parseGitStatusPorcelainV2(raw []byte) (GitSnapshot, error) {
 				return GitSnapshot{}, err
 			}
 			paths = append(paths, path)
+			snapshot.statusRecords = append(snapshot.statusRecords, gitStatusRecord{encoded: "? " + path, paths: []string{path}})
 			if !PathIgnored(path) {
 				untracked = append(untracked, path)
 			}
@@ -296,6 +312,7 @@ func parseGitStatusPorcelainV2(raw []byte) (GitSnapshot, error) {
 		return GitSnapshot{}, fmt.Errorf("porcelain status omitted branch.head")
 	}
 	paths = uniquePaths(paths)
+	sort.Slice(snapshot.statusRecords, func(i, j int) bool { return snapshot.statusRecords[i].encoded < snapshot.statusRecords[j].encoded })
 	snapshot.Changed = append([]string(nil), paths...)
 	snapshot.Dirty = append([]string(nil), paths...)
 	snapshot.Untracked = uniquePaths(untracked)

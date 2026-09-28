@@ -35,6 +35,28 @@ func TestOpenReadUsesCapabilitySafeRepositoryAfterRefresh(t *testing.T) {
 	}
 }
 
+func TestMCPUsesCoordinatorRootsAndNotWritableOpenRead(t *testing.T) {
+	single, err := parseArguments([]string{"mcp", "--repo", "/tmp/one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots, err := mcpRoots(single)
+	if err != nil || len(roots) != 1 || roots[0] != "/tmp/one" {
+		t.Fatalf("single roots=%#v err=%v", roots, err)
+	}
+	federated, err := parseArguments([]string{"mcp", "--repos", "/tmp/two,/tmp/one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots, err = mcpRoots(federated)
+	if err != nil || len(roots) != 2 || roots[0] != "/tmp/two" || roots[1] != "/tmp/one" {
+		t.Fatalf("federated roots=%#v err=%v", roots, err)
+	}
+	if requiresWritableRead("mcp") {
+		t.Fatal("MCP remained on the legacy persistent writable open path")
+	}
+}
+
 func TestOpenReadRetainsSemanticWritesForReusableAlias(t *testing.T) {
 	root := indexedRepository(t)
 	args, err := parseArguments([]string{"find-reusable-code", "payment helper", "--repo", root})

@@ -207,7 +207,11 @@ same read-only repository port used by normal traversal. When an explicit
 external fact exactly matches a compatible declaration in a peer index, the
 adapter synthesizes a deterministic edge marked `federated=true`. It neither
 copies databases nor guesses from similarity. Both one-shot CLI queries and
-long-running MCP tool calls incrementally refresh their indexes first.
+long-running MCP tool calls prove source freshness first. MCP publishes one
+atomic query-only generation after all changed members refresh successfully;
+unchanged members perform no writable open or metadata write. A tool holds one
+generation lease for its complete scalar or batched response, so a later
+refresh cannot expose a partially updated federation or close a handle in use.
 
 ## Semantic discovery
 
