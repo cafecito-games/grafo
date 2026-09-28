@@ -539,6 +539,16 @@ evidence for the same event without persisting a derived relationship.
 Federation retains its edge marker, and cross-repository evidence also marks
 template-compatible HTTP links as federated.
 
+Go outbound HTTP extraction is resolved once in the compact package semantic
+view using go/types API identity. It composes `net/http` constructors,
+convenience functions, `Client.Do`, request/URL fields, and bounded
+package-local helpers while retaining the highest application callsite and the
+underlying sink chain. Literal concatenation and `fmt.Sprintf` are accepted
+only when dynamic path segments are proven safe through `url.PathEscape`;
+query strings remain evidence outside route identity. Cycles, unsafe dynamic
+segments, and unknown receiver authorities fail closed, and an unknown
+authority can never produce a path-only local match.
+
 Go/Chi composition is resolved once in the compact package semantic view using
 go/types API identity. The analyzer expands package-local router helpers and
 constructors with a bounded recursion guard, applies `Use`, `With`, `Group`,

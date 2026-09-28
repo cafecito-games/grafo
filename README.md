@@ -415,7 +415,10 @@ are marked `federated` and retain their original evidence.
   other document sections, and explicit code keywords connect prose to symbols.
 - Outbound Go `net/http`, Python Requests/HTTPX, and TypeScript `fetch`/Axios
   calls, linked to matching endpoint declarations locally or across repository
-  boundaries.
+  boundaries. Go extraction follows typed `net/http` request constructors,
+  convenience calls, `Client.Do`, request fields, and bounded package-local
+  wrappers; unescaped dynamic paths and unknown receiver authorities stay
+  unresolved rather than becoming path-only links.
 - Deterministic symbol lookup, neighborhood traversal, shortest paths, callers,
   callees, failure-flow and blast-radius reports, multi-repository federation,
   and MCP access.

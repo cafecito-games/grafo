@@ -126,6 +126,211 @@ func Routes() {
 	}
 }
 
+func TestPackageSemanticLoaderExtractsOutboundHTTPThroughWrappers(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/client\n\ngo 1.26\n")
+	content := []byte(`package client
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+)
+
+const orders = "/orders/"
+
+func build(ctx context.Context, method, target string) (*http.Request, error) {
+	return http.NewRequestWithContext(ctx, method, target, nil)
+}
+
+func send(client *http.Client, request *http.Request) (*http.Response, error) {
+	return client.Do(request)
+}
+
+func invoke(ctx context.Context, client *http.Client, method, target string) (*http.Response, error) {
+	request, err := build(ctx, method, target)
+	if err != nil { return nil, err }
+	return send(client, request)
+}
+
+func Call(ctx context.Context, id string) {
+	_, _ = invoke(ctx, http.DefaultClient, http.MethodPost,
+		fmt.Sprintf("/charge/%s?view=full", url.PathEscape(id)))
+}
+
+func Direct(id string) {
+	request, _ := http.NewRequest(http.MethodGet, orders+url.PathEscape(id)+"?expand=true", nil)
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func Convenience() { _, _ = http.Get("/ready") }
+
+func Alternatives(flag bool) {
+	method := http.MethodGet
+	if flag { method = http.MethodDelete }
+	request, _ := http.NewRequest(method, "/alternative", nil)
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func TooManyAlternatives(flags [9]bool) {
+	method := http.MethodGet
+	if flags[0] { method = http.MethodPost }
+	if flags[1] { method = http.MethodPut }
+	if flags[2] { method = http.MethodPatch }
+	if flags[3] { method = http.MethodDelete }
+	if flags[4] { method = http.MethodHead }
+	if flags[5] { method = http.MethodOptions }
+	if flags[6] { method = http.MethodConnect }
+	if flags[7] { method = http.MethodTrace }
+	request, _ := http.NewRequest(method, "/bounded", nil)
+	_, _ = http.DefaultClient.Do(request)
+}
+
+type API struct {
+	baseURL string
+	client *http.Client
+}
+
+func (api *API) fetch(id string) {
+	request, _ := http.NewRequest(http.MethodGet, api.baseURL+"/users/"+url.PathEscape(id), nil)
+	_, _ = api.client.Do(request)
+}
+
+func External(id string) {
+	api := &API{baseURL: "https://api.example.test", client: http.DefaultClient}
+	api.fetch(id)
+}
+
+func (api *API) UnknownAuthority(id string) {
+	request, _ := http.NewRequest(http.MethodGet, api.baseURL+"/unknown/"+url.PathEscape(id), nil)
+	_, _ = api.client.Do(request)
+}
+
+func Composite(id string) {
+	request := &http.Request{Method: http.MethodPut, URL: &url.URL{
+		Path: "/items/"+url.PathEscape(id), RawQuery: "mode=full",
+	}}
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func Mutated(id string) {
+	request := &http.Request{}
+	request.Method = http.MethodPatch
+	request.URL = &url.URL{}
+	request.URL.Path = "/mutable/"+url.PathEscape(id)
+	request.URL.RawQuery = "mode=edit"
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func Unsafe(id string) {
+	request, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("/unsafe/%s", id), nil)
+	_, _ = http.DefaultClient.Do(request)
+	request = httptest.NewRequest(http.MethodGet, "/synthetic", nil)
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func cycleA(path string) { cycleB(path) }
+func cycleB(path string) {
+	cycleA(path)
+	_, _ = http.Get(fmt.Sprintf("/cycle/%s", path))
+}
+func Cyclic(path string) { cycleA(path) }
+
+type unrelated struct{}
+func (unrelated) NewRequest(string, string, any) *http.Request { return nil }
+func (unrelated) Do(*http.Request) {}
+func NotHTTP() {
+	var other unrelated
+	request := other.NewRequest(http.MethodGet, "/invented", nil)
+	other.Do(request)
+}
+`)
+	writeFile(t, filepath.Join(root, "client.go"), string(content))
+
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "client.go", Content: content, Repository: "client",
+		RepoID: "repo", GoModule: "example.com/client",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := map[string]graph.Node{}
+	for _, node := range result.Nodes {
+		nodes[node.ID] = node
+	}
+	want := map[string]string{
+		"POST /charge/{_}":                       "example.com/client.Call",
+		"GET /orders/{_}":                        "example.com/client.Direct",
+		"GET /ready":                             "example.com/client.Convenience",
+		"GET /alternative":                       "example.com/client.Alternatives",
+		"DELETE /alternative":                    "example.com/client.Alternatives",
+		"GET https://api.example.test/users/{_}": "example.com/client.External",
+		"GET /unknown/{_}":                       "example.com/client.API.UnknownAuthority",
+		"PUT /items/{_}":                         "example.com/client.Composite",
+		"PATCH /mutable/{_}":                     "example.com/client.Mutated",
+	}
+	found := map[string]graph.Fact{}
+	for _, fact := range result.Facts {
+		if fact.Kind != graph.EdgeRequests {
+			continue
+		}
+		if source := nodes[fact.FromID]; source.QualifiedName != want[fact.Target] {
+			t.Fatalf("request %q belongs to %q, want %q: %#v", fact.Target, source.QualifiedName, want[fact.Target], fact)
+		}
+		found[fact.Target] = fact
+	}
+	if len(found) != len(want) {
+		t.Fatalf("outbound requests = %#v, want %#v; diagnostics = %#v", found, want, result.Diagnostics)
+	}
+	for target := range want {
+		fact, ok := found[target]
+		if !ok || fact.Properties["resolution"] != "go/types" || fact.Properties["http_sink"] == "" ||
+			fact.Properties["http_source"] == "" {
+			t.Fatalf("request %q lacks semantic provenance: %#v", target, fact)
+		}
+	}
+	wrapped := found["POST /charge/{_}"]
+	if !strings.Contains(wrapped.Properties["http_wrapper_chain"], "example.com/client.invoke") ||
+		wrapped.Properties["http_query"] != "view=full" || wrapped.Location.Line != 28 {
+		t.Fatalf("wrapper request lost its highest callsite, query, or chain: %#v", wrapped)
+	}
+	external := found["GET https://api.example.test/users/{_}"]
+	if external.Properties["http_authority"] != "api.example.test" {
+		t.Fatalf("external authority was not preserved: %#v", external)
+	}
+	unknown := found["GET /unknown/{_}"]
+	if unknown.Properties["http_authority_unknown"] != "true" {
+		t.Fatalf("receiver base URL uncertainty was not explicit: %#v", unknown)
+	}
+	composite := found["PUT /items/{_}"]
+	if composite.Properties["http_query"] != "mode=full" {
+		t.Fatalf("request URL query was not separated: %#v", composite)
+	}
+	mutated := found["PATCH /mutable/{_}"]
+	if mutated.Properties["http_query"] != "mode=edit" {
+		t.Fatalf("mutated request URL query was not separated: %#v", mutated)
+	}
+	for _, forbidden := range []string{"GET /unsafe/{_}", "GET /synthetic", "GET /invented", "GET /cycle"} {
+		if _, ok := found[forbidden]; ok {
+			t.Fatalf("unproven or unrelated request %q was invented: %#v", forbidden, found[forbidden])
+		}
+	}
+	foundCycleDiagnostic := false
+	foundBoundDiagnostic := false
+	for _, diagnostic := range result.Diagnostics {
+		foundCycleDiagnostic = foundCycleDiagnostic || strings.Contains(diagnostic.Message, "recursive HTTP wrapper")
+		foundBoundDiagnostic = foundBoundDiagnostic || strings.Contains(diagnostic.Message, "HTTP alternatives exceeded")
+	}
+	if !foundCycleDiagnostic {
+		t.Fatalf("recursive wrapper was not diagnosed: %#v", result.Diagnostics)
+	}
+	if !foundBoundDiagnostic {
+		t.Fatalf("alternative bound was not diagnosed: %#v", result.Diagnostics)
+	}
+}
+
 func TestCanonicalEndpointsAtSameLineRemainDistinct(t *testing.T) {
 	content := []byte(`package api
 func Handler() {}
