@@ -310,6 +310,27 @@ func RequestFieldOverflow(flags [9]bool) {
 	_, _ = http.DefaultClient.Do(literal)
 }
 
+type requestBox struct { request *http.Request }
+
+func URLAssignmentOverflow(flags [9]bool) {
+	target := &url.URL{Path: "/url-zero"}
+	if flags[0] { target = &url.URL{Path: "/url-one"} }
+	if flags[1] { target = &url.URL{Path: "/url-two"} }
+	if flags[2] { target = &url.URL{Path: "/url-three"} }
+	if flags[3] { target = &url.URL{Path: "/url-four"} }
+	if flags[4] { target = &url.URL{Path: "/url-five"} }
+	if flags[5] { target = &url.URL{Path: "/url-six"} }
+	if flags[6] { target = &url.URL{Path: "/url-seven"} }
+	if flags[7] { target = &url.URL{Path: "/url-eight"} }
+	if flags[8] { target = &url.URL{Path: "/url-nine"} }
+	direct, _ := http.NewRequest(http.MethodGet, "/direct-url-overflow", nil)
+	direct.URL = target
+	_, _ = http.DefaultClient.Do(direct)
+	box := &requestBox{request: &http.Request{Method: http.MethodGet, URL: &url.URL{Path: "/holder-url-overflow"}}}
+	box.request.URL = target
+	_, _ = http.DefaultClient.Do(box.request)
+}
+
 type API struct {
 	baseURL string
 	client *http.Client
@@ -479,7 +500,7 @@ func NotHTTP() {
 	if !foundCycleDiagnostic {
 		t.Fatalf("recursive wrapper was not diagnosed: %#v", result.Diagnostics)
 	}
-	if foundBoundDiagnostics < 4 {
+	if foundBoundDiagnostics < 6 {
 		t.Fatalf("alternative bound was not diagnosed: %#v", result.Diagnostics)
 	}
 }
