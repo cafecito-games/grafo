@@ -208,6 +208,7 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 		}
 	}
 	emitChiEndpoints(b, semantic)
+	emitSemanticHTTPRequests(b, semantic)
 	if haveBindingRegistry {
 		emitProtocolUses(b, semantic, bindingRegistry)
 	}
@@ -717,6 +718,9 @@ func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input,
 	}
 	method := strings.ToLower(graph.SimpleName(callee))
 	if isHTTPMethod(method) && len(call.Args) > 0 && (strings.HasPrefix(callee, "net/http.") || strings.HasPrefix(callee, "http.")) {
+		if semantic.HTTPRequestCalls[callOffset] {
+			return
+		}
 		if route, ok := stringArgument(call.Args, 0); ok {
 			addHTTPRequest(b, fromID, loc, method, route)
 			return
@@ -779,6 +783,35 @@ func emitChiEndpoints(b *parserapi.Builder, semantic SemanticView) {
 			b.AddFact(endpointID, graph.EdgeUsesMiddleware, "", middleware.Target, middleware.TargetKind,
 				middleware.Location, middlewareProperties)
 		}
+	}
+}
+
+func emitSemanticHTTPRequests(b *parserapi.Builder, semantic SemanticView) {
+	sources := map[string]string{"": b.FileID()}
+	for _, node := range b.Result.Nodes {
+		if node.Kind == graph.KindFunction || node.Kind == graph.KindMethod {
+			sources[node.QualifiedName] = node.ID
+		}
+	}
+	for _, request := range semantic.HTTPRequests {
+		fromID := sources[request.Function]
+		if fromID == "" {
+			fromID = b.FileID()
+		}
+		properties := map[string]string{
+			"resolution": "go/types", "evidence": "go/types", "http_sink": request.Sink,
+			"http_source": request.Source,
+		}
+		if len(request.Wrappers) > 0 {
+			properties["http_wrapper_chain"] = strings.Join(request.Wrappers, " -> ")
+		}
+		if request.AuthorityUnknown {
+			properties["http_authority_unknown"] = "true"
+		}
+		if request.Conditional {
+			properties["conditional"] = "true"
+		}
+		addHTTPRequestWithProperties(b, fromID, request.Location, request.Method, request.Route, properties)
 	}
 }
 
@@ -918,9 +951,18 @@ func addEndpoint(b *parserapi.Builder, loc graph.Location, method, route string)
 }
 
 func addHTTPRequest(b *parserapi.Builder, fromID string, loc graph.Location, method, route string) {
+	addHTTPRequestWithProperties(b, fromID, loc, method, route, nil)
+}
+
+func addHTTPRequestWithProperties(b *parserapi.Builder, fromID string, loc graph.Location, method, route string,
+	extra map[string]string,
+) {
 	normalizedMethod, methodErr := httpmodel.NormalizeMethod(method)
 	parsedRoute, routeErr := httpmodel.ParseRoute(route)
 	properties := map[string]string{"http_raw_method": method, "http_raw_route": route}
+	for key, value := range extra {
+		properties[key] = value
+	}
 	identityMethod := normalizedMethod
 	if methodErr != nil {
 		identityMethod = method

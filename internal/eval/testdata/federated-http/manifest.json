@@ -16,8 +16,55 @@
       {
         "repo": "client",
         "kind": "endpoint",
+        "qualified_name": "GET /ambiguous/{_}",
+        "external": true
+      },
+      {
+        "repo": "client",
+        "kind": "endpoint",
         "qualified_name": "GET /charge/{_}",
         "external": true
+      },
+      {
+        "repo": "client",
+        "kind": "endpoint",
+        "qualified_name": "GET https://api.example.test/health",
+        "external": true
+      },
+      {
+        "repo": "client",
+        "kind": "external",
+        "qualified_name": "fmt.Sprintf",
+        "external": true
+      },
+      {
+        "repo": "client",
+        "kind": "external",
+        "qualified_name": "net/http.Client.Do",
+        "external": true
+      },
+      {
+        "repo": "client",
+        "kind": "external",
+        "qualified_name": "net/http.Get",
+        "external": true
+      },
+      {
+        "repo": "client",
+        "kind": "external",
+        "qualified_name": "net/http.NewRequest",
+        "external": true
+      },
+      {
+        "repo": "client",
+        "kind": "external",
+        "qualified_name": "net/url.PathEscape",
+        "external": true
+      },
+      {
+        "repo": "client",
+        "kind": "field",
+        "qualified_name": "example.com/client.API.baseURL"
       },
       {
         "repo": "client",
@@ -32,7 +79,43 @@
       {
         "repo": "client",
         "kind": "function",
+        "qualified_name": "example.com/client.Ambiguous"
+      },
+      {
+        "repo": "client",
+        "kind": "function",
         "qualified_name": "example.com/client.Call"
+      },
+      {
+        "repo": "client",
+        "kind": "function",
+        "qualified_name": "example.com/client.External"
+      },
+      {
+        "repo": "client",
+        "kind": "function",
+        "qualified_name": "example.com/client.Unsafe"
+      },
+      {
+        "repo": "client",
+        "kind": "function",
+        "qualified_name": "example.com/client.build"
+      },
+      {
+        "repo": "client",
+        "kind": "function",
+        "qualified_name": "example.com/client.send"
+      },
+      {
+        "repo": "client",
+        "kind": "interface",
+        "qualified_name": "builtin.error",
+        "external": true
+      },
+      {
+        "repo": "client",
+        "kind": "method",
+        "qualified_name": "example.com/client.API.UnknownAuthority"
       },
       {
         "repo": "client",
@@ -48,8 +131,50 @@
       {
         "repo": "client",
         "kind": "module",
+        "qualified_name": "fmt",
+        "external": true
+      },
+      {
+        "repo": "client",
+        "kind": "module",
         "qualified_name": "net/http",
         "external": true
+      },
+      {
+        "repo": "client",
+        "kind": "module",
+        "qualified_name": "net/url",
+        "external": true
+      },
+      {
+        "repo": "client",
+        "kind": "parameter",
+        "qualified_name": "example.com/client.API.UnknownAuthority.requestID"
+      },
+      {
+        "repo": "client",
+        "kind": "parameter",
+        "qualified_name": "example.com/client.Ambiguous.requestID"
+      },
+      {
+        "repo": "client",
+        "kind": "parameter",
+        "qualified_name": "example.com/client.Call.requestID"
+      },
+      {
+        "repo": "client",
+        "kind": "parameter",
+        "qualified_name": "example.com/client.Unsafe.requestID"
+      },
+      {
+        "repo": "client",
+        "kind": "parameter",
+        "qualified_name": "example.com/client.build.requestID"
+      },
+      {
+        "repo": "client",
+        "kind": "parameter",
+        "qualified_name": "example.com/client.send.request"
       },
       {
         "repo": "client",
@@ -57,14 +182,44 @@
         "qualified_name": "client"
       },
       {
-        "repo": "server",
-        "kind": "endpoint",
-        "qualified_name": "endpoint:GET /charge/{_}@server.go:7:2"
+        "repo": "client",
+        "kind": "type",
+        "qualified_name": "example.com/client.API"
+      },
+      {
+        "repo": "client",
+        "kind": "variable",
+        "qualified_name": "example.com/client.Ambiguous.request@36"
+      },
+      {
+        "repo": "client",
+        "kind": "variable",
+        "qualified_name": "example.com/client.Call.request@19"
+      },
+      {
+        "repo": "client",
+        "kind": "variable",
+        "qualified_name": "example.com/client.build.target@10"
       },
       {
         "repo": "server",
         "kind": "endpoint",
-        "qualified_name": "endpoint:POST /charge/{_}@server.go:8:2"
+        "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:11:2"
+      },
+      {
+        "repo": "server",
+        "kind": "endpoint",
+        "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:12:2"
+      },
+      {
+        "repo": "server",
+        "kind": "endpoint",
+        "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
+      },
+      {
+        "repo": "server",
+        "kind": "endpoint",
+        "qualified_name": "endpoint:POST /charge/{_}@server.go:10:2"
       },
       {
         "repo": "server",
@@ -75,6 +230,16 @@
         "repo": "server",
         "kind": "file",
         "qualified_name": "server.go"
+      },
+      {
+        "repo": "server",
+        "kind": "function",
+        "qualified_name": "example.com/server.AmbiguousA"
+      },
+      {
+        "repo": "server",
+        "kind": "function",
+        "qualified_name": "example.com/server.AmbiguousB"
       },
       {
         "repo": "server",
@@ -113,12 +278,160 @@
         "to": {
           "repo": "client",
           "kind": "function",
+          "qualified_name": "example.com/client.Ambiguous"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 35,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "client.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "function",
           "qualified_name": "example.com/client.Call"
         },
         "source": {
           "path": "client.go",
-          "line": 5,
+          "line": 18,
           "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "client.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.External"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 31,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "client.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.Unsafe"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 40,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "client.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.build"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 9,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "client.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.send"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 14,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "client.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "method",
+          "qualified_name": "example.com/client.API.UnknownAuthority"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 27,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "client.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "type",
+          "qualified_name": "example.com/client.API"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 23,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "client.go"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "client",
+          "kind": "module",
+          "qualified_name": "fmt",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 4,
+          "column": 2
+        },
+        "properties": {
+          "alias": "fmt"
         }
       },
       {
@@ -136,11 +449,33 @@
         },
         "source": {
           "path": "client.go",
-          "line": 3,
-          "column": 8
+          "line": 5,
+          "column": 2
         },
         "properties": {
           "alias": "http"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "file",
+          "qualified_name": "client.go"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "client",
+          "kind": "module",
+          "qualified_name": "net/url",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 6,
+          "column": 2
+        },
+        "properties": {
+          "alias": "url"
         }
       },
       {
@@ -165,26 +500,680 @@
         "from": {
           "repo": "client",
           "kind": "function",
+          "qualified_name": "example.com/client.Ambiguous"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "net/http.Client.Do",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 37,
+          "column": 9
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.Ambiguous"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "net/http.NewRequest",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 36,
+          "column": 16
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.Ambiguous"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "net/url.PathEscape",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 36,
+          "column": 62
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.Ambiguous"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.Ambiguous.requestID"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 35,
+          "column": 16
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.Ambiguous"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "variable",
+          "qualified_name": "example.com/client.Ambiguous.request@36"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 36,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.Ambiguous"
+        },
+        "relation": "requests",
+        "to": {
+          "repo": "server",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:11:2"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 37,
+          "column": 9
+        },
+        "properties": {
+          "evidence": "go/types",
+          "federated": "true",
+          "http_method": "GET",
+          "http_raw_method": "GET",
+          "http_raw_route": "/ambiguous/{_}",
+          "http_route": "/ambiguous/{_}",
+          "http_sink": "net/http.Client.Do",
+          "http_source": "constructor",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.Ambiguous"
+        },
+        "relation": "requests",
+        "to": {
+          "repo": "server",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:12:2"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 37,
+          "column": 9
+        },
+        "properties": {
+          "evidence": "go/types",
+          "federated": "true",
+          "http_method": "GET",
+          "http_raw_method": "GET",
+          "http_raw_route": "/ambiguous/{_}",
+          "http_route": "/ambiguous/{_}",
+          "http_sink": "net/http.Client.Do",
+          "http_source": "constructor",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.Call"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.build"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 19,
+          "column": 16
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.Call"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.send"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 20,
+          "column": 9
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.Call"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.Call.requestID"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 18,
+          "column": 11
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.Call"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "variable",
+          "qualified_name": "example.com/client.Call.request@19"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 19,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
           "qualified_name": "example.com/client.Call"
         },
         "relation": "requests",
         "to": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:GET /charge/{_}@server.go:7:2"
+          "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
         },
         "source": {
           "path": "client.go",
-          "line": 6,
-          "column": 2
+          "line": 20,
+          "column": 9
         },
         "properties": {
+          "evidence": "go/types",
           "federated": "true",
           "http_method": "GET",
           "http_query": "view=full",
-          "http_raw_method": "get",
-          "http_raw_route": "/charge/{requestID}/?view=full",
-          "http_route": "/charge/{_}"
+          "http_raw_method": "GET",
+          "http_raw_route": "/charge/{_}?view=full",
+          "http_route": "/charge/{_}",
+          "http_sink": "net/http.Client.Do",
+          "http_source": "constructor",
+          "http_wrapper_chain": "example.com/client.send -\u003e example.com/client.build",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.External"
+        },
+        "relation": "requests",
+        "to": {
+          "repo": "client",
+          "kind": "endpoint",
+          "qualified_name": "GET https://api.example.test/health",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 32,
+          "column": 9
+        },
+        "properties": {
+          "evidence": "go/types",
+          "http_authority": "api.example.test",
+          "http_method": "GET",
+          "http_raw_method": "GET",
+          "http_raw_route": "https://api.example.test/health",
+          "http_route": "/health",
+          "http_scheme": "https",
+          "http_sink": "net/http.Get",
+          "http_source": "convenience",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.Unsafe"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "fmt.Sprintf",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 41,
+          "column": 18
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.Unsafe"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "net/http.Get",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 41,
+          "column": 9
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.Unsafe"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.Unsafe.requestID"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 40,
+          "column": 13
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.build"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "fmt.Sprintf",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 10,
+          "column": 12
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.build"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "net/http.NewRequest",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 11,
+          "column": 9
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.build"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "net/url.PathEscape",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 10,
+          "column": 48
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.build"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.build.requestID"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 9,
+          "column": 12
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.build"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "variable",
+          "qualified_name": "example.com/client.build.target@10"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 10,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.build"
+        },
+        "relation": "propagates_error",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "net/http.NewRequest",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 11,
+          "column": 2
+        },
+        "properties": {
+          "callee_result_position": "1",
+          "conditional": "false",
+          "evidence": "go/types",
+          "form": "return_call",
+          "resolution": "go/types",
+          "result_position": "1"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.build"
+        },
+        "relation": "returns_error",
+        "to": {
+          "repo": "client",
+          "kind": "interface",
+          "qualified_name": "builtin.error",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 9,
+          "column": 46
+        },
+        "properties": {
+          "evidence": "go/types",
+          "form": "signature",
+          "resolution": "go/types",
+          "result_position": "1",
+          "type": "builtin.error"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.send"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "net/http.Client.Do",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 15,
+          "column": 9
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.send"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.send.request"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 14,
+          "column": 11
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.send"
+        },
+        "relation": "propagates_error",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "net/http.Client.Do",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 15,
+          "column": 2
+        },
+        "properties": {
+          "callee_result_position": "1",
+          "conditional": "false",
+          "evidence": "go/types",
+          "form": "return_call",
+          "resolution": "go/types",
+          "result_position": "1"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.send"
+        },
+        "relation": "returns_error",
+        "to": {
+          "repo": "client",
+          "kind": "interface",
+          "qualified_name": "builtin.error",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 14,
+          "column": 51
+        },
+        "properties": {
+          "evidence": "go/types",
+          "form": "signature",
+          "resolution": "go/types",
+          "result_position": "1",
+          "type": "builtin.error"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "method",
+          "qualified_name": "example.com/client.API.UnknownAuthority"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "net/url.PathEscape",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 28,
+          "column": 45
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "method",
+          "qualified_name": "example.com/client.API.UnknownAuthority"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.API.UnknownAuthority.requestID"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 27,
+          "column": 34
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "method",
+          "qualified_name": "example.com/client.API.UnknownAuthority"
+        },
+        "relation": "requests",
+        "to": {
+          "repo": "client",
+          "kind": "endpoint",
+          "qualified_name": "GET /charge/{_}",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 28,
+          "column": 9
+        },
+        "properties": {
+          "evidence": "go/types",
+          "http_authority_unknown": "true",
+          "http_method": "GET",
+          "http_raw_method": "GET",
+          "http_raw_route": "/charge/{_}",
+          "http_route": "/charge/{_}",
+          "http_sink": "net/http.Get",
+          "http_source": "convenience",
+          "resolution": "go/types"
         }
       },
       {
@@ -214,6 +1203,297 @@
       {
         "from": {
           "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.API.UnknownAuthority.requestID"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "net/http.Get",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 28,
+          "column": 9
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.API.UnknownAuthority.requestID"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "net/url.PathEscape",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 28,
+          "column": 45
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.Ambiguous.requestID"
+        },
+        "relation": "assigns",
+        "to": {
+          "repo": "client",
+          "kind": "variable",
+          "qualified_name": "example.com/client.Ambiguous.request@36"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 36,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.Ambiguous.requestID"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "net/http.NewRequest",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 36,
+          "column": 16
+        },
+        "properties": {
+          "argument": "1"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.Ambiguous.requestID"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "net/url.PathEscape",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 36,
+          "column": 62
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.Call.requestID"
+        },
+        "relation": "assigns",
+        "to": {
+          "repo": "client",
+          "kind": "variable",
+          "qualified_name": "example.com/client.Call.request@19"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 19,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.Call.requestID"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.build"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 19,
+          "column": 16
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.Unsafe.requestID"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "fmt.Sprintf",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 41,
+          "column": 18
+        },
+        "properties": {
+          "argument": "1"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.Unsafe.requestID"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "net/http.Get",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 41,
+          "column": 9
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.build.requestID"
+        },
+        "relation": "assigns",
+        "to": {
+          "repo": "client",
+          "kind": "variable",
+          "qualified_name": "example.com/client.build.target@10"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 10,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.build.requestID"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "fmt.Sprintf",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 10,
+          "column": 12
+        },
+        "properties": {
+          "argument": "1"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.build.requestID"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "net/url.PathEscape",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 10,
+          "column": 48
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.send.request"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "net/http.Client.Do",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 15,
+          "column": 9
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "parameter",
+          "qualified_name": "example.com/client.send.request"
+        },
+        "relation": "returns",
+        "to": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.send"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 15,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
           "kind": "repository",
           "qualified_name": "client"
         },
@@ -249,9 +1529,146 @@
       },
       {
         "from": {
+          "repo": "client",
+          "kind": "type",
+          "qualified_name": "example.com/client.API"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "client",
+          "kind": "field",
+          "qualified_name": "example.com/client.API.baseURL"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 24,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "variable",
+          "qualified_name": "example.com/client.Ambiguous.request@36"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "net/http.Client.Do",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 37,
+          "column": 9
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "variable",
+          "qualified_name": "example.com/client.Call.request@19"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.send"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 20,
+          "column": 9
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "variable",
+          "qualified_name": "example.com/client.build.target@10"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "client",
+          "kind": "external",
+          "qualified_name": "net/http.NewRequest",
+          "external": true
+        },
+        "source": {
+          "path": "client.go",
+          "line": 11,
+          "column": 9
+        },
+        "properties": {
+          "argument": "1"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "variable",
+          "qualified_name": "example.com/client.build.target@10"
+        },
+        "relation": "returns",
+        "to": {
+          "repo": "client",
+          "kind": "function",
+          "qualified_name": "example.com/client.build"
+        },
+        "source": {
+          "path": "client.go",
+          "line": 11,
+          "column": 2
+        }
+      },
+      {
+        "from": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:GET /charge/{_}@server.go:7:2"
+          "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:11:2"
+        },
+        "relation": "handled_by",
+        "to": {
+          "repo": "server",
+          "kind": "function",
+          "qualified_name": "example.com/server.AmbiguousA"
+        },
+        "source": {
+          "path": "server.go",
+          "line": 11,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:12:2"
+        },
+        "relation": "handled_by",
+        "to": {
+          "repo": "server",
+          "kind": "function",
+          "qualified_name": "example.com/server.AmbiguousB"
+        },
+        "source": {
+          "path": "server.go",
+          "line": 12,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
         },
         "relation": "handled_by",
         "to": {
@@ -261,7 +1678,7 @@
         },
         "source": {
           "path": "server.go",
-          "line": 7,
+          "line": 9,
           "column": 2
         }
       },
@@ -269,7 +1686,7 @@
         "from": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:POST /charge/{_}@server.go:8:2"
+          "qualified_name": "endpoint:POST /charge/{_}@server.go:10:2"
         },
         "relation": "handled_by",
         "to": {
@@ -279,7 +1696,7 @@
         },
         "source": {
           "path": "server.go",
-          "line": 8,
+          "line": 10,
           "column": 2
         }
       },
@@ -298,6 +1715,42 @@
         "source": {
           "path": "go.mod",
           "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "file",
+          "qualified_name": "server.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "server",
+          "kind": "function",
+          "qualified_name": "example.com/server.AmbiguousA"
+        },
+        "source": {
+          "path": "server.go",
+          "line": 5,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "file",
+          "qualified_name": "server.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "server",
+          "kind": "function",
+          "qualified_name": "example.com/server.AmbiguousB"
+        },
+        "source": {
+          "path": "server.go",
+          "line": 6,
           "column": 1
         }
       },
@@ -333,7 +1786,7 @@
         },
         "source": {
           "path": "server.go",
-          "line": 6,
+          "line": 8,
           "column": 1
         }
       },
@@ -365,11 +1818,11 @@
         "to": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:GET /charge/{_}@server.go:7:2"
+          "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:11:2"
         },
         "source": {
           "path": "server.go",
-          "line": 7,
+          "line": 11,
           "column": 2
         }
       },
@@ -383,11 +1836,47 @@
         "to": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:POST /charge/{_}@server.go:8:2"
+          "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:12:2"
         },
         "source": {
           "path": "server.go",
-          "line": 8,
+          "line": 12,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "function",
+          "qualified_name": "example.com/server.Routes"
+        },
+        "relation": "exposes",
+        "to": {
+          "repo": "server",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
+        },
+        "source": {
+          "path": "server.go",
+          "line": 9,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "server",
+          "kind": "function",
+          "qualified_name": "example.com/server.Routes"
+        },
+        "relation": "exposes",
+        "to": {
+          "repo": "server",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:POST /charge/{_}@server.go:10:2"
+        },
+        "source": {
+          "path": "server.go",
+          "line": 10,
           "column": 2
         }
       },
@@ -432,14 +1921,28 @@
       {
         "repo": "server",
         "path": "server.go",
-        "line": 7,
+        "line": 9,
         "level": "warning",
         "message_contains": "router"
       },
       {
         "repo": "server",
         "path": "server.go",
-        "line": 8,
+        "line": 10,
+        "level": "warning",
+        "message_contains": "router"
+      },
+      {
+        "repo": "server",
+        "path": "server.go",
+        "line": 11,
+        "level": "warning",
+        "message_contains": "router"
+      },
+      {
+        "repo": "server",
+        "path": "server.go",
+        "line": 12,
         "level": "warning",
         "message_contains": "router"
       }
@@ -463,7 +1966,7 @@
           {
             "repo": "server",
             "kind": "endpoint",
-            "qualified_name": "endpoint:GET /charge/{_}@server.go:7:2"
+            "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
           },
           {
             "repo": "server",
@@ -482,27 +1985,32 @@
             "to": {
               "repo": "server",
               "kind": "endpoint",
-              "qualified_name": "endpoint:GET /charge/{_}@server.go:7:2"
+              "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
             },
             "source": {
               "path": "client.go",
-              "line": 6,
-              "column": 2
+              "line": 20,
+              "column": 9
             },
             "properties": {
+              "evidence": "go/types",
               "federated": "true",
               "http_method": "GET",
               "http_query": "view=full",
-              "http_raw_method": "get",
-              "http_raw_route": "/charge/{requestID}/?view=full",
-              "http_route": "/charge/{_}"
+              "http_raw_method": "GET",
+              "http_raw_route": "/charge/{_}?view=full",
+              "http_route": "/charge/{_}",
+              "http_sink": "net/http.Client.Do",
+              "http_source": "constructor",
+              "http_wrapper_chain": "example.com/client.send -\u003e example.com/client.build",
+              "resolution": "go/types"
             }
           },
           {
             "from": {
               "repo": "server",
               "kind": "endpoint",
-              "qualified_name": "endpoint:GET /charge/{_}@server.go:7:2"
+              "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
             },
             "relation": "handled_by",
             "to": {
@@ -512,7 +2020,7 @@
             },
             "source": {
               "path": "server.go",
-              "line": 7,
+              "line": 9,
               "column": 2
             }
           }
@@ -530,7 +2038,20 @@
         "to": {
           "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:POST /charge/{_}@server.go:8:2"
+          "qualified_name": "endpoint:POST /charge/{_}@server.go:10:2"
+        }
+      },
+      {
+        "from": {
+          "repo": "client",
+          "kind": "method",
+          "qualified_name": "example.com/client.API.UnknownAuthority"
+        },
+        "relation": "requests",
+        "to": {
+          "repo": "server",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /charge/{_}@server.go:9:2"
         }
       }
     ],
@@ -538,6 +2059,33 @@
       {
         "from": "example.com/client.Call",
         "to": "example.com/server.WrongMethod",
+        "direction": "outgoing",
+        "relations": [
+          "requests",
+          "handled_by"
+        ]
+      },
+      {
+        "from": "example.com/client.Unsafe",
+        "to": "example.com/server.Handler",
+        "direction": "outgoing",
+        "relations": [
+          "requests",
+          "handled_by"
+        ]
+      },
+      {
+        "from": "example.com/client.External",
+        "to": "example.com/server.Handler",
+        "direction": "outgoing",
+        "relations": [
+          "requests",
+          "handled_by"
+        ]
+      },
+      {
+        "from": "example.com/client.API.UnknownAuthority",
+        "to": "example.com/server.Handler",
         "direction": "outgoing",
         "relations": [
           "requests",

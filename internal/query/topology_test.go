@@ -211,6 +211,7 @@ func TestOutboundRequestsRankCanonicalRouteCompatibility(t *testing.T) {
 		{source: "ExternalAuthority", route: "/users/42", scheme: "https", authority: "external.test", status: query.BoundaryUnresolved},
 		{source: "HTTPAuthority", route: "/users/42", scheme: "http", authority: "external.test", status: query.BoundaryUnresolved},
 		{source: "LegacyAuthority", route: "/users/42", scheme: "https", authority: "legacy.test", status: query.BoundaryUnresolved},
+		{source: "UnknownAuthority", route: "/users/42", status: query.BoundaryUnresolved},
 		{source: "Invalid", route: "/users/%zz", status: query.BoundaryUnresolved},
 	}
 	for _, test := range tests {
@@ -240,7 +241,7 @@ func TestOutboundRequestsRankCanonicalRouteCompatibility(t *testing.T) {
 			externalIDs[link.ToServiceID] = true
 		}
 	}
-	if len(externalIDs) != 3 {
+	if len(externalIDs) != 4 {
 		t.Fatalf("distinct authorities shared an external service: %#v", topology)
 	}
 }
@@ -291,6 +292,7 @@ func newHTTPCompatibilityFixture() *catalogRepository {
 		{name: "ExternalAuthority", method: "GET", raw: "https://external.test/users/42", canonical: "/users/42", scheme: "https", authority: "external.test"},
 		{name: "HTTPAuthority", method: "GET", raw: "http://external.test/users/42", canonical: "/users/42", scheme: "http", authority: "external.test"},
 		{name: "LegacyAuthority", method: "GET", raw: "https://legacy.test/users/42?view=full#details", canonical: "/users/42", legacy: true},
+		{name: "UnknownAuthority", method: "GET", raw: "/users/42", canonical: "/users/42"},
 		{name: "Invalid", method: "GET", raw: "/users/%zz", canonical: "/users/%zz"},
 	}
 	for index, request := range requests {
@@ -311,6 +313,9 @@ func newHTTPCompatibilityFixture() *catalogRepository {
 		}
 		if request.name == "Invalid" {
 			properties["http_invalid"] = "true"
+		}
+		if request.name == "UnknownAuthority" {
+			properties["http_authority_unknown"] = "true"
 		}
 		repository.edges = append(repository.edges, graph.Edge{ID: edgeID, FactID: edgeID, FromID: sourceID,
 			ToID: targetID, Kind: graph.EdgeRequests, Location: graph.Location{Path: "client.go", Line: index + 1}, Properties: properties})

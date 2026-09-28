@@ -386,6 +386,10 @@ func (r *Repository) EdgesFrom(ctx context.Context, id string) ([]graph.Edge, er
 	}
 	var result []graph.Edge
 	for _, edge := range raw {
+		if !federationAllowed(edge) {
+			result = append(result, edge)
+			continue
+		}
 		target, err := r.Node(ctx, edge.ToID)
 		if err != nil || !target.External {
 			result = append(result, edge)
@@ -427,7 +431,7 @@ func (r *Repository) EdgesTo(ctx context.Context, id string) ([]graph.Edge, erro
 				return nil, err
 			}
 			for _, edge := range edges {
-				if candidateAllowed(edge.Kind, target) {
+				if federationAllowed(edge) && candidateAllowed(edge.Kind, target) {
 					result = append(result, federatedEdge(edge, target.ID))
 				}
 			}
@@ -458,6 +462,10 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 	case graph.OutgoingRelations:
 		projected := make([]graph.HydratedRelationEdge, 0, len(items))
 		for _, item := range items {
+			if !federationAllowed(item.Edge) {
+				projected = append(projected, item)
+				continue
+			}
 			if !item.Counterpart.External {
 				projected = append(projected, item)
 				continue
@@ -507,6 +515,9 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 						}
 						truncated = truncated || page.Truncated
 						for _, item := range page.Items {
+							if !federationAllowed(item.Edge) {
+								continue
+							}
 							item.Edge = federatedEdge(item.Edge, target.ID)
 							items = append(items, item)
 						}
@@ -666,6 +677,10 @@ func candidateAllowed(relation graph.EdgeKind, node graph.Node) bool {
 	default:
 		return true
 	}
+}
+
+func federationAllowed(edge graph.Edge) bool {
+	return edge.Kind != graph.EdgeRequests || edge.Properties["http_authority_unknown"] != "true"
 }
 
 func federatedEdge(edge graph.Edge, targetID string) graph.Edge {
