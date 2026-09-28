@@ -47,6 +47,7 @@ func TestGlobSupportsOnlyDocumentedSlashPatterns(t *testing.T) {
 		{pattern: "internal/**", matches: []string{"internal/a.go", "internal/eval/testdata/a.go"}, misses: []string{"internalized/a.go"}},
 		{pattern: "cmd/*/?.go", matches: []string{"cmd/grafo/a.go"}, misses: []string{"cmd/grafo/main.go", "cmd/a/b/c.go"}},
 		{pattern: "**/testdata/**", matches: []string{"internal/eval/testdata/a.go", "testdata/a.go"}, misses: []string{"internal/testdatabase/a.go"}},
+		{pattern: "**/**/**/target.??", matches: []string{"a/b/c/d/target.go"}, misses: []string{"a/b/c/d/target.long"}},
 	}
 	for _, test := range tests {
 		normalized, err := pathscope.NormalizeGlob(test.pattern)

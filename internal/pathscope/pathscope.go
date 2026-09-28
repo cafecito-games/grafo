@@ -95,22 +95,30 @@ func MatchGlob(pattern, candidate string) bool {
 	if candidate == "." || strings.HasPrefix(candidate, "../") || strings.HasPrefix(candidate, "/") {
 		return false
 	}
-	return matchParts(patternParts, strings.Split(candidate, "/"))
-}
-
-func matchParts(pattern, candidate []string) bool {
-	if len(pattern) == 0 {
-		return len(candidate) == 0
-	}
-	if pattern[0] == "**" {
-		if matchParts(pattern[1:], candidate) {
-			return true
+	candidateParts := strings.Split(candidate, "/")
+	type state struct{ pattern, candidate int }
+	memo := map[state]bool{}
+	visited := map[state]bool{}
+	var match func(int, int) bool
+	match = func(patternIndex, candidateIndex int) bool {
+		current := state{pattern: patternIndex, candidate: candidateIndex}
+		if visited[current] {
+			return memo[current]
 		}
-		return len(candidate) > 0 && matchParts(pattern, candidate[1:])
+		visited[current] = true
+		matched := false
+		switch {
+		case patternIndex == len(patternParts):
+			matched = candidateIndex == len(candidateParts)
+		case patternParts[patternIndex] == "**":
+			matched = match(patternIndex+1, candidateIndex) ||
+				candidateIndex < len(candidateParts) && match(patternIndex, candidateIndex+1)
+		case candidateIndex < len(candidateParts):
+			segmentMatched, err := path.Match(patternParts[patternIndex], candidateParts[candidateIndex])
+			matched = err == nil && segmentMatched && match(patternIndex+1, candidateIndex+1)
+		}
+		memo[current] = matched
+		return matched
 	}
-	if len(candidate) == 0 {
-		return false
-	}
-	matched, err := path.Match(pattern[0], candidate[0])
-	return err == nil && matched && matchParts(pattern[1:], candidate[1:])
+	return match(0, 0)
 }
