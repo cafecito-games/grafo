@@ -177,7 +177,7 @@ func run(ctx context.Context, env Environment, options Options, install bool, bu
 			receipts.drop(entry.action.Client, entry.action.Kind)
 		default:
 			receipts.record(entry.action.Client, entry.action.Kind, entry.action.Target,
-				entry.plan.digest, entry.plan.ownedCommands)
+				entry.plan.receiptTarget(entry.action.Target), entry.plan.digest, entry.plan.ownedCommands)
 		}
 		actions = append(actions, entry.action)
 	}
@@ -229,6 +229,15 @@ func planSteps(ctx context.Context, reader Reader, options Options, install bool
 		}
 
 		intended, planErr := build(entry, reader, place)
+		mcpOwnership := receipts.lookup(identity.Name, KindMCP)
+		if planErr == nil && identity.Method == methodConfig && place.registered &&
+			intended.change != changeUnchanged && mcpOwnership.found && !mcpOwnership.provesPath(place.target) {
+			planErr = fmt.Errorf("refusing to mutate %s MCP configuration %s: its install receipt belongs to a different resolved target; inspect %s and reconcile the current registration manually",
+				identity.Display, place.target, receipts.path)
+		}
+		if planErr == nil && identity.Method == methodConfig {
+			planErr = intended.bindUserConfigTargets(reader)
+		}
 		if planErr != nil {
 			failures = append(failures, planErr)
 		} else {
@@ -277,10 +286,11 @@ func planGuidance(reader Reader, options Options, install bool, identity Client,
 			failures = append(failures, planErr)
 			continue
 		}
-		// Guidance targets are root-bounded, so every mutation re-checks
-		// containment immediately before it runs.
-		if intended.write != nil || len(intended.removes) > 0 || len(intended.removeDirs) > 0 {
-			intended.guardRoot = true
+		// Guidance targets are root-bounded and bound to the physical path seen
+		// during planning, so every mutation rechecks both before it runs.
+		if planErr = intended.bindUserConfigTargets(reader); planErr != nil {
+			failures = append(failures, fmt.Errorf("%s %s: %w", identity.Display, artifact.kind(), planErr))
+			continue
 		}
 		steps = append(steps, newStep(identity, artifact.kind(), target, intended, options, artifact))
 	}

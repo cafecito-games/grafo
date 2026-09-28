@@ -32,6 +32,15 @@ func newRecordingEnvironment(t *testing.T, goos string) *recordingEnvironment {
 	}
 }
 
+func resolvedUserTarget(t *testing.T, env agentinstall.Environment, path string) string {
+	t.Helper()
+	resolved, err := agentinstall.ResolveUserConfigPath(env, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
+}
+
 func (e *recordingEnvironment) record(name string, arguments []string) string {
 	line := strings.TrimSpace(name + " " + strings.Join(arguments, " "))
 	e.mutex.Lock()
@@ -100,7 +109,7 @@ func TestInstallGeneratesOwnedDefinitionIdempotently(t *testing.T) {
 			if err != nil || !found {
 				t.Fatalf("no ownership receipt was recorded: %v found=%v", err, found)
 			}
-			if !agentinstall.ProvesFile(receipt, path, text) {
+			if !agentinstall.ProvesFile(env, receipt, path, text) {
 				t.Fatal("receipt does not prove the definition Grafo just wrote")
 			}
 			replayed, err := Install(context.Background(), env, binary, stateDir, false)
@@ -261,7 +270,7 @@ func TestInstallIgnoresAReceiptRecordedForAnotherPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := agentinstall.RecordOwnedFile(env, agentinstall.ServiceOwner, "systemd", elsewhere, foreign); err != nil {
+	if err := agentinstall.RecordOwnedFile(env, agentinstall.ServiceOwner, "systemd", elsewhere, resolvedUserTarget(t, env, elsewhere), foreign); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(agentinstall.ParentPath("linux", path), 0o755); err != nil {
@@ -283,6 +292,50 @@ func TestInstallIgnoresAReceiptRecordedForAnotherPath(t *testing.T) {
 	}
 	if state.Owned || !state.Conflict {
 		t.Fatalf("Describe trusted a receipt for another path: %#v", state)
+	}
+}
+
+func TestServiceReceiptDoesNotFollowRetargetedParent(t *testing.T) {
+	env := newRecordingEnvironment(t, "linux")
+	stateDir, err := StateDir(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions, err := Install(context.Background(), env, installedBinary(t), stateDir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := actions[0].Target
+	generated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := filepath.Dir(path)
+	original := parent + ".original"
+	if err = os.Rename(parent, original); err != nil {
+		t.Fatal(err)
+	}
+	replacement := filepath.Join(filepath.Dir(parent), "retargeted-user-units")
+	if err = os.MkdirAll(replacement, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(replacement, filepath.Base(path)), generated, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Symlink(replacement, parent); err != nil {
+		t.Fatal(err)
+	}
+
+	removed, err := Uninstall(context.Background(), env, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 1 || removed[0].Change != ChangeSkipped {
+		t.Fatalf("uninstall actions = %#v", removed)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil || string(contents) != string(generated) {
+		t.Fatalf("retargeted user definition changed: %q (%v)", contents, err)
 	}
 }
 

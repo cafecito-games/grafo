@@ -142,6 +142,116 @@ func TestFileAdapterInstallCreatesMissingConfiguration(t *testing.T) {
 	}
 }
 
+func TestFileAdaptersRefuseParentsResolvingOutsideUserRoots(t *testing.T) {
+	workflows := []struct {
+		name string
+		run  func(context.Context, Environment, string, Options) ([]Action, error)
+		args Options
+	}{
+		{name: "install", run: Install},
+		{name: "mcp-only", run: Install, args: Options{MCPOnly: true}},
+		{name: "dry-run", run: Install, args: Options{MCPOnly: true, DryRun: true}},
+		{name: "refresh", run: Install, args: Options{MCPOnly: true, Refresh: true}},
+		{name: "uninstall", run: func(ctx context.Context, env Environment, _ string, options Options) ([]Action, error) {
+			return Uninstall(ctx, env, options)
+		}, args: Options{MCPOnly: true}},
+	}
+	for _, entry := range registry {
+		adapter, ok := entry.(fileAdapter)
+		if !ok {
+			continue
+		}
+		for _, workflow := range workflows {
+			t.Run(adapter.identity.Name+"/"+workflow.name, func(t *testing.T) {
+				environment := newFakeEnvironment("linux", linuxHome)
+				target, err := adapter.configPath(environment)
+				if err != nil {
+					t.Fatal(err)
+				}
+				environment.files[target] = "{}\n"
+				parent := parentPath(environment.GOOS(), target)
+				environment.symlinks[parent] = "/srv/outside/" + adapter.identity.Name
+				environment.dirs[environment.symlinks[parent]] = true
+				before := environment.files[target]
+
+				options := workflow.args
+				options.Targets = []string{adapter.identity.Name}
+				_, err = workflow.run(context.Background(), environment, grafoPath, options)
+				if err == nil || !strings.Contains(err.Error(), "outside the user configuration roots") {
+					t.Fatalf("error = %v", err)
+				}
+				if environment.files[target] != before {
+					t.Fatal("configuration changed through an escaping parent")
+				}
+				if len(environment.writes) != 0 {
+					t.Fatalf("writes = %#v", environment.writes)
+				}
+			})
+		}
+	}
+}
+
+func TestFileAdapterRevalidatesResolvedTargetBeforeApply(t *testing.T) {
+	environment := newFakeEnvironment("linux", linuxHome)
+	environment.files[cursorFile] = "{}\n"
+	before := environment.files[cursorFile]
+	options := Options{Targets: []string{"cursor"}, MCPOnly: true}
+	options.Announce = func([]Action) {
+		environment.symlinks[linuxHome+"/.cursor"] = linuxHome + "/dotfiles/cursor"
+		environment.dirs[linuxHome+"/dotfiles/cursor"] = true
+	}
+
+	_, err := Install(context.Background(), environment, grafoPath, options)
+	if err == nil || !strings.Contains(err.Error(), "resolved target changed") {
+		t.Fatalf("error = %v", err)
+	}
+	if environment.files[cursorFile] != before {
+		t.Fatal("configuration changed after its parent was retargeted")
+	}
+	if got := configWrites(environment); len(got) != 0 {
+		t.Fatalf("configuration writes = %#v", got)
+	}
+}
+
+func TestFileAdapterRecordsAndRequiresResolvedReceiptTarget(t *testing.T) {
+	environment := newFakeEnvironment("linux", linuxHome)
+	environment.files[cursorFile] = "{}\n"
+	environment.symlinks[linuxHome+"/.cursor"] = linuxHome + "/dotfiles/cursor"
+	environment.dirs[linuxHome+"/dotfiles/cursor"] = true
+
+	if _, err := Install(context.Background(), environment, grafoPath,
+		Options{Targets: []string{"cursor"}, MCPOnly: true}); err != nil {
+		t.Fatal(err)
+	}
+	receipts, err := Receipts(environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(receipts) != 1 || receipts[0].Target != cursorFile ||
+		receipts[0].ResolvedTarget != linuxHome+"/dotfiles/cursor/mcp.json" {
+		t.Fatalf("receipt = %#v", receipts)
+	}
+
+	// The same lexical client path now names a different physical file carrying
+	// an identical registration. The old receipt must not authorize its removal.
+	environment.symlinks[linuxHome+"/.cursor"] = linuxHome + "/dotfiles/other-cursor"
+	environment.dirs[linuxHome+"/dotfiles/other-cursor"] = true
+	before := environment.files[cursorFile]
+	receiptLedger, pathErr := receiptPath(environment)
+	if pathErr != nil {
+		t.Fatal(pathErr)
+	}
+	environment.writes = nil
+	_, err = Uninstall(context.Background(), environment, Options{Targets: []string{"cursor"}, MCPOnly: true})
+	if err == nil || !strings.Contains(err.Error(), "different resolved target") ||
+		!strings.Contains(err.Error(), receiptLedger) || !strings.Contains(err.Error(), "manually") {
+		t.Fatalf("error = %v", err)
+	}
+	if environment.files[cursorFile] != before || len(configWrites(environment)) != 0 {
+		t.Fatal("retargeted MCP registration was removed")
+	}
+}
+
 func TestFileAdapterInstallUpdatesAndDetectsUnchanged(t *testing.T) {
 	environment := newFakeEnvironment("linux", linuxHome).withFixture(t, cursorFile, "cursor_with_grafo.json")
 

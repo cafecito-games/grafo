@@ -624,6 +624,9 @@ func TestReceiptsRecordOwnershipAfterMutation(t *testing.T) {
 		if receipt.Target != claudeSkill {
 			t.Errorf("receipt target = %q", receipt.Target)
 		}
+		if receipt.ResolvedTarget != claudeSkill {
+			t.Errorf("receipt resolved target = %q", receipt.ResolvedTarget)
+		}
 		if receipt.Digest != agentguide.Digest(agentguide.Skill()) {
 			t.Errorf("receipt digest = %q", receipt.Digest)
 		}
@@ -672,6 +675,28 @@ func TestUnsupportedReceiptFormatIsReported(t *testing.T) {
 	environment.files[receiptLedger] = `{"format":"grafo.install.receipts/99","receipts":[]}`
 	_, err := Install(context.Background(), environment, grafoPath, Options{})
 	if err == nil || !strings.Contains(err.Error(), "unsupported format") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestLegacyReceiptRequiresAnUnsymlinkedTarget(t *testing.T) {
+	environment := guidanceEnvironment()
+	own := ownership{reader: environment, found: true, receipt: Receipt{Target: claudeSettings}}
+	if !own.provesPath(claudeSettings) {
+		t.Fatal("ordinary unsymlinked legacy receipt stopped proving its target")
+	}
+	environment.symlinks[linuxHome+"/.claude"] = linuxHome + "/dotfiles/claude"
+	environment.dirs[linuxHome+"/dotfiles/claude"] = true
+	if own.provesPath(claudeSettings) {
+		t.Fatal("legacy receipt followed a parent whose historical destination is unknowable")
+	}
+}
+
+func TestResolvedUserConfigPathRejectsSymlinkCycles(t *testing.T) {
+	environment := newFakeEnvironment("linux", linuxHome)
+	environment.symlinks[linuxHome+"/.cursor"] = ".cursor"
+	_, err := resolveUserConfigPath(environment, cursorFile)
+	if err == nil || !strings.Contains(err.Error(), "too many levels") {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -928,6 +953,31 @@ func TestHookReceiptDoesNotAuthorizeADifferentSettingsFile(t *testing.T) {
 			t.Fatalf("a user-authored hook was replaced: %#v", entries[0])
 		}
 	})
+}
+
+func TestHookReceiptDoesNotFollowRetargetedParentInsideUserTree(t *testing.T) {
+	environment := guidanceEnvironment()
+	options := Options{Targets: []string{"claude"}, Hooks: true}
+	if _, err := Install(context.Background(), environment, grafoPath, options); err != nil {
+		t.Fatal(err)
+	}
+	userAuthored := environment.files[claudeSettings]
+	environment.symlinks[linuxHome+"/.claude"] = linuxHome + "/dotfiles/claude"
+	environment.dirs[linuxHome+"/dotfiles/claude"] = true
+	environment.writes = nil
+	environment.removes = nil
+
+	actions, err := Uninstall(context.Background(), environment, Options{Targets: []string{"claude"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hooks := findAction(t, actions, "claude", KindHooks)
+	if hooks.Change != changeSkipped || !strings.Contains(hooks.Detail, "cannot prove") {
+		t.Fatalf("hooks action = %#v", hooks)
+	}
+	if environment.files[claudeSettings] != userAuthored {
+		t.Fatal("a receipt followed the retargeted parent and removed user-authored hooks")
+	}
 }
 
 // Containment is re-validated immediately before the write, so swapping a
