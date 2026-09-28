@@ -88,10 +88,12 @@ func discoverFilesWithCatalog(ctx context.Context, project Project, registry *pa
 	}
 	result := discoveredFiles{paths: make([]string, 0, len(candidates)), gitCommands: gitCommands}
 	if reuseKnown {
+		seen := map[string]bool{}
 		for _, path := range candidates {
-			if PathIgnored(path) {
+			if seen[path] || PathIgnored(path) {
 				continue
 			}
+			seen[path] = true
 			if _, ok := registry.For(path); ok {
 				if !scope.Allows(path) {
 					result.scopedOut++

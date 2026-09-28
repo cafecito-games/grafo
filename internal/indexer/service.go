@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ const workspaceSemanticKeysMeta = "parser_workspace_semantic_keys"
 const workspaceStateDigestMeta = "workspace_state_digest"
 const gitUntrackedPathsMeta = "git_untracked_paths"
 const indexScopeDigestMeta = "index_scope_digest"
+const indexScopeScopedOutMeta = "index_scope_scoped_out"
 const SemanticIndexVersion = indexversion.Semantic
 
 type Options struct {
@@ -232,6 +234,12 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	}
 	scopeDigest := configuration.Index.SemanticKey()
 	scopeChanged := indexedScopeDigest != scopeDigest
+	indexedScopedOutRaw, err := s.repository.Meta(ctx, indexScopeScopedOutMeta)
+	if err != nil {
+		return report, fmt.Errorf("load index scope excluded count: %w", err)
+	}
+	indexedScopedOut, scopedOutErr := strconv.Atoi(indexedScopedOutRaw)
+	indexedScopedOutValid := scopedOutErr == nil && indexedScopedOut >= 0
 	if err := progress.emit(ProgressMembership, ProgressStarted, "files", 0, 0, ""); err != nil {
 		return report, err
 	}
@@ -247,7 +255,7 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	reuseMembership := project.gitSnapshot != nil && indexedCommit != "" &&
 		project.gitSnapshot.Head == indexedCommit && project.gitSnapshot.MembershipStable &&
 		previousUntrackedValid && equalPaths(previousUntracked, project.gitSnapshot.Untracked) &&
-		!scopeChanged && !schemaChanged && previousDirtyValid && !options.Force && options.Boundary == nil
+		!scopeChanged && indexedScopedOutValid && !schemaChanged && previousDirtyValid && !options.Force && options.Boundary == nil
 	var detectedChanges gitChanges
 	changesValid := false
 	var dirtyPaths []string
@@ -282,6 +290,9 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	report.GitCommands += discovered.gitCommands
 	if err != nil {
 		return report, fmt.Errorf("discover source files: %w", err)
+	}
+	if reuseMembership {
+		discovered.scopedOut = indexedScopedOut
 	}
 	paths := discovered.paths
 	if err := progress.emit(ProgressDiscovery, ProgressCompleted, "files", len(paths), len(paths), ""); err != nil {
@@ -563,9 +574,6 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	if err := setMetaIfChanged(ctx, s.repository, workspaceStateDigestMeta, workspaceDigest); err != nil {
 		return report, err
 	}
-	if err := setMetaIfChanged(ctx, s.repository, indexScopeDigestMeta, scopeDigest); err != nil {
-		return report, err
-	}
 	if dirtyPathsValid {
 		encoded, marshalErr := json.Marshal(dirtyPaths)
 		if marshalErr != nil {
@@ -586,6 +594,15 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	// so it intentionally advances even when every graph and other metadata
 	// value is unchanged.
 	if err := s.repository.SetMeta(ctx, "indexed_at", graph.NowUTC()); err != nil {
+		return report, err
+	}
+	if err := setMetaIfChanged(ctx, s.repository, indexScopeScopedOutMeta, strconv.Itoa(discovered.scopedOut)); err != nil {
+		return report, err
+	}
+	// Publish the digest last: it is the reuse authority for both membership
+	// and the associated scoped-out count, after every other index metadata
+	// value for this run has been stored successfully.
+	if err := setMetaIfChanged(ctx, s.repository, indexScopeDigestMeta, scopeDigest); err != nil {
 		return report, err
 	}
 	if options.Boundary != nil {

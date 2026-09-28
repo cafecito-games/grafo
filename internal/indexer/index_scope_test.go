@@ -111,6 +111,13 @@ func TestServiceScopeNarrowingAndBroadeningConvergeWithoutChangingHead(t *testin
 		t.Fatalf("control file was not retained: %#v", restricted)
 	}
 	assertOutgoingQualifiedSet(t, ctx, repository, fixtureComponent.ID, graph.EdgeContains, nil)
+	repeated, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repeated.Updated) != 0 || len(repeated.Removed) != 0 || repeated.Unchanged != 2 || repeated.ScopedOut != 1 {
+		t.Fatalf("unchanged scoped run = %#v", repeated)
+	}
 	validFiles, err := repository.Files(ctx)
 	if err != nil {
 		t.Fatal(err)
