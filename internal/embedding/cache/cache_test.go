@@ -446,6 +446,57 @@ func TestPruneComposesFiltersUsesOldestFirstAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestRFC3339NanoTimestampsUseChronologicalBoundsAndAge(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 9, 28, 10, 0, 2, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "embeddings.sqlite")
+	store, err := embeddingcache.OpenWithOptions(ctx, path, embeddingcache.Options{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	whole := semantic.CacheKey{Model: "model", DocumentVersion: "1", ContentHash: strings.Repeat("4", 64)}
+	fractional := semantic.CacheKey{Model: "model", DocumentVersion: "1", ContentHash: strings.Repeat("5", 64)}
+	if err := store.Store(ctx, []semantic.CacheEntry{{Key: whole, Vector: []float32{1}}, {Key: fractional, Vector: []float32{2}}}); err != nil {
+		t.Fatal(err)
+	}
+	database, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "UPDATE embeddings SET last_used_at = ? WHERE content_hash = ?", "2026-09-28T10:00:00Z", whole.ContentHash); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "UPDATE embeddings SET last_used_at = ? WHERE content_hash = ?", "2026-09-28T10:00:00.5Z", fractional.ContentHash); err != nil {
+		t.Fatal(err)
+	}
+	_ = database.Close()
+	status, err := store.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.OldestUsedAt != "2026-09-28T10:00:00Z" || status.NewestUsedAt != "2026-09-28T10:00:00.5Z" {
+		t.Fatalf("chronological bounds = %q..%q", status.OldestUsedAt, status.NewestUsedAt)
+	}
+	report, err := store.Prune(ctx, embeddingcache.PruneOptions{OlderThan: 1750 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.DeletedRows != 1 {
+		t.Fatalf("age prune = %#v", report)
+	}
+	remaining, err := store.Load(ctx, []semantic.CacheKey{whole, fractional})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := remaining[whole]; exists {
+		t.Fatal("whole-second older row was not pruned")
+	}
+	if _, exists := remaining[fractional]; !exists {
+		t.Fatal("newer fractional row was pruned")
+	}
+}
+
 func TestCanceledPruneRollsBack(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "embeddings.sqlite")

@@ -19,6 +19,7 @@ type fakeEmbedder struct {
 	inputs     int
 	dimensions int
 	err        error
+	failCall   int
 	malformed  string
 }
 
@@ -27,7 +28,7 @@ func (*fakeEmbedder) Model() string { return "test-model" }
 func (e *fakeEmbedder) Embed(_ context.Context, inputs []string) ([][]float32, error) {
 	e.calls++
 	e.inputs += len(inputs)
-	if e.err != nil {
+	if e.err != nil && (e.failCall == 0 || e.calls == e.failCall) {
 		return nil, e.err
 	}
 	result := make([][]float32, 0, len(inputs))
@@ -274,6 +275,47 @@ func TestDimensionDriftRequiresForceForCurrentKeys(t *testing.T) {
 	}
 	if _, err := service.Search(ctx, "payment", 2); err != nil {
 		t.Fatalf("search after forced replacement: %v", err)
+	}
+}
+
+func TestForceSyncRecoversAfterPriorBatchLeavesMixedDimensions(t *testing.T) {
+	ctx := context.Background()
+	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	nodes := []graph.Node{
+		{ID: "n:charge", Kind: graph.KindFunction, Name: "Charge", QualifiedName: "payments.Charge", OwnerFile: "fixture.go"},
+		{ID: "n:refund", Kind: graph.KindFunction, Name: "Refund", QualifiedName: "payments.Refund", OwnerFile: "fixture.go"},
+	}
+	if err := repository.ReplaceOwner(ctx, "fixture.go", graph.ParseResult{Nodes: nodes}); err != nil {
+		t.Fatal(err)
+	}
+	cache, err := embeddingcache.Open(ctx, filepath.Join(t.TempDir(), "embeddings.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cache.Close() }()
+	embedder := &fakeEmbedder{dimensions: 2}
+	service := semantic.NewService(repository, repository, cache, embedder).WithBatchSize(1)
+	if _, err := service.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	embedder.dimensions = 3
+	embedder.err = errors.New("second provider batch failed")
+	embedder.failCall = embedder.calls + 2
+	if _, err := service.WithForce(true).Sync(ctx); err == nil || !strings.Contains(err.Error(), "second provider batch failed") {
+		t.Fatalf("partial force error = %v", err)
+	}
+	embedder.err = nil
+	embedder.failCall = 0
+	if _, err := service.Sync(ctx); err != nil {
+		t.Fatalf("force did not recover mixed current dimensions: %v", err)
+	}
+	if _, err := service.Search(ctx, "payment", 2); err != nil {
+		t.Fatalf("search after converged force: %v", err)
 	}
 }
 

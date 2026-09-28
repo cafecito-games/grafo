@@ -144,10 +144,12 @@ func (s *Service) Sync(ctx context.Context) (SyncReport, error) {
 		if !exists {
 			continue
 		}
-		if existingDimension == 0 {
-			existingDimension = len(vector)
-		} else if len(vector) != existingDimension {
-			return report, fmt.Errorf("embedding dimensions changed for model %q among current cache keys; run 'grafo embed --force'", model)
+		if !s.force {
+			if existingDimension == 0 {
+				existingDimension = len(vector)
+			} else if len(vector) != existingDimension {
+				return report, fmt.Errorf("embedding dimensions changed for model %q among current cache keys; run 'grafo embed --force'", model)
+			}
 		}
 		if !s.force {
 			report.Unchanged += byKey[key].count

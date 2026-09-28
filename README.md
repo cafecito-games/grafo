@@ -369,6 +369,8 @@ content hash; vectors are stored losslessly as little-endian float32 binary
 data. The cache contains no source documents, symbol names, repository paths,
 provider credentials, or endpoint URLs. Equal semantic documents therefore use
 one cached vector while their graph nodes remain separate search candidates.
+On POSIX platforms, Grafo creates the cache directory with owner-only `0700`
+permissions and the cache file with owner-only `0600` permissions.
 
 Inspect or evict this rebuildable data without contacting the provider:
 

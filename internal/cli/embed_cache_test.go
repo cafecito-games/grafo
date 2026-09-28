@@ -105,6 +105,19 @@ func TestEmbedCachePruneValidatesBeforeOpeningWritableCache(t *testing.T) {
 	}
 }
 
+func TestEmbedCacheStatusDoesNotCreateMissingCache(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "typo", "embeddings.sqlite")
+	t.Setenv(embeddingcache.EnvPath, path)
+	var stdout, stderr bytes.Buffer
+	code := New(&stdout, &stderr).Run(context.Background(), []string{"embed-cache", "status"})
+	if code == 0 || !strings.Contains(stderr.String(), "inspect embedding cache path") {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Dir(path)); !os.IsNotExist(err) {
+		t.Fatalf("status created missing cache parent: %v", err)
+	}
+}
+
 func TestParseEmbedCacheOptions(t *testing.T) {
 	parsed, err := parseArguments([]string{"embed-cache", "prune", "--older-than", "24h", "--max-bytes", "1024", "--yes"})
 	if err != nil {

@@ -82,6 +82,11 @@ type PruneReport struct {
 	ReclaimableBytes   int64 `json:"reclaimable_bytes"`
 }
 
+type timestampBounds struct {
+	oldest time.Time
+	newest time.Time
+}
+
 func ResolvePath() (string, error) {
 	if value, present := os.LookupEnv(EnvPath); present {
 		if strings.TrimSpace(value) == "" {
@@ -608,44 +613,44 @@ func decodeVector(key semantic.CacheKey, dimensions int64, blob []byte) ([]float
 
 func (c *Cache) Status(ctx context.Context) (Status, error) {
 	status := Status{Path: c.path, SchemaVersion: SchemaVersion, Models: []ModelStatus{}}
-	rows, err := c.db.QueryContext(ctx, `SELECT model, dimensions, count(*), coalesce(sum(length(vector)), 0), min(last_used_at), max(last_used_at)
-		FROM embeddings GROUP BY model, dimensions ORDER BY model, dimensions`)
+	rows, err := c.db.QueryContext(ctx, `SELECT model, document_version, content_hash, dimensions, length(vector), last_used_at
+		FROM embeddings ORDER BY model, dimensions, document_version, content_hash`)
 	if err != nil {
 		return Status{}, fmt.Errorf("read embedding cache status: %w", err)
 	}
 	byModel := map[string]int{}
+	modelBounds := make(map[string]timestampBounds)
+	var cacheBounds timestampBounds
 	for rows.Next() {
-		var model, oldest, newest string
+		var key semantic.CacheKey
+		var stamp string
 		var dimensions int
-		var count, bytes int64
-		if err := rows.Scan(&model, &dimensions, &count, &bytes, &oldest, &newest); err != nil {
+		var bytes int64
+		if err := rows.Scan(&key.Model, &key.DocumentVersion, &key.ContentHash, &dimensions, &bytes, &stamp); err != nil {
 			_ = rows.Close()
 			return Status{}, fmt.Errorf("read embedding cache status: %w", err)
 		}
-		index, exists := byModel[model]
+		usedAt, err := time.Parse(time.RFC3339Nano, stamp)
+		if err != nil {
+			_ = rows.Close()
+			return Status{}, fmt.Errorf("embedding cache key %s has invalid last_used_at: %w", formatKey(key), err)
+		}
+		index, exists := byModel[key.Model]
 		if !exists {
 			index = len(status.Models)
-			byModel[model] = index
-			status.Models = append(status.Models, ModelStatus{Model: model})
+			byModel[key.Model] = index
+			status.Models = append(status.Models, ModelStatus{Model: key.Model})
 		}
 		item := &status.Models[index]
-		item.Dimensions = append(item.Dimensions, dimensions)
-		item.Rows += count
+		if len(item.Dimensions) == 0 || item.Dimensions[len(item.Dimensions)-1] != dimensions {
+			item.Dimensions = append(item.Dimensions, dimensions)
+		}
+		item.Rows++
 		item.BlobBytes += bytes
-		if item.OldestUsedAt == "" || oldest < item.OldestUsedAt {
-			item.OldestUsedAt = oldest
-		}
-		if newest > item.NewestUsedAt {
-			item.NewestUsedAt = newest
-		}
-		status.Rows += count
+		status.Rows++
 		status.BlobBytes += bytes
-		if status.OldestUsedAt == "" || oldest < status.OldestUsedAt {
-			status.OldestUsedAt = oldest
-		}
-		if newest > status.NewestUsedAt {
-			status.NewestUsedAt = newest
-		}
+		modelBounds[key.Model] = extendBounds(modelBounds[key.Model], usedAt)
+		cacheBounds = extendBounds(cacheBounds, usedAt)
 	}
 	if err := rows.Close(); err != nil {
 		return Status{}, fmt.Errorf("read embedding cache status: %w", err)
@@ -653,6 +658,14 @@ func (c *Cache) Status(ctx context.Context) (Status, error) {
 	if err := rows.Err(); err != nil {
 		return Status{}, fmt.Errorf("read embedding cache status: %w", err)
 	}
+	for index := range status.Models {
+		item := &status.Models[index]
+		bounds := modelBounds[item.Model]
+		item.OldestUsedAt = formatTimestamp(bounds.oldest)
+		item.NewestUsedAt = formatTimestamp(bounds.newest)
+	}
+	status.OldestUsedAt = formatTimestamp(cacheBounds.oldest)
+	status.NewestUsedAt = formatTimestamp(cacheBounds.newest)
 	status.DatabaseBytes = fileSize(c.path)
 	status.WALBytes = fileSize(c.path + "-wal")
 	status.SHMBytes = fileSize(c.path + "-shm")
@@ -668,8 +681,9 @@ func (c *Cache) Status(ctx context.Context) (Status, error) {
 }
 
 type pruneRow struct {
-	key   semantic.CacheKey
-	bytes int64
+	key    semantic.CacheKey
+	bytes  int64
+	usedAt time.Time
 }
 
 func (c *Cache) Prune(ctx context.Context, options PruneOptions) (PruneReport, error) {
@@ -731,21 +745,27 @@ func (c *Cache) prunePlan(ctx context.Context, options PruneOptions) ([]pruneRow
 		clauses = append(clauses, "model = ?")
 		arguments = append(arguments, options.Model)
 	}
-	if options.OlderThan > 0 {
-		clauses = append(clauses, "last_used_at < ?")
-		arguments = append(arguments, c.now().UTC().Add(-options.OlderThan).Format(time.RFC3339Nano))
-	}
-	rows, err := c.db.QueryContext(ctx, `SELECT model, document_version, content_hash, length(vector)
-		FROM embeddings WHERE `+strings.Join(clauses, " AND ")+` ORDER BY last_used_at, model, document_version, content_hash`, arguments...)
+	rows, err := c.db.QueryContext(ctx, `SELECT model, document_version, content_hash, length(vector), last_used_at
+		FROM embeddings WHERE `+strings.Join(clauses, " AND ")+` ORDER BY model, document_version, content_hash`, arguments...)
 	if err != nil {
 		return nil, 0, Status{}, fmt.Errorf("plan embedding cache prune: %w", err)
 	}
 	eligible := []pruneRow{}
+	cutoff := c.now().UTC().Add(-options.OlderThan)
 	for rows.Next() {
 		var row pruneRow
-		if err := rows.Scan(&row.key.Model, &row.key.DocumentVersion, &row.key.ContentHash, &row.bytes); err != nil {
+		var stamp string
+		if err := rows.Scan(&row.key.Model, &row.key.DocumentVersion, &row.key.ContentHash, &row.bytes, &stamp); err != nil {
 			_ = rows.Close()
 			return nil, 0, Status{}, fmt.Errorf("plan embedding cache prune: %w", err)
+		}
+		row.usedAt, err = time.Parse(time.RFC3339Nano, stamp)
+		if err != nil {
+			_ = rows.Close()
+			return nil, 0, Status{}, fmt.Errorf("embedding cache key %s has invalid last_used_at: %w", formatKey(row.key), err)
+		}
+		if options.OlderThan > 0 && !row.usedAt.Before(cutoff) {
+			continue
 		}
 		eligible = append(eligible, row)
 	}
@@ -755,6 +775,12 @@ func (c *Cache) prunePlan(ctx context.Context, options PruneOptions) ([]pruneRow
 	if err := rows.Err(); err != nil {
 		return nil, 0, Status{}, fmt.Errorf("plan embedding cache prune: %w", err)
 	}
+	sort.Slice(eligible, func(i, j int) bool {
+		if !eligible[i].usedAt.Equal(eligible[j].usedAt) {
+			return eligible[i].usedAt.Before(eligible[j].usedAt)
+		}
+		return lessKey(eligible[i].key, eligible[j].key)
+	})
 	needed := int64(math.MaxInt64)
 	if options.MaxBytes != nil {
 		needed = max(0, status.BlobBytes-*options.MaxBytes)
@@ -769,6 +795,23 @@ func (c *Cache) prunePlan(ctx context.Context, options PruneOptions) ([]pruneRow
 		freed += row.bytes
 	}
 	return selected, freed, status, nil
+}
+
+func extendBounds(current timestampBounds, value time.Time) timestampBounds {
+	if current.oldest.IsZero() || value.Before(current.oldest) {
+		current.oldest = value
+	}
+	if current.newest.IsZero() || value.After(current.newest) {
+		current.newest = value
+	}
+	return current
+}
+
+func formatTimestamp(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.Format(time.RFC3339Nano)
 }
 
 func fileSize(path string) int64 {

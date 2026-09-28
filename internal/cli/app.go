@@ -734,7 +734,7 @@ func (a *App) embedCache(ctx context.Context, args parsedArguments) error {
 		return err
 	}
 	if operation == "status" {
-		store, err := embeddingcache.Open(ctx, path)
+		store, err := embeddingcache.OpenReadOnly(ctx, path)
 		if err != nil {
 			return err
 		}
