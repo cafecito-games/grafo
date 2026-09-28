@@ -108,7 +108,9 @@ explicitly marked as test helpers or lifecycle hooks, is bounded by depth and
 work limits, and reports cycles or exhausted bounds as truncated. These reports
 are structural evidence and never claim runtime execution coverage.
 
-Semantic-index version 30 adds repository-declared call-effect adapters. The
+Semantic-index version 30 refreshes Go workspace evidence when nested modules
+or vendored semantic inputs change. Semantic-index version 31 adds
+repository-declared call-effect adapters. The
 durable graph schema does not change: configured calls project through the
 existing event and HTTP vocabularies and retain their ordinary call evidence.
 
