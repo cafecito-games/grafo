@@ -41,6 +41,7 @@ type IndexMetadata struct {
 // query or write capabilities.
 type IndexInspection struct {
 	Metadata      IndexMetadata      `json:"metadata"`
+	Metrics       *StorageMetrics    `json:"metrics,omitempty"`
 	Compatibility IndexCompatibility `json:"compatibility"`
 	Diagnostic    string             `json:"diagnostic,omitempty"`
 }
@@ -76,7 +77,11 @@ func InspectIndex(ctx context.Context, path string) (IndexInspection, error) {
 		failure.Metadata = metadata
 		return failure, nil
 	}
-	return IndexInspection{Metadata: metadata, Compatibility: CompatibilityCompatible}, nil
+	metrics, err := readStorageMetrics(ctx, db)
+	if err != nil {
+		return IndexInspection{}, err
+	}
+	return IndexInspection{Metadata: metadata, Metrics: &metrics, Compatibility: CompatibilityCompatible}, nil
 }
 
 // CheckpointIndex verifies that an existing compatible database still carries

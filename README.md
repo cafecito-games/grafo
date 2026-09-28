@@ -819,7 +819,10 @@ grafo indexes list . --json
 
 The inventory reports each primary database and its exact WAL/SHM sidecar
 bytes, stored branch/commit/repository metadata, compatibility, current-index
-status, and deterministic totals. It examines only direct regular
+status, SQLite page/freelist estimates, and deterministic totals. A compaction
+recommendation appears only when estimated reclaimable freelist space is both
+at least 20% of the primary database and at least 256 MiB. WAL/SHM bytes are
+separate and are not counted as freelist space. It examines only direct regular
 `.grafo/indexes/*.sqlite` entries and never follows symlinks.
 
 Pruning always requires at least one explicit retention selector. Preview first;
@@ -837,6 +840,21 @@ automatically prune locked, corrupt, incompatible, metadata-free,
 identity-mismatched, future-dated, or symlinked candidates. Each deleted index
 is rebuildable from source with `grafo index`, but the next switch to that
 branch pays the full rebuild cost. Advisory `.lock` anchors remain in place.
+
+Compaction addresses free pages inside the current branch database; it does not
+remove live graph data or stale branch databases. Preview the current estimate,
+then compact explicitly:
+
+```sh
+grafo indexes compact . --dry-run
+grafo indexes compact . --yes
+```
+
+Compaction takes the same exclusive index lock as indexing, checkpoints the
+WAL, and runs SQLite `VACUUM`. It can require temporary disk space comparable to
+the live database and future queries wait while it runs. An empty freelist is a
+successful zero-byte no-op. Use source include/exclude settings to reduce live
+graph scope, and `indexes prune` to remove whole non-current branch databases.
 
 ## Development
 

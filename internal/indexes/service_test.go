@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
 	"github.com/cafecito-games/grafo/internal/service"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
@@ -44,6 +45,9 @@ func TestListIsDeterministicAndAccountsForEveryBranchFile(t *testing.T) {
 		if candidate.Compatibility != CompatibilityCompatible || !candidate.Verified {
 			t.Fatalf("candidate was not verified: %#v", candidate)
 		}
+		if candidate.Metrics == nil || candidate.Metrics.PageSize <= 0 || candidate.Metrics.PageCount <= 0 {
+			t.Fatalf("candidate metrics = %#v", candidate.Metrics)
+		}
 		if candidate.Filename != filepath.Base(candidate.Path) || !filepath.IsAbs(candidate.Path) {
 			t.Fatalf("candidate paths = %#v", candidate)
 		}
@@ -66,6 +70,186 @@ func TestListIsDeterministicAndAccountsForEveryBranchFile(t *testing.T) {
 		if candidate.Sizes.Total*2 >= inventory.Totals.Total {
 			t.Fatalf("three branch fixtures did not demonstrate additive disk growth: candidate=%#v totals=%#v", candidate.Sizes, inventory.Totals)
 		}
+	}
+}
+
+func TestRecommendCompactionRequiresBothThresholds(t *testing.T) {
+	const mib = int64(1 << 20)
+	for _, test := range []struct {
+		name        string
+		primary     int64
+		reclaimable int64
+		want        bool
+	}{
+		{name: "both exact", primary: 1280 * mib, reclaimable: 256 * mib, want: true},
+		{name: "bytes below", primary: 1280 * mib, reclaimable: 256*mib - 1},
+		{name: "percent below", primary: 1280*mib + 1, reclaimable: 256 * mib},
+		{name: "larger", primary: 2 << 30, reclaimable: 512 * mib, want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			metrics := sqlite.StorageMetrics{ReclaimableBytes: test.reclaimable}
+			if got := recommendCompaction(test.primary, metrics); got != test.want {
+				t.Fatalf("recommendCompaction(%d, %d) = %t, want %t", test.primary, test.reclaimable, got, test.want)
+			}
+		})
+	}
+}
+
+func TestCompactDryRunIsReadOnlyAndRealRunReportsCurrentIndex(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	project := discoverTestProject(t, root)
+	repository := seedIndex(t, project.IndexPath, project, project.Branch, time.Now().UTC())
+	closeRepositories(t, repository)
+	before := snapshotFiles(t, filepath.Dir(project.IndexPath))
+	beforeInfo, err := os.Stat(project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	manager := newManager()
+	manager.lock = func(string, time.Duration) (service.Unlock, error) {
+		t.Fatal("dry run acquired a writer lock")
+		return nil, nil
+	}
+	dry, err := manager.compact(ctx, root, CompactPolicy{DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dry.DryRun || dry.Path != project.IndexPath || dry.After != nil || dry.Before.Metrics.PageCount <= 0 || dry.ExpectedUpperBoundBytes != dry.Before.Metrics.LiveAllocatedBytes {
+		t.Fatalf("dry report = %#v", dry)
+	}
+	if after := snapshotFiles(t, filepath.Dir(project.IndexPath)); !reflect.DeepEqual(before, after) {
+		t.Fatalf("dry run changed files: before=%#v after=%#v", before, after)
+	}
+	afterInfo, err := os.Stat(project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !beforeInfo.ModTime().Equal(afterInfo.ModTime()) {
+		t.Fatalf("dry run changed primary timestamp: before=%s after=%s", beforeInfo.ModTime(), afterInfo.ModTime())
+	}
+
+	real, err := Compact(ctx, root, CompactPolicy{Confirm: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if real.DryRun || real.After == nil || real.Path != project.IndexPath || real.After.Metrics.PageCount <= 0 {
+		t.Fatalf("real report = %#v", real)
+	}
+	if real.Before.Metrics.ReclaimableBytes == 0 && real.Reclaimed.Total != 0 {
+		t.Fatalf("empty-freelist compaction claimed reclaimed bytes: %#v", real.Reclaimed)
+	}
+	if _, err := os.Stat(project.IndexPath + ".lock"); err != nil {
+		t.Fatalf("compaction removed lock anchor: %v", err)
+	}
+}
+
+func TestCompactValidatesIntentTargetLockAndPendingState(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	manager := newManager()
+	discovered := false
+	manager.discover = func(context.Context, string) (indexer.Project, error) {
+		discovered = true
+		return indexer.Project{}, errors.New("unexpected discovery")
+	}
+	if _, err := manager.compact(ctx, root, CompactPolicy{}); err == nil || discovered {
+		t.Fatalf("missing confirmation error=%v discovered=%t", err, discovered)
+	}
+
+	project := discoverTestProject(t, root)
+	repository := seedIndex(t, project.IndexPath, project, project.Branch, time.Now().UTC())
+	if err := repository.ReplaceFile(ctx, graph.FileRecord{Path: "pending.go", Hash: "hash", Language: "go", IndexedAt: graph.NowUTC()}, graph.ParseResult{}); err != nil {
+		t.Fatal(err)
+	}
+	closeRepositories(t, repository)
+	if _, err := Compact(ctx, root, CompactPolicy{Confirm: true}); err == nil || !strings.Contains(err.Error(), "reconciliation is pending") {
+		t.Fatalf("pending compaction error = %v", err)
+	}
+
+	manager = newManager()
+	manager.lock = func(string, time.Duration) (service.Unlock, error) { return nil, errors.New("held branch lock") }
+	if _, err := manager.compact(ctx, root, CompactPolicy{Confirm: true}); err == nil || !strings.Contains(err.Error(), "held branch lock") {
+		t.Fatalf("held lock error = %v", err)
+	}
+
+	missingRoot := t.TempDir()
+	if _, err := Compact(ctx, missingRoot, CompactPolicy{DryRun: true}); err == nil || !strings.Contains(err.Error(), "run 'grafo index'") {
+		t.Fatalf("missing index error = %v", err)
+	}
+
+	symlinkRoot := t.TempDir()
+	symlinkProject := discoverTestProject(t, symlinkRoot)
+	if err := os.MkdirAll(filepath.Dir(symlinkProject.IndexPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	external := filepath.Join(t.TempDir(), "external.sqlite")
+	if err := os.WriteFile(external, []byte("outside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, symlinkProject.IndexPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Compact(ctx, symlinkRoot, CompactPolicy{DryRun: true}); err == nil || !strings.Contains(err.Error(), "non-symlink") {
+		t.Fatalf("symlink index error = %v", err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		create func(string, indexer.Project)
+	}{
+		{name: "corrupt", create: func(path string, _ indexer.Project) {
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte("not sqlite"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "incompatible", create: func(path string, project indexer.Project) {
+			repository := seedIndex(t, path, project, project.Branch, time.Now().UTC())
+			if err := repository.SetMeta(ctx, "semantic_index_version", "0"); err != nil {
+				t.Fatal(err)
+			}
+			closeRepositories(t, repository)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidateRoot := t.TempDir()
+			candidate := discoverTestProject(t, candidateRoot)
+			test.create(candidate.IndexPath, candidate)
+			if _, err := Compact(ctx, candidateRoot, CompactPolicy{DryRun: true}); err == nil || !strings.Contains(err.Error(), "cannot be compacted") {
+				t.Fatalf("%s compaction error = %v", test.name, err)
+			}
+		})
+	}
+}
+
+func TestCompactRevalidatesCurrentIndexAfterLock(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	project := discoverTestProject(t, root)
+	repository := seedIndex(t, project.IndexPath, project, project.Branch, time.Now().UTC())
+	otherPath := filepath.Join(filepath.Dir(project.IndexPath), "other.sqlite")
+	other := seedIndex(t, otherPath, project, "other", time.Now().UTC())
+	closeRepositories(t, repository, other)
+	manager := newManager()
+	discover := manager.discover
+	calls := 0
+	manager.discover = func(ctx context.Context, root string) (indexer.Project, error) {
+		calls++
+		result, err := discover(ctx, root)
+		if calls > 1 {
+			result.IndexPath = otherPath
+		}
+		return result, err
+	}
+	if _, err := manager.compact(ctx, root, CompactPolicy{Confirm: true}); err == nil || !strings.Contains(err.Error(), "current branch index changed") {
+		t.Fatalf("changed current index error = %v", err)
+	}
+	if _, err := os.Stat(project.IndexPath); err != nil {
+		t.Fatalf("original index changed: %v", err)
 	}
 }
 

@@ -399,7 +399,7 @@ func (a *App) index(ctx context.Context, args parsedArguments) error {
 
 func (a *App) indexes(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) == 0 {
-		return fmt.Errorf("usage: grafo indexes list|prune [path]")
+		return fmt.Errorf("usage: grafo indexes list|prune|compact [path]")
 	}
 	subcommand := args.positionals[0]
 	root, err := optionalPath(args.positionals[1:])
@@ -431,8 +431,22 @@ func (a *App) indexes(ctx context.Context, args parsedArguments) error {
 			return err
 		}
 		return pruneErr
+	case "compact":
+		if err := rejectUnsupportedIndexOptions(args,
+			map[string]bool{"json": true, "dry-run": true, "yes": true}, nil); err != nil {
+			return err
+		}
+		policy := branchindexes.CompactPolicy{DryRun: args.flags["dry-run"], Confirm: args.flags["yes"]}
+		if !policy.DryRun && !policy.Confirm {
+			return fmt.Errorf("compaction requires --yes (or use --dry-run)")
+		}
+		report, err := branchindexes.Compact(ctx, root, policy)
+		if err != nil {
+			return err
+		}
+		return a.printIndexCompactReport(report, args.flags["json"])
 	default:
-		return fmt.Errorf("usage: grafo indexes list|prune [path]")
+		return fmt.Errorf("usage: grafo indexes list|prune|compact [path]")
 	}
 }
 
@@ -490,16 +504,22 @@ func (a *App) printIndexInventory(inventory branchindexes.Inventory, asJSON bool
 	if asJSON {
 		return writeJSON(a.stdout, inventory)
 	}
-	a.println("CURRENT\tBRANCH\tCOMMIT\tINDEXED_AT\tREPOSITORY_ID\tROOT\tCOMPATIBILITY\tDATABASE\tWAL\tSHM\tTOTAL\tFILENAME\tPATH")
+	a.println("CURRENT\tBRANCH\tCOMMIT\tINDEXED_AT\tREPOSITORY_ID\tROOT\tCOMPATIBILITY\tDATABASE\tWAL\tSHM\tTOTAL\tPAGE_SIZE\tPAGE_COUNT\tFREELIST\tLIVE_ALLOCATED\tRECLAIMABLE\tRECLAIMABLE_PERCENT\tCOMPACT_RECOMMENDED\tFILENAME\tPATH")
 	for _, candidate := range inventory.Indexes {
 		current := ""
 		if candidate.Current {
 			current = "*"
 		}
-		a.printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%s\t%s\n",
+		metrics := sqlite.StorageMetrics{}
+		if candidate.Metrics != nil {
+			metrics = *candidate.Metrics
+		}
+		a.printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.2f\t%t\t%s\t%s\n",
 			current, candidate.Branch, candidate.Commit, candidate.IndexedAt,
 			candidate.RepositoryID, candidate.Root, candidate.Compatibility,
 			candidate.Sizes.Database, candidate.Sizes.WAL, candidate.Sizes.SHM, candidate.Sizes.Total,
+			metrics.PageSize, metrics.PageCount, metrics.FreelistCount, metrics.LiveAllocatedBytes,
+			metrics.ReclaimableBytes, metrics.ReclaimablePercent, candidate.CompactRecommended,
 			candidate.Filename, candidate.Path)
 		if candidate.Diagnostic != "" {
 			a.printf("  diagnostic: %s\n", candidate.Diagnostic)
@@ -508,6 +528,27 @@ func (a *App) printIndexInventory(inventory branchindexes.Inventory, asJSON bool
 	a.printf("totals database=%d wal=%d shm=%d total=%d\n",
 		inventory.Totals.Database, inventory.Totals.WAL, inventory.Totals.SHM, inventory.Totals.Total)
 	return nil
+}
+
+func (a *App) printIndexCompactReport(report branchindexes.CompactReport, asJSON bool) error {
+	if asJSON {
+		return writeJSON(a.stdout, report)
+	}
+	a.printf("index=%s dry_run=%t expected_upper_bound=%d\n", report.Path, report.DryRun, report.ExpectedUpperBoundBytes)
+	a.printCompactState("before", report.Before)
+	if report.After != nil {
+		a.printCompactState("after", *report.After)
+		a.printf("reclaimed database=%d wal=%d shm=%d total=%d\n",
+			report.Reclaimed.Database, report.Reclaimed.WAL, report.Reclaimed.SHM, report.Reclaimed.Total)
+	}
+	return nil
+}
+
+func (a *App) printCompactState(label string, state branchindexes.CompactState) {
+	a.printf("%s database=%d wal=%d shm=%d total=%d page_size=%d page_count=%d freelist=%d live_allocated=%d reclaimable=%d reclaimable_percent=%.2f\n",
+		label, state.Sizes.Database, state.Sizes.WAL, state.Sizes.SHM, state.Sizes.Total,
+		state.Metrics.PageSize, state.Metrics.PageCount, state.Metrics.FreelistCount,
+		state.Metrics.LiveAllocatedBytes, state.Metrics.ReclaimableBytes, state.Metrics.ReclaimablePercent)
 }
 
 func (a *App) printIndexPruneReport(report branchindexes.PruneReport, asJSON bool) error {
@@ -2525,6 +2566,7 @@ Usage:
   grafo index [path] [--force] [--json]
   grafo indexes list [path] [--json]
   grafo indexes prune [path] [--older-than duration] [--keep n] [--dry-run] [--yes] [--json]
+  grafo indexes compact [path] [--dry-run] [--yes] [--json]
   grafo watch [path] [--interval 1s]
   grafo service add [path] [--interval 10s] [--paused] [--json]
   grafo service remove [path]
@@ -2593,6 +2635,8 @@ Test reports are bounded structural call/reference evidence, not runtime coverag
 of every branch index for one repository. 'indexes prune' requires a retention
 selector and either '--dry-run' or '--yes'; the current index and any index whose
 identity, timestamp, compatibility, or lock cannot be verified are protected.
+'grafo indexes compact' reports or reclaims freelist pages in only the current
+branch index; mutation requires '--yes' and exclusive index maintenance access.
 
 'grafo install --list' only detects clients and never writes; '--dry-run'
 reports every file and command a real run would touch. 'grafo install' also installs

@@ -34,6 +34,8 @@ const (
 
 	inspectionTimeout = 2 * time.Second
 	maxDiagnostic     = 240
+	compactLockWait   = 2 * time.Minute
+	compactMinBytes   = 256 << 20
 )
 
 // Sizes reports the physical bytes used by an index database and its SQLite
@@ -58,18 +60,20 @@ func (s Sizes) Add(other Sizes) Sizes {
 // Index describes one branch index discovered in the repository's index
 // directory.
 type Index struct {
-	Filename      string        `json:"filename"`
-	Path          string        `json:"path"`
-	Root          string        `json:"root,omitempty"`
-	RepositoryID  string        `json:"repository_id,omitempty"`
-	Branch        string        `json:"branch,omitempty"`
-	Commit        string        `json:"commit,omitempty"`
-	IndexedAt     string        `json:"indexed_at,omitempty"`
-	Sizes         Sizes         `json:"sizes"`
-	Current       bool          `json:"current"`
-	Compatibility Compatibility `json:"compatibility"`
-	Verified      bool          `json:"verified"`
-	Diagnostic    string        `json:"diagnostic,omitempty"`
+	Filename           string                 `json:"filename"`
+	Path               string                 `json:"path"`
+	Root               string                 `json:"root,omitempty"`
+	RepositoryID       string                 `json:"repository_id,omitempty"`
+	Branch             string                 `json:"branch,omitempty"`
+	Commit             string                 `json:"commit,omitempty"`
+	IndexedAt          string                 `json:"indexed_at,omitempty"`
+	Sizes              Sizes                  `json:"sizes"`
+	Metrics            *sqlite.StorageMetrics `json:"metrics,omitempty"`
+	CompactRecommended bool                   `json:"compact_recommended"`
+	Current            bool                   `json:"current"`
+	Compatibility      Compatibility          `json:"compatibility"`
+	Verified           bool                   `json:"verified"`
+	Diagnostic         string                 `json:"diagnostic,omitempty"`
 
 	indexedTime time.Time
 }
@@ -115,20 +119,45 @@ type PruneReport struct {
 	Reclaimed Sizes     `json:"reclaimed"`
 }
 
+// CompactPolicy carries explicit mutation intent for current-index compaction.
+type CompactPolicy struct {
+	DryRun  bool
+	Confirm bool
+}
+
+// CompactState combines physical file sizes with logical SQLite page metrics.
+type CompactState struct {
+	Sizes   Sizes                 `json:"sizes"`
+	Metrics sqlite.StorageMetrics `json:"metrics"`
+}
+
+// CompactReport is the before/after evidence for current-index compaction.
+type CompactReport struct {
+	Path                    string        `json:"path"`
+	DryRun                  bool          `json:"dry_run"`
+	Before                  CompactState  `json:"before"`
+	After                   *CompactState `json:"after,omitempty"`
+	ExpectedUpperBoundBytes int64         `json:"expected_upper_bound_bytes"`
+	Reclaimed               Sizes         `json:"reclaimed"`
+}
+
 type manager struct {
-	discover   func(context.Context, string) (indexer.Project, error)
-	inspect    func(context.Context, string) (sqlite.IndexInspection, error)
-	tryLock    func(string) (lifeservice.Unlock, bool, error)
-	checkpoint func(context.Context, string, sqlite.IndexMetadata) error
-	readDir    func(string) ([]fs.DirEntry, error)
-	lstat      func(string) (fs.FileInfo, error)
-	remove     func(string) error
+	discover        func(context.Context, string) (indexer.Project, error)
+	inspect         func(context.Context, string) (sqlite.IndexInspection, error)
+	tryLock         func(string) (lifeservice.Unlock, bool, error)
+	checkpoint      func(context.Context, string, sqlite.IndexMetadata) error
+	lock            func(string, time.Duration) (lifeservice.Unlock, error)
+	openMaintenance func(context.Context, string) (*sqlite.Repository, error)
+	readDir         func(string) ([]fs.DirEntry, error)
+	lstat           func(string) (fs.FileInfo, error)
+	remove          func(string) error
 }
 
 func newManager() *manager {
 	return &manager{
 		discover: indexer.DiscoverProject, inspect: sqlite.InspectIndex,
 		tryLock: lifeservice.TryIndexLock, checkpoint: sqlite.CheckpointIndex,
+		lock: lifeservice.IndexLock, openMaintenance: sqlite.OpenMaintenance,
 		readDir: os.ReadDir, lstat: os.Lstat, remove: os.Remove,
 	}
 }
@@ -142,6 +171,11 @@ func List(ctx context.Context, root string) (Inventory, error) {
 // Prune removes verified stale branch indexes under a fail-closed policy.
 func Prune(ctx context.Context, root string, policy Policy) (PruneReport, error) {
 	return newManager().prune(ctx, root, policy)
+}
+
+// Compact reports or compacts the currently discovered branch index only.
+func Compact(ctx context.Context, root string, policy CompactPolicy) (CompactReport, error) {
+	return newManager().compact(ctx, root, policy)
 }
 
 func (m *manager) list(ctx context.Context, root string) (Inventory, error) {
@@ -233,6 +267,10 @@ func (m *manager) list(ctx context.Context, root string) (Inventory, error) {
 			candidate.Commit = inspection.Metadata.Commit
 			candidate.IndexedAt = inspection.Metadata.IndexedAt
 			candidate.Compatibility = compatibility(inspection.Compatibility)
+			candidate.Metrics = inspection.Metrics
+			if inspection.Metrics != nil {
+				candidate.CompactRecommended = recommendCompaction(candidate.Sizes.Database, *inspection.Metrics)
+			}
 			candidate.Diagnostic = appendDiagnostic(candidate.Diagnostic, inspection.Diagnostic)
 		}
 		candidate.indexedTime, candidate.Verified, candidate.Diagnostic = verifyCandidate(candidate, project)
@@ -243,6 +281,152 @@ func (m *manager) list(ctx context.Context, root string) (Inventory, error) {
 		inventory.Totals = inventory.Totals.Add(candidate.Sizes)
 	}
 	return inventory, nil
+}
+
+func (m *manager) compact(ctx context.Context, root string, policy CompactPolicy) (report CompactReport, resultErr error) {
+	if !policy.DryRun && !policy.Confirm {
+		return report, fmt.Errorf("compaction requires --yes (or use --dry-run)")
+	}
+	project, err := m.discover(ctx, root)
+	if err != nil {
+		return report, err
+	}
+	path, err := validateCurrentIndexPath(project.IndexPath)
+	if err != nil {
+		return report, err
+	}
+	report.Path, report.DryRun = path, policy.DryRun
+	report.Before.Sizes, err = m.indexSizes(path)
+	if err != nil {
+		return report, err
+	}
+	inspection, err := m.inspect(ctx, path)
+	if err != nil {
+		return report, err
+	}
+	if inspection.Compatibility != sqlite.CompatibilityCompatible || inspection.Metrics == nil {
+		return report, fmt.Errorf("current index cannot be compacted: %s", diagnosticOr(inspection.Diagnostic, string(inspection.Compatibility)))
+	}
+	report.Before.Metrics = *inspection.Metrics
+	report.ExpectedUpperBoundBytes = inspection.Metrics.LiveAllocatedBytes
+	if policy.DryRun {
+		return report, nil
+	}
+
+	unlock, err := m.lock(path, compactLockWait)
+	if err != nil {
+		return report, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, unlock()) }()
+	revalidated, err := m.discover(ctx, root)
+	if err != nil {
+		return report, fmt.Errorf("revalidate current index: %w", err)
+	}
+	revalidatedPath, err := validateCurrentIndexPath(revalidated.IndexPath)
+	if err != nil {
+		return report, err
+	}
+	if !samePath(path, revalidatedPath) || project.ID != revalidated.ID || !samePath(project.Root, revalidated.Root) {
+		return report, fmt.Errorf("current branch index changed before compaction")
+	}
+	report.Before.Sizes, err = m.indexSizes(path)
+	if err != nil {
+		return report, err
+	}
+
+	repository, err := m.openMaintenance(ctx, path)
+	if err != nil {
+		return report, err
+	}
+	compaction, compactErr := repository.Compact(ctx)
+	closeErr := repository.Close()
+	if err := errors.Join(compactErr, closeErr); err != nil {
+		return report, err
+	}
+	report.Before.Metrics = compaction.Before
+	report.ExpectedUpperBoundBytes = compaction.Before.LiveAllocatedBytes
+	afterSizes, err := m.indexSizes(path)
+	if err != nil {
+		return report, err
+	}
+	report.After = &CompactState{Sizes: afterSizes, Metrics: compaction.After}
+	report.Reclaimed = reclaimedSizes(report.Before.Sizes, afterSizes)
+	if report.Before.Metrics.ReclaimableBytes == 0 {
+		report.Reclaimed = Sizes{}
+	}
+	return report, nil
+}
+
+func validateCurrentIndexPath(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve current index path: %w", err)
+	}
+	info, err := os.Lstat(absolute)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("current index is missing; run 'grafo index' first")
+	}
+	if err != nil {
+		return "", fmt.Errorf("inspect current index: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("current index is not a regular non-symlink file")
+	}
+	resolved, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return "", fmt.Errorf("resolve current index: %w", err)
+	}
+	if !samePath(absolute, resolved) {
+		return "", fmt.Errorf("current index resolves through a symlink")
+	}
+	return absolute, nil
+}
+
+func (m *manager) indexSizes(path string) (Sizes, error) {
+	info, err := m.lstat(path)
+	if err != nil {
+		return Sizes{}, fmt.Errorf("inspect current index: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return Sizes{}, fmt.Errorf("current index is not a regular non-symlink file")
+	}
+	sizes := Sizes{Database: info.Size(), Total: info.Size()}
+	for suffix, target := range map[string]*int64{"-wal": &sizes.WAL, "-shm": &sizes.SHM} {
+		sidecar, err := m.lstat(path + suffix)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return Sizes{}, fmt.Errorf("inspect current index sidecar: %w", err)
+		}
+		if sidecar.Mode()&os.ModeSymlink != 0 || !sidecar.Mode().IsRegular() {
+			return Sizes{}, fmt.Errorf("current index sidecar %s is not a regular non-symlink file", filepath.Base(path+suffix))
+		}
+		*target = sidecar.Size()
+		sizes.Total += sidecar.Size()
+	}
+	return sizes, nil
+}
+
+func recommendCompaction(primaryBytes int64, metrics sqlite.StorageMetrics) bool {
+	if primaryBytes <= 0 || metrics.ReclaimableBytes < compactMinBytes {
+		return false
+	}
+	threshold := primaryBytes / 5
+	if primaryBytes%5 != 0 {
+		threshold++
+	}
+	return metrics.ReclaimableBytes >= threshold
+}
+
+func reclaimedSizes(before, after Sizes) Sizes {
+	reclaimed := Sizes{
+		Database: max(0, before.Database-after.Database),
+		WAL:      max(0, before.WAL-after.WAL),
+		SHM:      max(0, before.SHM-after.SHM),
+	}
+	reclaimed.Total = reclaimed.Database + reclaimed.WAL + reclaimed.SHM
+	return reclaimed
 }
 
 func (m *manager) sidecarSize(directory, path string) (int64, bool, string) {

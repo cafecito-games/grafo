@@ -47,6 +47,9 @@ func TestInspectIndexReportsMetadataAndCompatibilityWithoutMutation(t *testing.T
 	if inspection.Compatibility != CompatibilityCompatible || inspection.Metadata != metadata || inspection.Diagnostic != "" {
 		t.Fatalf("inspection = %#v", inspection)
 	}
+	if inspection.Metrics == nil || inspection.Metrics.PageSize <= 0 || inspection.Metrics.PageCount <= 0 {
+		t.Fatalf("inspection metrics = %#v", inspection.Metrics)
+	}
 	after, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
