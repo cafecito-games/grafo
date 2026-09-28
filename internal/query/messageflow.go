@@ -754,11 +754,28 @@ func filterFlowComponent(flow *MessageFlow, component string) {
 		return result
 	}
 	flow.Sends, flow.Receives = transports(flow.Sends), transports(flow.Receives)
+	for _, item := range append(append([]TransportFlow{}, flow.Sends...), flow.Receives...) {
+		if item.Status != CoverageUnknown || evidenceContains(flow.UnknownEvidence, item.Evidence.EdgeID) {
+			continue
+		}
+		flow.UnknownEvidence = append(flow.UnknownEvidence, item.Evidence)
+		flow.Uncertainties = append(flow.Uncertainties, FlowUncertainty{Reason: "dynamic_transport",
+			Message: "transport channel or payload evidence is not proven", Evidence: []FlowEvidence{item.Evidence}})
+	}
 	flow.Handlers = slicesDeleteFunc(flow.Handlers, func(item MessageHandler) bool {
 		return item.Evidence.Component != component && item.Evidence.ComponentID != component
 	})
 	flow.ChannelMismatches = channelConflicts(flow.Sends, flow.Receives)
 	classifyFlow(flow)
+}
+
+func evidenceContains(items []FlowEvidence, edgeID string) bool {
+	for _, item := range items {
+		if item.EdgeID == edgeID {
+			return true
+		}
+	}
+	return false
 }
 
 func messageWideUncertainty(reason string) bool {

@@ -36,3 +36,7 @@ func ReceiveEnvelope(event enet.Event, message *generated.Envelope) {
 	_ = event.GetChannelID()
 	_ = wire.Unmarshal(payload, message)
 }
+
+func DispatchEnvelope(event enet.Event, message *generated.Envelope) {
+	ReceiveEnvelope(event, message)
+}

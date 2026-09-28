@@ -252,6 +252,11 @@
       {
         "repo": "transport",
         "kind": "function",
+        "qualified_name": "example.com/transport.DispatchEnvelope"
+      },
+      {
+        "repo": "transport",
+        "kind": "function",
         "qualified_name": "example.com/transport.EncodeOnly"
       },
       {
@@ -545,6 +550,16 @@
       {
         "repo": "transport",
         "kind": "parameter",
+        "qualified_name": "example.com/transport.DispatchEnvelope.event"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
+        "qualified_name": "example.com/transport.DispatchEnvelope.message"
+      },
+      {
+        "repo": "transport",
+        "kind": "parameter",
         "qualified_name": "example.com/transport.EncodeOnly.message"
       },
       {
@@ -636,6 +651,11 @@
         "repo": "transport",
         "kind": "transport_operation",
         "qualified_name": "transport.go:35:13:github.com/codecat/go-enet.Packet.GetData:receive"
+      },
+      {
+        "repo": "transport",
+        "kind": "transport_operation",
+        "qualified_name": "transport.go:41:2:github.com/codecat/go-enet.Packet.GetData:receive"
       },
       {
         "repo": "transport",
@@ -1323,6 +1343,24 @@
         "to": {
           "repo": "transport",
           "kind": "function",
+          "qualified_name": "example.com/transport.DispatchEnvelope"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 40,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "file",
+          "qualified_name": "transport.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "function",
           "qualified_name": "example.com/transport.EncodeOnly"
         },
         "source": {
@@ -1520,6 +1558,85 @@
         },
         "properties": {
           "alias": "wire"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.DispatchEnvelope"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.ReceiveEnvelope"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 41,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.DispatchEnvelope"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.DispatchEnvelope.event"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 40,
+          "column": 23
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.DispatchEnvelope"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.DispatchEnvelope.message"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 40,
+          "column": 41
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.DispatchEnvelope"
+        },
+        "relation": "receives",
+        "to": {
+          "repo": "transport",
+          "kind": "transport_operation",
+          "qualified_name": "transport.go:41:2:github.com/codecat/go-enet.Packet.GetData:receive"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 41,
+          "column": 2
+        },
+        "properties": {
+          "proof": "go/types",
+          "protocol": "enet"
         }
       },
       {
@@ -3633,6 +3750,48 @@
         "from": {
           "repo": "transport",
           "kind": "parameter",
+          "qualified_name": "example.com/transport.DispatchEnvelope.event"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.ReceiveEnvelope"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 41,
+          "column": 2
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "parameter",
+          "qualified_name": "example.com/transport.DispatchEnvelope.message"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "transport",
+          "kind": "function",
+          "qualified_name": "example.com/transport.ReceiveEnvelope"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 41,
+          "column": 2
+        },
+        "properties": {
+          "argument": "1"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "parameter",
           "qualified_name": "example.com/transport.EncodeOnly.message"
         },
         "relation": "passes",
@@ -4130,6 +4289,31 @@
           "payload_position": "-1",
           "proof": "go/types",
           "protocol": "enet"
+        }
+      },
+      {
+        "from": {
+          "repo": "transport",
+          "kind": "transport_operation",
+          "qualified_name": "transport.go:41:2:github.com/codecat/go-enet.Packet.GetData:receive"
+        },
+        "relation": "carries",
+        "to": {
+          "repo": "transport",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "transport.go",
+          "line": 41,
+          "column": 2
+        },
+        "properties": {
+          "binding": "example.com/transport/generated/go/proto.Envelope",
+          "payload_position": "-1",
+          "proof": "go/types",
+          "protocol": "enet",
+          "wrapper_depth": "1"
         }
       },
       {
@@ -4769,12 +4953,12 @@
           ],
           "encoders": [
             "e:2f0172be4bedf24ea14c",
-            "e:2fde0419a1571900d614",
+            "e:7ff86b23f6dbaa1908d3",
             "e:c009777144fa79ee2ce1"
           ],
           "decoders": [
             "e:27dc01ec9b0ee5ba33ae",
-            "e:e39dc23e6e784bd154b2"
+            "e:5b4271d306202a4ea5e7"
           ],
           "sends": [
             {
@@ -4800,7 +4984,7 @@
               "channel": "3",
               "reliability": "reliable",
               "sources": [
-                "e:f3204efdc195f2e42c57"
+                "e:b72c9ffdbddbcef18e9e"
               ]
             },
             {
@@ -4821,25 +5005,38 @@
               "operation": {
                 "repo": "transport",
                 "kind": "transport_operation",
-                "qualified_name": "transport.go:35:13:github.com/codecat/go-enet.Packet.GetData:receive"
-              },
-              "status": "unknown",
-              "channel": "event.GetChannelID()",
-              "reliability": "unknown",
-              "sources": [
-                "e:204d68e6fe8a70ed54a1"
-              ]
-            },
-            {
-              "operation": {
-                "repo": "transport",
-                "kind": "transport_operation",
                 "qualified_name": "client.gd:17:15:ENetPacketPeer.get_packet:receive"
               },
               "status": "unknown",
               "reliability": "unknown",
               "sources": [
                 "e:da4972b759e786179f70"
+              ]
+            },
+            {
+              "operation": {
+                "repo": "transport",
+                "kind": "transport_operation",
+                "qualified_name": "transport.go:41:2:github.com/codecat/go-enet.Packet.GetData:receive"
+              },
+              "status": "unknown",
+              "channel": "event.GetChannelID()",
+              "reliability": "unknown",
+              "sources": [
+                "e:738bd8bf30e942f46f61"
+              ]
+            },
+            {
+              "operation": {
+                "repo": "transport",
+                "kind": "transport_operation",
+                "qualified_name": "transport.go:35:13:github.com/codecat/go-enet.Packet.GetData:receive"
+              },
+              "status": "unknown",
+              "channel": "event.GetChannelID()",
+              "reliability": "unknown",
+              "sources": [
+                "e:3893a70b26657c376497"
               ]
             }
           ],
@@ -4859,18 +5056,22 @@
                 "kind": "function",
                 "qualified_name": "example.com/transport.ReceiveEnvelope"
               },
-              "evidence": "e:e39dc23e6e784bd154b2",
-              "callers": []
+              "evidence": "e:5b4271d306202a4ea5e7",
+              "callers": [
+                "e:332e04fe499af8e70ac9"
+              ]
             }
           ],
           "channel_mismatches": [],
           "gaps": [],
           "unknown_evidence": [
-            "e:02e3303bed60bfd7d71a",
             "e:6c4bd598921c30373f86",
+            "e:a4269d17c9243214fc62",
+            "e:b2bc59e3a0285ba76fa4",
             "e:f735c4d6d9da3717ef7b"
           ],
           "uncertainties": [
+            "dynamic_transport",
             "dynamic_transport",
             "dynamic_transport",
             "dynamic_transport"
@@ -4916,7 +5117,7 @@
             }
           ],
           "encoders": [
-            "e:da54daa6bec0bbfbd550"
+            "e:aa31f6e0f3f8d6a851fe"
           ],
           "decoders": [],
           "sends": [],
@@ -5015,7 +5216,7 @@
           ],
           "encoders": [
             "e:2f0172be4bedf24ea14c",
-            "e:2fde0419a1571900d614",
+            "e:7ff86b23f6dbaa1908d3",
             "e:c009777144fa79ee2ce1"
           ],
           "decoders": [],
@@ -5043,7 +5244,7 @@
               "channel": "3",
               "reliability": "reliable",
               "sources": [
-                "e:f3204efdc195f2e42c57"
+                "e:b72c9ffdbddbcef18e9e"
               ]
             },
             {
@@ -5064,11 +5265,13 @@
           "channel_mismatches": [],
           "gaps": [],
           "unknown_evidence": [
-            "e:02e3303bed60bfd7d71a",
             "e:6c4bd598921c30373f86",
+            "e:a4269d17c9243214fc62",
+            "e:b2bc59e3a0285ba76fa4",
             "e:f735c4d6d9da3717ef7b"
           ],
           "uncertainties": [
+            "dynamic_transport",
             "dynamic_transport",
             "dynamic_transport",
             "dynamic_transport"
@@ -5131,11 +5334,13 @@
                 "unused_message_member"
               ],
               "unknown_evidence": [
-                "e:02e3303bed60bfd7d71a",
                 "e:6c4bd598921c30373f86",
+                "e:a4269d17c9243214fc62",
+                "e:b2bc59e3a0285ba76fa4",
                 "e:f735c4d6d9da3717ef7b"
               ],
               "uncertainties": [
+                "dynamic_transport",
                 "dynamic_transport",
                 "dynamic_transport",
                 "dynamic_transport"

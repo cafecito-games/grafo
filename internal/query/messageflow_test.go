@@ -256,6 +256,27 @@ func TestMessageFlowDirectionDoesNotRelabelKnownUseAsUnused(t *testing.T) {
 	t.Fatal("receipt member missing")
 }
 
+func TestMessageFlowComponentRetainsUnknownTransportThroughMatchingSource(t *testing.T) {
+	repository := newMessageFlowFixture()
+	operation := repository.nodes["n:send"]
+	operation.OwnerFile = "vendor/generated_transport.go"
+	operation.Properties["channel_status"] = "unknown"
+	repository.nodes[operation.ID] = operation
+
+	flow, err := query.NewMessageFlow(repository).Flow(context.Background(), "acme.v1.Envelope",
+		query.MessageFlowOptions{Component: "client", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(flow.Sends) != 1 || len(flow.Sends[0].Sources) != 1 || flow.Sends[0].Sources[0].Component != "client" {
+		t.Fatalf("component-matching source did not retain transport: %#v", flow.Sends)
+	}
+	if flow.Status != query.CoverageUnknown || !hasUncertainty(flow.Uncertainties, "dynamic_transport") ||
+		len(flow.UnknownEvidence) != 1 || flow.UnknownEvidence[0].EdgeID != "e:carries-send" {
+		t.Fatalf("retained unknown transport lost fail-closed evidence: %#v", flow)
+	}
+}
+
 func addMessageFlowEdge(repository *catalogRepository, id, from, to string, kind graph.EdgeKind, properties map[string]string) {
 	repository.edges = append(repository.edges, graph.Edge{ID: id, FactID: "f:" + id, FromID: from, ToID: to,
 		Kind: kind, Properties: properties, Location: graph.Location{Path: "flow.go", Line: len(repository.edges) + 1}})
