@@ -274,7 +274,7 @@ func validateStorageCompatibility(ctx context.Context, db *sql.DB) error {
 	if err != nil {
 		return incompatibleIndexCause("inspect database schema", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	requiredNames := []string{"meta", "files", "nodes", "facts", "edges", "embeddings"}
 	required := make(map[string]bool, len(requiredNames))
 	for _, name := range requiredNames {
