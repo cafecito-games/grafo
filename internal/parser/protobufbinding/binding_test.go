@@ -49,6 +49,8 @@ plugins:
 	assertProjection(t, result, graph.KindMethod, "example.com/generated/acme/v1.Envelope.GetText2", "acme.v1.Envelope.text2")
 	assertProjection(t, result, graph.KindMethod, "example.com/generated/acme/v1.Envelope.GetXPrivate", "acme.v1.Envelope._private")
 	assertProjection(t, result, graph.KindClass, "AcmeV1EnvelopeEnvelope", "acme.v1.Envelope")
+	assertProjection(t, result, graph.KindMethod, "AcmeV1EnvelopeEnvelope.to_bytes", "acme.v1.Envelope")
+	assertProjection(t, result, graph.KindMethod, "AcmeV1EnvelopeEnvelope.from_bytes", "acme.v1.Envelope")
 	assertProjection(t, result, graph.KindMethod, "AcmeV1EnvelopeEnvelope.set_text", "acme.v1.Envelope.text")
 	assertProjection(t, result, graph.KindMethod, "AcmeV1EnvelopeEnvelope.has_text", "acme.v1.Envelope.text")
 	assertProjection(t, result, graph.KindMethod, "AcmeV1EnvelopeEnvelope.add_tags", "acme.v1.Envelope.tags")

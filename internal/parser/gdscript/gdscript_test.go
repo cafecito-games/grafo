@@ -83,6 +83,159 @@ func reset() -> void:
 	}
 }
 
+func TestParserExtractsCanonicalProtobufUsageWithoutGeneratedBindings(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, ".gitignore", "generated/\n")
+	writeFile(t, root, "buf.yaml", "version: v2\nmodules:\n  - path: proto\n")
+	writeFile(t, root, "buf.gen.yaml", `version: v2
+plugins:
+  - local: protoc-gen-gdscript
+    out: generated
+`)
+	writeFile(t, root, "proto/envelope.proto", `syntax = "proto3";
+package acme.v1;
+message Envelope {
+  string text = 1;
+  repeated string tags = 2;
+  Child child = 3;
+  oneof payload { string raw = 4; }
+}
+message Child { string name = 1; }
+`)
+	content := []byte(`class_name Client
+
+class Lookalike:
+	func set_text(_value: String) -> void:
+		pass
+	func get_text() -> String:
+		return ""
+	func to_bytes() -> PackedByteArray:
+		return PackedByteArray()
+
+func use(data: PackedByteArray, typed: AcmeV1EnvelopeEnvelope) -> String:
+	var envelope_type = AcmeV1EnvelopeEnvelope
+	var message = envelope_type.new()
+	message.set_text("hello")
+	message.add_tags("tag")
+	var child = message.new_child()
+	child.set_name("nested")
+	var nested_name = message.get_child().get_name()
+	if typed.has_raw():
+		var raw = typed.get_raw()
+		typed.set_raw(raw)
+	var assigned
+	assigned = typed
+	var copied = assigned.get_text()
+	var encoded = assigned.to_bytes()
+	var decoded = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	decoded.set_text(copied)
+	return nested_name
+
+func forbidden(dynamic, variant: Variant, local: Lookalike) -> void:
+	dynamic.set_text("unknown")
+	variant.get_text()
+	local.set_text("local")
+	local.get_text()
+	local.to_bytes()
+
+func shadowed(AcmeV1EnvelopeEnvelope: Variant, data: PackedByteArray) -> void:
+	var decoded = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	decoded.set_text("shadowed")
+`)
+	writeFile(t, root, "client.gd", string(content))
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "client.gd", Content: content, Repository: "protobuf-gdscript", RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	useID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.use").ID
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeWrites, "acme.v1.Envelope.text", "set")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeWrites, "acme.v1.Envelope.tags", "add")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeWrites, "acme.v1.Envelope.child", "new")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeWrites, "acme.v1.Child.name", "set")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeReads, "acme.v1.Envelope.child", "get")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeReads, "acme.v1.Child.name", "get")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeReads, "acme.v1.Envelope.raw", "has")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeReads, "acme.v1.Envelope.raw", "get")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeWrites, "acme.v1.Envelope.raw", "set")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeEncodes, "acme.v1.Envelope", "to_bytes")
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeDecodes, "acme.v1.Envelope", "from_bytes")
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "AcmeV1EnvelopeEnvelope.set_text")
+
+	forbiddenID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.forbidden").ID
+	shadowedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.shadowed").ID
+	for _, fact := range result.Facts {
+		if (fact.FromID == forbiddenID || fact.FromID == shadowedID) && fact.Properties["protocol"] == "protobuf" {
+			t.Fatalf("unproven or local lookalike receiver produced protocol usage: %#v", fact)
+		}
+	}
+}
+
+func TestParserRejectsAmbiguousProtobufGDScriptBindings(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "buf.yaml", "version: v2\nmodules:\n  - path: proto\n")
+	writeFile(t, root, "buf.gen.yaml", "version: v2\nplugins:\n  - local: protoc-gen-gdscript\n    out: generated\n")
+	writeFile(t, root, "proto/one/envelope.proto", "syntax = \"proto3\"; package acme.v1; message Envelope { string text = 1; }\n")
+	// gdproto's class-name normalization makes acme.v1 and acme_v1 collide.
+	writeFile(t, root, "proto/two/envelope.proto", "syntax = \"proto3\"; package acme_v1; message Envelope { string text = 1; }\n")
+	content := []byte("class_name Client\nfunc use() -> void:\n\tvar value = AcmeV1EnvelopeEnvelope.new()\n\tvalue.set_text(\"ambiguous\")\n")
+	writeFile(t, root, "client.gd", string(content))
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "client.gd", Content: content, RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fact := range result.Facts {
+		if fact.Properties["protocol"] == "protobuf" {
+			t.Fatalf("ambiguous generated API produced protocol usage: %#v", fact)
+		}
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if strings.Contains(diagnostic.Message, "ambiguous generated Protobuf GDScript API") {
+			return
+		}
+	}
+	t.Fatalf("missing ambiguous binding diagnostic: %#v", result.Diagnostics)
+}
+
+func TestParserSuppressesProtocolUseInConfiguredGDScriptOutputWithRejectedHeader(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "buf.gen.yaml", "version: v2\nplugins:\n  - local: protoc-gen-gdscript\n    out: generated\n")
+	writeFile(t, root, "schema.proto", "syntax = \"proto3\"; message Message { string value = 1; }\n")
+	content := []byte("class_name SchemaMessage\n# Generated by an unsupported tool\nfunc use(value: SchemaMessage) -> void:\n\tvalue.set_value(\"generated implementation\")\n")
+	path := "generated/SchemaMessage.pb.gd"
+	writeFile(t, root, path, string(content))
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{Root: root, Path: path, Content: content, RepoID: "repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "SchemaMessage.set_value")
+	for _, fact := range result.Facts {
+		if fact.Properties["protocol"] == "protobuf" {
+			t.Fatalf("configured generated implementation produced protocol usage: %#v", fact)
+		}
+	}
+}
+
+func assertProtocolFact(t *testing.T, facts []graph.Fact, fromID string, kind graph.EdgeKind, target, form string) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.FromID != fromID || fact.Kind != kind || fact.Target != target || fact.Properties["form"] != form {
+			continue
+		}
+		if fact.TargetID == "" || fact.Location.Path == "" || fact.Location.Line == 0 ||
+			fact.Properties["protocol"] != "protobuf" || fact.Properties["api"] == "" ||
+			fact.Properties["static_type"] == "" || fact.Properties["binding"] == "" ||
+			fact.Properties["binding_id"] == "" || fact.Properties["evidence"] != "gdscript_scope" {
+			t.Fatalf("protocol fact lost canonical evidence: %#v", fact)
+		}
+		return
+	}
+	t.Fatalf("missing %s protocol fact from %q to %q with form %q", kind, fromID, target, form)
+}
+
 func TestParserCreatesImplicitScriptClassAndInnerTypes(t *testing.T) {
 	content := []byte(`extends Node
 

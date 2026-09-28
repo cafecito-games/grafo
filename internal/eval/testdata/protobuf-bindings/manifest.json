@@ -27,6 +27,11 @@
       {
         "repo": "bindings",
         "kind": "class",
+        "qualified_name": "Client.Lookalike"
+      },
+      {
+        "repo": "bindings",
+        "kind": "class",
         "qualified_name": "Node",
         "external": true
       },
@@ -49,6 +54,24 @@
         "repo": "bindings",
         "kind": "config_key",
         "qualified_name": "config:project.godot:config_version"
+      },
+      {
+        "repo": "bindings",
+        "kind": "external",
+        "qualified_name": "PackedByteArray",
+        "external": true
+      },
+      {
+        "repo": "bindings",
+        "kind": "external",
+        "qualified_name": "dynamic.set_text",
+        "external": true
+      },
+      {
+        "repo": "bindings",
+        "kind": "external",
+        "qualified_name": "variant.get_text",
+        "external": true
       },
       {
         "repo": "bindings",
@@ -138,6 +161,11 @@
       {
         "repo": "bindings",
         "kind": "method",
+        "qualified_name": "AcmeV1EnvelopeEnvelope.from_bytes"
+      },
+      {
+        "repo": "bindings",
+        "kind": "method",
         "qualified_name": "AcmeV1EnvelopeEnvelope.get_text"
       },
       {
@@ -154,6 +182,31 @@
         "repo": "bindings",
         "kind": "method",
         "qualified_name": "AcmeV1EnvelopeEnvelope.set_text"
+      },
+      {
+        "repo": "bindings",
+        "kind": "method",
+        "qualified_name": "AcmeV1EnvelopeEnvelope.to_bytes"
+      },
+      {
+        "repo": "bindings",
+        "kind": "method",
+        "qualified_name": "Client.Lookalike.get_text"
+      },
+      {
+        "repo": "bindings",
+        "kind": "method",
+        "qualified_name": "Client.Lookalike.set_text"
+      },
+      {
+        "repo": "bindings",
+        "kind": "method",
+        "qualified_name": "Client.Lookalike.to_bytes"
+      },
+      {
+        "repo": "bindings",
+        "kind": "method",
+        "qualified_name": "Client.forbidden"
       },
       {
         "repo": "bindings",
@@ -179,6 +232,36 @@
         "repo": "bindings",
         "kind": "module",
         "qualified_name": "project"
+      },
+      {
+        "repo": "bindings",
+        "kind": "parameter",
+        "qualified_name": "Client.Lookalike.set_text._value"
+      },
+      {
+        "repo": "bindings",
+        "kind": "parameter",
+        "qualified_name": "Client.forbidden.dynamic"
+      },
+      {
+        "repo": "bindings",
+        "kind": "parameter",
+        "qualified_name": "Client.forbidden.local"
+      },
+      {
+        "repo": "bindings",
+        "kind": "parameter",
+        "qualified_name": "Client.forbidden.variant"
+      },
+      {
+        "repo": "bindings",
+        "kind": "parameter",
+        "qualified_name": "Client.make_envelope.data"
+      },
+      {
+        "repo": "bindings",
+        "kind": "parameter",
+        "qualified_name": "Client.make_envelope.typed"
       },
       {
         "repo": "bindings",
@@ -219,6 +302,26 @@
         "repo": "bindings",
         "kind": "type",
         "qualified_name": "example.com/bindings/gen/acme/v1.State"
+      },
+      {
+        "repo": "bindings",
+        "kind": "variable",
+        "qualified_name": "Client.make_envelope.decoded@19"
+      },
+      {
+        "repo": "bindings",
+        "kind": "variable",
+        "qualified_name": "Client.make_envelope.encoded@18"
+      },
+      {
+        "repo": "bindings",
+        "kind": "variable",
+        "qualified_name": "Client.make_envelope.message@13"
+      },
+      {
+        "repo": "bindings",
+        "kind": "variable",
+        "qualified_name": "Client.make_envelope.text@16"
       }
     ],
     "edges": [
@@ -240,7 +343,7 @@
           "column": 1
         },
         "properties": {
-          "adapter_version": "1",
+          "adapter_version": "2",
           "generator": "protoc-gen-gdscript",
           "generator_version": "local"
         }
@@ -263,9 +366,99 @@
           "column": 1
         },
         "properties": {
-          "adapter_version": "1",
+          "adapter_version": "2",
           "generator": "protoc-gen-gdscript",
           "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "class",
+          "qualified_name": "Client.Lookalike"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.Lookalike.get_text"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 7,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "class",
+          "qualified_name": "Client.Lookalike"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.Lookalike.set_text"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 5,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "class",
+          "qualified_name": "Client.Lookalike"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.Lookalike.to_bytes"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 9,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "class",
+          "qualified_name": "Client"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "class",
+          "qualified_name": "Client.Lookalike"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 4,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "class",
+          "qualified_name": "Client"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.forbidden"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 23,
+          "column": 1
         }
       },
       {
@@ -282,7 +475,7 @@
         },
         "source": {
           "path": "client.gd",
-          "line": 4,
+          "line": 12,
           "column": 1
         }
       },
@@ -323,7 +516,7 @@
           "column": 1
         },
         "properties": {
-          "adapter_version": "1",
+          "adapter_version": "2",
           "generator": "protoc-gen-gdscript",
           "generator_version": "local"
         }
@@ -346,7 +539,7 @@
           "column": 1
         },
         "properties": {
-          "adapter_version": "1",
+          "adapter_version": "2",
           "generator": "protoc-gen-gdscript",
           "generator_version": "local"
         }
@@ -369,7 +562,7 @@
           "column": 1
         },
         "properties": {
-          "adapter_version": "1",
+          "adapter_version": "2",
           "generator": "protoc-gen-go",
           "generator_version": "v1.36.11"
         }
@@ -392,7 +585,7 @@
           "column": 1
         },
         "properties": {
-          "adapter_version": "1",
+          "adapter_version": "2",
           "generator": "protoc-gen-go",
           "generator_version": "v1.36.11"
         }
@@ -415,7 +608,7 @@
           "column": 1
         },
         "properties": {
-          "adapter_version": "1",
+          "adapter_version": "2",
           "generator": "protoc-gen-go",
           "generator_version": "v1.36.11"
         }
@@ -634,6 +827,29 @@
         "from": {
           "repo": "bindings",
           "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.from_bytes"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "bindings",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
           "qualified_name": "AcmeV1EnvelopeEnvelope.get_text"
         },
         "relation": "generated_from",
@@ -648,7 +864,7 @@
           "column": 1
         },
         "properties": {
-          "adapter_version": "1",
+          "adapter_version": "2",
           "generator": "protoc-gen-gdscript",
           "generator_version": "local"
         }
@@ -671,7 +887,7 @@
           "column": 1
         },
         "properties": {
-          "adapter_version": "1",
+          "adapter_version": "2",
           "generator": "protoc-gen-gdscript",
           "generator_version": "local"
         }
@@ -694,7 +910,7 @@
           "column": 1
         },
         "properties": {
-          "adapter_version": "1",
+          "adapter_version": "2",
           "generator": "protoc-gen-gdscript",
           "generator_version": "local"
         }
@@ -717,9 +933,269 @@
           "column": 1
         },
         "properties": {
-          "adapter_version": "1",
+          "adapter_version": "2",
           "generator": "protoc-gen-gdscript",
           "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.to_bytes"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "bindings",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "buf.gen.yaml",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "2",
+          "generator": "protoc-gen-gdscript",
+          "generator_version": "local"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.Lookalike.set_text"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "parameter",
+          "qualified_name": "Client.Lookalike.set_text._value"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 5,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.Lookalike.to_bytes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "bindings",
+          "kind": "external",
+          "qualified_name": "PackedByteArray",
+          "external": true
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 10,
+          "column": 10
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.forbidden"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "bindings",
+          "kind": "external",
+          "qualified_name": "dynamic.set_text",
+          "external": true
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 24,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.forbidden"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "bindings",
+          "kind": "external",
+          "qualified_name": "variant.get_text",
+          "external": true
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 25,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.forbidden"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.Lookalike.get_text"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 27,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.forbidden"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.Lookalike.set_text"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 26,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.forbidden"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.Lookalike.to_bytes"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 28,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.forbidden"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "parameter",
+          "qualified_name": "Client.forbidden.dynamic"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 23,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.forbidden"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "parameter",
+          "qualified_name": "Client.forbidden.local"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 23,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.forbidden"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "parameter",
+          "qualified_name": "Client.forbidden.variant"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 23,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.from_bytes"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 19,
+          "column": 16
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.get_text"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 16,
+          "column": 14
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.has_text"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 15,
+          "column": 5
         }
       },
       {
@@ -736,8 +1212,377 @@
         },
         "source": {
           "path": "client.gd",
-          "line": 5,
-          "column": 9
+          "line": 13,
+          "column": 16
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.set_text"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 14,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.set_text"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 17,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.set_text"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 20,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.to_bytes"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 18,
+          "column": 16
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "parameter",
+          "qualified_name": "Client.make_envelope.data"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 12,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "parameter",
+          "qualified_name": "Client.make_envelope.typed"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 12,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "variable",
+          "qualified_name": "Client.make_envelope.decoded@19"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 19,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "variable",
+          "qualified_name": "Client.make_envelope.encoded@18"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 18,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "variable",
+          "qualified_name": "Client.make_envelope.message@13"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 13,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "bindings",
+          "kind": "variable",
+          "qualified_name": "Client.make_envelope.text@16"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 16,
+          "column": 3
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "decodes",
+        "to": {
+          "repo": "bindings",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 19,
+          "column": 16
+        },
+        "properties": {
+          "api": "AcmeV1EnvelopeEnvelope.from_bytes",
+          "binding": "AcmeV1EnvelopeEnvelope.from_bytes",
+          "binding_id": "n:2b2fb869550ab2b5dd98",
+          "evidence": "gdscript_scope",
+          "form": "from_bytes",
+          "protocol": "protobuf",
+          "static_type": "AcmeV1EnvelopeEnvelope"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "encodes",
+        "to": {
+          "repo": "bindings",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 18,
+          "column": 16
+        },
+        "properties": {
+          "api": "AcmeV1EnvelopeEnvelope.to_bytes",
+          "binding": "AcmeV1EnvelopeEnvelope.to_bytes",
+          "binding_id": "n:213f5b2cf4adfe98b5a7",
+          "evidence": "gdscript_scope",
+          "form": "to_bytes",
+          "protocol": "protobuf",
+          "static_type": "AcmeV1EnvelopeEnvelope"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "reads",
+        "to": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 15,
+          "column": 5
+        },
+        "properties": {
+          "api": "AcmeV1EnvelopeEnvelope.has_text",
+          "binding": "AcmeV1EnvelopeEnvelope.has_text",
+          "binding_id": "n:de59fcbc809e7ed7b837",
+          "evidence": "gdscript_scope",
+          "form": "has",
+          "protocol": "protobuf",
+          "static_type": "AcmeV1EnvelopeEnvelope"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "reads",
+        "to": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 16,
+          "column": 14
+        },
+        "properties": {
+          "api": "AcmeV1EnvelopeEnvelope.get_text",
+          "binding": "AcmeV1EnvelopeEnvelope.get_text",
+          "binding_id": "n:2764f4a07a5844da6273",
+          "evidence": "gdscript_scope",
+          "form": "get",
+          "protocol": "protobuf",
+          "static_type": "AcmeV1EnvelopeEnvelope"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "writes",
+        "to": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 14,
+          "column": 2
+        },
+        "properties": {
+          "api": "AcmeV1EnvelopeEnvelope.set_text",
+          "binding": "AcmeV1EnvelopeEnvelope.set_text",
+          "binding_id": "n:a220a6a9beb9a1ff3c14",
+          "evidence": "gdscript_scope",
+          "form": "set",
+          "protocol": "protobuf",
+          "static_type": "AcmeV1EnvelopeEnvelope"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "writes",
+        "to": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 17,
+          "column": 3
+        },
+        "properties": {
+          "api": "AcmeV1EnvelopeEnvelope.set_text",
+          "binding": "AcmeV1EnvelopeEnvelope.set_text",
+          "binding_id": "n:a220a6a9beb9a1ff3c14",
+          "evidence": "gdscript_scope",
+          "form": "set",
+          "protocol": "protobuf",
+          "static_type": "AcmeV1EnvelopeEnvelope"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "writes",
+        "to": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 20,
+          "column": 2
+        },
+        "properties": {
+          "api": "AcmeV1EnvelopeEnvelope.set_text",
+          "binding": "AcmeV1EnvelopeEnvelope.set_text",
+          "binding_id": "n:a220a6a9beb9a1ff3c14",
+          "evidence": "gdscript_scope",
+          "form": "set",
+          "protocol": "protobuf",
+          "static_type": "AcmeV1EnvelopeEnvelope"
         }
       },
       {
@@ -758,7 +1603,7 @@
           "column": 1
         },
         "properties": {
-          "adapter_version": "1",
+          "adapter_version": "2",
           "generator": "protoc-gen-go",
           "generator_version": "v1.36.11"
         }
@@ -815,6 +1660,63 @@
           "path": "project.godot",
           "line": 1,
           "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "parameter",
+          "qualified_name": "Client.make_envelope.data"
+        },
+        "relation": "assigns",
+        "to": {
+          "repo": "bindings",
+          "kind": "variable",
+          "qualified_name": "Client.make_envelope.decoded@19"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 19,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "parameter",
+          "qualified_name": "Client.make_envelope.data"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.from_bytes"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 19,
+          "column": 16
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "parameter",
+          "qualified_name": "Client.make_envelope.typed"
+        },
+        "relation": "assigns",
+        "to": {
+          "repo": "bindings",
+          "kind": "variable",
+          "qualified_name": "Client.make_envelope.text@16"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 16,
+          "column": 3
         }
       },
       {
@@ -997,7 +1899,7 @@
           "column": 1
         },
         "properties": {
-          "adapter_version": "1",
+          "adapter_version": "2",
           "generator": "protoc-gen-gdscript",
           "generator_version": "local"
         }
@@ -1074,7 +1976,7 @@
           "column": 1
         },
         "properties": {
-          "adapter_version": "1",
+          "adapter_version": "2",
           "generator": "protoc-gen-go",
           "generator_version": "v1.36.11"
         }
@@ -1097,7 +1999,7 @@
           "column": 1
         },
         "properties": {
-          "adapter_version": "1",
+          "adapter_version": "2",
           "generator": "protoc-gen-go",
           "generator_version": "v1.36.11"
         }
@@ -1120,9 +2022,120 @@
           "column": 1
         },
         "properties": {
-          "adapter_version": "1",
+          "adapter_version": "2",
           "generator": "protoc-gen-go",
           "generator_version": "v1.36.11"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "variable",
+          "qualified_name": "Client.make_envelope.decoded@19"
+        },
+        "relation": "returns",
+        "to": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 21,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "variable",
+          "qualified_name": "Client.make_envelope.message@13"
+        },
+        "relation": "assigns",
+        "to": {
+          "repo": "bindings",
+          "kind": "variable",
+          "qualified_name": "Client.make_envelope.encoded@18"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 18,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "variable",
+          "qualified_name": "Client.make_envelope.text@16"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "AcmeV1EnvelopeEnvelope.set_text"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 17,
+          "column": 3
+        },
+        "properties": {
+          "argument": "0"
+        }
+      }
+    ],
+    "forbidden_edges": [
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.forbidden"
+        },
+        "relation": "reads",
+        "to": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.forbidden"
+        },
+        "relation": "writes",
+        "to": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.forbidden"
+        },
+        "relation": "encodes",
+        "to": {
+          "repo": "bindings",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.forbidden"
+        },
+        "relation": "decodes",
+        "to": {
+          "repo": "bindings",
+          "kind": "type",
+          "qualified_name": "acme.v1.Envelope"
         }
       }
     ]
