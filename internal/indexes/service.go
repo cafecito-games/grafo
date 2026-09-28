@@ -25,11 +25,12 @@ const (
 	CompatibilityCorrupt      Compatibility = "corrupt"
 	CompatibilityUnverified   Compatibility = "unverified"
 
-	StatusDeleted    Status = "deleted"
-	StatusProtected  Status = "protected"
-	StatusIneligible Status = "ineligible"
-	StatusLocked     Status = "locked"
-	StatusFailed     Status = "failed"
+	StatusDeleted     Status = "deleted"
+	StatusWouldDelete Status = "would-delete"
+	StatusProtected   Status = "protected"
+	StatusIneligible  Status = "ineligible"
+	StatusLocked      Status = "locked"
+	StatusFailed      Status = "failed"
 
 	inspectionTimeout = 2 * time.Second
 	maxDiagnostic     = 240
@@ -296,9 +297,9 @@ func (m *manager) prune(ctx context.Context, root string, policy Policy) (PruneR
 		default:
 			result.Selected = true
 			if policy.DryRun {
-				result.Status, result.Reason = StatusProtected, "dry run; would delete"
+				result.Status, result.Reason = StatusWouldDelete, "dry run; would delete"
 			} else {
-				result = m.deleteCandidate(ctx, result)
+				result = m.deleteCandidate(ctx, root, result)
 				if result.Status == StatusFailed {
 					operationErr = errors.Join(operationErr, errors.New(result.Reason))
 				}
@@ -310,7 +311,7 @@ func (m *manager) prune(ctx context.Context, root string, policy Policy) (PruneR
 	return report, operationErr
 }
 
-func (m *manager) deleteCandidate(ctx context.Context, initial Result) (result Result) {
+func (m *manager) deleteCandidate(ctx context.Context, root string, initial Result) (result Result) {
 	result = initial
 	candidate := result.Index
 	unlock, acquired, err := m.tryLock(candidate.Path)
@@ -327,6 +328,21 @@ func (m *manager) deleteCandidate(ctx context.Context, initial Result) (result R
 			result.Status, result.Reason = StatusFailed, boundedDiagnostic("unlock branch index: "+unlockErr.Error())
 		}
 	}()
+	currentProject, err := m.discover(ctx, root)
+	if err != nil {
+		result.Status, result.Reason = StatusFailed, boundedDiagnostic("revalidate current branch index: "+err.Error())
+		return result
+	}
+	currentPath, err := filepath.Abs(currentProject.IndexPath)
+	if err != nil {
+		result.Status, result.Reason = StatusFailed, boundedDiagnostic("resolve revalidated current index path: "+err.Error())
+		return result
+	}
+	if samePath(candidate.Path, currentPath) {
+		result.Selected = false
+		result.Status, result.Reason = StatusProtected, "became the current branch index before deletion"
+		return result
+	}
 	if err := ctx.Err(); err != nil {
 		result.Status, result.Reason = StatusFailed, err.Error()
 		return result

@@ -490,16 +490,17 @@ func (a *App) printIndexInventory(inventory branchindexes.Inventory, asJSON bool
 	if asJSON {
 		return writeJSON(a.stdout, inventory)
 	}
-	a.println("CURRENT\tBRANCH\tINDEXED_AT\tCOMPATIBILITY\tDATABASE\tWAL\tSHM\tTOTAL\tFILENAME")
+	a.println("CURRENT\tBRANCH\tCOMMIT\tINDEXED_AT\tREPOSITORY_ID\tROOT\tCOMPATIBILITY\tDATABASE\tWAL\tSHM\tTOTAL\tFILENAME\tPATH")
 	for _, candidate := range inventory.Indexes {
 		current := ""
 		if candidate.Current {
 			current = "*"
 		}
-		a.printf("%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%s\n",
-			current, candidate.Branch, candidate.IndexedAt, candidate.Compatibility,
+		a.printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%s\t%s\n",
+			current, candidate.Branch, candidate.Commit, candidate.IndexedAt,
+			candidate.RepositoryID, candidate.Root, candidate.Compatibility,
 			candidate.Sizes.Database, candidate.Sizes.WAL, candidate.Sizes.SHM, candidate.Sizes.Total,
-			candidate.Filename)
+			candidate.Filename, candidate.Path)
 		if candidate.Diagnostic != "" {
 			a.printf("  diagnostic: %s\n", candidate.Diagnostic)
 		}

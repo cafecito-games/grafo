@@ -1,7 +1,9 @@
 package service
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -59,4 +61,28 @@ func TryIndexLock(indexPath string) (unlock Unlock, acquired bool, err error) {
 		return nil, false, fmt.Errorf("create lock directory %s: %w", filepath.Dir(path), err)
 	}
 	return tryLock(path)
+}
+
+// tryPortableLock is the non-flock fallback. The stable anchor remains at
+// path; exclusive creation and removal use a separate transient sentinel so
+// unlocking can never replace the inode named by the public lock anchor.
+func tryPortableLock(path string) (Unlock, bool, error) {
+	anchor, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, false, fmt.Errorf("open lock anchor %s: %w", path, err)
+	}
+	if err := anchor.Close(); err != nil {
+		return nil, false, fmt.Errorf("close lock anchor %s: %w", path, err)
+	}
+	heldPath := path + ".held"
+	file, err := os.OpenFile(heldPath, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	if err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("open lock sentinel %s: %w", heldPath, err)
+	}
+	return func() error {
+		return errors.Join(file.Close(), os.Remove(heldPath))
+	}, true, nil
 }

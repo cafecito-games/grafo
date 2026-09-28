@@ -89,6 +89,11 @@ func TestIndexesListAndPruneTextJSONParity(t *testing.T) {
 	if currentOffset < 0 || oldOffset <= currentOffset || !strings.Contains(textOutput, "totals") || !strings.Contains(textOutput, "database=") {
 		t.Fatalf("text inventory did not preserve JSON order/totals:\n%s", textOutput)
 	}
+	for _, required := range []string{oldPath, project.Root, project.ID, "old-commit"} {
+		if !strings.Contains(textOutput, required) {
+			t.Fatalf("text inventory omitted required metadata %q:\n%s", required, textOutput)
+		}
+	}
 
 	dryJSON, stderr, code := output(t, "indexes", "prune", root, "--keep", "1", "--dry-run", "--json")
 	if code != 0 {
@@ -100,6 +105,13 @@ func TestIndexesListAndPruneTextJSONParity(t *testing.T) {
 	}
 	if selectedResult(dry, "old.sqlite") == nil || !selectedResult(dry, "old.sqlite").Selected {
 		t.Fatalf("dry report = %#v", dry.Results)
+	}
+	if selectedResult(dry, "old.sqlite").Status != branchindexes.StatusWouldDelete {
+		t.Fatalf("dry-run selected status = %q, want %q", selectedResult(dry, "old.sqlite").Status, branchindexes.StatusWouldDelete)
+	}
+	dryText, stderr, code := output(t, "indexes", "prune", root, "--keep", "1", "--dry-run")
+	if code != 0 || !strings.Contains(dryText, string(branchindexes.StatusWouldDelete)) || strings.Contains(dryText, "protected\told\told.sqlite") {
+		t.Fatalf("dry text: code=%d stdout=%q stderr=%q", code, dryText, stderr)
 	}
 	if _, err := os.Stat(oldPath); err != nil {
 		t.Fatalf("dry run removed old index: %v", err)

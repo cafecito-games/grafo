@@ -286,6 +286,43 @@ func TestRetainedIndexesCountsCurrentTowardKeepLimit(t *testing.T) {
 	}
 }
 
+func TestPruneRevalidatesCurrentIndexUnderCandidateLock(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	project := discoverTestProject(t, root)
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	current := seedIndex(t, project.IndexPath, project, project.Branch, now.Add(-time.Hour))
+	oldPath := filepath.Join(filepath.Dir(project.IndexPath), "old.sqlite")
+	old := seedIndex(t, oldPath, project, "old", now.Add(-72*time.Hour))
+	closeRepositories(t, current, old)
+
+	manager := newManager()
+	discover := manager.discover
+	discoveries := 0
+	manager.discover = func(ctx context.Context, requestedRoot string) (indexer.Project, error) {
+		discoveries++
+		if discoveries == 1 {
+			return discover(ctx, requestedRoot)
+		}
+		switched := project
+		switched.Branch = "old"
+		switched.IndexPath = oldPath
+		return switched, nil
+	}
+	keep := 0
+	report, err := manager.prune(ctx, root, Policy{Keep: &keep, Confirm: true, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := resultFor(report, "old.sqlite")
+	if result == nil || result.Status != StatusProtected || result.Selected {
+		t.Fatalf("newly current result = %#v", result)
+	}
+	if _, err := os.Stat(oldPath); err != nil {
+		t.Fatalf("newly current index was deleted: %v", err)
+	}
+}
+
 func TestPruneValidatesBeforeWorkAndReportsPartialFailureAndCancellation(t *testing.T) {
 	root := t.TempDir()
 	project := discoverTestProject(t, root)
