@@ -1,0 +1,30 @@
+{
+  "schema": "grafo.issue-104-benchmark/v1",
+  "base_commit": "fdd487bd7c3ec66161684afafa2e10e7a3c7f8db",
+  "implementation_commit": "869e6dcf1ee33907b5e13ba379d28eaa9af591af",
+  "benchmark_source_sha256": "32d7031ac3922dc9e187c1101f587338b39a400536fa5d2e7f24e5d8a4370933",
+  "command": "TMPDIR=/home/coder/.tmp-issue104 GOMAXPROCS=8 go test ./internal/cli -run '^$' -bench '^BenchmarkWarmStatus$' -benchtime=1x -count=30",
+  "unit": "ns/op",
+  "base_samples": [
+    83781466, 92100839, 94591969, 80927932, 77671140, 106107251,
+    22130415, 89739698, 79617510, 93833073, 85651504, 81048644,
+    83392132, 104929498, 90041769, 78238062, 30133782, 33278708,
+    85390821, 106226674, 178697916, 103490528, 81225558, 93576395,
+    95083913, 85185379, 86314665, 34186500, 97520833, 30495753
+  ],
+  "implementation_samples": [
+    93403375, 93441356, 74185904, 96722351, 81868706, 86621965,
+    81376374, 85961820, 91045952, 77371293, 102222917, 94982295,
+    90534573, 87949788, 24703268, 99497580, 102603493, 91452977,
+    30059334, 86287275, 25953760, 85595981, 75128663, 42582738,
+    34061110, 79300452, 107554237, 30598534, 19686631, 94470163
+  ],
+  "base_median": 85521162.5,
+  "implementation_median": 86124547.5,
+  "median_ratio": 1.0070553881911977,
+  "median_regression_percent": 0.70553881911977,
+  "base_p95": 106226674,
+  "implementation_p95": 102603493,
+  "default_auto_stderr_bytes_per_sample": 0,
+  "passes_maximum_median_regression_percent": 10
+}

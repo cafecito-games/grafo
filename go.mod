@@ -7,6 +7,7 @@ require (
 	github.com/bufbuild/protocompile v0.14.1
 	github.com/cafecito-games/gdparser v0.0.0-20260926231848-07997740011c
 	github.com/cockroachdb/pebble/v2 v2.1.7
+	github.com/mattn/go-isatty v0.0.24
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/pganalyze/pg_query_go/v6 v6.2.2
 	github.com/pressly/goose/v3 v3.28.0
@@ -47,7 +48,6 @@ require (
 	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
-	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.4 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect

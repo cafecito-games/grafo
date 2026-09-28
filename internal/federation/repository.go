@@ -301,16 +301,28 @@ func (r *Repository) DeleteStaleEmbeddings(ctx context.Context, model string) (i
 }
 
 func (r *Repository) Refresh(ctx context.Context, parsers *parserapi.Registry) error {
+	_, err := r.RefreshReports(ctx, parsers, indexer.Options{ReportDetail: indexer.ReportWithoutCounts})
+	return err
+}
+
+// RefreshReports refreshes members in canonical order and returns only reports
+// for successful members. A failure is terminal and is never represented as a
+// successful federation refresh.
+func (r *Repository) RefreshReports(ctx context.Context, parsers *parserapi.Registry, options indexer.Options) ([]indexer.Report, error) {
+	reports := make([]indexer.Report, 0, len(r.members))
 	for _, item := range r.members {
 		indexed, ok := item.repository.(graph.IndexRepository)
 		if !ok {
-			return fmt.Errorf("repository %s does not support index refresh", item.project.Name)
+			return nil, fmt.Errorf("repository %s does not support index refresh", item.project.Name)
 		}
-		if _, err := indexer.NewService(indexed, parsers).Run(ctx, item.project, indexer.Options{ReportDetail: indexer.ReportWithoutCounts}); err != nil {
-			return fmt.Errorf("refresh %s: %w", item.project.Name, err)
+		options.ReportDetail = indexer.ReportWithoutCounts
+		report, err := indexer.NewService(indexed, parsers).Run(ctx, item.project, options)
+		if err != nil {
+			return nil, fmt.Errorf("refresh %s: %w", item.project.Name, err)
 		}
+		reports = append(reports, report)
 	}
-	return nil
+	return reports, nil
 }
 
 func (r *ReadRepository) Close() error                { return r.repository.Close() }

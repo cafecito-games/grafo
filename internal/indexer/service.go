@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,10 +26,11 @@ const gitUntrackedPathsMeta = "git_untracked_paths"
 const SemanticIndexVersion = indexversion.Semantic
 
 type Options struct {
-	Force        bool
-	MaxFileSize  int64
-	Boundary     BoundaryHook
-	ReportDetail ReportDetail
+	Force            bool
+	MaxFileSize      int64
+	Boundary         BoundaryHook
+	ProgressObserver ProgressObserver
+	ReportDetail     ReportDetail
 }
 
 // ReportDetail selects optional work whose result is used only for reporting.
@@ -73,22 +75,23 @@ type PhaseDurations struct {
 }
 
 type Report struct {
-	Project               Project            `json:"project"`
-	Updated               []string           `json:"updated"`
-	Unchanged             int                `json:"unchanged"`
-	Removed               []string           `json:"removed"`
-	Skipped               []string           `json:"skipped,omitempty"`
-	Checked               int                `json:"content_checked"`
-	Diagnostics           []graph.Diagnostic `json:"diagnostics,omitempty"`
-	Counts                graph.Counts       `json:"-"`
-	CountsCollected       bool               `json:"counts_collected"`
-	Phases                PhaseDurations     `json:"phases"`
-	Writes                graph.WriteStats   `json:"writes"`
-	ReconciliationBatches int                `json:"reconciliation_batches"`
-	GitCommands           int                `json:"git_commands"`
-	ElapsedMS             int64              `json:"elapsed_ms"`
-	ReconcileMS           int64              `json:"reconciliation_ms"`
-	Rebuild               string             `json:"rebuild_reason,omitempty"`
+	Project                      Project            `json:"project"`
+	Updated                      []string           `json:"updated"`
+	Unchanged                    int                `json:"unchanged"`
+	Removed                      []string           `json:"removed"`
+	Skipped                      []string           `json:"skipped,omitempty"`
+	Checked                      int                `json:"content_checked"`
+	Diagnostics                  []graph.Diagnostic `json:"diagnostics,omitempty"`
+	Counts                       graph.Counts       `json:"-"`
+	CountsCollected              bool               `json:"counts_collected"`
+	Phases                       PhaseDurations     `json:"phases"`
+	Writes                       graph.WriteStats   `json:"writes"`
+	ReconciliationBatches        int                `json:"reconciliation_batches"`
+	ReconciliationPendingAtStart bool               `json:"reconciliation_pending_at_start"`
+	GitCommands                  int                `json:"git_commands"`
+	ElapsedMS                    int64              `json:"elapsed_ms"`
+	ReconcileMS                  int64              `json:"reconciliation_ms"`
+	Rebuild                      string             `json:"rebuild_reason,omitempty"`
 }
 
 func (r Report) MarshalJSON() ([]byte, error) {
@@ -114,7 +117,25 @@ func NewService(repository graph.IndexRepository, parsers *parserapi.Registry) *
 
 func (s *Service) Run(ctx context.Context, project Project, options Options) (report Report, runErr error) {
 	started := time.Now()
+	report = Report{Project: project, Updated: []string{}, Removed: []string{}}
 	writeStart := writeStats(s.repository)
+	progress := newProgressEmitter(project, options.ProgressObserver, started)
+	defer func() {
+		report.Writes = writeStatsDelta(writeStats(s.repository), writeStart)
+		report.Phases.TotalNS = time.Since(started).Nanoseconds()
+		report.ElapsedMS = time.Since(started).Milliseconds()
+		progress.rebuild = report.Rebuild
+		if err := progress.terminal(ctx, runErr); err != nil {
+			if runErr == nil {
+				runErr = err
+			} else {
+				runErr = errors.Join(runErr, err)
+			}
+		}
+	}()
+	if err := progress.emit(ProgressGitProbe, ProgressStarted, "", 0, 0, ""); err != nil {
+		return report, err
+	}
 	if options.MaxFileSize <= 0 {
 		options.MaxFileSize = 5 << 20
 	}
@@ -142,16 +163,21 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 			}
 		}
 	}
-	report = Report{Project: project, Updated: []string{}, Removed: []string{}}
+	report.Project = project
 	if project.gitSnapshot != nil {
 		report.GitCommands = project.gitSnapshot.Commands
 		report.Phases.GitProbeNS = project.gitSnapshot.ProbeNS
 	}
-	defer func() {
-		report.Writes = writeStatsDelta(writeStats(s.repository), writeStart)
-		report.Phases.TotalNS = time.Since(started).Nanoseconds()
-		report.ElapsedMS = time.Since(started).Milliseconds()
-	}()
+	if err := progress.emit(ProgressGitProbe, ProgressCompleted, "", 0, 0, ""); err != nil {
+		return report, err
+	}
+	if status, ok := s.repository.(graph.ReconciliationStatusRepository); ok {
+		pending, err := status.ReconciliationPending(ctx)
+		if err != nil {
+			return report, fmt.Errorf("check pending reconciliation at start: %w", err)
+		}
+		report.ReconciliationPendingAtStart = pending
+	}
 	configuration, err := projectconfig.Load(project.Root)
 	if err != nil {
 		return report, fmt.Errorf("load project configuration: %w", err)
@@ -177,6 +203,7 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 			report.Rebuild = "semantic schema changed"
 		}
 	}
+	progress.rebuild = report.Rebuild
 	indexedCommit, err := s.repository.Meta(ctx, "commit")
 	if err != nil {
 		return report, fmt.Errorf("load indexed commit: %w", err)
@@ -197,16 +224,48 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	if indexedCommit != "" && previousUntrackedRaw == "" {
 		previousUntrackedValid = false
 	}
+	if err := progress.emit(ProgressMembership, ProgressStarted, "files", 0, 0, ""); err != nil {
+		return report, err
+	}
 	persistenceStarted := time.Now()
 	known, err := s.repository.Files(ctx)
 	report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
 	if err != nil {
 		return report, fmt.Errorf("load indexed files: %w", err)
 	}
+	if err := progress.emit(ProgressMembership, ProgressCompleted, "files", len(known), len(known), ""); err != nil {
+		return report, err
+	}
 	reuseMembership := project.gitSnapshot != nil && indexedCommit != "" &&
 		project.gitSnapshot.Head == indexedCommit && project.gitSnapshot.MembershipStable &&
 		previousUntrackedValid && equalPaths(previousUntracked, project.gitSnapshot.Untracked) &&
 		!schemaChanged && previousDirtyValid && !options.Force && options.Boundary == nil
+	var detectedChanges gitChanges
+	changesValid := false
+	var dirtyPaths []string
+	var untrackedPaths []string
+	dirtyPathsValid := false
+	if err := progress.emit(ProgressChangeProbe, ProgressStarted, "files", 0, 0, ""); err != nil {
+		return report, err
+	}
+	if project.GitManaged && project.Commit != "" {
+		baseCommit := indexedCommit
+		if baseCommit == "" {
+			baseCommit = project.Commit
+		}
+		changeStarted := time.Now()
+		var changeErr error
+		detectedChanges, changeErr = detectGitChanges(ctx, project.Root, baseCommit, project.gitSnapshot)
+		report.Phases.ChangeProbeNS += time.Since(changeStarted).Nanoseconds()
+		report.GitCommands += detectedChanges.gitCommands
+		changesValid = changeErr == nil
+	}
+	if err := progress.emit(ProgressChangeProbe, ProgressCompleted, "files", 0, 0, ""); err != nil {
+		return report, err
+	}
+	if err := progress.emit(ProgressDiscovery, ProgressStarted, "files", 0, 0, ""); err != nil {
+		return report, err
+	}
 	discoveryStarted := time.Now()
 	membershipStarted := time.Now()
 	discovered, err := discoverFilesWithCatalog(ctx, project, s.parsers, known, reuseMembership)
@@ -217,6 +276,9 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		return report, fmt.Errorf("discover source files: %w", err)
 	}
 	paths := discovered.paths
+	if err := progress.emit(ProgressDiscovery, ProgressCompleted, "files", len(paths), len(paths), ""); err != nil {
+		return report, err
+	}
 	report.Skipped = append(report.Skipped, discovered.skipped...)
 	workspaceSemanticKeys, err := s.parsers.WorkspaceSemanticKeys(ctx, parserapi.Input{
 		Root: project.Root, Repository: project.Name, RepoID: project.ID, GoModule: project.GoModule,
@@ -248,24 +310,11 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		}
 	}
 	var selected map[string]bool
-	var dirtyPaths []string
-	var untrackedPaths []string
-	dirtyPathsValid := false
-	if project.GitManaged && project.Commit != "" {
-		baseCommit := indexedCommit
-		if baseCommit == "" {
-			baseCommit = project.Commit
-		}
-		changeStarted := time.Now()
-		changes, changeErr := detectGitChanges(ctx, project.Root, baseCommit, project.gitSnapshot)
-		report.Phases.ChangeProbeNS += time.Since(changeStarted).Nanoseconds()
-		report.GitCommands += changes.gitCommands
-		if changeErr == nil {
-			dirtyPaths, dirtyPathsValid = changes.dirty, true
-			untrackedPaths = changes.untracked
-			if !options.Force && !schemaChanged && indexedCommit != "" && previousDirtyValid && previousUntrackedValid {
-				selected = selectChangedPaths(paths, known, changes.changed, previousDirty, s.parsers)
-			}
+	if changesValid {
+		dirtyPaths, dirtyPathsValid = detectedChanges.dirty, true
+		untrackedPaths = detectedChanges.untracked
+		if !options.Force && !schemaChanged && indexedCommit != "" && previousDirtyValid && previousUntrackedValid {
+			selected = selectChangedPaths(paths, known, detectedChanges.changed, previousDirty, s.parsers)
 		}
 	}
 	if selected != nil && len(changedSemanticLanguages) > 0 {
@@ -277,6 +326,15 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	}
 	current := make(map[string]bool, len(paths))
 	graphDirtied := false
+	if err := progress.emit(ProgressReadHash, ProgressStarted, "files", 0, 0, ""); err != nil {
+		return report, err
+	}
+	if err := progress.emit(ProgressParse, ProgressStarted, "files", 0, 0, ""); err != nil {
+		return report, err
+	}
+	if err := progress.emit(ProgressPersistence, ProgressStarted, "files", 0, 0, ""); err != nil {
+		return report, err
+	}
 	for _, path := range paths {
 		if selected != nil && !selected[path] {
 			current[path] = true
@@ -301,6 +359,9 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 			continue
 		}
 		report.Checked++
+		if err := progress.emit(ProgressReadHash, ProgressProgress, "files", report.Checked, 0, ""); err != nil {
+			return report, err
+		}
 		current[path] = true
 		languageParser, ok := s.parsers.For(path)
 		if !ok {
@@ -339,6 +400,9 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		if parseErr != nil {
 			parsed.Diagnostics = append(parsed.Diagnostics, graph.Diagnostic{Path: path, Level: "error", Message: parseErr.Error()})
 		}
+		if err := progress.emit(ProgressParse, ProgressProgress, "files", len(report.Updated)+1, 0, ""); err != nil {
+			return report, err
+		}
 		// The selected parser is the producer authority. Parser-returned facts are
 		// otherwise untrusted and cannot claim another extractor's identity.
 		for index := range parsed.Facts {
@@ -359,12 +423,21 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		graphDirtied = true
 		report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
 		report.Updated = append(report.Updated, path)
+		if err := progress.emit(ProgressPersistence, ProgressProgress, "files", len(report.Updated), 0, ""); err != nil {
+			return report, err
+		}
 		report.Diagnostics = append(report.Diagnostics, parsed.Diagnostics...)
 		if options.Boundary != nil {
 			if err := options.Boundary(Boundary{Kind: BoundaryFilePersisted, Path: path, Completed: len(report.Updated)}); err != nil {
 				return report, fmt.Errorf("file persistence boundary %s: %w", path, err)
 			}
 		}
+	}
+	if err := progress.emit(ProgressReadHash, ProgressCompleted, "files", report.Checked, 0, ""); err != nil {
+		return report, err
+	}
+	if err := progress.emit(ProgressParse, ProgressCompleted, "files", len(report.Updated), 0, ""); err != nil {
+		return report, err
 	}
 	membershipPaths := make([]string, 0, len(current))
 	for path := range current {
@@ -415,7 +488,7 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		}
 		report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
 	}
-	shouldReconcile := graphDirtied || !previousDirtyValid || !previousUntrackedValid
+	shouldReconcile := graphDirtied || !previousDirtyValid || !previousUntrackedValid || report.ReconciliationPendingAtStart
 	if !shouldReconcile {
 		if status, ok := s.repository.(graph.ReconciliationStatusRepository); ok {
 			shouldReconcile, err = status.ReconciliationPending(ctx)
@@ -426,14 +499,20 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 			shouldReconcile = true
 		}
 	}
+	if err := progress.emit(ProgressReconciliation, ProgressStarted, "batches", 0, 0, ""); err != nil {
+		return report, err
+	}
 	if shouldReconcile {
 		reconcileStarted := time.Now()
 		if instrumented, ok := s.repository.(graph.InstrumentedIndexRepository); ok {
 			stats, reconcileErr := instrumented.ReconcileWithStats(ctx, func(stats graph.ReconciliationStats) error {
-				if options.Boundary == nil {
-					return nil
+				if err := progress.emit(ProgressReconciliation, ProgressProgress, "batches", stats.Batches, 0, ""); err != nil {
+					return err
 				}
-				return options.Boundary(Boundary{Kind: BoundaryReconciliationBatch, Completed: stats.Batches})
+				if options.Boundary != nil {
+					return options.Boundary(Boundary{Kind: BoundaryReconciliationBatch, Completed: stats.Batches})
+				}
+				return nil
 			})
 			report.ReconciliationBatches = stats.Batches
 			if reconcileErr != nil {
@@ -444,6 +523,9 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		}
 		report.ReconcileMS = time.Since(reconcileStarted).Milliseconds()
 		report.Phases.ReconciliationNS = time.Since(reconcileStarted).Nanoseconds()
+	}
+	if err := progress.emit(ProgressReconciliation, ProgressCompleted, "batches", report.ReconciliationBatches, report.ReconciliationBatches, ""); err != nil {
+		return report, err
 	}
 	persistenceStarted = time.Now()
 	if err := setMetaIfChanged(ctx, s.repository, "repository_id", project.ID); err != nil {
@@ -496,6 +578,9 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	}
 	report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
 	if err != nil {
+		return report, err
+	}
+	if err := progress.emit(ProgressPersistence, ProgressCompleted, "files", len(report.Updated), 0, ""); err != nil {
 		return report, err
 	}
 	return report, nil

@@ -2,6 +2,7 @@ package federation_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,61 @@ import (
 	"github.com/cafecito-games/grafo/internal/semantic"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 )
+
+func TestRefreshReportsAreCanonicalAndFailureReturnsNoSuccessSet(t *testing.T) {
+	ctx := context.Background()
+	left, right := t.TempDir(), t.TempDir()
+	write(t, filepath.Join(left, "go.mod"), "module example.com/left\n\ngo 1.26\n")
+	write(t, filepath.Join(left, "left.go"), "package left\nfunc Left() {}\n")
+	write(t, filepath.Join(right, "go.mod"), "module example.com/right\n\ngo 1.26\n")
+	write(t, filepath.Join(right, "right.go"), "package right\nfunc Right() {}\n")
+	index(t, ctx, left)
+	index(t, ctx, right)
+	repository, err := federation.Open(ctx, []string{right, left})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	var events []indexer.ProgressEvent
+	reports, err := repository.RefreshReports(ctx, parserapi.NewRegistry(golangparser.New(), manifestparser.New()), indexer.Options{
+		ProgressObserver: func(event indexer.ProgressEvent) error {
+			events = append(events, event)
+			return nil
+		},
+	})
+	if err != nil || len(reports) != 2 {
+		t.Fatalf("reports=%#v err=%v", reports, err)
+	}
+	if reports[0].Project.Root > reports[1].Project.Root || reports[0].CountsCollected || reports[1].CountsCollected {
+		t.Fatalf("reports are not canonical/no-count: %#v", reports)
+	}
+	terminals := 0
+	for _, event := range events {
+		if event.Phase == indexer.ProgressComplete && event.State == indexer.ProgressCompleted {
+			terminals++
+		}
+	}
+	if terminals != 2 {
+		t.Fatalf("terminal events = %d; events=%#v", terminals, events)
+	}
+
+	sentinel := errors.New("progress output failed")
+	starts := 0
+	reports, err = repository.RefreshReports(ctx, parserapi.NewRegistry(golangparser.New(), manifestparser.New()), indexer.Options{
+		ProgressObserver: func(event indexer.ProgressEvent) error {
+			if event.Phase == indexer.ProgressGitProbe && event.State == indexer.ProgressStarted {
+				starts++
+				if starts == 2 {
+					return sentinel
+				}
+			}
+			return nil
+		},
+	})
+	if !errors.Is(err, sentinel) || reports != nil {
+		t.Fatalf("failed refresh reports=%#v err=%v", reports, err)
+	}
+}
 
 func TestRepositoryResolvesHTTPAcrossIndexes(t *testing.T) {
 	ctx := context.Background()

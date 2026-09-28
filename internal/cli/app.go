@@ -26,6 +26,7 @@ import (
 	sourcecontext "github.com/cafecito-games/grafo/internal/source"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 	"github.com/cafecito-games/grafo/internal/version"
+	"github.com/mattn/go-isatty"
 )
 
 const Version = version.Value
@@ -35,11 +36,21 @@ const Version = version.Value
 const foregroundIndexLockWait = 2 * time.Minute
 
 type App struct {
-	stdout io.Writer
-	stderr io.Writer
+	stdout           io.Writer
+	stderr           io.Writer
+	stderrIsTerminal func(io.Writer) bool
+	progressDelay    time.Duration
 }
 
-func New(stdout, stderr io.Writer) *App { return &App{stdout: stdout, stderr: stderr} }
+func New(stdout, stderr io.Writer) *App {
+	return &App{
+		stdout: stdout, stderr: stderr, progressDelay: 500 * time.Millisecond,
+		stderrIsTerminal: func(writer io.Writer) bool {
+			file, ok := writer.(*os.File)
+			return ok && (isatty.IsTerminal(file.Fd()) || isatty.IsCygwinTerminal(file.Fd()))
+		},
+	}
+}
 
 // print, printf, println and errorf are the only way this package writes to the
 // terminal. A failed write to stdout or stderr leaves nothing to fall back on
@@ -149,7 +160,10 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		}
 	}
 	if runErr != nil {
-		a.fail(runErr)
+		var rendered *progressRenderedError
+		if !errors.As(runErr, &rendered) {
+			a.fail(runErr)
+		}
 		var ambiguous *query.AmbiguousError
 		if errors.As(runErr, &ambiguous) {
 			a.printNodes(ambiguous.Candidates)
@@ -436,6 +450,35 @@ type statusOutput struct {
 	IndexedAt string            `json:"indexed_at"`
 	Commit    string            `json:"indexed_commit,omitempty"`
 	Counts    graph.Counts      `json:"counts"`
+	Refresh   []refreshSummary  `json:"refresh"`
+}
+
+type refreshSummary struct {
+	RepositoryID                 string                 `json:"repository_id"`
+	RepositoryName               string                 `json:"repository_name"`
+	Branch                       string                 `json:"branch"`
+	RebuildReason                string                 `json:"rebuild_reason,omitempty"`
+	ElapsedMS                    int64                  `json:"elapsed_ms"`
+	Checked                      int                    `json:"content_checked"`
+	Updated                      int                    `json:"updated"`
+	Removed                      int                    `json:"removed"`
+	ReconciliationBatches        int                    `json:"reconciliation_batches"`
+	ReconciliationPendingAtStart bool                   `json:"reconciliation_pending_at_start"`
+	Phases                       indexer.PhaseDurations `json:"phases"`
+	Writes                       graph.WriteStats       `json:"writes"`
+}
+
+func summarizeRefresh(reports []indexer.Report) []refreshSummary {
+	result := make([]refreshSummary, 0, len(reports))
+	for _, report := range reports {
+		result = append(result, refreshSummary{
+			RepositoryID: report.Project.ID, RepositoryName: report.Project.Name, Branch: report.Project.Branch,
+			RebuildReason: report.Rebuild, ElapsedMS: report.ElapsedMS, Checked: report.Checked,
+			Updated: len(report.Updated), Removed: len(report.Removed), ReconciliationBatches: report.ReconciliationBatches,
+			ReconciliationPendingAtStart: report.ReconciliationPendingAtStart, Phases: report.Phases, Writes: report.Writes,
+		})
+	}
+	return result
 }
 
 func (a *App) status(ctx context.Context, args parsedArguments) error {
@@ -445,11 +488,44 @@ func (a *App) status(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) == 1 {
 		args.values["repo"] = args.positionals[0]
 	}
-	repository, projects, closeRepository, err := openRead(ctx, args)
+	mode, err := parseProgressMode(args.values["progress"])
 	if err != nil {
 		return err
 	}
+	renderer := newProgressRenderer(a.stderr, mode, a.stderrIsTerminal(a.stderr), a.progressDelay)
+	repository, projects, reports, closeRepository, err := openStatusRead(ctx, args, renderer.Observer())
+	if err != nil {
+		if !renderer.hasTerminal() {
+			state := indexer.ProgressError
+			sensitivePaths := []string{repoPath(args)}
+			if raw := args.values["repos"]; raw != "" {
+				sensitivePaths = append(sensitivePaths, splitList(raw)...)
+			}
+			message := indexer.ProgressErrorMessage(err, sensitivePaths...)
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+				state = indexer.ProgressCanceled
+			}
+			observeErr := renderer.Observe(indexer.ProgressEvent{
+				Schema: indexer.ProgressSchemaV1, Phase: indexer.ProgressComplete, State: state, Error: message,
+			})
+			if observeErr != nil {
+				err = errors.Join(err, observeErr)
+			}
+		}
+		closeErr := renderer.Close()
+		if closeErr != nil {
+			return errors.Join(err, closeErr)
+		}
+		if renderer.terminalRendered() {
+			return &progressRenderedError{err}
+		}
+		return err
+	}
 	defer func() { _ = closeRepository() }()
+	if err := renderer.Close(); err != nil {
+		_ = closeRepository()
+		return err
+	}
 	counts, err := repository.Counts(ctx)
 	if err != nil {
 		return err
@@ -462,7 +538,7 @@ func (a *App) status(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	output := statusOutput{Projects: projects, IndexedAt: indexedAt, Commit: commit, Counts: counts}
+	output := statusOutput{Projects: projects, IndexedAt: indexedAt, Commit: commit, Counts: counts, Refresh: summarizeRefresh(reports)}
 	if args.flags["json"] {
 		return writeJSON(a.stdout, output)
 	}
@@ -1994,6 +2070,65 @@ func openRead(ctx context.Context, args parsedArguments) (graph.ReadRepository, 
 	return readRepository, []indexer.Project{project}, readRepository.Close, nil
 }
 
+// openStatusRead keeps refresh reporting on the status/counts path while all
+// other query commands retain their existing open/refresh behavior.
+func openStatusRead(ctx context.Context, args parsedArguments, observer indexer.ProgressObserver) (graph.ReadRepository, []indexer.Project, []indexer.Report, func() error, error) {
+	if args.values["repo"] != "" && args.values["repos"] != "" {
+		return nil, nil, nil, nil, fmt.Errorf("--repo and --repos cannot be used together")
+	}
+	if raw := args.values["repos"]; raw != "" {
+		paths := strings.Split(raw, ",")
+		repository, err := federation.Open(ctx, paths)
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+		reports, refreshErr := repository.RefreshReports(ctx, parserdefaults.NewRegistry(), indexer.Options{
+			ProgressObserver: observer, ReportDetail: indexer.ReportWithoutCounts,
+		})
+		projects := repository.Projects()
+		closeErr := repository.Close()
+		if refreshErr != nil {
+			return nil, nil, nil, nil, errors.Join(refreshErr, closeErr)
+		}
+		if closeErr != nil {
+			return nil, nil, nil, nil, fmt.Errorf("close refreshed indexes: %w", closeErr)
+		}
+		readRepository, err := federation.OpenReadOnly(ctx, paths)
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+		return readRepository, projects, reports, readRepository.Close, nil
+	}
+	project, err := indexer.DiscoverProject(ctx, repoPath(args))
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	if _, err := os.Stat(project.IndexPath); errors.Is(err, os.ErrNotExist) {
+		return nil, nil, nil, nil, fmt.Errorf("branch %q has no index; run 'grafo index %s'", project.Branch, project.Root)
+	} else if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	report, refreshErr := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{
+		ProgressObserver: observer, ReportDetail: indexer.ReportWithoutCounts,
+	})
+	closeErr := repository.Close()
+	if refreshErr != nil {
+		return nil, nil, nil, nil, errors.Join(fmt.Errorf("refresh index: %w", refreshErr), closeErr)
+	}
+	if closeErr != nil {
+		return nil, nil, nil, nil, fmt.Errorf("close refreshed index: %w", closeErr)
+	}
+	readRepository, err := sqlite.OpenReadOnly(ctx, project.IndexPath)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	return readRepository, []indexer.Project{project}, []indexer.Report{report}, readRepository.Close, nil
+}
+
 func requiresWritableRead(command string) bool {
 	return command == "reusable" || command == "find-reusable-code"
 }
@@ -2065,6 +2200,7 @@ var valueOptions = map[string]bool{
 	"kind": true, "name": true, "state-dir": true, "lines": true, "concurrency": true,
 	"filter": true, "method": true, "route": true, "event": true, "component": true,
 	"package": true, "message": true, "oneof": true, "status": true,
+	"progress": true,
 }
 
 func parseArguments(arguments []string) (parsedArguments, error) {
@@ -2099,6 +2235,14 @@ func parseArguments(arguments []string) (parsedArguments, error) {
 			value = arguments[index]
 		}
 		result.values[name] = value
+	}
+	if result.values["progress"] != "" && result.command != "status" && result.command != "counts" {
+		return result, fmt.Errorf("--progress is only supported by status and counts")
+	}
+	if result.command == "status" || result.command == "counts" {
+		if _, err := parseProgressMode(result.values["progress"]); err != nil {
+			return result, err
+		}
 	}
 	return result, nil
 }
@@ -2194,7 +2338,7 @@ Usage:
   grafo service uninstall [--dry-run] [--json]
   grafo service run [--once] [--state-dir dir] [--concurrency n] [--json]
   grafo doctor [--repair] [--json]
-  grafo status [path] [--repos pathA,pathB] [--json]
+  grafo status [path] [--repos pathA,pathB] [--json] [--progress auto|human|json|off]
   grafo mcp [--repo path | --repos pathA,pathB] [--model embeddinggemma]
   grafo embed [path] [--model embeddinggemma] [--ollama-url http://localhost:11434] [--force]
   grafo reusable <description> [--repo path | --repos pathA,pathB] [--limit 5] [--json]
