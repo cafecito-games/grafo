@@ -178,7 +178,7 @@ func TestParserRejectsAmbiguousProtobufGDScriptBindings(t *testing.T) {
 	writeFile(t, root, "buf.gen.yaml", "version: v2\nplugins:\n  - local: protoc-gen-gdscript\n    out: generated\n")
 	writeFile(t, root, "proto/one/envelope.proto", "syntax = \"proto3\"; package acme.v1; message Envelope { string text = 1; }\n")
 	// gdproto's class-name normalization makes acme.v1 and acme_v1 collide.
-	writeFile(t, root, "proto/two/envelope.proto", "syntax = \"proto3\"; package acme_v1; message Envelope { string text = 1; }\n")
+	writeFile(t, root, "proto/two/envelope.proto", "syntax = \"proto3\"; package acme_v1; message Envelope { string other = 1; }\n")
 	content := []byte("class_name Client\nfunc use() -> void:\n\tvar value = AcmeV1EnvelopeEnvelope.new()\n\tvalue.set_text(\"ambiguous\")\n")
 	writeFile(t, root, "client.gd", string(content))
 	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{

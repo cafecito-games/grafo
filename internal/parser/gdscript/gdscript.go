@@ -238,6 +238,16 @@ func gdscriptProtobufBindings(registry protobufbinding.Registry) (map[string]pro
 			}
 		}
 	}
+	// A projected class is the authority for every member beneath it. Even when
+	// a field exists in only one colliding schema, its receiver is still not
+	// proven, so cascade class ambiguity to all generated member APIs.
+	for symbol := range apis {
+		owner := strings.TrimSuffix(symbol, "."+graph.SimpleName(symbol))
+		if ambiguous[owner] {
+			delete(apis, symbol)
+			ambiguous[symbol] = true
+		}
+	}
 	return apis, ambiguous, types
 }
 
@@ -1152,7 +1162,7 @@ func (e *extractor) inferExpressionType(expression gdast.Expression, current sco
 	}
 	if strings.HasSuffix(callee, ".new") {
 		result := strings.TrimSuffix(callee, ".new")
-		if !e.protobufTypes[result] {
+		if !e.protobufTypes[result] && !e.protobufAmbiguous[result] {
 			return result
 		}
 		return ""
