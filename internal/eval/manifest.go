@@ -378,6 +378,7 @@ var validEdgeKinds = makeSet([]graph.EdgeKind{
 	graph.EdgePanics, graph.EdgeRecovers, graph.EdgeDefers,
 	graph.EdgeExtends, graph.EdgeImplements, graph.EdgeReadsConfig, graph.EdgeDefines, graph.EdgeExposes,
 	graph.EdgeHandledBy, graph.EdgePublishes, graph.EdgeSubscribes, graph.EdgeReferences, graph.EdgeReads,
+	graph.EdgeUsesMiddleware,
 	graph.EdgeWrites, graph.EdgeHasField, graph.EdgeAssigns, graph.EdgeReturns, graph.EdgePasses,
 	graph.EdgeEncodes, graph.EdgeDecodes,
 	graph.EdgeRequests, graph.EdgeDependsOn, graph.EdgeDocuments, graph.EdgeGeneratedFrom, graph.EdgeInstantiates,

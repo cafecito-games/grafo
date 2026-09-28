@@ -50,6 +50,9 @@ func TestAllowsResolutionKindCoversRestrictedEdges(t *testing.T) {
 	}{
 		{graph.EdgeCalls, graph.KindMethod, true},
 		{graph.EdgeCalls, graph.KindTable, false},
+		{graph.EdgeUsesMiddleware, graph.KindFunction, true},
+		{graph.EdgeUsesMiddleware, graph.KindMethod, true},
+		{graph.EdgeUsesMiddleware, graph.KindConfigKey, false},
 		{graph.EdgeEncodes, graph.KindType, true},
 		{graph.EdgeEncodes, graph.KindField, false},
 		{graph.EdgeDecodes, graph.KindType, true},

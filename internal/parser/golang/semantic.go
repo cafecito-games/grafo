@@ -37,6 +37,31 @@ type SemanticCall struct {
 	Ignore bool
 }
 
+// SemanticChiMiddleware is compact, go/types-backed evidence for one
+// middleware inherited by a composed Chi endpoint.
+type SemanticChiMiddleware struct {
+	Target     string
+	TargetKind graph.NodeKind
+	Form       string
+	Location   graph.Location
+	Unresolved bool
+}
+
+// SemanticChiEndpoint is the final package-local composition of a Chi route.
+// It deliberately retains no AST or types objects after package loading.
+type SemanticChiEndpoint struct {
+	Function     string
+	FunctionKind graph.NodeKind
+	Method       string
+	Route        string
+	Handler      string
+	HandlerKind  graph.NodeKind
+	Location     graph.Location
+	Middleware   []SemanticChiMiddleware
+	Conditional  bool
+	Unresolved   bool
+}
+
 // SemanticProtocolUse is compact go/types evidence for one possible protocol
 // operation. Binding names a generated Go symbol; the parser maps it through
 // the Protobuf binding registry before any canonical fact is emitted.
@@ -100,6 +125,9 @@ type SemanticView struct {
 	Functions         map[string]SemanticFunction
 	ErrorDeclarations []SemanticErrorDeclaration
 	Failures          []SemanticFailure
+	ChiEndpoints      []SemanticChiEndpoint
+	ChiEndpointCalls  map[int]bool
+	NonChiHTTPCalls   map[int]bool
 	Diagnostics       []graph.Diagnostic
 }
 
@@ -279,8 +307,26 @@ func cloneSemanticView(view SemanticView) SemanticView {
 		copyView.Failures[index] = failure
 		copyView.Failures[index].Properties = cloneStringMap(failure.Properties)
 	}
+	copyView.ChiEndpoints = make([]SemanticChiEndpoint, len(view.ChiEndpoints))
+	for index, endpoint := range view.ChiEndpoints {
+		copyView.ChiEndpoints[index] = endpoint
+		copyView.ChiEndpoints[index].Middleware = append([]SemanticChiMiddleware(nil), endpoint.Middleware...)
+	}
+	copyView.ChiEndpointCalls = cloneBoolMap(view.ChiEndpointCalls)
+	copyView.NonChiHTTPCalls = cloneBoolMap(view.NonChiHTTPCalls)
 	copyView.Diagnostics = append([]graph.Diagnostic(nil), view.Diagnostics...)
 	return copyView
+}
+
+func cloneBoolMap(values map[int]bool) map[int]bool {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make(map[int]bool, len(values))
+	for key, value := range values {
+		result[key] = value
+	}
+	return result
 }
 
 func cloneStringMap(values map[string]string) map[string]string {
@@ -383,6 +429,9 @@ func collectPackageViews(root, buildContext string, pkg *packages.Package, views
 		}
 		collectFailureView(root, pkg, file, path, &view)
 		views[path] = view
+	}
+	if len(pkg.Errors) == 0 {
+		collectChiPackageViews(root, pkg, views)
 	}
 	collectPackageDiagnostics(root, pkg, views, buildContext)
 }

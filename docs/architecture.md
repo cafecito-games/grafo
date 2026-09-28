@@ -539,6 +539,15 @@ evidence for the same event without persisting a derived relationship.
 Federation retains its edge marker, and cross-repository evidence also marks
 template-compatible HTTP links as federated.
 
+Go/Chi composition is resolved once in the compact package semantic view using
+go/types API identity. The analyzer expands package-local router helpers and
+constructors with a bounded recursion guard, applies `Use`, `With`, `Group`,
+`Route`, and `Mount` scope rules, and emits only the final mounted endpoint at
+the leaf registration location. Dynamic prefixes and ambiguous or cyclic
+helpers remain diagnosed boundaries rather than root-relative guesses.
+Persisted `uses_middleware` edges are the sole query authority for the ordered
+effective middleware chain; topology queries do not reconstruct router syntax.
+
 ## Persistence
 
 Each branch has a separate SQLite file under `.grafo/indexes`. The database is

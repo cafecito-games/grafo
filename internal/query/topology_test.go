@@ -40,6 +40,13 @@ func TestEndpointCatalogAndHandlerResolutionUseGraphEvidence(t *testing.T) {
 		endpoint.Handlers[0].Node.QualifiedName != "orders.List" {
 		t.Fatalf("endpoint handler did not resolve from handled_by evidence: %#v", endpoint)
 	}
+	if got := []string{endpoint.Middleware[0].Node.QualifiedName, endpoint.Middleware[1].Node.QualifiedName}; !reflect.DeepEqual(got, []string{"orders.RequestID", "orders.Authenticate"}) {
+		t.Fatalf("endpoint middleware is not in inherited order: %#v", endpoint.Middleware)
+	}
+	if endpoint.Middleware[0].Evidence["form"] != "use" || endpoint.Middleware[1].Evidence["order"] != "1" ||
+		len(endpoint.UnresolvedMiddleware) != 1 || endpoint.UnresolvedMiddleware[0].Node.QualifiedName != "dynamicMiddleware" {
+		t.Fatalf("endpoint middleware evidence or unresolved boundary is missing: %#v", endpoint)
+	}
 
 	handlers, err := service.Handlers(context.Background(), query.TopologyOptions{
 		Repository: "orders", Method: "GET", Route: "/orders", Limit: 10,
@@ -80,6 +87,19 @@ func TestHandlerResolutionReportsAmbiguousAndUnresolvedTargets(t *testing.T) {
 	}
 	if statuses["POST /unresolved"] != query.BoundaryUnresolved {
 		t.Fatalf("an external handler was not kept unresolved: %#v", result.Matches)
+	}
+}
+
+func TestEndpointMiddlewareEvidenceIsBounded(t *testing.T) {
+	result, err := query.NewTopology(newTopologyFixture()).Endpoints(context.Background(), query.TopologyOptions{
+		Repository: "orders", Method: "GET", Route: "/orders", Limit: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Endpoints) != 1 || !result.Truncated || !result.Endpoints[0].MiddlewareTruncated ||
+		len(result.Endpoints[0].Middleware)+len(result.Endpoints[0].UnresolvedMiddleware) != 1 {
+		t.Fatalf("middleware bound was not propagated: %#v", result)
 	}
 }
 
@@ -605,6 +625,12 @@ func newTopologyFixture() *catalogRepository {
 		QualifiedName: "orders.Routes", Location: graph.Location{Path: "routes.go", Line: 5}})
 	add("orders", graph.Node{ID: "n:list-orders", Kind: graph.KindFunction, Name: "List",
 		QualifiedName: "orders.List", Location: graph.Location{Path: "handlers.go", Line: 12}})
+	add("orders", graph.Node{ID: "n:middleware-z", Kind: graph.KindFunction, Name: "RequestID",
+		QualifiedName: "orders.RequestID", Location: graph.Location{Path: "middleware.go", Line: 4}})
+	add("orders", graph.Node{ID: "n:middleware-a", Kind: graph.KindFunction, Name: "Authenticate",
+		QualifiedName: "orders.Authenticate", Location: graph.Location{Path: "middleware.go", Line: 8}})
+	add("orders", graph.Node{ID: "n:middleware-external", Kind: graph.KindExternal, Name: "dynamicMiddleware",
+		QualifiedName: "dynamicMiddleware", External: true, Properties: map[string]string{"unresolved": "true"}})
 
 	for _, candidate := range []struct{ repository, id, path string }{
 		{"payments-a", "n:charge-a", "a.go"}, {"payments-b", "n:charge-b", "b.go"},
@@ -650,6 +676,15 @@ func newTopologyFixture() *catalogRepository {
 			Kind: graph.EdgeExposes, Location: graph.Location{Path: "routes.go", Line: 7}},
 		{ID: "e:handle-orders", FactID: "f:handle-orders", FromID: "n:endpoint-orders", ToID: "n:list-orders",
 			Kind: graph.EdgeHandledBy, Location: graph.Location{Path: "routes.go", Line: 7}},
+		{ID: "e:middleware-0", FactID: "f:middleware-0", FromID: "n:endpoint-orders", ToID: "n:middleware-z",
+			Kind: graph.EdgeUsesMiddleware, Location: graph.Location{Path: "routes.go", Line: 5},
+			Properties: map[string]string{"form": "use", "order": "0", "resolution": "go/types"}},
+		{ID: "e:middleware-1", FactID: "f:middleware-1", FromID: "n:endpoint-orders", ToID: "n:middleware-a",
+			Kind: graph.EdgeUsesMiddleware, Location: graph.Location{Path: "routes.go", Line: 6},
+			Properties: map[string]string{"form": "with", "order": "1", "resolution": "go/types"}},
+		{ID: "e:middleware-2", FactID: "f:middleware-2", FromID: "n:endpoint-orders", ToID: "n:middleware-external",
+			Kind: graph.EdgeUsesMiddleware, Location: graph.Location{Path: "routes.go", Line: 7},
+			Properties: map[string]string{"form": "use", "order": "2", "resolution": "go/types", "unresolved": "true"}},
 		{ID: "e:request-orders", FactID: "f:request-orders", FromID: "n:client-call", ToID: "n:endpoint-orders",
 			Kind: graph.EdgeRequests, Location: graph.Location{Path: "client.go", Line: 10},
 			Properties: map[string]string{"federated": "true"}},
