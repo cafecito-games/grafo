@@ -41,6 +41,7 @@ const (
 
 var _ graph.Repository = (*Repository)(nil)
 var _ graph.CatalogRepository = (*Repository)(nil)
+var _ graph.CanonicalMessageRepository = (*Repository)(nil)
 var _ semantic.Repository = (*Repository)(nil)
 
 func Open(ctx context.Context, path string) (*Repository, error) {
@@ -771,6 +772,49 @@ func (r *Repository) ListNodesByKind(ctx context.Context, request graph.NodeList
 		}
 	}
 	return result, nil
+}
+
+// CanonicalMessages enumerates authoritative protocol-message declarations.
+// Filtering happens in SQLite before the deterministic order and bound, so
+// unrelated type declarations cannot hide or truncate message coverage.
+func (r *Repository) CanonicalMessages(ctx context.Context, request graph.CanonicalMessageQuery) (graph.CanonicalMessagePage, error) {
+	if err := request.Validate(); err != nil {
+		return graph.CanonicalMessagePage{}, err
+	}
+	name, err := r.repositoryName(ctx)
+	if err != nil {
+		return graph.CanonicalMessagePage{}, err
+	}
+	if request.Repository != "" && request.Repository != name {
+		return graph.CanonicalMessagePage{Items: []graph.ScopedNode{}}, nil
+	}
+	if request.Limit == int(^uint(0)>>1) {
+		return graph.CanonicalMessagePage{}, fmt.Errorf("canonical message limit is too large")
+	}
+	prefixes := request.PathPrefixes
+	if prefixes == nil {
+		prefixes = []string{}
+	}
+	prefixesJSON, err := json.Marshal(prefixes)
+	if err != nil {
+		return graph.CanonicalMessagePage{}, fmt.Errorf("encode canonical message path prefixes: %w", err)
+	}
+	rows, err := r.queries.ListCanonicalMessages(ctx, sqlcgen.ListCanonicalMessagesParams{
+		PackageName: strings.TrimSuffix(request.Package, "."), MessageName: request.Message,
+		PathPrefixesJson: string(prefixesJSON), MaxResults: int64(request.Limit) + 1,
+	})
+	if err != nil {
+		return graph.CanonicalMessagePage{}, err
+	}
+	page := graph.CanonicalMessagePage{Items: make([]graph.ScopedNode, 0, min(len(rows), request.Limit))}
+	if len(rows) > request.Limit {
+		page.Truncated = true
+		rows = rows[:request.Limit]
+	}
+	for _, row := range rows {
+		page.Items = append(page.Items, graph.ScopedNode{Repository: name, Node: nodeFromRow(row)})
+	}
+	return page, nil
 }
 
 func (r *Repository) repositoryName(ctx context.Context) (string, error) {

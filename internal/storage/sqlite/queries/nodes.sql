@@ -95,6 +95,31 @@ WHERE kind = @kind
 ORDER BY qualified_name, id
 LIMIT @max_results;
 
+-- name: ListCanonicalMessages :many
+SELECT * FROM nodes
+WHERE kind = 'type'
+  AND external = 0
+  AND json_extract(properties, '$.declaration') = 'message'
+  AND (
+      CAST(@package_name AS TEXT) = ''
+      OR substr(qualified_name, 1, length(CAST(@package_name AS TEXT)) + 1) = CAST(@package_name AS TEXT) || '.'
+  )
+  AND (
+      CAST(@message_name AS TEXT) = ''
+      OR name = CAST(@message_name AS TEXT)
+      OR qualified_name = CAST(@message_name AS TEXT)
+  )
+  AND (
+    @path_prefixes_json = '[]'
+    OR EXISTS (
+      SELECT 1 FROM json_each(@path_prefixes_json) AS prefix
+      WHERE nodes.path = prefix.value
+         OR substr(nodes.path, 1, length(prefix.value) + 1) = prefix.value || '/'
+    )
+  )
+ORDER BY qualified_name, id
+LIMIT @max_results;
+
 -- Selector resolution queries. Each level is narrow and index-backed so
 -- ambiguity is decided from complete counts instead of a truncated substring
 -- window. nodes_qualified and nodes_name are COLLATE NOCASE indexes, so the

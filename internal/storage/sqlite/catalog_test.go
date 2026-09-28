@@ -3,11 +3,14 @@ package sqlite_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/indexer"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 )
 
@@ -149,6 +152,9 @@ func TestListNodesByKindEnumeratesExactKinds(t *testing.T) {
 	if err := repository.SetMeta(ctx, "root", "/tmp/example/checkout"); err != nil {
 		t.Fatal(err)
 	}
+	if err := repository.SetMeta(ctx, "semantic_index_version", indexer.SemanticIndexVersion); err != nil {
+		t.Fatal(err)
+	}
 	orders := graph.Node{ID: graph.NodeID(graph.KindTable, "orders"), Kind: graph.KindTable,
 		Name: "orders", QualifiedName: "orders", OwnerFile: "schema.sql"}
 	summary := graph.Node{ID: graph.NodeID(graph.KindView, "order_summary"), Kind: graph.KindView,
@@ -276,6 +282,93 @@ func TestListNodesByKindFiltersSegmentPathsBeforeLimit(t *testing.T) {
 	}
 	if len(listed) != 1 || listed[0].Node.Name != "c" {
 		t.Fatalf("path-filtered bounded nodes = %#v", listed)
+	}
+}
+
+func TestCanonicalMessagesFiltersBeforeOrderingAndBounds(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "graph.sqlite")
+	repository, err := sqlite.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.SetMeta(ctx, "root", "/tmp/example/checkout"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.SetMeta(ctx, "semantic_index_version", indexer.SemanticIndexVersion); err != nil {
+		t.Fatal(err)
+	}
+	nodes := make([]graph.Node, 0, 1005)
+	for index := 0; index <= 1000; index++ {
+		nodes = append(nodes, graph.Node{ID: fmt.Sprintf("ordinary-%04d", index), Kind: graph.KindType,
+			Name: fmt.Sprintf("Ordinary%04d", index), QualifiedName: fmt.Sprintf("aaa.Ordinary%04d", index),
+			OwnerFile: "fixture.proto", Location: graph.Location{Path: "bulk/fixture.proto"},
+			Properties: map[string]string{"declaration": "struct"}})
+	}
+	for _, qualified := range []string{"acme.v1.Alpha", "acme.v1.Bravo", "other.v1.Alpha"} {
+		name := qualified[strings.LastIndex(qualified, ".")+1:]
+		messagePath := "protocol/" + strings.ReplaceAll(qualified, ".", "/") + ".proto"
+		nodes = append(nodes, graph.Node{ID: "message-" + qualified, Kind: graph.KindType, Name: name,
+			QualifiedName: qualified, OwnerFile: "fixture.proto", Location: graph.Location{Path: messagePath},
+			Properties: map[string]string{"declaration": "message"}})
+	}
+	if err := repository.ReplaceOwner(ctx, "fixture.proto", graph.ParseResult{Nodes: nodes}); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := repository.CanonicalMessages(ctx, graph.CanonicalMessageQuery{Package: "acme.v1", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Truncated || len(page.Items) != 2 || page.Items[0].Node.QualifiedName != "acme.v1.Alpha" ||
+		page.Items[1].Node.QualifiedName != "acme.v1.Bravo" {
+		t.Fatalf("filtered canonical page = %#v", page)
+	}
+	bounded, err := repository.CanonicalMessages(ctx, graph.CanonicalMessageQuery{Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bounded.Truncated || len(bounded.Items) != 2 {
+		t.Fatalf("bounded canonical page = %#v", bounded)
+	}
+	exact, err := repository.CanonicalMessages(ctx, graph.CanonicalMessageQuery{Message: "other.v1.Alpha", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(exact.Items) != 1 || exact.Items[0].Node.QualifiedName != "other.v1.Alpha" {
+		t.Fatalf("qualified message filter = %#v", exact)
+	}
+	pathFiltered, err := repository.CanonicalMessages(ctx, graph.CanonicalMessageQuery{
+		PathPrefixes: []string{"protocol/acme/v1/Bravo.proto"}, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pathFiltered.Truncated || len(pathFiltered.Items) != 1 || pathFiltered.Items[0].Node.QualifiedName != "acme.v1.Bravo" {
+		t.Fatalf("path-filtered canonical page = %#v", pathFiltered)
+	}
+	foreign, err := repository.CanonicalMessages(ctx, graph.CanonicalMessageQuery{Repository: "billing", Limit: 10})
+	if err != nil || foreign.Truncated || len(foreign.Items) != 0 {
+		t.Fatalf("foreign repository filter = %#v, %v", foreign, err)
+	}
+	if _, err := repository.CanonicalMessages(ctx, graph.CanonicalMessageQuery{}); err == nil {
+		t.Fatal("zero canonical message bound succeeded")
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := repository.CanonicalMessages(cancelled, graph.CanonicalMessageQuery{Limit: 10}); err == nil {
+		t.Fatal("cancelled canonical message query succeeded")
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := sqlite.OpenReadOnly(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reader.Close() })
+	repeated, err := reader.CanonicalMessages(ctx, graph.CanonicalMessageQuery{Package: "acme.v1", Limit: 10})
+	if err != nil || !reflect.DeepEqual(page, repeated) {
+		t.Fatalf("read-only canonical page = %#v, %v", repeated, err)
 	}
 }
 

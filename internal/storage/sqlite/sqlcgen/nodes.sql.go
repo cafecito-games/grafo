@@ -286,6 +286,82 @@ func (q *Queries) GetNode(ctx context.Context, id string) (Node, error) {
 	return i, err
 }
 
+const listCanonicalMessages = `-- name: ListCanonicalMessages :many
+SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, owner_file, external, name_folded, qualified_name_folded FROM nodes
+WHERE kind = 'type'
+  AND external = 0
+  AND json_extract(properties, '$.declaration') = 'message'
+  AND (
+      CAST(?1 AS TEXT) = ''
+      OR substr(qualified_name, 1, length(CAST(?1 AS TEXT)) + 1) = CAST(?1 AS TEXT) || '.'
+  )
+  AND (
+      CAST(?2 AS TEXT) = ''
+      OR name = CAST(?2 AS TEXT)
+      OR qualified_name = CAST(?2 AS TEXT)
+  )
+  AND (
+    ?3 = '[]'
+    OR EXISTS (
+      SELECT 1 FROM json_each(?3) AS prefix
+      WHERE nodes.path = prefix.value
+         OR substr(nodes.path, 1, length(prefix.value) + 1) = prefix.value || '/'
+    )
+  )
+ORDER BY qualified_name, id
+LIMIT ?4
+`
+
+type ListCanonicalMessagesParams struct {
+	PackageName      string      `json:"package_name"`
+	MessageName      string      `json:"message_name"`
+	PathPrefixesJson interface{} `json:"path_prefixes_json"`
+	MaxResults       int64       `json:"max_results"`
+}
+
+func (q *Queries) ListCanonicalMessages(ctx context.Context, arg ListCanonicalMessagesParams) ([]Node, error) {
+	rows, err := q.query(ctx, q.listCanonicalMessagesStmt, listCanonicalMessages,
+		arg.PackageName,
+		arg.MessageName,
+		arg.PathPrefixesJson,
+		arg.MaxResults,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Node{}
+	for rows.Next() {
+		var i Node
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Name,
+			&i.QualifiedName,
+			&i.Language,
+			&i.Path,
+			&i.Line,
+			&i.ColumnNo,
+			&i.EndLine,
+			&i.Properties,
+			&i.OwnerFile,
+			&i.External,
+			&i.NameFolded,
+			&i.QualifiedNameFolded,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listExternalNodesMatching = `-- name: ListExternalNodesMatching :many
 SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, owner_file, external, name_folded, qualified_name_folded FROM nodes
 WHERE external = 1

@@ -2,7 +2,11 @@ package query_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -158,6 +162,167 @@ func TestMessageFlowBatchReusesOneComponentSnapshotAndIsolatesErrors(t *testing.
 	}
 	if repository.componentScans != 1 {
 		t.Fatalf("batch rebuilt component snapshot %d times", repository.componentScans)
+	}
+}
+
+func TestMessageFlowComponentSnapshotIgnoresUnrelatedGraphSize(t *testing.T) {
+	repository := newMessageFlowFixture()
+	for index := 0; index <= query.MaxCatalogLimit; index++ {
+		repository.add("transport", graph.Node{
+			ID:            fmt.Sprintf("n:unrelated:%04d", index),
+			Kind:          graph.KindFunction,
+			Name:          fmt.Sprintf("Unrelated%04d", index),
+			QualifiedName: fmt.Sprintf("unrelated.Function%04d", index),
+			OwnerFile:     "unrelated.go",
+		})
+	}
+
+	flow, err := query.NewMessageFlow(repository).Flow(context.Background(), "acme.v1.Envelope", query.MessageFlowOptions{Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flow.Truncated {
+		t.Fatalf("unrelated functions made component evidence uncertain: %#v", flow.Uncertainties)
+	}
+}
+
+func TestMessageCoverageBoundsCanonicalMessagesAfterFilteringOrdinaryTypes(t *testing.T) {
+	repository := newMessageFlowFixture()
+	for index := 0; index <= query.MaxCatalogLimit; index++ {
+		repository.add("transport", graph.Node{
+			ID:            fmt.Sprintf("n:ordinary:%04d", index),
+			Kind:          graph.KindType,
+			Name:          fmt.Sprintf("Ordinary%04d", index),
+			QualifiedName: fmt.Sprintf("aaa.Ordinary%04d", index),
+			Properties:    map[string]string{"declaration": "struct"},
+		})
+	}
+
+	coverage, err := query.NewMessageFlow(repository).Coverage(context.Background(), query.MessageCoverageOptions{
+		Repository: "transport", Package: "acme.v1", Message: "Envelope", Limit: 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coverage.Truncated || len(coverage.Messages) != 1 || coverage.Messages[0].Message.QualifiedName != "acme.v1.Envelope" {
+		t.Fatalf("ordinary types consumed canonical message bound: %#v", coverage)
+	}
+}
+
+func TestMessageFlowRejectsContradictoryComponentOwnership(t *testing.T) {
+	repository := newMessageFlowFixture()
+	repository.add("transport", graph.Node{ID: "n:component-shadow", Kind: graph.KindComponent, Name: "shadow", QualifiedName: "component:shadow"})
+	addMessageFlowEdge(repository, "e:owns-client-shadow", "n:component-shadow", "n:file-client", graph.EdgeContains, nil)
+
+	_, err := query.NewMessageFlow(repository).Flow(context.Background(), "acme.v1.Envelope", query.MessageFlowOptions{Limit: 20})
+	if err == nil || !strings.Contains(err.Error(), "client") || !strings.Contains(err.Error(), "shadow") {
+		t.Fatalf("contradictory component ownership error = %v", err)
+	}
+}
+
+func TestMessageFlowDoesNotConflateEqualFileBasenames(t *testing.T) {
+	repository := newMessageFlowFixture()
+	clientFile := repository.nodes["n:file-client"]
+	clientFile.Name = "client.go"
+	clientFile.QualifiedName = "a/client.go"
+	clientFile.OwnerFile = "a/client.go"
+	clientFile.Location.Path = "a/client.go"
+	repository.nodes[clientFile.ID] = clientFile
+	build := repository.nodes["n:build"]
+	build.OwnerFile = "a/client.go"
+	repository.nodes[build.ID] = build
+
+	repository.add("transport", graph.Node{ID: "n:component-other", Kind: graph.KindComponent,
+		Name: "other", QualifiedName: "component:other"})
+	repository.add("transport", graph.Node{ID: "n:file-other-client", Kind: graph.KindFile,
+		Name: "client.go", QualifiedName: "b/client.go", OwnerFile: "b/client.go", Location: graph.Location{Path: "b/client.go"}})
+	addMessageFlowEdge(repository, "e:owns-other-client", "n:component-other", "n:file-other-client", graph.EdgeContains, nil)
+
+	flow, err := query.NewMessageFlow(repository).Flow(context.Background(), "acme.v1.Envelope", query.MessageFlowOptions{Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(flow.Encoders) != 1 || flow.Encoders[0].Component != "client" {
+		t.Fatalf("path-qualified owner was lost: %#v", flow.Encoders)
+	}
+}
+
+func TestMessageFlowReportsOnlyGenuineComponentBounds(t *testing.T) {
+	t.Run("component enumeration", func(t *testing.T) {
+		repository := newMessageFlowFixture()
+		for index := 0; index <= query.MaxCatalogLimit; index++ {
+			repository.add("transport", graph.Node{ID: fmt.Sprintf("n:component-extra:%04d", index),
+				Kind: graph.KindComponent, Name: fmt.Sprintf("extra-%04d", index), QualifiedName: fmt.Sprintf("component:extra-%04d", index)})
+		}
+		flow, err := query.NewMessageFlow(repository).Flow(context.Background(), "acme.v1.Envelope", query.MessageFlowOptions{Limit: 20})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !flow.Truncated || !hasUncertainty(flow.Uncertainties, "truncated") {
+			t.Fatalf("component overflow was not reported: %#v", flow)
+		}
+	})
+
+	t.Run("component membership", func(t *testing.T) {
+		repository := newMessageFlowFixture()
+		for index := 0; index <= query.MaxCatalogLimit; index++ {
+			id, path := fmt.Sprintf("n:file-extra:%04d", index), fmt.Sprintf("extra/%04d.go", index)
+			repository.add("transport", graph.Node{ID: id, Kind: graph.KindFile, Name: path, QualifiedName: path,
+				OwnerFile: path, Location: graph.Location{Path: path}})
+			addMessageFlowEdge(repository, "e:owns-extra:"+id, "n:component-client", id, graph.EdgeContains, nil)
+		}
+		flow, err := query.NewMessageFlow(repository).Flow(context.Background(), "acme.v1.Envelope", query.MessageFlowOptions{Limit: 20})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !flow.Truncated || !hasUncertainty(flow.Uncertainties, "truncated") {
+			t.Fatalf("component membership overflow was not reported: %#v", flow)
+		}
+	})
+
+	t.Run("no components", func(t *testing.T) {
+		repository := newMessageFlowFixture()
+		delete(repository.nodes, "n:component-client")
+		delete(repository.nodes, "n:component-server")
+		repository.edges = slices.DeleteFunc(repository.edges, func(edge graph.Edge) bool { return edge.Kind == graph.EdgeContains })
+		flow, err := query.NewMessageFlow(repository).Flow(context.Background(), "acme.v1.Envelope", query.MessageFlowOptions{Limit: 20})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if flow.Truncated {
+			t.Fatalf("empty component map was uncertain: %#v", flow.Uncertainties)
+		}
+		for _, evidence := range append(flow.Encoders, flow.Decoders...) {
+			if evidence.Component != "" || evidence.ComponentID != "" {
+				t.Fatalf("unassigned evidence invented a component: %#v", evidence)
+			}
+		}
+	})
+}
+
+func TestMessageFlowCatalogFailuresRemainFailClosed(t *testing.T) {
+	repository := newMessageFlowFixture()
+	want := errors.New("component membership unavailable")
+	repository.relationEdgeErr = want
+	if _, err := query.NewMessageFlow(repository).Flow(context.Background(), "acme.v1.Envelope", query.MessageFlowOptions{Limit: 20}); !errors.Is(err, want) {
+		t.Fatalf("component adapter error = %v", err)
+	}
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := query.NewMessageFlow(newMessageFlowFixture()).Coverage(cancelled, query.MessageCoverageOptions{Limit: 20}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled canonical coverage error = %v", err)
+	}
+
+	repository = newMessageFlowFixture()
+	want = errors.New("canonical catalog unavailable")
+	repository.canonicalErr = want
+	if _, err := query.NewMessageFlow(repository).Coverage(context.Background(), query.MessageCoverageOptions{Limit: 20}); !errors.Is(err, want) {
+		t.Fatalf("canonical adapter error = %v", err)
+	}
+	withoutCatalog := struct{ graph.TopologyRepository }{TopologyRepository: newMessageFlowFixture()}
+	if _, err := query.NewMessageFlow(withoutCatalog).Coverage(context.Background(), query.MessageCoverageOptions{Limit: 20}); err == nil || !strings.Contains(err.Error(), "canonical message catalogs") {
+		t.Fatalf("unsupported canonical catalog error = %v", err)
 	}
 }
 

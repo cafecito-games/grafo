@@ -612,6 +612,7 @@ type catalogRepository struct {
 	legacyEdgeCalls   int
 	relationEdgeCalls int
 	relationEdgeErr   error
+	canonicalErr      error
 }
 
 func (c *catalogRepository) add(repository string, node graph.Node) {
@@ -623,8 +624,11 @@ func (c *catalogRepository) Repositories(context.Context) ([]string, error) {
 	return append([]string(nil), c.repositories...), nil
 }
 
-func (c *catalogRepository) ListNodesByKind(_ context.Context, request graph.NodeListQuery) ([]graph.ScopedNode, error) {
-	if len(request.Kinds) == len(graph.NodeKinds()) {
+func (c *catalogRepository) ListNodesByKind(ctx context.Context, request graph.NodeListQuery) ([]graph.ScopedNode, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(request.Kinds) == 1 && request.Kinds[0] == graph.KindComponent {
 		c.componentScans++
 	}
 	var result []graph.ScopedNode
@@ -675,6 +679,60 @@ func (c *catalogRepository) ListNodesByKind(_ context.Context, request graph.Nod
 		result = append(result, matched...)
 	}
 	return result, nil
+}
+
+func (c *catalogRepository) CanonicalMessages(ctx context.Context, request graph.CanonicalMessageQuery) (graph.CanonicalMessagePage, error) {
+	if c.canonicalErr != nil {
+		return graph.CanonicalMessagePage{}, c.canonicalErr
+	}
+	if err := request.Validate(); err != nil {
+		return graph.CanonicalMessagePage{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return graph.CanonicalMessagePage{}, err
+	}
+	items := []graph.ScopedNode{}
+	for _, node := range c.nodes {
+		repository := c.owners[node.ID]
+		if node.Kind != graph.KindType || node.External || node.Properties["declaration"] != "message" ||
+			request.Repository != "" && request.Repository != repository ||
+			!messageCatalogNameMatches(node, request.Package, request.Message) {
+			continue
+		}
+		if len(request.PathPrefixes) > 0 {
+			matched := false
+			for _, prefix := range request.PathPrefixes {
+				matched = matched || node.Location.Path == prefix || strings.HasPrefix(node.Location.Path, prefix+"/")
+			}
+			if !matched {
+				continue
+			}
+		}
+		items = append(items, graph.ScopedNode{Repository: repository, Node: node})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Repository != items[j].Repository {
+			return items[i].Repository < items[j].Repository
+		}
+		if items[i].Node.QualifiedName != items[j].Node.QualifiedName {
+			return items[i].Node.QualifiedName < items[j].Node.QualifiedName
+		}
+		return items[i].Node.ID < items[j].Node.ID
+	})
+	page := graph.CanonicalMessagePage{Items: items}
+	if len(page.Items) > request.Limit {
+		page.Truncated = true
+		page.Items = page.Items[:request.Limit]
+	}
+	return page, nil
+}
+
+func messageCatalogNameMatches(node graph.Node, pkg, message string) bool {
+	pkg = strings.TrimSuffix(pkg, ".")
+	if pkg != "" && !strings.HasPrefix(node.QualifiedName, pkg+".") {
+		return false
+	}
+	return message == "" || node.Name == message || node.QualifiedName == message
 }
 
 // MatchNodes implements the graph.NodeMatchGroup contract over the fake's node
@@ -820,7 +878,7 @@ func (c *catalogRepository) RelationEdges(_ context.Context, request graph.Relat
 			return graph.RelationEdgePage{}, fmt.Errorf("edge %s counterpart %s not found", edge.ID, counterpartID)
 		}
 		kept[edge.Kind]++
-		page.Items = append(page.Items, graph.HydratedRelationEdge{Edge: edge, Counterpart: counterpart})
+		page.Items = append(page.Items, graph.HydratedRelationEdge{Edge: edge, Counterpart: counterpart, Repository: c.owners[counterpartID]})
 	}
 	return page, nil
 }
