@@ -82,6 +82,8 @@ func (e *extractor) prepareTransportSummaries(statements []gdast.Statement, curr
 				return
 			}
 			functionScope.symbols[name] = "local:" + qualified + ":" + name
+			delete(functionScope.types, name)
+			delete(functionScope.locked, name)
 			clearLocalTransportEvidence(name, functionScope)
 		}
 		for _, bodyStatement := range declaration.Body {

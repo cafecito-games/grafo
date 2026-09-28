@@ -166,7 +166,7 @@ func collectTransportPackageViews(root string, pkg *packages.Package, views map[
 				if conflict {
 					view := views[function.path]
 					view.Diagnostics = append(view.Diagnostics, graph.Diagnostic{Path: function.path, Line: call.location.Line,
-						Level: "warning", Message: "conflicting ENet wrapper summaries; transport evidence marked ambiguous"})
+						Level: "warning", Message: "conflicting ENet wrapper summaries for " + merged.spec.API + "; transport evidence marked ambiguous"})
 					views[function.path] = view
 				}
 			}

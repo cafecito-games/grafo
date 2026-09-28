@@ -78,6 +78,8 @@ class Lookalike:
 	func send(_channel: int, _payload: PackedByteArray, _flags: int) -> void:
 		pass
 
+var stored_message: AcmeV1EnvelopeEnvelope
+
 func send_message(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope) -> void:
 	peer.send(GAMEPLAY_CHANNEL, message.to_bytes(), ENetPacketPeer.FLAG_RELIABLE)
 
@@ -161,6 +163,13 @@ func loop_shadow_wrapper(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope, 
 
 func use_loop_shadow(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope, items: Array) -> void:
 	loop_shadow_wrapper(peer, message, items)
+
+func typed_field_shadow_wrapper(peer: ENetPacketPeer, items: Array) -> void:
+	for stored_message in items:
+		peer.send(12, stored_message.to_bytes(), ENetPacketPeer.FLAG_RELIABLE)
+
+func use_typed_field_shadow(peer: ENetPacketPeer, items: Array) -> void:
+	typed_field_shadow_wrapper(peer, items)
 
 func multi_api(peer: ENetPacketPeer, connection: ENetConnection, message: AcmeV1EnvelopeEnvelope) -> void:
 	peer.send(10, message.to_bytes(), ENetPacketPeer.FLAG_RELIABLE)
@@ -265,6 +274,9 @@ func use_multi(peer: ENetPacketPeer, connection: ENetConnection, message: AcmeV1
 	if loopShadow.Properties["channel_status"] != "unknown" || loopShadow.Properties["channel"] != "" {
 		t.Fatalf("loop-shadowed class constant retained wrapper evidence: %#v", loopShadow.Properties)
 	}
+	useTypedShadowID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "TransportClient.use_typed_field_shadow").ID
+	typedShadow := assertGDTransportOperation(t, result, useTypedShadowID, graph.EdgeSends, "send", "ENetPacketPeer.send")
+	assertGDTransportDoesNotCarry(t, result.Facts, typedShadow.ID)
 	useMultiID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "TransportClient.use_multi").ID
 	assertGDTransportOperation(t, result, useMultiID, graph.EdgeSends, "send", "ENetPacketPeer.send")
 	assertGDTransportOperation(t, result, useMultiID, graph.EdgeSends, "send", "ENetConnection.broadcast")

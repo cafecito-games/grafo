@@ -1153,6 +1153,15 @@ func conflicting(peer enet.Peer, left, right []byte) {
 	_ = peer.SendBytes(left, 1, enet.PacketFlagReliable)
 	_ = peer.SendBytes(right, 2, enet.PacketFlagUnsequenced)
 }
+func multiConflict(peer enet.Peer, left, right []byte, leftText, rightText string) {
+	_ = peer.SendBytes(left, 1, enet.PacketFlagReliable)
+	_ = peer.SendBytes(right, 2, enet.PacketFlagUnsequenced)
+	_ = peer.SendString(leftText, 3, enet.PacketFlagReliable)
+	_ = peer.SendString(rightText, 4, enet.PacketFlagUnsequenced)
+}
+func UseMultiConflict(peer enet.Peer, left, right []byte, leftText, rightText string) {
+	multiConflict(peer, left, right, leftText, rightText)
+}
 func cycleA(peer enet.Peer, payload []byte) { cycleB(peer, payload) }
 func cycleB(peer enet.Peer, payload []byte) { cycleA(peer, payload) }
 func deep1(peer enet.Peer, payload []byte) { send(peer, payload) }
@@ -1238,6 +1247,20 @@ func UncertainTransport(peer enet.Peer, input *generated.Envelope, unknown []byt
 	}
 	if !unreliableOperation {
 		t.Fatalf("exact unreliable flags were not normalized: %#v", result.Nodes)
+	}
+	var conflictDiagnostics []string
+	for _, diagnostic := range result.Diagnostics {
+		if strings.Contains(diagnostic.Message, "conflicting ENet wrapper summaries for ") {
+			conflictDiagnostics = append(conflictDiagnostics, diagnostic.Message)
+		}
+	}
+	wantConflictDiagnostics := []string{
+		"conflicting ENet wrapper summaries for github.com/codecat/go-enet.Peer.SendBytes; transport evidence marked ambiguous",
+		"conflicting ENet wrapper summaries for github.com/codecat/go-enet.Peer.SendString; transport evidence marked ambiguous",
+		"conflicting ENet wrapper summaries for github.com/codecat/go-enet.Peer.SendBytes; transport evidence marked ambiguous",
+	}
+	if !reflect.DeepEqual(conflictDiagnostics, wantConflictDiagnostics) {
+		t.Fatalf("multi-API conflict diagnostics = %#v, want %#v", conflictDiagnostics, wantConflictDiagnostics)
 	}
 	truncatedOperation := false
 	nodesByID := map[string]graph.Node{}
