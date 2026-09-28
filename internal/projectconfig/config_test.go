@@ -192,3 +192,81 @@ func TestParseRejectsInvalidHTTPRequestAPIContracts(t *testing.T) {
 		})
 	}
 }
+
+func TestParseGDScriptTestBasesAndSemanticKey(t *testing.T) {
+	first, err := projectconfig.Parse([]byte(`components:
+  - name: game
+    roots: [game]
+tests:
+  gdscript_bases: [SpecBase, addons.gut.CustomBase]
+unknown: one
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Tests.Invalid != "" {
+		t.Fatalf("invalid = %q", first.Tests.Invalid)
+	}
+	want := []string{"SpecBase", "addons.gut.CustomBase"}
+	if len(first.Tests.GDScriptBases) != len(want) {
+		t.Fatalf("bases = %#v", first.Tests.GDScriptBases)
+	}
+	for index := range want {
+		if first.Tests.GDScriptBases[index] != want[index] {
+			t.Fatalf("bases = %#v", first.Tests.GDScriptBases)
+		}
+	}
+
+	second, err := projectconfig.Parse([]byte(`unknown: two
+tests:
+  gdscript_bases:
+    - addons.gut.CustomBase
+    - SpecBase
+components:
+  - name: other
+    roots: [other]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Tests.SemanticKey() != second.Tests.SemanticKey() {
+		t.Fatalf("equivalent tests config changed semantic key: %q != %q", first.Tests.SemanticKey(), second.Tests.SemanticKey())
+	}
+
+	third, err := projectconfig.Parse([]byte("tests:\n  gdscript_bases: [OtherBase]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Tests.SemanticKey() == third.Tests.SemanticKey() {
+		t.Fatal("different test bases produced the same semantic key")
+	}
+}
+
+func TestInvalidTestConfigurationFailsClosedWithoutRejectingRepositoryConfig(t *testing.T) {
+	tests := []struct {
+		name, source, want string
+	}{
+		{name: "tests shape", source: "tests: []\n", want: "tests must be a mapping"},
+		{name: "unknown setting", source: "tests:\n  frameworks: [gut]\n", want: `unknown tests setting "frameworks"`},
+		{name: "bases shape", source: "tests:\n  gdscript_bases: SpecBase\n", want: "gdscript_bases must be a sequence"},
+		{name: "base type", source: "tests:\n  gdscript_bases: [42]\n", want: "must be a GDScript class name"},
+		{name: "unsafe base", source: "tests:\n  gdscript_bases: ['../Spec']\n", want: "must be a GDScript class name"},
+		{name: "duplicate base", source: "tests:\n  gdscript_bases: [SpecBase, SpecBase]\n", want: `duplicate tests.gdscript_bases entry "SpecBase"`},
+		{name: "duplicate field", source: "tests:\n  gdscript_bases: [First]\n  gdscript_bases: [Second]\n", want: `duplicate tests setting "gdscript_bases"`},
+		{name: "duplicate top level", source: "tests: {}\ntests: {}\n", want: `duplicate top-level section "tests"`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config, err := projectconfig.Parse([]byte(test.source))
+			if err != nil {
+				t.Fatalf("Parse() returned repository-fatal error: %v", err)
+			}
+			if config.Tests.Invalid == "" || !strings.Contains(config.Tests.Invalid, test.want) {
+				t.Fatalf("invalid = %q, want substring %q", config.Tests.Invalid, test.want)
+			}
+			if len(config.Tests.GDScriptBases) != 0 {
+				t.Fatalf("invalid config retained custom bases: %#v", config.Tests.GDScriptBases)
+			}
+		})
+	}
+}

@@ -13,6 +13,135 @@ import (
 	gdscriptparser "github.com/cafecito-games/grafo/internal/parser/gdscript"
 )
 
+func TestParserClassifiesOnlyStructurallyBackedGodotTests(t *testing.T) {
+	content := []byte(`extends GutTest
+
+func test_damage() -> void:
+	assert_true(true)
+
+func before_each() -> void:
+	pass
+
+func helper() -> void:
+	pass
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "tests/player_test.gd", Content: content, Repository: "sample", RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	testNode := gdNodeNamed(t, result.Nodes, "test_damage")
+	if testNode.Kind != graph.KindTest || testNode.Properties["test_subtype"] != "test" ||
+		testNode.Properties["test_framework"] != "gdscript" || testNode.Properties["test_base"] != "GutTest" {
+		t.Fatalf("GUT test metadata = %#v", testNode)
+	}
+	lifecycle := gdNodeNamed(t, result.Nodes, "before_each")
+	if lifecycle.Kind != graph.KindMethod || lifecycle.Properties["test_role"] != "lifecycle" ||
+		lifecycle.Properties["test_lifecycle"] != "before_each" {
+		t.Fatalf("lifecycle metadata = %#v", lifecycle)
+	}
+	helper := gdNodeNamed(t, result.Nodes, "helper")
+	if helper.Kind != graph.KindMethod || helper.Properties["test_role"] != "helper" {
+		t.Fatalf("test helper metadata = %#v", helper)
+	}
+
+	plain, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "scripts/player.gd", Content: []byte("extends Node\nfunc test_damage():\n\tpass\n"),
+		Repository: "sample", RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node := gdNodeNamed(t, plain.Nodes, "test_damage"); node.Kind != graph.KindMethod || node.Properties["test_role"] != "" {
+		t.Fatalf("unbacked test-like method = %#v", node)
+	}
+}
+
+func TestParserClassifiesTestsThroughLaterSameFileBaseDeclarations(t *testing.T) {
+	content := []byte(`extends RootSpec
+
+func test_root_late_base() -> void:
+	pass
+
+class DerivedSpec extends InnerSpec:
+	func test_inner_late_base() -> void:
+		pass
+
+class RootSpec extends GutTest:
+	pass
+
+class InnerSpec extends GutTest:
+	pass
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "tests/late_base_test.gd", Content: content, Repository: "sample", RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"test_root_late_base", "test_inner_late_base"} {
+		node := gdNodeNamed(t, result.Nodes, name)
+		if node.Kind != graph.KindTest || node.Properties["test_base"] == "" {
+			t.Fatalf("later-declared base did not classify %s: %#v", name, node)
+		}
+	}
+}
+
+func TestConfiguredGodotTestBasesAreValidatedAndSemantic(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "grafo.yaml", "tests:\n  gdscript_bases: [SpecBase]\n")
+	input := parserapi.Input{Root: root, Path: "tests/spec.gd", Content: []byte("extends SpecBase\nfunc test_custom():\n\tpass\n"),
+		Repository: "sample", RepoID: "repo"}
+	parser := gdscriptparser.New()
+	configured, err := parser.Parse(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node := gdNodeNamed(t, configured.Nodes, "test_custom"); node.Kind != graph.KindTest || node.Properties["test_base"] != "SpecBase" {
+		t.Fatalf("configured test base was not honored: %#v", node)
+	}
+	firstKey, err := parser.SemanticKey(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, root, "grafo.yaml", "tests:\n  gdscript_bases: [OtherBase]\n")
+	secondKey, err := parser.SemanticKey(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstKey == secondKey {
+		t.Fatal("test-base configuration did not invalidate the GDScript semantic key")
+	}
+
+	writeFile(t, root, "grafo.yaml", "tests:\n  gdscript_bases: [42]\n")
+	invalid, err := parser.Parse(context.Background(), input)
+	if err != nil {
+		t.Fatalf("invalid test config must fall back to built-ins: %v", err)
+	}
+	if node := gdNodeNamed(t, invalid.Nodes, "test_custom"); node.Kind == graph.KindTest {
+		t.Fatalf("invalid config enabled custom base: %#v", node)
+	}
+	foundWarning := false
+	for _, diagnostic := range invalid.Diagnostics {
+		foundWarning = foundWarning || diagnostic.Level == "warning" && strings.Contains(diagnostic.Message, "gdscript_bases")
+	}
+	if !foundWarning {
+		t.Fatalf("invalid test config was not diagnosed: %#v", invalid.Diagnostics)
+	}
+}
+
+func gdNodeNamed(t *testing.T, nodes []graph.Node, name string) graph.Node {
+	t.Helper()
+	for _, node := range nodes {
+		if node.Name == name {
+			return node
+		}
+	}
+	t.Fatalf("node %q not found: %#v", name, nodes)
+	return graph.Node{}
+}
+
 func TestParserExtractsGodotSymbolsAndWiring(t *testing.T) {
 	content := []byte(`class_name Player extends CharacterBody2D
 

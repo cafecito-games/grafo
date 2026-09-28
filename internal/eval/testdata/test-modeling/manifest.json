@@ -1,0 +1,1113 @@
+{
+  "schema_version": 2,
+  "case_id": "test-modeling",
+  "repositories": [
+    {
+      "id": "model",
+      "path": "repos/model"
+    }
+  ],
+  "expect": {
+    "nodes": [
+      {
+        "repo": "model",
+        "kind": "class",
+        "qualified_name": "GutTest",
+        "external": true
+      },
+      {
+        "repo": "model",
+        "kind": "class",
+        "qualified_name": "Node",
+        "external": true
+      },
+      {
+        "repo": "model",
+        "kind": "class",
+        "qualified_name": "Player"
+      },
+      {
+        "repo": "model",
+        "kind": "class",
+        "qualified_name": "PlayerSpec"
+      },
+      {
+        "repo": "model",
+        "kind": "external",
+        "qualified_name": "testing.common.Fatal",
+        "external": true
+      },
+      {
+        "repo": "model",
+        "kind": "external",
+        "qualified_name": "testing.common.Helper",
+        "external": true
+      },
+      {
+        "repo": "model",
+        "kind": "file",
+        "qualified_name": "go.mod"
+      },
+      {
+        "repo": "model",
+        "kind": "file",
+        "qualified_name": "player.gd"
+      },
+      {
+        "repo": "model",
+        "kind": "file",
+        "qualified_name": "player_spec.gd"
+      },
+      {
+        "repo": "model",
+        "kind": "file",
+        "qualified_name": "produce.go"
+      },
+      {
+        "repo": "model",
+        "kind": "file",
+        "qualified_name": "produce_test.go"
+      },
+      {
+        "repo": "model",
+        "kind": "function",
+        "qualified_name": "example.com/testmodel.Produce"
+      },
+      {
+        "repo": "model",
+        "kind": "function",
+        "qualified_name": "example.com/testmodel.assertProduced"
+      },
+      {
+        "repo": "model",
+        "kind": "method",
+        "qualified_name": "Player.damage"
+      },
+      {
+        "repo": "model",
+        "kind": "method",
+        "qualified_name": "PlayerSpec.assert_damage"
+      },
+      {
+        "repo": "model",
+        "kind": "module",
+        "qualified_name": "example.com/testmodel"
+      },
+      {
+        "repo": "model",
+        "kind": "module",
+        "qualified_name": "player"
+      },
+      {
+        "repo": "model",
+        "kind": "module",
+        "qualified_name": "player_spec"
+      },
+      {
+        "repo": "model",
+        "kind": "module",
+        "qualified_name": "testing",
+        "external": true
+      },
+      {
+        "repo": "model",
+        "kind": "parameter",
+        "qualified_name": "example.com/testmodel.TestDirect.t"
+      },
+      {
+        "repo": "model",
+        "kind": "parameter",
+        "qualified_name": "example.com/testmodel.TestProduce.t"
+      },
+      {
+        "repo": "model",
+        "kind": "parameter",
+        "qualified_name": "example.com/testmodel.assertProduced.t"
+      },
+      {
+        "repo": "model",
+        "kind": "repository",
+        "qualified_name": "model"
+      },
+      {
+        "repo": "model",
+        "kind": "test",
+        "qualified_name": "PlayerSpec.test_damage"
+      },
+      {
+        "repo": "model",
+        "kind": "test",
+        "qualified_name": "PlayerSpec.test_direct"
+      },
+      {
+        "repo": "model",
+        "kind": "test",
+        "qualified_name": "example.com/testmodel.TestDirect"
+      },
+      {
+        "repo": "model",
+        "kind": "test",
+        "qualified_name": "example.com/testmodel.TestProduce"
+      }
+    ],
+    "edges": [
+      {
+        "from": {
+          "repo": "model",
+          "kind": "class",
+          "qualified_name": "Player"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "method",
+          "qualified_name": "Player.damage"
+        },
+        "source": {
+          "path": "player.gd",
+          "line": 4,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "class",
+          "qualified_name": "Player"
+        },
+        "relation": "extends",
+        "to": {
+          "repo": "model",
+          "kind": "class",
+          "qualified_name": "Node",
+          "external": true
+        },
+        "source": {
+          "path": "player.gd",
+          "line": 2,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "class",
+          "qualified_name": "PlayerSpec"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "method",
+          "qualified_name": "PlayerSpec.assert_damage"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 10,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "class",
+          "qualified_name": "PlayerSpec"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "PlayerSpec.test_damage"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 4,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "class",
+          "qualified_name": "PlayerSpec"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "PlayerSpec.test_direct"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 7,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "class",
+          "qualified_name": "PlayerSpec"
+        },
+        "relation": "extends",
+        "to": {
+          "repo": "model",
+          "kind": "class",
+          "qualified_name": "GutTest",
+          "external": true
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 2,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "file",
+          "qualified_name": "go.mod"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "module",
+          "qualified_name": "example.com/testmodel"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "file",
+          "qualified_name": "player.gd"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "module",
+          "qualified_name": "player"
+        },
+        "source": {
+          "path": "player.gd",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "file",
+          "qualified_name": "player_spec.gd"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "module",
+          "qualified_name": "player_spec"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "file",
+          "qualified_name": "produce.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "function",
+          "qualified_name": "example.com/testmodel.Produce"
+        },
+        "source": {
+          "path": "produce.go",
+          "line": 3,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "file",
+          "qualified_name": "produce_test.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "function",
+          "qualified_name": "example.com/testmodel.assertProduced"
+        },
+        "source": {
+          "path": "produce_test.go",
+          "line": 13,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "file",
+          "qualified_name": "produce_test.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "example.com/testmodel.TestDirect"
+        },
+        "source": {
+          "path": "produce_test.go",
+          "line": 7,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "file",
+          "qualified_name": "produce_test.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "example.com/testmodel.TestProduce"
+        },
+        "source": {
+          "path": "produce_test.go",
+          "line": 5,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "file",
+          "qualified_name": "produce_test.go"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "model",
+          "kind": "module",
+          "qualified_name": "testing",
+          "external": true
+        },
+        "source": {
+          "path": "produce_test.go",
+          "line": 3,
+          "column": 8
+        },
+        "properties": {
+          "alias": "testing"
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "function",
+          "qualified_name": "example.com/testmodel.assertProduced"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "model",
+          "kind": "external",
+          "qualified_name": "testing.common.Fatal",
+          "external": true
+        },
+        "source": {
+          "path": "produce_test.go",
+          "line": 16,
+          "column": 3
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "function",
+          "qualified_name": "example.com/testmodel.assertProduced"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "model",
+          "kind": "external",
+          "qualified_name": "testing.common.Helper",
+          "external": true
+        },
+        "source": {
+          "path": "produce_test.go",
+          "line": 14,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "function",
+          "qualified_name": "example.com/testmodel.assertProduced"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "model",
+          "kind": "function",
+          "qualified_name": "example.com/testmodel.Produce"
+        },
+        "source": {
+          "path": "produce_test.go",
+          "line": 15,
+          "column": 5
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "function",
+          "qualified_name": "example.com/testmodel.assertProduced"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "parameter",
+          "qualified_name": "example.com/testmodel.assertProduced.t"
+        },
+        "source": {
+          "path": "produce_test.go",
+          "line": 13,
+          "column": 21
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "method",
+          "qualified_name": "PlayerSpec.assert_damage"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "model",
+          "kind": "method",
+          "qualified_name": "Player.damage"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 11,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "module",
+          "qualified_name": "player"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "class",
+          "qualified_name": "Player"
+        },
+        "source": {
+          "path": "player.gd",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "module",
+          "qualified_name": "player_spec"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "class",
+          "qualified_name": "PlayerSpec"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "parameter",
+          "qualified_name": "example.com/testmodel.TestProduce.t"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "model",
+          "kind": "function",
+          "qualified_name": "example.com/testmodel.assertProduced"
+        },
+        "source": {
+          "path": "produce_test.go",
+          "line": 5,
+          "column": 34
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "repository",
+          "qualified_name": "model"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "model",
+          "kind": "file",
+          "qualified_name": "go.mod"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "repository",
+          "qualified_name": "model"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "model",
+          "kind": "file",
+          "qualified_name": "player.gd"
+        },
+        "source": {
+          "path": "player.gd",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "repository",
+          "qualified_name": "model"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "model",
+          "kind": "file",
+          "qualified_name": "player_spec.gd"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "repository",
+          "qualified_name": "model"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "model",
+          "kind": "file",
+          "qualified_name": "produce.go"
+        },
+        "source": {
+          "path": "produce.go",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "repository",
+          "qualified_name": "model"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "model",
+          "kind": "file",
+          "qualified_name": "produce_test.go"
+        },
+        "source": {
+          "path": "produce_test.go",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "PlayerSpec.test_damage"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "model",
+          "kind": "method",
+          "qualified_name": "PlayerSpec.assert_damage"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 5,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "PlayerSpec.test_direct"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "model",
+          "kind": "method",
+          "qualified_name": "Player.damage"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 8,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "PlayerSpec.test_direct"
+        },
+        "relation": "tests",
+        "to": {
+          "repo": "model",
+          "kind": "method",
+          "qualified_name": "Player.damage"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 8,
+          "column": 2
+        },
+        "properties": {
+          "coverage": "structural",
+          "evidence_edge_id": "e:f01de1c57a5c741ca559",
+          "evidence_relation": "calls"
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "example.com/testmodel.TestDirect"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "model",
+          "kind": "external",
+          "qualified_name": "testing.common.Fatal",
+          "external": true
+        },
+        "source": {
+          "path": "produce_test.go",
+          "line": 9,
+          "column": 3
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "example.com/testmodel.TestDirect"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "model",
+          "kind": "function",
+          "qualified_name": "example.com/testmodel.Produce"
+        },
+        "source": {
+          "path": "produce_test.go",
+          "line": 8,
+          "column": 5
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "example.com/testmodel.TestDirect"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "parameter",
+          "qualified_name": "example.com/testmodel.TestDirect.t"
+        },
+        "source": {
+          "path": "produce_test.go",
+          "line": 7,
+          "column": 17
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "example.com/testmodel.TestDirect"
+        },
+        "relation": "tests",
+        "to": {
+          "repo": "model",
+          "kind": "function",
+          "qualified_name": "example.com/testmodel.Produce"
+        },
+        "source": {
+          "path": "produce_test.go",
+          "line": 8,
+          "column": 5
+        },
+        "properties": {
+          "coverage": "structural",
+          "evidence_edge_id": "e:31ec6b4d1936c7ca0fdb",
+          "evidence_relation": "calls",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "example.com/testmodel.TestProduce"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "model",
+          "kind": "function",
+          "qualified_name": "example.com/testmodel.assertProduced"
+        },
+        "source": {
+          "path": "produce_test.go",
+          "line": 5,
+          "column": 34
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "example.com/testmodel.TestProduce"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "parameter",
+          "qualified_name": "example.com/testmodel.TestProduce.t"
+        },
+        "source": {
+          "path": "produce_test.go",
+          "line": 5,
+          "column": 18
+        }
+      }
+    ],
+    "test_coverage": [
+      {
+        "id": "go-test-to-production",
+        "direction": "test_coverage",
+        "selector": "example.com/testmodel.TestProduce",
+        "options": {},
+        "result": {
+          "root": {
+            "repo": "model",
+            "kind": "test",
+            "qualified_name": "example.com/testmodel.TestProduce"
+          },
+          "designation": "structural",
+          "matches": [
+            {
+              "test": {
+                "repo": "model",
+                "kind": "test",
+                "qualified_name": "example.com/testmodel.TestProduce"
+              },
+              "target": {
+                "repo": "model",
+                "kind": "function",
+                "qualified_name": "example.com/testmodel.Produce"
+              },
+              "direct": false,
+              "depth": 2,
+              "path": [
+                {
+                  "repo": "model",
+                  "kind": "test",
+                  "qualified_name": "example.com/testmodel.TestProduce"
+                },
+                {
+                  "repo": "model",
+                  "kind": "function",
+                  "qualified_name": "example.com/testmodel.assertProduced"
+                },
+                {
+                  "repo": "model",
+                  "kind": "function",
+                  "qualified_name": "example.com/testmodel.Produce"
+                }
+              ],
+              "relations": [
+                "calls",
+                "calls"
+              ]
+            }
+          ],
+          "truncated": false
+        }
+      },
+      {
+        "id": "go-production-to-tests",
+        "direction": "find_tests",
+        "selector": "example.com/testmodel.Produce",
+        "options": {},
+        "result": {
+          "root": {
+            "repo": "model",
+            "kind": "function",
+            "qualified_name": "example.com/testmodel.Produce"
+          },
+          "designation": "structural",
+          "matches": [
+            {
+              "test": {
+                "repo": "model",
+                "kind": "test",
+                "qualified_name": "example.com/testmodel.TestDirect"
+              },
+              "target": {
+                "repo": "model",
+                "kind": "function",
+                "qualified_name": "example.com/testmodel.Produce"
+              },
+              "direct": true,
+              "depth": 1,
+              "path": [
+                {
+                  "repo": "model",
+                  "kind": "test",
+                  "qualified_name": "example.com/testmodel.TestDirect"
+                },
+                {
+                  "repo": "model",
+                  "kind": "function",
+                  "qualified_name": "example.com/testmodel.Produce"
+                }
+              ],
+              "relations": [
+                "tests"
+              ]
+            },
+            {
+              "test": {
+                "repo": "model",
+                "kind": "test",
+                "qualified_name": "example.com/testmodel.TestProduce"
+              },
+              "target": {
+                "repo": "model",
+                "kind": "function",
+                "qualified_name": "example.com/testmodel.Produce"
+              },
+              "direct": false,
+              "depth": 2,
+              "path": [
+                {
+                  "repo": "model",
+                  "kind": "test",
+                  "qualified_name": "example.com/testmodel.TestProduce"
+                },
+                {
+                  "repo": "model",
+                  "kind": "function",
+                  "qualified_name": "example.com/testmodel.assertProduced"
+                },
+                {
+                  "repo": "model",
+                  "kind": "function",
+                  "qualified_name": "example.com/testmodel.Produce"
+                }
+              ],
+              "relations": [
+                "calls",
+                "calls"
+              ]
+            }
+          ],
+          "truncated": false
+        }
+      },
+      {
+        "id": "godot-test-to-production",
+        "direction": "test_coverage",
+        "selector": "PlayerSpec.test_damage",
+        "options": {},
+        "result": {
+          "root": {
+            "repo": "model",
+            "kind": "test",
+            "qualified_name": "PlayerSpec.test_damage"
+          },
+          "designation": "structural",
+          "matches": [
+            {
+              "test": {
+                "repo": "model",
+                "kind": "test",
+                "qualified_name": "PlayerSpec.test_damage"
+              },
+              "target": {
+                "repo": "model",
+                "kind": "method",
+                "qualified_name": "Player.damage"
+              },
+              "direct": false,
+              "depth": 2,
+              "path": [
+                {
+                  "repo": "model",
+                  "kind": "test",
+                  "qualified_name": "PlayerSpec.test_damage"
+                },
+                {
+                  "repo": "model",
+                  "kind": "method",
+                  "qualified_name": "PlayerSpec.assert_damage"
+                },
+                {
+                  "repo": "model",
+                  "kind": "method",
+                  "qualified_name": "Player.damage"
+                }
+              ],
+              "relations": [
+                "calls",
+                "calls"
+              ]
+            }
+          ],
+          "truncated": false
+        }
+      },
+      {
+        "id": "godot-production-to-tests",
+        "direction": "find_tests",
+        "selector": "Player.damage",
+        "options": {},
+        "result": {
+          "root": {
+            "repo": "model",
+            "kind": "method",
+            "qualified_name": "Player.damage"
+          },
+          "designation": "structural",
+          "matches": [
+            {
+              "test": {
+                "repo": "model",
+                "kind": "test",
+                "qualified_name": "PlayerSpec.test_damage"
+              },
+              "target": {
+                "repo": "model",
+                "kind": "method",
+                "qualified_name": "Player.damage"
+              },
+              "direct": false,
+              "depth": 2,
+              "path": [
+                {
+                  "repo": "model",
+                  "kind": "test",
+                  "qualified_name": "PlayerSpec.test_damage"
+                },
+                {
+                  "repo": "model",
+                  "kind": "method",
+                  "qualified_name": "PlayerSpec.assert_damage"
+                },
+                {
+                  "repo": "model",
+                  "kind": "method",
+                  "qualified_name": "Player.damage"
+                }
+              ],
+              "relations": [
+                "calls",
+                "calls"
+              ]
+            },
+            {
+              "test": {
+                "repo": "model",
+                "kind": "test",
+                "qualified_name": "PlayerSpec.test_direct"
+              },
+              "target": {
+                "repo": "model",
+                "kind": "method",
+                "qualified_name": "Player.damage"
+              },
+              "direct": true,
+              "depth": 1,
+              "path": [
+                {
+                  "repo": "model",
+                  "kind": "test",
+                  "qualified_name": "PlayerSpec.test_direct"
+                },
+                {
+                  "repo": "model",
+                  "kind": "method",
+                  "qualified_name": "Player.damage"
+                }
+              ],
+              "relations": [
+                "tests"
+              ]
+            }
+          ],
+          "truncated": false
+        }
+      }
+    ]
+  }
+}

@@ -83,7 +83,7 @@ func (s *Service) ready(ctx context.Context) error {
 
 func (s *Service) Server(version string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "grafo", Version: version}, &mcp.ServerOptions{
-		Instructions: "Use Grafo tools for deterministic structural code retrieval. Resolve symbols first, then walk graph edges. Treat external nodes as explicit unresolved boundaries. Use get_message_flow and list_message_coverage for canonical Protobuf flow instead of inferring stages from names; unknown is not proof of a missing runtime stage. Prefer get_blast_radius before a behavior-changing edit: it reports both what depends on a symbol and what it depends on. Symbol, node, source, caller, callee, path, impact, and message-flow tools accept a batch of inputs and return one result or error per input in order. Use search_source only for content questions the graph does not model. Reusable-code search uses embeddings only to select candidates and includes graph-resolved context.",
+		Instructions: "Use Grafo tools for deterministic structural code retrieval. Resolve symbols first, then walk graph edges. Treat external nodes as explicit unresolved boundaries. Use find_tests and get_test_coverage for bounded structural test relationships; they do not report runtime execution coverage. Use get_message_flow and list_message_coverage for canonical Protobuf flow instead of inferring stages from names; unknown is not proof of a missing runtime stage. Prefer get_blast_radius before a behavior-changing edit: it reports both what depends on a symbol and what it depends on. Symbol, node, source, caller, callee, path, impact, test, and message-flow tools accept a batch of inputs and return one result or error per input in order. Use search_source only for content questions the graph does not model. Reusable-code search uses embeddings only to select candidates and includes graph-resolved context.",
 	})
 	annotations := &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: boolPointer(false)}
 	mcp.AddTool(server, &mcp.Tool{Name: "find_symbols", Title: "Find symbols", Description: "Find graph nodes by deterministic name matching. Use this to obtain an unambiguous qualified name or stable node ID.", Annotations: annotations}, s.findSymbols)
@@ -98,6 +98,8 @@ func (s *Service) Server(version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{Name: "get_godot_composition", Title: "Get Godot composition", Description: "Return Godot runtime composition for a scene, scene node, resource, script, or autoload: which scenes it instantiates, which scenes instantiate it, attached scripts, and autoload availability, each with its original resource evidence.", Annotations: annotations}, s.getGodotComposition)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_godot_interactions", Title: "Get Godot interactions", Description: "Return Godot gameplay wiring for a scene, scene node, script symbol, input action, node group, or signal: the input actions it uses, the node groups it joins, inspects, and dispatches to, and the signal routes it takes part in, whether a scene declared them or a script established them. Filter by action, group, or signal and by direction; unresolved actions, groups, and signals stay in the report and are counted so missing wiring is visible.", Annotations: annotations}, s.getGodotInteractions)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_failure_flow", Title: "Get failure flow", Description: "Return typed error-return declarations, escaping and wrapped errors, handlers, panic and recovery sites, and deferred cleanup. Every fact includes its source and recognition evidence; conditional and unresolved facts remain explicit.", Annotations: annotations}, s.getFailureFlow)
+	mcp.AddTool(server, &mcp.Tool{Name: "find_tests", Title: "Find tests", Description: "Find tests for one production declaration from direct call/reference evidence plus bounded helper expansion. Results are structural evidence, not runtime coverage; cycles and exhausted bounds are reported as truncated.", Annotations: annotations}, s.findTests)
+	mcp.AddTool(server, &mcp.Tool{Name: "get_test_coverage", Title: "Get structural test coverage", Description: "Return production declarations structurally reached by one test through direct call/reference evidence and bounded test helpers. This is not runtime execution coverage; cycles and exhausted bounds are reported as truncated.", Annotations: annotations}, s.getTestCoverage)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_blast_radius", Title: "Get change impact", Description: "Return a bounded bidirectional change-impact report: what depends on the symbol, what it depends on, impacted files, cross-repository hops, and config, data, and event relationships.", Annotations: annotations}, s.getBlastRadius)
 	if s.search != nil {
 		mcp.AddTool(server, &mcp.Tool{Name: "search_source", Title: "Search indexed source", Description: "Search literal text or RE2 patterns across files belonging to the refreshed indexes. Use graph tools first when the question is structural; use this for content questions the graph does not model.", Annotations: annotations}, s.searchSource)
@@ -159,6 +161,46 @@ type SelectorInput struct {
 	Selector  string   `json:"selector,omitempty" jsonschema:"qualified symbol name or stable node ID"`
 	Selectors []string `json:"selectors,omitempty" jsonschema:"batch of qualified symbol names or stable node IDs resolved in caller order"`
 	Kind      string   `json:"kind,omitempty" jsonschema:"optional node kind the selector must resolve to, such as function, method, type, or field"`
+}
+
+type TestCoverageInput struct {
+	Selector  string   `json:"selector,omitempty" jsonschema:"qualified symbol name or stable node ID"`
+	Selectors []string `json:"selectors,omitempty" jsonschema:"batch of qualified symbol names or stable node IDs resolved in caller order"`
+	Depth     int      `json:"depth,omitempty" jsonschema:"maximum structural helper depth; defaults to 8 and may not exceed 32"`
+	Limit     int      `json:"limit,omitempty" jsonschema:"maximum structural matches and traversal work; defaults to 100 and may not exceed 1000"`
+	Kind      string   `json:"kind,omitempty" jsonschema:"optional production node kind for find_tests selector resolution"`
+}
+
+type TestCoverageOutput struct {
+	query.TestCoverageReport
+	Results []ResultEnvelope[query.TestCoverageReport] `json:"results,omitempty"`
+}
+
+func (s *Service) findTests(ctx context.Context, _ *mcp.CallToolRequest, input TestCoverageInput) (*mcp.CallToolResult, TestCoverageOutput, error) {
+	return s.runTestCoverage(ctx, input, true)
+}
+
+func (s *Service) getTestCoverage(ctx context.Context, _ *mcp.CallToolRequest, input TestCoverageInput) (*mcp.CallToolResult, TestCoverageOutput, error) {
+	return s.runTestCoverage(ctx, input, false)
+}
+
+func (s *Service) runTestCoverage(ctx context.Context, input TestCoverageInput, find bool) (*mcp.CallToolResult, TestCoverageOutput, error) {
+	if err := s.ready(ctx); err != nil {
+		return nil, TestCoverageOutput{}, err
+	}
+	selectors, batched, err := batchInputs("selector", input.Selector, input.Selectors)
+	if err != nil {
+		return nil, TestCoverageOutput{}, err
+	}
+	options := query.TestCoverageOptions{Depth: input.Depth, Limit: input.Limit, Kind: graph.NodeKind(strings.TrimSpace(input.Kind))}
+	results := runBatch(ctx, selectors, namingCandidates(func(queryContext context.Context, selector string) (query.TestCoverageReport, error) {
+		if find {
+			return s.query.FindTests(queryContext, selector, options)
+		}
+		return s.query.TestCoverage(queryContext, selector, options)
+	}))
+	report, err := firstValue(results, batched)
+	return nil, TestCoverageOutput{TestCoverageReport: report, Results: results}, err
 }
 
 type SourceInput struct {

@@ -208,6 +208,34 @@ func TestFailureFlowReportsTypedEscapes(t *testing.T) {
 	}
 }
 
+func TestTestCoverageCommandsExposeStructuralEvidence(t *testing.T) {
+	root := t.TempDir()
+	write := func(name, content string) {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("go.mod", "module sample\n\ngo 1.26\n")
+	write("charge.go", "package sample\nfunc Charge() {}\n")
+	write("charge_test.go", `package sample
+import "testing"
+func TestCharge(t *testing.T) { helper() }
+func helper() { Charge() }
+`)
+	if code := run(t, "index", root); code != 0 {
+		t.Fatalf("index exited with %d", code)
+	}
+	stdout, stderr, code := output(t, "find-tests", "sample.Charge", "--repo", root)
+	if code != 0 || !strings.Contains(stdout, "sample.TestCharge") || !strings.Contains(stdout, "helper-expanded") ||
+		!strings.Contains(stdout, "not runtime coverage") {
+		t.Fatalf("find-tests output: code=%d stdout=%s stderr=%s", code, stdout, stderr)
+	}
+	stdout, stderr, code = output(t, "get_test_coverage", "sample.TestCharge", "--repo", root, "--json")
+	if code != 0 || !strings.Contains(stdout, `"designation": "structural"`) || !strings.Contains(stdout, `"qualified_name": "sample.Charge"`) {
+		t.Fatalf("test-coverage JSON: code=%d stdout=%s stderr=%s", code, stdout, stderr)
+	}
+}
+
 func TestSearchFindsIndexedContentOnly(t *testing.T) {
 	root := indexedRepository(t)
 

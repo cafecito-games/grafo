@@ -410,8 +410,9 @@ func loadWorkspace(ctx context.Context, root, buildContext string) (map[string]S
 		Env:     environment,
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
 			packages.NeedImports | packages.NeedDeps | packages.NeedSyntax |
-			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedTypesSizes | packages.NeedModule,
-		Tests: false,
+			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedTypesSizes | packages.NeedModule |
+			packages.NeedForTest,
+		Tests: true,
 	}
 	patterns, err := workspacePackagePatterns(root)
 	if err != nil {
@@ -422,11 +423,17 @@ func loadWorkspace(ctx context.Context, root, buildContext string) (map[string]S
 		return nil, err
 	}
 	views := map[string]SemanticView{}
+	basePackages := make([]*packages.Package, 0, len(loaded))
 	for _, pkg := range loaded {
-		collectPackageViews(root, buildContext, pkg, views)
+		if pkg.ForTest == "" {
+			basePackages = append(basePackages, pkg)
+			collectPackageViews(root, buildContext, pkg, views)
+			continue
+		}
+		collectTestPackageViews(root, buildContext, pkg, views)
 	}
-	interfaces := loadedInterfaces(loaded)
-	for _, pkg := range loaded {
+	interfaces := loadedInterfaces(basePackages)
+	for _, pkg := range basePackages {
 		collectImplementations(root, pkg, interfaces, views)
 	}
 	for path, view := range views {
@@ -439,6 +446,37 @@ func loadWorkspace(ctx context.Context, root, buildContext string) (map[string]S
 		views[path] = view
 	}
 	return views, nil
+}
+
+// collectTestPackageViews adds go/types evidence only for _test.go sources.
+// packages.Load returns augmented test variants that also repeat every
+// production file; limiting the variant prevents duplicate production facts
+// and keeps package-level protocol/HTTP analyzers on the canonical build.
+func collectTestPackageViews(root, buildContext string, pkg *packages.Package, views map[string]SemanticView) {
+	if pkg == nil {
+		return
+	}
+	for index, file := range pkg.Syntax {
+		if index >= len(pkg.CompiledGoFiles) {
+			continue
+		}
+		path, ok := relativeSourcePath(root, pkg.CompiledGoFiles[index])
+		if !ok || !strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		view := views[path]
+		view.Available = true
+		view.Included = true
+		view.PackagePath = pkg.PkgPath
+		view.BuildContext = buildContext
+		if view.Calls == nil {
+			view.Calls = map[int]SemanticCall{}
+		}
+		collectCalls(pkg, file, view.Calls)
+		collectFailureView(root, pkg, file, path, &view)
+		views[path] = view
+	}
+	collectPackageDiagnostics(root, pkg, views, buildContext)
 }
 
 func collectPackageViews(root, buildContext string, pkg *packages.Package, views map[string]SemanticView) {

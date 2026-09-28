@@ -1055,6 +1055,113 @@ func send(api: AuthAPI) -> void:
 	assertHTTPRequestSet(t, ctx, repository, nil)
 }
 
+func TestServiceReconcilesFirstClassTestsAcrossConfigInheritanceAndRenameEdits(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	runGit(t, root, "init", "-b", "main")
+	write(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26\n")
+	write(t, filepath.Join(root, "run.go"), "package sample\nfunc Run() {}\n")
+	write(t, filepath.Join(root, "run_test.go"), "package sample\nimport \"testing\"\nfunc TestGo(t *testing.T) { Run() }\n")
+	write(t, filepath.Join(root, "target.gd"), "class_name Target\nextends Node\nfunc run() -> void:\n\tpass\n")
+	write(t, filepath.Join(root, "spec.gd"), "class_name Spec\nextends SpecBase\nfunc test_run() -> void:\n\trun()\n")
+	write(t, filepath.Join(root, "grafo.yaml"), "tests:\n  gdscript_bases: [SpecBase]\n")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(golangparser.New(), gdscriptparser.New(), configparser.New()))
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	assertIndexedTestNames(t, ctx, repository, []string{"TestGo", "test_run"})
+
+	write(t, filepath.Join(root, "grafo.yaml"), "tests:\n  gdscript_bases: [OtherBase]\n")
+	changed, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(changed.Updated, "grafo.yaml") || !slices.Contains(changed.Updated, "spec.gd") {
+		t.Fatalf("test-base config did not invalidate GDScript: %#v", changed)
+	}
+	assertIndexedTestNames(t, ctx, repository, []string{"TestGo"})
+
+	write(t, filepath.Join(root, "grafo.yaml"), "tests:\n  gdscript_bases: [42]\n")
+	invalid, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatalf("invalid test config must keep indexing with built-ins only: %v", err)
+	}
+	foundWarning := false
+	for _, diagnostic := range invalid.Diagnostics {
+		foundWarning = foundWarning || diagnostic.Path == "spec.gd" && diagnostic.Level == "warning" && strings.Contains(diagnostic.Message, "gdscript_bases")
+	}
+	if !foundWarning {
+		t.Fatalf("invalid test config warning missing: %#v", invalid.Diagnostics)
+	}
+	assertIndexedTestNames(t, ctx, repository, []string{"TestGo"})
+
+	write(t, filepath.Join(root, "spec.gd"), "class_name Spec\nextends GutTest\nfunc test_changed() -> void:\n\trun()\n")
+	write(t, filepath.Join(root, "run_test.go"), "package sample\nimport \"testing\"\nfunc TestRenamed(t *testing.T) { Run() }\n")
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	assertIndexedTestNames(t, ctx, repository, []string{"TestRenamed", "test_changed"})
+
+	write(t, filepath.Join(root, "run_test.go"), "package sample_test\nimport (\"testing\"; \"example.com/sample\")\nfunc TestRenamed(t *testing.T) { sample.Run() }\n")
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	assertIndexedTestNames(t, ctx, repository, []string{"TestRenamed", "test_changed"})
+	tests, err := repository.ListNodesByKind(ctx, graph.NodeListQuery{Kinds: []graph.NodeKind{graph.KindTest}, Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundExternal := false
+	for _, item := range tests {
+		foundExternal = foundExternal || item.Node.Name == "TestRenamed" && item.Node.Properties["test_package"] == "external"
+	}
+	if !foundExternal {
+		t.Fatalf("external test package identity was not reconciled: %#v", tests)
+	}
+	before, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Run(ctx, project, indexer.Options{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("clean rebuild did not converge:\nbefore=%#v\nafter=%#v", before, after)
+	}
+}
+
+func assertIndexedTestNames(t *testing.T, ctx context.Context, repository *sqlite.Repository, want []string) {
+	t.Helper()
+	items, err := repository.ListNodesByKind(ctx, graph.NodeListQuery{Kinds: []graph.NodeKind{graph.KindTest}, Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(items))
+	for _, item := range items {
+		got = append(got, item.Node.Name)
+	}
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("indexed tests = %v, want %v", got, want)
+	}
+}
+
 func assertHTTPRequestSet(t *testing.T, ctx context.Context, repository graph.TopologyRepository, want []string) {
 	t.Helper()
 	result, err := query.NewTopology(repository).OutboundRequests(ctx, query.TopologyOptions{Limit: 100})

@@ -130,7 +130,7 @@ func IsDeclarationMember(kind NodeKind) bool { return memberKinds[kind] }
 func AllowsResolutionKind(edge EdgeKind, kind NodeKind) bool {
 	switch edge {
 	case EdgeCalls, EdgePasses, EdgeHandledBy, EdgeUsesMiddleware:
-		return kind == KindFunction || kind == KindMethod
+		return kind == KindFunction || kind == KindMethod || kind == KindTest
 	case EdgeReads, EdgeWrites:
 		return kind == KindTable || kind == KindView
 	case EdgeEncodes, EdgeDecodes:

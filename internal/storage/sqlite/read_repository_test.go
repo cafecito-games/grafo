@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -78,6 +79,12 @@ func TestReadRepositoryCapabilitiesExcludeWrites(t *testing.T) {
 }
 
 func TestOpenReadOnlyRejectsIncompatibleMetadataWithoutMutation(t *testing.T) {
+	semanticVersion, err := strconv.Atoi(indexer.SemanticIndexVersion)
+	if err != nil {
+		t.Fatalf("semantic index version %q is not numeric: %v", indexer.SemanticIndexVersion, err)
+	}
+	olderSemantic := strconv.Itoa(semanticVersion - 1)
+	newerSemantic := strconv.Itoa(semanticVersion + 1)
 	for _, test := range []struct {
 		name   string
 		mutate func(context.Context, *sql.DB) error
@@ -89,8 +96,8 @@ func TestOpenReadOnlyRejectsIncompatibleMetadataWithoutMutation(t *testing.T) {
 		{name: "newer schema", mutate: setMetaRaw("schema_version", fmt.Sprint(graph.SchemaVersion+1)), want: fmt.Sprintf("schema_version is %d, want %d", graph.SchemaVersion+1, graph.SchemaVersion)},
 		{name: "missing semantic", mutate: deleteMeta("semantic_index_version"), want: "semantic_index_version metadata is missing"},
 		{name: "malformed semantic", mutate: setMetaRaw("semantic_index_version", "next"), want: `semantic_index_version "next" is malformed`},
-		{name: "older semantic", mutate: setMetaRaw("semantic_index_version", "27"), want: `semantic_index_version is "27", want "28"`},
-		{name: "newer semantic", mutate: setMetaRaw("semantic_index_version", "29"), want: `semantic_index_version is "29", want "28"`},
+		{name: "older semantic", mutate: setMetaRaw("semantic_index_version", olderSemantic), want: fmt.Sprintf("semantic_index_version is %q, want %q", olderSemantic, indexer.SemanticIndexVersion)},
+		{name: "newer semantic", mutate: setMetaRaw("semantic_index_version", newerSemantic), want: fmt.Sprintf("semantic_index_version is %q, want %q", newerSemantic, indexer.SemanticIndexVersion)},
 		{name: "older migration", mutate: setLatestMigration(6), want: "storage migration is 6"},
 		{name: "newer migration", mutate: setLatestMigration(8), want: "storage migration is 8"},
 		{name: "rolled back migration", mutate: execRaw("UPDATE goose_db_version SET is_applied = 0 WHERE id = (SELECT MAX(id) FROM goose_db_version)"), want: "applied=false"},
