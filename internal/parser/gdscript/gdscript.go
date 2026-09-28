@@ -1016,7 +1016,7 @@ func (e *extractor) addHTTPRequest(node *gdast.CallExpression, callee, fromID st
 	configured, builtin := false, false
 	apiSymbol := callee
 	if member, ok := node.Callee.(*gdast.MemberExpression); ok && member.Property == "request" && !e.localCall(node.Callee, current) {
-		if receiverType, known := e.receiverType(member.Object, current); known && e.isHTTPRequestReceiverType(receiverType) {
+		if receiverType, known := e.httpReceiverType(member.Object, current); known && e.isHTTPRequestReceiverType(receiverType) {
 			builtin, methodIndex, routeIndex, apiSymbol = true, 2, 0, "HTTPRequest.request"
 		}
 	} else if identifier, ok := node.Callee.(*gdast.Identifier); ok && identifier.Name == "request" &&
@@ -1123,6 +1123,17 @@ func (e *extractor) isHTTPRequestReceiverType(typeName string) bool {
 		typeName = next
 	}
 	return false
+}
+
+func (e *extractor) httpReceiverType(object gdast.Expression, current scope) (string, bool) {
+	if member, ok := object.(*gdast.MemberExpression); ok {
+		identifier, identifierOK := member.Object.(*gdast.Identifier)
+		if identifierOK && identifier.Name == "self" {
+			resolved := current.fields[member.Property]
+			return resolved, resolved != ""
+		}
+	}
+	return e.receiverType(object, current)
 }
 
 func godotHTTPMethodSymbol(expression gdast.Expression) (string, bool) {
@@ -2335,13 +2346,6 @@ func (e *extractor) receiverType(object gdast.Expression, current scope) (string
 			return resolved, true
 		}
 		return node.Name, node.Name != ""
-	case *gdast.MemberExpression:
-		identifier, ok := node.Object.(*gdast.Identifier)
-		if !ok || identifier.Name != "self" {
-			return "", false
-		}
-		resolved := current.fields[node.Property]
-		return resolved, resolved != ""
 	default:
 		return "", false
 	}
