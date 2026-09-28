@@ -3,10 +3,12 @@ package layoutbench
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // PlanQuery pairs one production query with the representative parameters
@@ -54,6 +56,9 @@ type PlanStep struct {
 // one broken variant query cannot hide the rest. The returned error is
 // reserved for failures that stop step iteration itself.
 func CapturePlans(ctx context.Context, db *sql.DB, queries []PlanQuery) ([]PlanCapture, error) {
+	if db == nil {
+		return nil, errors.New("CapturePlans requires a non-nil database")
+	}
 	captures := make([]PlanCapture, 0, len(queries))
 	for _, query := range queries {
 		capture := PlanCapture{Query: query, Valid: true}
@@ -135,9 +140,16 @@ func ValidatePlan(capture PlanCapture) PlanCapture {
 // isUncoveredScan reports whether a step detail is a table scan the query
 // planner cannot serve from an index. SQLite reports index-served scans as
 // "SCAN table USING INDEX ..." or "SCAN table USING COVERING INDEX ...";
-// everything else after "SCAN" walks the table b-tree itself.
+// everything else after "SCAN" walks the table b-tree itself. Subquery
+// materializations ("SCAN subquery N", "SCAN (subquery N)") are not table
+// scans: the planner explains their inner steps as separate rows.
 func isUncoveredScan(detail string) bool {
-	if !strings.HasPrefix(detail, "SCAN ") {
+	rest, found := strings.CutPrefix(detail, "SCAN ")
+	if !found {
+		return false
+	}
+	target := strings.ToLower(strings.TrimSpace(rest))
+	if strings.HasPrefix(target, "subquery") || strings.HasPrefix(target, "(") {
 		return false
 	}
 	return !strings.Contains(detail, "USING INDEX") && !strings.Contains(detail, "USING COVERING INDEX")
@@ -161,13 +173,22 @@ func indexedByNames(query string) []string {
 	return names
 }
 
+// stepsReferenceIndex reports whether any step detail names the index as a
+// whole token, so an index whose name merely extends the pinned one (say
+// edges_from_v2 for INDEXED BY edges_from) cannot pass for it.
 func stepsReferenceIndex(steps []PlanStep, indexName string) bool {
 	for _, step := range steps {
-		if strings.Contains(step.Detail, indexName) {
-			return true
+		for _, token := range strings.FieldsFunc(step.Detail, isIndexTokenSeparator) {
+			if token == indexName {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+func isIndexTokenSeparator(char rune) bool {
+	return !(char == '_' || unicode.IsLetter(char) || unicode.IsDigit(char))
 }
 
 // rewriteNamedParameters converts @name placeholders to numbered ?N
@@ -184,7 +205,7 @@ func rewriteNamedParameters(query string) (string, int) {
 	}
 	var rewritten strings.Builder
 	positionalSeen := 0
-	walkPlaceholders(query, func(_, _ int, kind byte, name string) {
+	walkPlaceholders(query, func(kind byte, name string) {
 		if kind == '?' {
 			positionalSeen++
 			fmt.Fprintf(&rewritten, "?%d", len(names)+positionalSeen)
@@ -203,7 +224,7 @@ func scanPlaceholders(query string) ([]string, int) {
 	var names []string
 	seen := map[string]bool{}
 	positionalCount := 0
-	walkPlaceholders(query, func(_, _ int, kind byte, name string) {
+	walkPlaceholders(query, func(kind byte, name string) {
 		if kind == '?' {
 			positionalCount++
 			return
@@ -220,7 +241,7 @@ func scanPlaceholders(query string) ([]string, int) {
 // walkPlaceholders walks query outside of single-quoted strings and comments,
 // invoking onPlaceholder for each @name (kind '@') and ? (kind '?') token and
 // onSegment for the verbatim runs between tokens.
-func walkPlaceholders(query string, onPlaceholder func(start, end int, kind byte, name string), onSegment func(segment string)) {
+func walkPlaceholders(query string, onPlaceholder func(kind byte, name string), onSegment func(segment string)) {
 	index := 0
 	segmentStart := 0
 	flushSegment := func(end int) {
@@ -255,7 +276,6 @@ func walkPlaceholders(query string, onPlaceholder func(start, end int, kind byte
 			index = min(index+2, len(query))
 		case query[index] == '?':
 			flushSegment(index)
-			start := index
 			index++
 			// Consume digits of an already-numbered placeholder so it is
 			// rewritten, not concatenated onto the new number.
@@ -263,7 +283,7 @@ func walkPlaceholders(query string, onPlaceholder func(start, end int, kind byte
 				index++
 			}
 			if onPlaceholder != nil {
-				onPlaceholder(start, index, '?', "")
+				onPlaceholder('?', "")
 			}
 			segmentStart = index
 		case query[index] == '@':
@@ -277,7 +297,7 @@ func walkPlaceholders(query string, onPlaceholder func(start, end int, kind byte
 			}
 			flushSegment(index)
 			if onPlaceholder != nil {
-				onPlaceholder(index, end, '@', query[index+1:end])
+				onPlaceholder('@', query[index+1:end])
 			}
 			index = end
 			segmentStart = index
@@ -293,16 +313,31 @@ func isIdentifierByte(char byte) bool {
 }
 
 // PlanQueriesFor starts from the production inventory and swaps in overridden
-// SQL by query name, so variant schemas explain the same query inventory.
-// Override names that do not match an inventory entry are ignored.
-func PlanQueriesFor(sqlOverrides map[string]string) []PlanQuery {
+// SQL by query name, so variant schemas explain the same query inventory. It
+// also returns the override names that matched no inventory entry; callers
+// must fail loudly on a non-empty unmatched set, because a typo'd query name
+// would otherwise silently measure production SQL against a variant schema.
+// The returned queries are a fresh slice, so the production inventory is never
+// mutated.
+func PlanQueriesFor(sqlOverrides map[string]string) ([]PlanQuery, []string) {
 	queries := ProductionPlanQueries()
+	var unmatched []string
+	matched := make(map[string]bool, len(sqlOverrides))
 	for index := range queries {
-		if override, found := sqlOverrides[queries[index].Name]; found {
-			queries[index].SQL = override
+		override, found := sqlOverrides[queries[index].Name]
+		if !found {
+			continue
+		}
+		queries[index].SQL = override
+		matched[queries[index].Name] = true
+	}
+	for name := range sqlOverrides {
+		if !matched[name] {
+			unmatched = append(unmatched, name)
 		}
 	}
-	return queries
+	sort.Strings(unmatched)
+	return queries, unmatched
 }
 
 // Representative parameter values shared across the inventory. They only feed

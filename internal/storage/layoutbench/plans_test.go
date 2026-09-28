@@ -314,6 +314,52 @@ func TestPlanCaptureRewritesNamedParameters(t *testing.T) {
 	}
 }
 
+func TestPlanCaptureRejectsParameterCountMismatch(t *testing.T) {
+	ctx := context.Background()
+	cases := []struct {
+		description string
+		query       PlanQuery
+		wantReason  string
+	}{
+		{
+			description: "nil params for a positional placeholder",
+			query:       PlanQuery{Name: "Mismatched", SQL: "SELECT * FROM nodes WHERE id = ?"},
+			wantReason:  "query binds 1 parameters but 0 were provided",
+		},
+		{
+			description: "too many params",
+			query:       PlanQuery{Name: "Mismatched", SQL: "SELECT * FROM nodes WHERE id = ?", Params: []any{"a", "b"}},
+			wantReason:  "query binds 1 parameters but 2 were provided",
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.description, func(t *testing.T) {
+			captures, err := CapturePlans(ctx, openPlanDatabase(t), []PlanQuery{testCase.query})
+			if err != nil {
+				t.Fatalf("CapturePlans: %v", err)
+			}
+			if len(captures) != 1 {
+				t.Fatalf("expected one capture, got %d", len(captures))
+			}
+			if captures[0].Valid {
+				t.Error("capture valid despite parameter count mismatch")
+			}
+			if !strings.Contains(captures[0].Reason, testCase.wantReason) {
+				t.Errorf("reason %q does not contain %q", captures[0].Reason, testCase.wantReason)
+			}
+			if len(captures[0].Steps) != 0 {
+				t.Errorf("mismatched capture recorded steps: %+v", captures[0].Steps)
+			}
+		})
+	}
+}
+
+func TestPlanCaptureRejectsNilDatabase(t *testing.T) {
+	if captures, err := CapturePlans(context.Background(), nil, ProductionPlanQueries()); err == nil {
+		t.Fatalf("CapturePlans with nil database returned captures: %d", len(captures))
+	}
+}
+
 func TestPlanValidationRules(t *testing.T) {
 	highCardinality := PlanQuery{Name: "HighPath", SQL: "SELECT * FROM edges WHERE from_id = ?", HighCardinality: true}
 	cases := []struct {
@@ -372,6 +418,31 @@ func TestPlanValidationRules(t *testing.T) {
 			}},
 			wantValid: true,
 		},
+		{
+			description: "index whose name merely extends the pinned one does not satisfy INDEXED BY",
+			capture: PlanCapture{Query: PlanQuery{
+				Name: "Indexed", HighCardinality: true,
+				SQL: "SELECT * FROM edges INDEXED BY edges_from WHERE from_id = ?",
+			}, Valid: true, Steps: []PlanStep{
+				{SelectID: 1, Order: 0, From: 0, Detail: "SEARCH edges USING INDEX edges_from_v2 (from_id=?)"},
+			}},
+			wantValid:  false,
+			wantReason: "edges_from",
+		},
+		{
+			description: "subquery materialization scan on high-cardinality path is valid",
+			capture: PlanCapture{Query: highCardinality, Valid: true, Steps: []PlanStep{
+				{SelectID: 1, Order: 0, From: 0, Detail: "SCAN subquery 1"},
+			}},
+			wantValid: true,
+		},
+		{
+			description: "parenthesized subquery materialization scan is valid",
+			capture: PlanCapture{Query: highCardinality, Valid: true, Steps: []PlanStep{
+				{SelectID: 1, Order: 0, From: 0, Detail: "SCAN (subquery 1)"},
+			}},
+			wantValid: true,
+		},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.description, func(t *testing.T) {
@@ -392,7 +463,10 @@ func TestPlanValidationRules(t *testing.T) {
 func TestPlanQueriesForOverridesSQL(t *testing.T) {
 	production := findProductionQuery(t, "ListEdgesTo")
 	variantSQL := "SELECT * FROM edges INDEXED BY edges_to WHERE to_id = ? ORDER BY kind, from_id, id"
-	queries := PlanQueriesFor(map[string]string{"ListEdgesTo": variantSQL, "NoSuchQuery": "SELECT 1"})
+	queries, unmatched := PlanQueriesFor(map[string]string{"ListEdgesTo": variantSQL, "NoSuchQuery": "SELECT 1"})
+	if len(unmatched) != 1 || unmatched[0] != "NoSuchQuery" {
+		t.Errorf("unmatched override names = %v, want [NoSuchQuery]", unmatched)
+	}
 	found := false
 	for _, query := range queries {
 		if query.Name == "ListEdgesTo" {
