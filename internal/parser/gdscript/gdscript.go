@@ -44,12 +44,13 @@ func (p *Parser) SemanticKey(ctx context.Context, input parserapi.Input) (string
 	if err != nil {
 		return "", err
 	}
-	key := "gdscript-semantic-v2:" + project.SemanticKey()
+	key := "gdscript-semantic-v3:" + project.SemanticKey()
 	configuration, err := projectconfig.Load(input.Root)
 	if err != nil {
 		return "", err
 	}
 	key += ":" + configuration.HTTP.SemanticKey()
+	key += ":" + configuration.Tests.SemanticKey()
 	if p.bindings != nil {
 		bindingKey, bindingErr := p.bindings.SemanticKey(ctx, input)
 		if bindingErr != nil {
@@ -133,6 +134,7 @@ type scope struct {
 	transportReceives      map[string]string
 	values                 map[string]string
 	fieldValues            map[string]string
+	testBase               string
 }
 
 type protobufAPI struct {
@@ -173,6 +175,7 @@ type extractor struct {
 	transportSummaries map[string][]gdTransportTemplate
 	requestAPIs        map[string]projectconfig.HTTPRequestAPI
 	httpWarned         map[string]bool
+	testBases          map[string]bool
 }
 
 func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseResult, error) {
@@ -180,6 +183,9 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 	configuration, err := projectconfig.Load(input.Root)
 	if err != nil {
 		return b.Finish(), err
+	}
+	if configuration.Tests.Invalid != "" {
+		b.Diagnostic(1, "warning", "invalid test configuration; using built-in GDScript test bases only: "+configuration.Tests.Invalid)
 	}
 	registry := protobufbinding.Registry{}
 	protobufEnabled := true
@@ -216,7 +222,12 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 		protobufAmbiguous: protobufAmbiguous, protobufTypes: protobufTypes,
 		protobufEnabled: protobufEnabled, protobufWarned: map[string]bool{},
 		transportSummaries: map[string][]gdTransportTemplate{}, requestAPIs: map[string]projectconfig.HTTPRequestAPI{},
-		httpWarned: map[string]bool{}}
+		httpWarned: map[string]bool{}, testBases: map[string]bool{"GutTest": true}}
+	if configuration.Tests.Invalid == "" {
+		for _, base := range configuration.Tests.GDScriptBases {
+			e.testBases[base] = true
+		}
+	}
 	for _, api := range configuration.HTTP.RequestAPIs {
 		if api.Language == "gdscript" {
 			e.requestAPIs[api.Symbol] = api
@@ -307,6 +318,16 @@ func (e *extractor) extract(file *gdast.File) {
 	if qualified == "" {
 		qualified = className
 	}
+	base := fileBase(file.Statements)
+	testBase := e.recognizedTestBase(base)
+	if testBase != "" {
+		if properties == nil {
+			properties = map[string]string{}
+		}
+		properties["test_role"] = "scope"
+		properties["test_framework"] = "gdscript"
+		properties["test_base"] = testBase
+	}
 	// The script file is also a Godot resource. Declaring it as a module named
 	// by its canonical repository-relative path gives scenes, resources,
 	// configuration, and UID sidecars one exact node to attach a script to,
@@ -322,9 +343,8 @@ func (e *extractor) extract(file *gdast.File) {
 		fieldSymbols: map[string]string{}, fieldLocked: map[string]bool{}, locked: map[string]bool{}, signals: map[string]signalRef{},
 		transportConstants: map[string]string{}, transportPayloads: map[string]protobufAPI{},
 		transportFieldPayloads: map[string]protobufAPI{}, transportReceives: map[string]string{},
-		values: map[string]string{}, fieldValues: map[string]string{}}
+		values: map[string]string{}, fieldValues: map[string]string{}, testBase: testBase}
 	root.types[className] = qualified
-	base := fileBase(file.Statements)
 	// Register inner class names before resolving the file base, because a script
 	// may extend a class declared later in the same file. Resolve that base before
 	// field inference so bare inherited generated APIs such as from_bytes remain
@@ -626,14 +646,29 @@ func (e *extractor) parseFunction(node *gdast.FunctionDeclaration, current scope
 		properties["annotations"] = strings.Join(annotations, ",")
 	}
 	qualified := qualify(current.container, node.Name)
-	id := e.b.Declare(current.parentID, graph.Node{Kind: graph.KindMethod, Name: node.Name,
+	kind := graph.KindMethod
+	if current.testBase != "" {
+		properties["test_framework"] = "gdscript"
+		properties["test_base"] = current.testBase
+		switch {
+		case strings.HasPrefix(node.Name, "test_") && len(node.Name) > len("test_"):
+			kind = graph.KindTest
+			properties["test_subtype"] = "test"
+		case gdscriptLifecycleMethods[node.Name]:
+			properties["test_role"] = "lifecycle"
+			properties["test_lifecycle"] = node.Name
+		default:
+			properties["test_role"] = "helper"
+		}
+	}
+	id := e.b.Declare(current.parentID, graph.Node{Kind: kind, Name: node.Name,
 		QualifiedName: qualified, Location: e.location(node), Properties: properties})
 	functionScope := scope{currentID: id, parentID: id, container: qualified, receiver: current.receiver,
 		classID: current.classID, symbols: cloneMap(current.symbols), types: cloneMap(current.types), fields: cloneMap(current.fields),
 		fieldSymbols: cloneMap(current.fieldSymbols), fieldLocked: cloneBoolMap(current.fieldLocked), locked: cloneBoolMap(current.locked), signals: cloneSignals(current.signals),
 		transportConstants: cloneMap(current.transportConstants), transportPayloads: cloneProtobufAPIMap(current.transportPayloads),
 		transportFieldPayloads: cloneProtobufAPIMap(current.transportFieldPayloads), transportReceives: cloneMap(current.transportReceives),
-		values: cloneMap(current.values), fieldValues: cloneMap(current.fieldValues)}
+		values: cloneMap(current.values), fieldValues: cloneMap(current.fieldValues), testBase: current.testBase}
 	for _, parameter := range node.Parameters {
 		parameterProperties := map[string]string{}
 		if parameter.Type != "" {
@@ -656,21 +691,47 @@ func (e *extractor) parseFunction(node *gdast.FunctionDeclaration, current scope
 
 func (e *extractor) parseClass(node *gdast.ClassDeclaration, current scope) {
 	qualified := qualify(current.container, node.Name)
-	id := e.b.Declare(current.parentID, graph.Node{Kind: graph.KindClass, Name: node.Name,
-		QualifiedName: qualified, Location: e.location(node)})
+	base := ""
 	if node.Extends != "" {
-		e.b.AddFact(id, graph.EdgeExtends, "", e.resolveType(node.Extends, current), graph.KindClass, e.location(node), nil)
+		base = e.resolveType(node.Extends, current)
+		e.bases[qualified] = base
+	}
+	testBase := e.recognizedTestBase(base)
+	properties := map[string]string(nil)
+	if testBase != "" {
+		properties = map[string]string{"test_role": "scope", "test_framework": "gdscript", "test_base": testBase}
+	}
+	id := e.b.Declare(current.parentID, graph.Node{Kind: graph.KindClass, Name: node.Name,
+		QualifiedName: qualified, Location: e.location(node), Properties: properties})
+	if base != "" {
+		e.b.AddFact(id, graph.EdgeExtends, "", base, graph.KindClass, e.location(node), nil)
 	}
 	inner := scope{currentID: id, parentID: id, container: qualified, receiver: qualified, classID: id,
 		classBody: true, symbols: map[string]string{}, types: cloneMap(current.types), fields: map[string]string{},
 		fieldSymbols: map[string]string{}, fieldLocked: map[string]bool{}, locked: cloneBoolMap(current.locked), signals: map[string]signalRef{},
 		transportConstants: cloneMap(current.transportConstants), transportPayloads: map[string]protobufAPI{},
 		transportFieldPayloads: map[string]protobufAPI{}, transportReceives: map[string]string{},
-		values: cloneMap(current.values), fieldValues: map[string]string{}}
+		values: cloneMap(current.values), fieldValues: map[string]string{}, testBase: testBase}
 	inner.types[node.Name] = qualified
 	e.prepareClass(node.Body, inner)
 	e.prepareTransportSummaries(node.Body, inner)
 	e.walkStatements(node.Body, inner)
+}
+
+var gdscriptLifecycleMethods = map[string]bool{
+	"before_all": true, "before_each": true, "after_each": true, "after_all": true,
+}
+
+func (e *extractor) recognizedTestBase(base string) string {
+	seen := map[string]bool{}
+	for depth := 0; base != "" && depth < 32 && !seen[base]; depth++ {
+		seen[base] = true
+		if e.testBases[base] {
+			return base
+		}
+		base = e.bases[base]
+	}
+	return ""
 }
 
 func (e *extractor) parseVariable(node *gdast.VariableDeclaration, current scope, annotations []string) {

@@ -23,9 +23,10 @@ import (
 const FileName = "grafo.yaml"
 
 var (
-	componentNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-	requestSymbolPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$`)
-	windowsAbsolutePath  = regexp.MustCompile(`^[A-Za-z]:/`)
+	componentNamePattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	requestSymbolPattern    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$`)
+	gdscriptTestBasePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$`)
+	windowsAbsolutePath     = regexp.MustCompile(`^[A-Za-z]:/`)
 )
 
 // Config contains Grafo-owned top-level configuration. Unknown top-level
@@ -35,7 +36,29 @@ type Config struct {
 	Components      []Component
 	HTTP            HTTP
 	SQL             SQL
+	Tests           Tests
 	UnknownSections map[string][]yaml.Node
+}
+
+// Tests is the fail-closed repository test-framework configuration. Invalid
+// settings retain one diagnostic and no custom bases, allowing parsers to keep
+// the verified built-in conventions without accepting an unvalidated name.
+type Tests struct {
+	GDScriptBases []string
+	Invalid       string
+}
+
+// SemanticKey fingerprints only the test-owned subtree. Invalid input is part
+// of the key so fixing grafo.yaml reparses otherwise unchanged scripts.
+func (t Tests) SemanticKey() string {
+	canonical := append([]string(nil), t.GDScriptBases...)
+	sort.Strings(canonical)
+	encoded, _ := json.Marshal(struct {
+		Bases   []string `json:"gdscript_bases"`
+		Invalid string   `json:"invalid,omitempty"`
+	}{Bases: canonical, Invalid: t.Invalid})
+	digest := sha256.Sum256(encoded)
+	return "test-config-v1:" + hex.EncodeToString(digest[:])
 }
 
 // HTTP is the shared, validated outbound-HTTP adapter configuration.
@@ -217,12 +240,62 @@ func Parse(content []byte) (Config, error) {
 			if err != nil {
 				return Config{}, err
 			}
+		case "tests":
+			if seenOwned[key] {
+				result.Tests = Tests{Invalid: fmt.Sprintf("line %d: duplicate top-level section %q", keyNode.Line, key)}
+				continue
+			}
+			seenOwned[key] = true
+			result.Tests = parseTests(valueNode)
 		default:
 			value := *valueNode
 			result.UnknownSections[key] = append(result.UnknownSections[key], value)
 		}
 	}
 	return result, nil
+}
+
+func parseTests(node *yaml.Node) Tests {
+	if isEmptyYAMLValue(node) {
+		return Tests{}
+	}
+	if node.Kind != yaml.MappingNode {
+		return Tests{Invalid: fmt.Sprintf("line %d: tests must be a mapping", node.Line)}
+	}
+	seenFields := map[string]bool{}
+	result := Tests{}
+	for index := 0; index < len(node.Content); index += 2 {
+		keyNode, valueNode := node.Content[index], node.Content[index+1]
+		key, err := stringScalar(keyNode)
+		if err != nil {
+			return Tests{Invalid: fmt.Sprintf("line %d: tests field name must be a string", keyNode.Line)}
+		}
+		if seenFields[key] {
+			return Tests{Invalid: fmt.Sprintf("line %d: duplicate tests setting %q", keyNode.Line, key)}
+		}
+		seenFields[key] = true
+		if key != "gdscript_bases" {
+			return Tests{Invalid: fmt.Sprintf("line %d: unknown tests setting %q", keyNode.Line, key)}
+		}
+		if valueNode.Kind != yaml.SequenceNode {
+			return Tests{Invalid: fmt.Sprintf("line %d: tests.gdscript_bases must be a sequence", valueNode.Line)}
+		}
+		seenBases := map[string]bool{}
+		for _, baseNode := range valueNode.Content {
+			base, baseErr := stringScalar(baseNode)
+			base = strings.TrimSpace(base)
+			if baseErr != nil || !gdscriptTestBasePattern.MatchString(base) {
+				return Tests{Invalid: fmt.Sprintf("line %d: tests.gdscript_bases entry must be a GDScript class name", baseNode.Line)}
+			}
+			if seenBases[base] {
+				return Tests{Invalid: fmt.Sprintf("line %d: duplicate tests.gdscript_bases entry %q", baseNode.Line, base)}
+			}
+			seenBases[base] = true
+			result.GDScriptBases = append(result.GDScriptBases, base)
+		}
+	}
+	sort.Strings(result.GDScriptBases)
+	return result
 }
 
 func parseHTTP(node *yaml.Node) (HTTP, error) {

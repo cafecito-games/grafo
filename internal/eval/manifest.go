@@ -39,6 +39,31 @@ type Expectations struct {
 	ForbiddenPaths  []PathPattern         `json:"forbidden_paths,omitempty"`
 	MessageFlows    []MessageFlowSpec     `json:"message_flows,omitempty"`
 	MessageCoverage []MessageCoverageSpec `json:"message_coverage,omitempty"`
+	TestCoverage    []TestCoverageSpec    `json:"test_coverage,omitempty"`
+}
+
+type TestCoverageSpec struct {
+	ID        string                    `json:"id"`
+	Direction string                    `json:"direction"`
+	Selector  string                    `json:"selector"`
+	Options   query.TestCoverageOptions `json:"options,omitempty"`
+	Result    TestCoverageResult        `json:"result"`
+}
+
+type TestCoverageResult struct {
+	Root        NodeRef                   `json:"root"`
+	Designation string                    `json:"designation"`
+	Matches     []TestCoverageMatchResult `json:"matches"`
+	Truncated   bool                      `json:"truncated"`
+}
+
+type TestCoverageMatchResult struct {
+	Test      NodeRef          `json:"test"`
+	Target    NodeRef          `json:"target"`
+	Direct    bool             `json:"direct"`
+	Depth     int              `json:"depth"`
+	Path      []NodeRef        `json:"path"`
+	Relations []graph.EdgeKind `json:"relations"`
 }
 
 // MessageFlowSpec is a schema-versioned golden task query. The compact result
@@ -432,6 +457,46 @@ func validateManifest(manifest Manifest) error {
 			}
 		}
 	}
+	for _, task := range manifest.Expect.TestCoverage {
+		if task.ID == "" || queryIDs[task.ID] {
+			return fmt.Errorf("task query ids must be non-empty and unique: %q", task.ID)
+		}
+		queryIDs[task.ID] = true
+		if task.Direction != "find_tests" && task.Direction != "test_coverage" {
+			return fmt.Errorf("test coverage %q has unknown direction %q", task.ID, task.Direction)
+		}
+		if strings.TrimSpace(task.Selector) == "" {
+			return fmt.Errorf("test coverage %q selector is required", task.ID)
+		}
+		if task.Options.Depth < 0 || task.Options.Depth > query.MaxTestCoverageDepth ||
+			task.Options.Limit < 0 || task.Options.Limit > query.MaxTestCoverageLimit {
+			return fmt.Errorf("test coverage %q has invalid bounds", task.ID)
+		}
+		if err := validateNodeRef(task.Result.Root, repositories); err != nil {
+			return fmt.Errorf("test coverage %q: %w", task.ID, err)
+		}
+		if task.Result.Designation != "structural" {
+			return fmt.Errorf("test coverage %q result must be designated structural", task.ID)
+		}
+		for _, match := range task.Result.Matches {
+			if err := validateNodeRef(match.Test, repositories); err != nil {
+				return fmt.Errorf("test coverage %q: %w", task.ID, err)
+			}
+			if err := validateNodeRef(match.Target, repositories); err != nil {
+				return fmt.Errorf("test coverage %q: %w", task.ID, err)
+			}
+			for _, node := range match.Path {
+				if err := validateNodeRef(node, repositories); err != nil {
+					return fmt.Errorf("test coverage %q: %w", task.ID, err)
+				}
+			}
+			for _, relation := range match.Relations {
+				if !validEdgeKinds[relation] {
+					return fmt.Errorf("test coverage %q has unknown relation %q", task.ID, relation)
+				}
+			}
+		}
+	}
 	for _, forbidden := range manifest.Expect.ForbiddenPaths {
 		if err := validatePath(forbidden.From, forbidden.To, forbidden.Direction, forbidden.Relations); err != nil {
 			return fmt.Errorf("forbidden path: %w", err)
@@ -572,6 +637,7 @@ var validEdgeKinds = makeSet([]graph.EdgeKind{
 	graph.EdgeRequests, graph.EdgeDependsOn, graph.EdgeDocuments, graph.EdgeGeneratedFrom, graph.EdgeInstantiates,
 	graph.EdgeAttachesScript, graph.EdgeAutoloads, graph.EdgeUsesInputAction, graph.EdgeInGroup,
 	graph.EdgeUsesGroup,
+	graph.EdgeTests,
 })
 
 func makeSet[T comparable](values []T) map[T]bool {

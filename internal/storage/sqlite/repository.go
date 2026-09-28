@@ -365,6 +365,19 @@ func (r *Repository) reconcileBatch(ctx context.Context, resolved *resolutionCac
 		if err := q.DeleteEdgesByDirtyFactBatch(ctx, reconciliationBatchSize); err != nil {
 			return err
 		}
+		nodeCache := map[string]graph.Node{}
+		loadNode := func(id string) (graph.Node, error) {
+			if node, ok := nodeCache[id]; ok {
+				return node, nil
+			}
+			row, err := q.GetNode(ctx, id)
+			if err != nil {
+				return graph.Node{}, err
+			}
+			node := nodeFromRow(row)
+			nodeCache[id] = node
+			return node, nil
+		}
 		for _, row := range facts {
 			processed++
 			fact := factFromDirtyRow(row)
@@ -383,6 +396,31 @@ func (r *Repository) reconcileBatch(ctx context.Context, resolved *resolutionCac
 						Properties: fact.Properties}
 					if err := writer.addEdge(ctx, edgeParams(edge)); err != nil {
 						return err
+					}
+					if edge.Kind != graph.EdgeCalls && edge.Kind != graph.EdgeReferences {
+						continue
+					}
+					sourceNode, sourceErr := loadNode(source)
+					if errors.Is(sourceErr, sql.ErrNoRows) {
+						continue // a newly materialized unresolved source cannot be a local test
+					}
+					if sourceErr != nil {
+						return sourceErr
+					}
+					if sourceNode.Kind != graph.KindTest {
+						continue
+					}
+					targetNode, targetErr := loadNode(target)
+					if errors.Is(targetErr, sql.ErrNoRows) {
+						continue // a newly materialized unresolved target is never production evidence
+					}
+					if targetErr != nil {
+						return targetErr
+					}
+					if testEdge, ok := graph.DirectTestEdge(sourceNode, targetNode, edge); ok {
+						if err := writer.addEdge(ctx, edgeParams(testEdge)); err != nil {
+							return err
+						}
 					}
 				}
 			}

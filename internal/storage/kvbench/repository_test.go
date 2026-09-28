@@ -48,6 +48,54 @@ func TestRepositoryMatchesSQLiteResolutionAndQueries(t *testing.T) {
 	}
 }
 
+func TestRepositoryDirectTestEdgesMatchSQLite(t *testing.T) {
+	ctx := context.Background()
+	for _, engine := range []Engine{EngineBolt, EnginePebble} {
+		t.Run(string(engine), func(t *testing.T) {
+			control, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "control.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = control.Close() }()
+			candidate, err := Open(ctx, engine, filepath.Join(t.TempDir(), "candidate"), Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = candidate.Close() }()
+
+			testDeclaration := testNode("test", graph.KindTest, "pkg.TestProduce", "sample_test.go")
+			target := testNode("target", graph.KindFunction, "pkg.Produce", "sample.go")
+			fact := testFact("test-call", testDeclaration.ID, graph.EdgeCalls, target.QualifiedName, target.Kind, "", testDeclaration.OwnerFile)
+			fact.Producer = "go"
+			for _, repository := range []graph.Repository{control, candidate} {
+				if err := repository.ReplaceFile(ctx, testFile(testDeclaration.OwnerFile), graph.ParseResult{Nodes: []graph.Node{testDeclaration}, Facts: []graph.Fact{fact}}); err != nil {
+					t.Fatal(err)
+				}
+				if err := repository.ReplaceFile(ctx, testFile(target.OwnerFile), graph.ParseResult{Nodes: []graph.Node{target}}); err != nil {
+					t.Fatal(err)
+				}
+				if err := repository.Reconcile(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			controlEdges, err := control.EdgesFrom(ctx, testDeclaration.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			candidateEdges, err := candidate.EdgesFrom(ctx, testDeclaration.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(controlEdges, candidateEdges) {
+				t.Fatalf("test edges differ:\ncontrol=%#v\ncandidate=%#v", controlEdges, candidateEdges)
+			}
+			if len(controlEdges) != 2 || controlEdges[1].Kind != graph.EdgeTests {
+				t.Fatalf("direct test edge missing: %#v", controlEdges)
+			}
+		})
+	}
+}
+
 func TestRepositoryExplicitTargetKindMatchesSQLite(t *testing.T) {
 	ctx := context.Background()
 	for _, engine := range []Engine{EngineBolt, EnginePebble} {

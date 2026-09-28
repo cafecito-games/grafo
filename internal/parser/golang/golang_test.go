@@ -23,6 +23,93 @@ func (f fakeSemanticLoader) Load(context.Context, parserapi.Input) (golangparser
 	return f.view, nil
 }
 
+func TestParserClassifiesOnlyValidGoTestDeclarations(t *testing.T) {
+	content := []byte(`package widget
+import check "testing"
+
+func TestValid(t *check.T) {}
+func BenchmarkValid(b *check.B) {}
+func FuzzValid(f *check.F) {}
+func ExampleWidget() { // Output:
+}
+func Testlower(t *check.T) {}
+func TestWrong() {}
+func BenchmarkWrong(b check.B) {}
+func FuzzWrong(f *check.T) {}
+func ExampleWrong(value string) {}
+func ExampleNoOutput() {}
+func helper() {}
+type Suite struct{}
+func (Suite) TestMethod(t *check.T) {}
+`)
+	result, err := golangparser.NewWithSemanticLoader(nil).Parse(context.Background(), parserapi.Input{
+		Path: "widget_test.go", Content: content, Repository: "sample", RepoID: "repo", GoModule: "example.com/sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTests := map[string]string{
+		"TestValid": "test", "BenchmarkValid": "benchmark", "FuzzValid": "fuzz", "ExampleWidget": "example",
+	}
+	for _, node := range result.Nodes {
+		if subtype, ok := wantTests[node.Name]; ok {
+			if node.Kind != graph.KindTest || node.Properties["test_subtype"] != subtype ||
+				node.Properties["test_framework"] != "go" || node.Properties["test_package"] != "internal" {
+				t.Fatalf("valid test %s = %#v", node.Name, node)
+			}
+			delete(wantTests, node.Name)
+		}
+	}
+	if len(wantTests) != 0 {
+		t.Fatalf("missing test declarations: %#v", wantTests)
+	}
+	for _, name := range []string{"Testlower", "TestWrong", "BenchmarkWrong", "FuzzWrong", "ExampleWrong", "ExampleNoOutput", "TestMethod"} {
+		node := nodeNamed(t, result.Nodes, name)
+		if node.Kind == graph.KindTest {
+			t.Fatalf("invalid test-like declaration %s classified as a test: %#v", name, node)
+		}
+	}
+	helper := nodeNamed(t, result.Nodes, "helper")
+	if helper.Kind != graph.KindFunction || helper.Properties["test_role"] != "helper" ||
+		helper.Properties["test_package"] != "internal" {
+		t.Fatalf("test helper metadata = %#v", helper)
+	}
+
+	external, err := golangparser.NewWithSemanticLoader(nil).Parse(context.Background(), parserapi.Input{
+		Path: "external_test.go", Content: []byte("package widget_test\nimport \"testing\"\nfunc TestExternal(t *testing.T) {}\n"),
+		Repository: "sample", RepoID: "repo", GoModule: "example.com/sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	externalTest := nodeNamed(t, external.Nodes, "TestExternal")
+	if externalTest.Kind != graph.KindTest || externalTest.Properties["test_package"] != "external" {
+		t.Fatalf("external-package test identity = %#v", externalTest)
+	}
+
+	production, err := golangparser.NewWithSemanticLoader(nil).Parse(context.Background(), parserapi.Input{
+		Path: "widget.go", Content: []byte("package widget\nimport \"testing\"\nfunc TestLooksValid(t *testing.T) {}\n"),
+		Repository: "sample", RepoID: "repo", GoModule: "example.com/sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node := nodeNamed(t, production.Nodes, "TestLooksValid"); node.Kind != graph.KindFunction || node.Properties["test_role"] != "" {
+		t.Fatalf("production test-like declaration = %#v", node)
+	}
+}
+
+func nodeNamed(t *testing.T, nodes []graph.Node, name string) graph.Node {
+	t.Helper()
+	for _, node := range nodes {
+		if node.Name == name {
+			return node
+		}
+	}
+	t.Fatalf("node %q not found: %#v", name, nodes)
+	return graph.Node{}
+}
+
 func TestParserExtractsSymbolsAndWiring(t *testing.T) {
 	content := []byte(`package api
 import (
@@ -900,6 +987,51 @@ func invoke(r Runner, w *Worker, left Left, right Right) {
 	for _, fact := range result.Facts {
 		if fact.Kind == graph.EdgeCalls && fact.Target == "example.com/sample.string" {
 			t.Fatalf("type conversion emitted a call edge: %#v", fact)
+		}
+	}
+}
+
+func TestPackageSemanticLoaderResolvesInternalAndExternalTestCalls(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26\n")
+	writeFile(t, filepath.Join(root, "sample.go"), "package sample\nfunc Produce() {}\n")
+	tests := map[string]string{
+		"sample_test.go": `package sample
+import "testing"
+func TestInternal(t *testing.T) { Produce() }
+`,
+		"external_test.go": `package sample_test
+import (
+  "testing"
+  "example.com/sample"
+)
+func TestExternal(t *testing.T) { sample.Produce() }
+`,
+	}
+	for path, source := range tests {
+		writeFile(t, filepath.Join(root, path), source)
+		result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+			Root: root, Path: path, Content: []byte(source), Repository: "sample", RepoID: "repo", GoModule: "example.com/sample",
+		})
+		if err != nil {
+			t.Fatalf("Parse(%s): %v", path, err)
+		}
+		var testNode graph.Node
+		for _, node := range result.Nodes {
+			if node.Kind == graph.KindTest {
+				testNode = node
+				break
+			}
+		}
+		found := false
+		for _, fact := range result.Facts {
+			if fact.Kind == graph.EdgeCalls && fact.FromID == testNode.ID &&
+				fact.Target == "example.com/sample.Produce" && fact.Properties["resolution"] == "go/types" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("%s did not retain exact typed production call: nodes=%#v facts=%#v diagnostics=%#v", path, result.Nodes, result.Facts, result.Diagnostics)
 		}
 	}
 }

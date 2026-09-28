@@ -100,6 +100,14 @@ complete reparse, replacing those legacy unknown values before current query
 results are served. Reconciliation copies fact provenance to every replacement
 edge without making it part of fact or edge identity.
 
+Graph schema version 11 and semantic-index version 29 add first-class Go and
+Godot test declarations. Reconciliation derives a `tests` edge only when a
+local test's exact `calls` or `references` evidence resolves uniquely to a
+local production declaration. Query-time helper expansion follows only nodes
+explicitly marked as test helpers or lifecycle hooks, is bounded by depth and
+work limits, and reports cycles or exhausted bounds as truncated. These reports
+are structural evidence and never claim runtime execution coverage.
+
 For Git worktrees, the indexer narrows content hashing to files changed since
 the indexed commit, current untracked files, and paths that were dirty during
 the previous run. Remembering the previous dirty set closes the restore case:

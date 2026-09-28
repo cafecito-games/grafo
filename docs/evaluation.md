@@ -39,6 +39,13 @@ path, line, column, and structural properties. The complete sorted `nodes` and
 direction, and relation filter alongside the exact ordered nodes and edges
 returned by the production shortest-path service.
 
+`test_coverage` task queries exercise the production `find_tests` and
+`test_coverage` services. Their goldens retain the structural designation,
+direct-versus-helper-expanded classification, bounded path nodes and
+relations, and truncation state. The `test-modeling` case covers both Go and
+Godot declarations, persisted direct `tests` evidence, and helper-expanded
+paths in both directions.
+
 Negative contracts belong in `ambiguities`, `forbidden_edges`, and
 `forbidden_paths`. Forbidden-edge endpoints must each resolve exactly once.
 Forbidden paths only pass on a real no-path result; a missing or ambiguous
