@@ -133,7 +133,7 @@ func fileQueryBodies(t *testing.T) map[string]string {
 
 func normalizeQueryText(text string) string {
 	var lines []string
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		if comment, _, found := strings.Cut(line, "--"); found {
 			line = comment
 		}
