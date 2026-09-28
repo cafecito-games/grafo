@@ -116,6 +116,14 @@ var stored: AcmeV1EnvelopeEnvelope
 var ordinary: Node
 var assigned_field
 var assigned_self
+var branch_field
+var branch_swapped_field
+var missing_else_field
+var while_field
+var for_field
+var match_field
+var shadow_field
+var compound_field
 
 class Derived extends AcmeV1EnvelopeEnvelope:
 	func inherited() -> void:
@@ -126,12 +134,15 @@ class Override extends AcmeV1EnvelopeEnvelope:
 		pass
 	func get_child() -> Variant:
 		return null
+	func helper() -> Variant:
+		return null
 	func use_override() -> void:
 		set_text("local override")
 		var child = get_child()
 		child.set_name("not a generated child")
 		self.set_text("self local override")
-		self.get_child().set_name("still not a generated child")
+		self.get_child().set_text("not an Envelope receiver")
+		self.helper().set_text("unresolved Variant receiver")
 
 func use(data: PackedByteArray, typed: AcmeV1EnvelopeEnvelope) -> String:
 	var envelope_type = AcmeV1EnvelopeEnvelope
@@ -181,6 +192,36 @@ func assigned_field_agreed(cond: bool, data: PackedByteArray) -> void:
 	else:
 		self.assigned_field = AcmeV1EnvelopeEnvelope.from_bytes(data)
 	self.assigned_field.set_text("field proven on every branch")
+
+func uncertain_fields(cond: bool, dynamic, data: PackedByteArray, items: Array) -> void:
+	if cond:
+		self.branch_field = dynamic
+	else:
+		self.branch_field = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	self.branch_field.set_text("branches disagree")
+	if cond:
+		self.branch_swapped_field = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	else:
+		self.branch_swapped_field = dynamic
+	self.branch_swapped_field.set_text("swapped branches disagree")
+	if cond:
+		self.missing_else_field = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	self.missing_else_field.set_text("else path has no proof")
+	while items.is_empty():
+		self.while_field = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	self.while_field.set_text("loop may not run")
+	for item in items:
+		self.for_field = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	self.for_field.set_text("iteration may not run")
+	match items.size():
+		1:
+			self.match_field = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	self.match_field.set_text("pattern may not match")
+	var shadow_field
+	shadow_field = AcmeV1EnvelopeEnvelope.from_bytes(data)
+	self.shadow_field.set_text("local assignment must not prove field")
+	self.compound_field += AcmeV1EnvelopeEnvelope.from_bytes(data)
+	self.compound_field.set_text("compound assignment is not type proof")
 
 func uncertain(cond: bool, dynamic, data: PackedByteArray) -> void:
 	var value
@@ -263,13 +304,14 @@ func uncertain_loops(items: Array, data: PackedByteArray) -> void:
 	uncertainID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.uncertain").ID
 	uncertainSwappedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.uncertain_swapped").ID
 	uncertainLoopsID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.uncertain_loops").ID
+	uncertainFieldsID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.uncertain_fields").ID
 	selfShadowedID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.self_shadowed").ID
 	overrideID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Client.Override.use_override").ID
 	for _, fact := range result.Facts {
 		if (fact.FromID == forbiddenID || fact.FromID == shadowedID || fact.FromID == selfShadowedID || fact.FromID == overrideID) && fact.Properties["protocol"] == "protobuf" {
 			t.Fatalf("unproven or local lookalike receiver produced protocol usage: %#v", fact)
 		}
-		if (fact.FromID == uncertainID || fact.FromID == uncertainSwappedID || fact.FromID == uncertainLoopsID) && fact.Kind == graph.EdgeWrites && fact.Properties["protocol"] == "protobuf" {
+		if (fact.FromID == uncertainID || fact.FromID == uncertainSwappedID || fact.FromID == uncertainLoopsID || fact.FromID == uncertainFieldsID) && fact.Kind == graph.EdgeWrites && fact.Properties["protocol"] == "protobuf" {
 			t.Fatalf("branch-dependent receiver produced protocol write: %#v", fact)
 		}
 	}

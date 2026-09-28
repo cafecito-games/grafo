@@ -621,7 +621,7 @@ func (e *extractor) parseAssignment(node *gdast.Assignment, current scope) {
 			targetName, selfField = target.Property, true
 		}
 	}
-	if targetName != "" {
+	if targetName != "" && (node.Operator == "" || node.Operator == "=") {
 		inferred := e.inferExpressionType(node.Value, current)
 		fieldID, isField := current.fieldSymbols[targetName]
 		actualField := isField && (selfField || current.symbols[targetName] == fieldID)
@@ -816,6 +816,9 @@ func (e *extractor) addProtobufUse(node *gdast.CallExpression, callee, fromID st
 	if e.localCall(node.Callee, current) {
 		return
 	}
+	if e.unresolvedMemberReceiver(node.Callee, current) {
+		return
+	}
 	apiCallee := e.protobufCallee(callee, current)
 	if e.protobufAmbiguous[apiCallee] {
 		if !e.protobufWarned[apiCallee] {
@@ -897,6 +900,14 @@ func (e *extractor) untypedLocalReceiver(expression gdast.Expression, current sc
 	}
 	_, local := current.symbols[identifier.Name]
 	return local && current.types[identifier.Name] == ""
+}
+
+func (e *extractor) unresolvedMemberReceiver(expression gdast.Expression, current scope) bool {
+	member, ok := expression.(*gdast.MemberExpression)
+	if !ok {
+		return false
+	}
+	return e.resolveExpression(member.Object, current) == ""
 }
 
 func isNodeLookup(method string) bool {
@@ -1261,7 +1272,8 @@ func (e *extractor) inferExpressionType(expression gdast.Expression, current sco
 	}
 	callee := e.resolveCallee(call.Callee, current)
 	apiCallee := e.protobufCallee(callee, current)
-	if !e.localCall(call.Callee, current) && !e.untypedLocalReceiver(call.Callee, current) && !e.protobufAmbiguous[apiCallee] {
+	if !e.localCall(call.Callee, current) && !e.unresolvedMemberReceiver(call.Callee, current) &&
+		!e.untypedLocalReceiver(call.Callee, current) && !e.protobufAmbiguous[apiCallee] {
 		if api, exists := e.protobufAPIs[apiCallee]; exists && api.returns != "" {
 			return api.returns
 		}
