@@ -46,6 +46,11 @@ storage can evolve independently.
 3. A parser emits declaration nodes and relationship facts without talking to
    the database. Most adapters use syntax evidence; the Go adapter augments it
    with compact `go/packages`/`go/types` object evidence when available.
+   Every fact carries an explicit extraction `producer`. The parser builder
+   stamps direct consumers, and the indexer overwrites that value with the
+   selected parser's `Language()` before persistence so parser output cannot
+   forge another producer. Indexer-owned containment/component facts use the
+   stable `indexer` identity.
 4. The repository transactionally replaces the changed file's nodes and facts.
 5. Reconciliation deterministically resolves only dirty facts against
    declarations and materializes adjacency-indexed edges. When evidence is
@@ -89,6 +94,11 @@ for existing rows; semantic-index version 18 required a one-time reindex to
 populate Unicode-correct shadow values for every node. Migration 00006 adds
 named fact sources without changing legacy exact-source rows, and semantic-index
 version 19 reparses producers so they can emit the expanded contract.
+Migration 00007 adds non-null producer columns to facts and edges with an empty
+legacy default. Graph schema version 10 and semantic-index version 28 force a
+complete reparse, replacing those legacy unknown values before current query
+results are served. Reconciliation copies fact provenance to every replacement
+edge without making it part of fact or edge identity.
 
 For Git worktrees, the indexer narrows content hashing to files changed since
 the indexed commit, current untracked files, and paths that were dirty during
@@ -292,6 +302,15 @@ both name a membership between a node and a group, and `lookup`, `call`, and
 `is_in_group` is a `uses_group` lookup with form `membership_test` and never an
 `in_group` edge, because asking whether a node is in a group is not evidence
 that it is.
+
+Operation form is not parser provenance. `Fact.Producer` is the extraction
+authority and `Edge.Producer` is its reconciled read model. Godot interaction
+classification first requires producer `gdscript` or `godot` for every action,
+group, signal, reference, and definition; shared signal relations additionally
+require one of the known forms. Missing, unknown, or non-Godot producers are
+excluded even when their endpoint kinds and `form` values look Godot-specific.
+Federation retargets a copied edge and therefore preserves the original
+producer unchanged.
 
 Actions and groups are project-scoped exactly as autoloads are
 (`godot:input_action:<project.godot path>:<name>`,

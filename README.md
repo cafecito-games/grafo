@@ -276,6 +276,11 @@ edge is a `form` property (`declared`, `add`, `remove`, `membership_test`,
 `lookup`, `call`, `notify`, `query`, `press`, `release`, `configure`, `emit`,
 `connect`) rather than another edge kind. `is_in_group` is a lookup and never
 membership: asking whether a node is in a group is not evidence that it is.
+Every fact and reconciled edge also exposes an explicit `producer`; this is
+extraction provenance, not endpoint language. Godot interaction reports accept
+only `gdscript` and `godot` producers, and still require a known signal form.
+Missing, unknown, or non-Godot producers fail closed even if they reuse a
+Godot-looking relation or form.
 
 Identity is scoped to the declaring project
 (`godot:input_action:<project.godot path>:<name>`,

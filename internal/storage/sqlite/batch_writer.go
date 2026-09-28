@@ -64,9 +64,9 @@ var (
 	}
 	factBatchSpec = batchSpec{
 		name:    "facts",
-		columns: 14,
+		columns: 15,
 		prefix: `INSERT INTO facts(
-    id, from_id, source, source_kind, kind, target_id, target, target_kind,
+    id, from_id, source, source_kind, kind, producer, target_id, target, target_kind,
     path, line, column_no, end_line, properties, owner_file
 ) VALUES `,
 		suffix: ` ON CONFLICT(id) DO UPDATE SET
@@ -74,6 +74,7 @@ var (
     source = excluded.source,
     source_kind = excluded.source_kind,
     kind = excluded.kind,
+    producer = excluded.producer,
     target_id = excluded.target_id,
     target = excluded.target,
     target_kind = excluded.target_kind,
@@ -86,9 +87,9 @@ var (
 	}
 	edgeBatchSpec = batchSpec{
 		name:    "edges",
-		columns: 10,
+		columns: 11,
 		prefix: `INSERT INTO edges(
-    id, fact_id, from_id, to_id, kind, path, line, column_no, end_line, properties
+    id, fact_id, from_id, to_id, kind, producer, path, line, column_no, end_line, properties
 ) VALUES `,
 	}
 	dirtyNodeBatchSpec = batchSpec{
@@ -157,7 +158,7 @@ func (w *batchWriter) addNode(ctx context.Context, row sqlcgen.UpsertNodeParams)
 
 func (w *batchWriter) addFact(ctx context.Context, row sqlcgen.UpsertFactParams) error {
 	return w.add(ctx, &w.facts, []any{row.ID, row.FromID, row.Source, row.SourceKind, row.Kind,
-		row.TargetID, row.Target, row.TargetKind, row.Path, row.Line, row.ColumnNo, row.EndLine,
+		row.Producer, row.TargetID, row.Target, row.TargetKind, row.Path, row.Line, row.ColumnNo, row.EndLine,
 		row.Properties, row.OwnerFile})
 }
 
@@ -171,7 +172,7 @@ func (w *batchWriter) addDirtyTarget(ctx context.Context, target, kind string) e
 
 func (w *batchWriter) addEdge(ctx context.Context, row sqlcgen.InsertEdgeParams) error {
 	return w.add(ctx, &w.edges, []any{row.ID, row.FactID, row.FromID, row.ToID, row.Kind,
-		row.Path, row.Line, row.ColumnNo, row.EndLine, row.Properties})
+		row.Producer, row.Path, row.Line, row.ColumnNo, row.EndLine, row.Properties})
 }
 
 func (w *batchWriter) add(ctx context.Context, buffer *batchBuffer, row []any) error {

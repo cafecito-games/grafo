@@ -211,6 +211,61 @@ func TestFederatedRelationEdgesProjectThenApplyGlobalBounds(t *testing.T) {
 	}
 }
 
+func TestFederatedGodotInteractionsPreserveAndEnforceProducer(t *testing.T) {
+	ctx := context.Background()
+	workspace := t.TempDir()
+	declarationsRoot := filepath.Join(workspace, "declarations")
+	clientRoot := filepath.Join(workspace, "client")
+	for _, root := range []string{declarationsRoot, clientRoot} {
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	action := graph.Node{ID: graph.NodeID(graph.KindGodotInputAction, "godot:input_action:project.godot:jump"),
+		Kind: graph.KindGodotInputAction, Name: "jump",
+		QualifiedName: "godot:input_action:project.godot:jump", OwnerFile: "project.godot"}
+	seedCatalogIndex(t, ctx, declarationsRoot, "project.godot", graph.ParseResult{Nodes: []graph.Node{action}})
+	accepted := graph.Node{ID: "n:accepted", Kind: graph.KindMethod, Name: "poll",
+		QualifiedName: "Player.poll", OwnerFile: "player.gd"}
+	rejected := graph.Node{ID: "n:rejected", Kind: graph.KindMethod, Name: "poll",
+		QualifiedName: "Forged.poll", OwnerFile: "forged.go"}
+	seedCatalogIndex(t, ctx, clientRoot, "client", graph.ParseResult{
+		Nodes: []graph.Node{accepted, rejected},
+		Facts: []graph.Fact{
+			{ID: "f:accepted", FromID: accepted.ID, Kind: graph.EdgeUsesInputAction,
+				Producer: graph.ProducerGDScript, Target: action.QualifiedName, TargetKind: action.Kind,
+				Properties: map[string]string{"form": "query"}, OwnerFile: "player.gd"},
+			{ID: "f:rejected", FromID: rejected.ID, Kind: graph.EdgeUsesInputAction,
+				Producer: "go", Target: action.QualifiedName, TargetKind: action.Kind,
+				Properties: map[string]string{"form": "query"}, OwnerFile: "forged.go"},
+		},
+	})
+
+	repository, err := federation.Open(ctx, []string{declarationsRoot, clientRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	acceptedReport, err := query.NewService(repository).GodotInteractions(ctx, accepted.QualifiedName,
+		query.GodotInteractionsOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(acceptedReport.Outbound) != 1 || !acceptedReport.Outbound[0].Federated ||
+		acceptedReport.Outbound[0].Edge.Producer != graph.ProducerGDScript ||
+		acceptedReport.Outbound[0].Node.ID != action.ID {
+		t.Fatalf("accepted federated interaction = %#v", acceptedReport.Outbound)
+	}
+	rejectedReport, err := query.NewService(repository).GodotInteractions(ctx, rejected.QualifiedName,
+		query.GodotInteractionsOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rejectedReport.Outbound) != 0 || len(rejectedReport.Inbound) != 0 {
+		t.Fatalf("non-Godot producer crossed federated gate: %#v", rejectedReport)
+	}
+}
+
 func seedCatalogIndex(t *testing.T, ctx context.Context, root, owner string, result graph.ParseResult) {
 	t.Helper()
 	project, err := indexer.DiscoverProject(ctx, root)

@@ -30,7 +30,7 @@ func (q *Queries) DeleteFactsByOwner(ctx context.Context, ownerFile string) erro
 }
 
 const listDirtyFactBatch = `-- name: ListDirtyFactBatch :many
-SELECT facts.id, facts.from_id, facts.source, facts.source_kind, facts.kind,
+SELECT facts.id, facts.from_id, facts.source, facts.source_kind, facts.kind, facts.producer,
        facts.target_id, facts.target, facts.target_kind, facts.path, facts.line,
        facts.column_no, facts.end_line, facts.properties, facts.owner_file,
        CASE WHEN facts.from_id = '' OR source_node.id IS NOT NULL THEN 1 ELSE 0 END AS source_exists,
@@ -50,6 +50,7 @@ type ListDirtyFactBatchRow struct {
 	Source       string `json:"source"`
 	SourceKind   string `json:"source_kind"`
 	Kind         string `json:"kind"`
+	Producer     string `json:"producer"`
 	TargetID     string `json:"target_id"`
 	Target       string `json:"target"`
 	TargetKind   string `json:"target_kind"`
@@ -78,6 +79,7 @@ func (q *Queries) ListDirtyFactBatch(ctx context.Context, limit int64) ([]ListDi
 			&i.Source,
 			&i.SourceKind,
 			&i.Kind,
+			&i.Producer,
 			&i.TargetID,
 			&i.Target,
 			&i.TargetKind,
@@ -105,14 +107,15 @@ func (q *Queries) ListDirtyFactBatch(ctx context.Context, limit int64) ([]ListDi
 
 const upsertFact = `-- name: UpsertFact :exec
 INSERT INTO facts(
-    id, from_id, source, source_kind, kind, target_id, target, target_kind,
+    id, from_id, source, source_kind, kind, producer, target_id, target, target_kind,
     path, line, column_no, end_line, properties, owner_file
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     from_id = excluded.from_id,
     source = excluded.source,
     source_kind = excluded.source_kind,
     kind = excluded.kind,
+    producer = excluded.producer,
     target_id = excluded.target_id,
     target = excluded.target,
     target_kind = excluded.target_kind,
@@ -130,6 +133,7 @@ type UpsertFactParams struct {
 	Source     string `json:"source"`
 	SourceKind string `json:"source_kind"`
 	Kind       string `json:"kind"`
+	Producer   string `json:"producer"`
 	TargetID   string `json:"target_id"`
 	Target     string `json:"target"`
 	TargetKind string `json:"target_kind"`
@@ -148,6 +152,7 @@ func (q *Queries) UpsertFact(ctx context.Context, arg UpsertFactParams) error {
 		arg.Source,
 		arg.SourceKind,
 		arg.Kind,
+		arg.Producer,
 		arg.TargetID,
 		arg.Target,
 		arg.TargetKind,

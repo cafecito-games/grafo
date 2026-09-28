@@ -44,4 +44,10 @@ func TestBuilderDistinguishesExactAndNamedSourceIdentity(t *testing.T) {
 	if fact.ID == exact.Result.Facts[0].ID {
 		t.Fatalf("exact and named source locators collided at %q", fact.ID)
 	}
+	for _, produced := range []graph.Fact{exact.Result.Facts[0], fact} {
+		if produced.Producer != graph.ProducerGDScript {
+			t.Fatalf("builder fact producer = %q, want %q: %#v",
+				produced.Producer, graph.ProducerGDScript, produced)
+		}
+	}
 }

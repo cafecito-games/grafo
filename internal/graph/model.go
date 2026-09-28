@@ -9,7 +9,17 @@ import (
 	"strings"
 )
 
-const SchemaVersion = 9
+const SchemaVersion = 10
+
+// Stable extraction producers identify the authority that created a fact.
+// Producer is deliberately separate from source language: one fact can point
+// across languages, while its producer remains the parser or indexer that
+// extracted the evidence.
+const (
+	ProducerGDScript = "gdscript"
+	ProducerGodot    = "godot"
+	ProducerIndexer  = "indexer"
+)
 
 type NodeKind string
 
@@ -215,6 +225,7 @@ type Fact struct {
 	Source     string            `json:"source,omitempty"`
 	SourceKind NodeKind          `json:"source_kind,omitempty"`
 	Kind       EdgeKind          `json:"kind"`
+	Producer   string            `json:"producer,omitempty"`
 	TargetID   string            `json:"target_id,omitempty"`
 	Target     string            `json:"target,omitempty"`
 	TargetKind NodeKind          `json:"target_kind,omitempty"`
@@ -244,6 +255,7 @@ type Edge struct {
 	FromID     string            `json:"from_id"`
 	ToID       string            `json:"to_id"`
 	Kind       EdgeKind          `json:"kind"`
+	Producer   string            `json:"producer,omitempty"`
 	Location   Location          `json:"location,omitempty"`
 	Properties map[string]string `json:"properties,omitempty"`
 	FactID     string            `json:"fact_id,omitempty"`

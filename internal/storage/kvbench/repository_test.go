@@ -213,6 +213,94 @@ func TestRepositoryRestartResumesCommittedReconciliationBatches(t *testing.T) {
 	}
 }
 
+func TestRepositoryPreservesProducerAcrossRestartAndReplacement(t *testing.T) {
+	ctx := context.Background()
+	for _, engine := range []Engine{EngineBolt, EnginePebble} {
+		t.Run(string(engine), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "candidate")
+			repository, err := Open(ctx, engine, path, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			source := testNode("producer-source", graph.KindMethod, "Player.poll", "player.gd")
+			target := testNode("producer-target", graph.KindGodotInputAction,
+				"godot:input_action:project.godot:jump", "project.godot")
+			fact := testFact("producer-fact", source.ID, graph.EdgeUsesInputAction,
+				target.QualifiedName, target.Kind, "", "player.gd")
+			fact.Producer = graph.ProducerGDScript
+			if err := repository.ReplaceFile(ctx, testFile("player.gd"), graph.ParseResult{
+				Nodes: []graph.Node{source}, Facts: []graph.Fact{fact},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := repository.ReplaceFile(ctx, testFile("project.godot"), graph.ParseResult{
+				Nodes: []graph.Node{target},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := repository.Reconcile(ctx); err != nil {
+				t.Fatal(err)
+			}
+			assertKVProducerEdge(t, ctx, repository, source.ID, graph.ProducerGDScript, false)
+			if err := repository.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			repository, err = Open(ctx, engine, path, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = repository.Close() }()
+			assertKVProducerEdge(t, ctx, repository, source.ID, graph.ProducerGDScript, false)
+			if err := repository.ReplaceFile(ctx, testFile("project.godot"), graph.ParseResult{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := repository.Reconcile(ctx); err != nil {
+				t.Fatal(err)
+			}
+			assertKVProducerEdge(t, ctx, repository, source.ID, graph.ProducerGDScript, true)
+			fact.Producer = graph.ProducerGodot
+			if err := repository.ReplaceFile(ctx, testFile("player.gd"), graph.ParseResult{
+				Nodes: []graph.Node{source}, Facts: []graph.Fact{fact},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := repository.Reconcile(ctx); err != nil {
+				t.Fatal(err)
+			}
+			assertKVProducerEdge(t, ctx, repository, source.ID, graph.ProducerGodot, true)
+			if err := repository.ReplaceFile(ctx, testFile("project.godot"), graph.ParseResult{
+				Nodes: []graph.Node{target},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := repository.Reconcile(ctx); err != nil {
+				t.Fatal(err)
+			}
+			assertKVProducerEdge(t, ctx, repository, source.ID, graph.ProducerGodot, false)
+		})
+	}
+}
+
+func assertKVProducerEdge(t *testing.T, ctx context.Context, repository *Repository,
+	fromID, producer string, external bool) {
+	t.Helper()
+	edges, err := repository.EdgesFrom(ctx, fromID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edges) != 1 || edges[0].Producer != producer {
+		t.Fatalf("producer edges = %#v, want producer %q", edges, producer)
+	}
+	target, err := repository.Node(ctx, edges[0].ToID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.External != external {
+		t.Fatalf("target external = %v, want %v: %#v", target.External, external, target)
+	}
+}
+
 func TestRepositoryReplacementIsAtomicOnCanceledContext(t *testing.T) {
 	ctx := context.Background()
 	for _, engine := range []Engine{EngineBolt, EnginePebble} {

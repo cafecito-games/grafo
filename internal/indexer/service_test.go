@@ -2,6 +2,7 @@ package indexer_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -39,6 +40,75 @@ func (deletingParser) Parse(_ context.Context, input parserapi.Input) (graph.Par
 		}
 	}
 	return parserapi.NewBuilder(input, "deleting-test").Finish(), nil
+}
+
+type forgingProducerParser struct{}
+
+func (forgingProducerParser) Language() string          { return "go" }
+func (forgingProducerParser) Supports(path string) bool { return strings.HasSuffix(path, ".forge") }
+func (forgingProducerParser) Parse(_ context.Context, input parserapi.Input) (graph.ParseResult, error) {
+	builder := parserapi.NewBuilder(input, "go")
+	method := graph.Node{ID: graph.NodeID(graph.KindMethod, "Forged.call"), Kind: graph.KindMethod,
+		Name: "call", QualifiedName: "Forged.call", Location: graph.Location{Path: input.Path, Line: 1}}
+	event := graph.Node{ID: graph.NodeID(graph.KindEvent, "Forged.ready"), Kind: graph.KindEvent,
+		Name: "ready", QualifiedName: "Forged.ready", Location: graph.Location{Path: input.Path, Line: 1}}
+	builder.AddNode(method)
+	builder.AddNode(event)
+	builder.AddFact(method.ID, graph.EdgeSubscribes, event.ID, "", graph.KindEvent,
+		graph.Location{Path: input.Path, Line: 1}, map[string]string{"form": "connect"})
+	result := builder.Finish()
+	for index := range result.Facts {
+		result.Facts[index].Producer = graph.ProducerGodot
+	}
+	return result, nil
+}
+
+func TestServiceNormalizesProducerBeforePersistence(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	write(t, filepath.Join(root, "forged.forge"), "untrusted parser output")
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(forgingProducerParser{}))
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	methodID := graph.NodeID(graph.KindMethod, "Forged.call")
+	edges, err := repository.EdgesFrom(ctx, methodID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edges) != 1 || edges[0].Producer != "go" {
+		t.Fatalf("persisted forged edge = %#v, want authoritative go producer", edges)
+	}
+	fileID := graph.NodeID(graph.KindFile, project.ID+":forged.forge")
+	contains, err := repository.EdgesFrom(ctx, project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundContainment := false
+	for _, edge := range contains {
+		if edge.Kind == graph.EdgeContains && edge.ToID == fileID {
+			foundContainment = edge.Producer == graph.ProducerIndexer
+		}
+	}
+	if !foundContainment {
+		t.Fatalf("repository containment producer was not indexer: %#v", contains)
+	}
+	report, err := query.NewService(repository).GodotInteractions(ctx, "Forged.call", query.GodotInteractionsOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Outbound) != 0 || len(report.Inbound) != 0 {
+		t.Fatalf("forged producer entered Godot report: %#v", report)
+	}
 }
 
 func TestServiceLinksDocumentationSectionsToCode(t *testing.T) {
@@ -1681,6 +1751,62 @@ func TestServiceReconcilesGodotInteractionsAfterProjectEdits(t *testing.T) {
 	assertCleanRebuildMatches(t, ctx, root, repository)
 }
 
+func TestServiceProducerProvenanceConvergesAcrossForcedAndCleanIndexing(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	write(t, mkdirFor(t, root, "project.godot"),
+		"config_version=5\n\n[input]\njump={\"deadzone\": 0.5, \"events\": []}\n\n[global_group]\nenemies=\"Hostile\"\n")
+	write(t, mkdirFor(t, root, "scenes/arena.tscn"),
+		"[gd_scene format=3]\n\n[node name=\"Arena\" type=\"Node2D\" groups=[\"enemies\"]]\n")
+	write(t, mkdirFor(t, root, "scripts/player.gd"),
+		"extends Node\n\nfunc poll() -> void:\n\tInput.is_action_pressed(\"jump\")\n\tget_tree().call_group(\"enemies\", \"wake\")\n")
+	service, repository, project := openGodotIndex(t, ctx, root)
+	defer func() { _ = repository.Close() }()
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	want := godotProducerSnapshot(t, ctx, repository, "scenes/arena", "scripts/player.poll")
+	if _, err := service.Run(ctx, project, indexer.Options{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := godotProducerSnapshot(t, ctx, repository, "scenes/arena", "scripts/player.poll"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("forced producer snapshot differs:\nwant=%v\ngot=%v", want, got)
+	}
+
+	cleanRoot := t.TempDir()
+	if err := copyTree(t, root, cleanRoot); err != nil {
+		t.Fatal(err)
+	}
+	cleanService, cleanRepository, cleanProject := openGodotIndex(t, ctx, cleanRoot)
+	defer func() { _ = cleanRepository.Close() }()
+	if _, err := cleanService.Run(ctx, cleanProject, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := godotProducerSnapshot(t, ctx, cleanRepository, "scenes/arena", "scripts/player.poll"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("clean producer snapshot differs:\nwant=%v\ngot=%v", want, got)
+	}
+}
+
+func godotProducerSnapshot(t *testing.T, ctx context.Context, repository graph.Repository,
+	selectors ...string) []string {
+	t.Helper()
+	var snapshot []string
+	for _, selector := range selectors {
+		report, err := query.NewService(repository).GodotInteractions(ctx, selector,
+			query.GodotInteractionsOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, interaction := range append(report.Outbound, report.Inbound...) {
+			snapshot = append(snapshot, strings.Join([]string{selector, string(interaction.Category),
+				string(interaction.Edge.Kind), interaction.Edge.Producer, interaction.Form,
+				interaction.Node.QualifiedName, fmt.Sprint(interaction.Node.External)}, "|"))
+		}
+	}
+	slices.Sort(snapshot)
+	return snapshot
+}
+
 func TestServiceReconcilesCrossFileSignalHandlers(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -1825,6 +1951,9 @@ func assertGodotInteraction(t *testing.T, ctx context.Context, repository graph.
 		if interaction.Node.External != external {
 			t.Fatalf("%s -> %s external = %v, want %v", selector, qualified,
 				interaction.Node.External, external)
+		}
+		if interaction.Edge.Producer != graph.ProducerGDScript && interaction.Edge.Producer != graph.ProducerGodot {
+			t.Fatalf("%s -> %s producer = %q", selector, qualified, interaction.Edge.Producer)
 		}
 		return
 	}
