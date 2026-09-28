@@ -252,6 +252,20 @@ func TestProgressErrorMessageIsActionableBoundedAndPathFree(t *testing.T) {
 	}
 }
 
+func TestProgressErrorMessageDoesNotReplaceShortRelativeProseOrItsPlaceholder(t *testing.T) {
+	for _, relative := range []string{"e", "it"} {
+		absolute, err := filepath.Abs(relative)
+		if err != nil {
+			t.Fatal(err)
+		}
+		message := indexer.ProgressErrorMessage(errors.New("resolve "+relative+" failed at "+absolute), relative)
+		want := "resolve " + relative + " failed at <repository>"
+		if message != want {
+			t.Fatalf("relative %q: message=%q want=%q", relative, message, want)
+		}
+	}
+}
+
 func TestServiceReportCapturesPendingReconciliationAtStart(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

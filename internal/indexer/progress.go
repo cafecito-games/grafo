@@ -111,8 +111,12 @@ func ProgressErrorMessage(err error, sensitivePaths ...string) string {
 		}
 	}
 	sort.Slice(sensitive, func(i, j int) bool { return len(sensitive[i]) > len(sensitive[j]) })
+	replacements := make([]string, 0, len(sensitive)*2)
 	for _, path := range sensitive {
-		message = strings.ReplaceAll(message, path, "<repository>")
+		replacements = append(replacements, path, "<repository>")
+	}
+	if len(replacements) > 0 {
+		message = strings.NewReplacer(replacements...).Replace(message)
 	}
 	const limit = 512
 	runes := []rune(message)
@@ -126,12 +130,26 @@ func progressSensitivePathCandidates(path string) []string {
 	if path == "" {
 		return nil
 	}
-	result := []string{filepath.Clean(path)}
+	cleaned := filepath.Clean(path)
+	var result []string
+	if filepath.IsAbs(cleaned) || strings.ContainsRune(cleaned, filepath.Separator) {
+		result = append(result, cleaned)
+	}
 	if absolute, err := filepath.Abs(path); err == nil {
 		result = append(result, absolute)
 	}
 	if canonical, err := filepath.EvalSymlinks(path); err == nil {
-		result = append(result, canonical)
+		if !filepath.IsAbs(canonical) {
+			absolute, absoluteErr := filepath.Abs(canonical)
+			if absoluteErr != nil {
+				canonical = ""
+			} else {
+				canonical = absolute
+			}
+		}
+		if canonical != "" {
+			result = append(result, canonical)
+		}
 	}
 	return result
 }
