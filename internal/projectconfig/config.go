@@ -65,8 +65,7 @@ func (h HTTP) SemanticKey() string {
 	}
 	canonical := make([]canonicalAPI, 0, len(h.RequestAPIs))
 	for _, api := range h.RequestAPIs {
-		canonical = append(canonical, canonicalAPI{Language: api.Language, Symbol: api.Symbol,
-			MethodArgument: api.MethodArgument, URLArgument: api.URLArgument, Line: api.Line})
+		canonical = append(canonical, canonicalAPI(api))
 	}
 	sort.Slice(canonical, func(i, j int) bool {
 		if canonical[i].Language != canonical[j].Language {

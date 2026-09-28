@@ -1057,7 +1057,8 @@ func (e *extractor) addHTTPRequest(node *gdast.CallExpression, callee, fromID st
 		}
 		return
 	}
-	method, methodExpression := "", "<default>"
+	var method string
+	methodExpression := "<default>"
 	if builtin && methodIndex >= len(node.Arguments) {
 		method = "GET"
 	} else {
