@@ -383,7 +383,9 @@ are marked `federated` and retain their original evidence.
   and message/enum type references in `.proto` files. Buf v2 generation
   configuration can project supported `protoc-gen-go` v1 and gdproto v0.6
   names back onto those canonical declarations, including bindings whose
-  generated GDScript files are ignored.
+  generated GDScript files are ignored. Go application use of those projections
+  records canonical message encoding/decoding and exact field/oneof reads and
+  writes when `go/types` and the binding registry provide matching evidence.
 - Swift imports, functions, classes, actors, structs, enums, protocols,
   extensions, methods, properties, parameters, local variables, basic
   assignment/argument/return flow, inheritance and protocol conformance,

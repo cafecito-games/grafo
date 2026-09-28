@@ -144,6 +144,18 @@ unsupported plugins or versions, ambiguous schema names, and ambiguous header
 source basenames fail closed with diagnostics or unresolved evidence instead of
 inventing a projection.
 
+Go application usage follows the same authority boundary. The semantic loader
+reduces exact `go/types` identities for `proto.Marshal`, `proto.Unmarshal`,
+generated getters and fields, keyed literals, oneof wrappers, and type-switch
+cases into a compact per-file view. The Go parser emits `encodes` and `decodes`
+to canonical messages and `reads` or `writes` to canonical fields only after a
+unique registry projection confirms the generated binding. Each fact retains
+its source location, static type, API, operation form, and binding-node identity.
+Ill-typed packages, ordinary same-name APIs, unkeyed field positions, default
+switch cases, and missing or ambiguous projections produce no guessed protocol
+relationship. Generated implementations remain type-checking input but are not
+application producers or consumers.
+
 ## Failure flow
 
 `internal/graph` owns the versioned failure vocabulary: `returns_error` for a

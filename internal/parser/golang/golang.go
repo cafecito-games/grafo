@@ -96,6 +96,8 @@ func (*Parser) SemanticAffectedPaths(allPaths, changedPaths []string) []string {
 func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseResult, error) {
 	b := parserapi.NewBuilder(input, "go")
 	semantic := SemanticView{}
+	bindingRegistry := protobufbinding.Registry{}
+	haveBindingRegistry := false
 	if p.semantic != nil {
 		loaded, loadErr := p.semantic.Load(ctx, input)
 		if loadErr != nil {
@@ -128,17 +130,20 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 		registry, bindingErr := p.bindings.Load(ctx, input)
 		if bindingErr != nil {
 			b.Diagnostic(0, "warning", "load Protobuf binding registry: "+bindingErr.Error())
-		} else if generated, ok, reason := registry.GeneratedFile(input.Path, "go", input.Content); ok {
-			if b.Result.Nodes[0].Properties == nil {
-				b.Result.Nodes[0].Properties = map[string]string{}
+		} else {
+			bindingRegistry, haveBindingRegistry = registry, true
+			if generated, ok, reason := registry.GeneratedFile(input.Path, "go", input.Content); ok {
+				if b.Result.Nodes[0].Properties == nil {
+					b.Result.Nodes[0].Properties = map[string]string{}
+				}
+				b.Result.Nodes[0].Properties["generated"] = "true"
+				b.Result.Nodes[0].Properties["generator"] = generated.Generator
+				b.Result.Nodes[0].Properties["generator_version"] = generated.Version
+				b.Result.Nodes[0].Properties["source_proto"] = generated.Source
+				return b.Finish(), nil
+			} else if reason != "" {
+				b.Diagnostic(1, "warning", "Protobuf generated-file provenance rejected: "+reason)
 			}
-			b.Result.Nodes[0].Properties["generated"] = "true"
-			b.Result.Nodes[0].Properties["generator"] = generated.Generator
-			b.Result.Nodes[0].Properties["generator_version"] = generated.Version
-			b.Result.Nodes[0].Properties["source_proto"] = generated.Source
-			return b.Finish(), nil
-		} else if reason != "" {
-			b.Diagnostic(1, "warning", "Protobuf generated-file provenance rejected: "+reason)
 		}
 	}
 	fset := token.NewFileSet()
@@ -200,6 +205,9 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 				}
 			}
 		}
+	}
+	if haveBindingRegistry {
+		emitProtocolUses(b, semantic, bindingRegistry)
 	}
 	return b.Finish(), nil
 }
@@ -273,6 +281,92 @@ func parseFunction(b *parserapi.Builder, fset *token.FileSet, input parserapi.In
 				failure.Location, cloneStringMap(failure.Properties))
 		}
 	}
+}
+
+func emitProtocolUses(b *parserapi.Builder, semantic SemanticView, registry protobufbinding.Registry) {
+	sources := map[string]string{"": b.FileID()}
+	for _, node := range b.Result.Nodes {
+		if node.Kind == graph.KindFunction || node.Kind == graph.KindMethod {
+			sources[node.QualifiedName] = node.ID
+		}
+	}
+	for _, use := range semantic.ProtocolUses {
+		fromID := sources[use.Function]
+		if fromID == "" {
+			fromID = b.FileID()
+		}
+		projection, count := resolveProtocolProjection(registry, use.Binding)
+		if count == 0 {
+			continue
+		}
+		if count > 1 {
+			b.Diagnostic(use.Location.Line, "warning", "ambiguous Protobuf binding for protocol usage: "+use.Binding)
+			continue
+		}
+		form := use.Form
+		switch use.Form {
+		case "marshal", "unmarshal":
+			if projection.CanonicalKind != graph.KindType || projection.Properties["projection"] != "message" {
+				continue
+			}
+		case "getter":
+			if projection.Properties["projection"] != "accessor" || projection.Properties["accessor"] != "get" {
+				continue
+			}
+		case "composite_literal":
+			if projection.Properties["projection"] != "field" {
+				continue
+			}
+		case "composite_literal_type":
+			if projection.Properties["projection"] != "oneof_wrapper" {
+				continue
+			}
+			form = "oneof_wrapper"
+		case "field_selection":
+			if projection.Properties["projection"] != "field" {
+				continue
+			}
+		case "type_switch":
+			if projection.Properties["projection"] != "oneof_wrapper" {
+				continue
+			}
+		default:
+			continue
+		}
+		properties := map[string]string{
+			"protocol": "protobuf", "form": form, "api": use.API,
+			"static_type": use.StaticType, "binding": use.Binding,
+			"binding_id": projection.Node.ID, "evidence": "go/types",
+		}
+		b.AddFact(fromID, use.Kind, projection.CanonicalID, projection.Canonical,
+			projection.CanonicalKind, use.Location, properties)
+	}
+}
+
+func resolveProtocolProjection(registry protobufbinding.Registry, binding string) (protobufbinding.Projection, int) {
+	byCanonical := map[string]protobufbinding.Projection{}
+	for _, config := range registry.Configs {
+		for _, projection := range config.Projections {
+			if projection.Node.Language != "go" || projection.Node.QualifiedName != binding {
+				continue
+			}
+			key := projection.CanonicalID
+			if key == "" {
+				key = string(projection.CanonicalKind) + ":" + projection.Canonical
+			}
+			current, exists := byCanonical[key]
+			if !exists || projection.Node.ID < current.Node.ID {
+				byCanonical[key] = projection
+			}
+		}
+	}
+	if len(byCanonical) != 1 {
+		return protobufbinding.Projection{}, len(byCanonical)
+	}
+	for _, projection := range byCanonical {
+		return projection, 1
+	}
+	return protobufbinding.Projection{}, 0
 }
 
 type functionBindings struct {

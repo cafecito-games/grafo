@@ -115,13 +115,18 @@ const (
 	EdgeReferences  EdgeKind = "references"
 	EdgeReads       EdgeKind = "reads"
 	EdgeWrites      EdgeKind = "writes"
-	EdgeHasField    EdgeKind = "has_field"
-	EdgeAssigns     EdgeKind = "assigns"
-	EdgeReturns     EdgeKind = "returns"
-	EdgePasses      EdgeKind = "passes"
-	EdgeRequests    EdgeKind = "requests"
-	EdgeDependsOn   EdgeKind = "depends_on"
-	EdgeDocuments   EdgeKind = "documents"
+	// encodes and decodes connect application code to a language-neutral
+	// protocol declaration. Field-level protocol access continues to use the
+	// shared reads and writes relations, distinguished by edge properties.
+	EdgeEncodes   EdgeKind = "encodes"
+	EdgeDecodes   EdgeKind = "decodes"
+	EdgeHasField  EdgeKind = "has_field"
+	EdgeAssigns   EdgeKind = "assigns"
+	EdgeReturns   EdgeKind = "returns"
+	EdgePasses    EdgeKind = "passes"
+	EdgeRequests  EdgeKind = "requests"
+	EdgeDependsOn EdgeKind = "depends_on"
+	EdgeDocuments EdgeKind = "documents"
 	// generated_from connects a language binding projection to the canonical
 	// declaration that defines its wire/schema identity. Generated source is
 	// evidence for a projection, never a second schema authority.

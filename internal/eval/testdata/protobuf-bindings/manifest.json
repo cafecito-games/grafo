@@ -606,6 +606,33 @@
       {
         "from": {
           "repo": "bindings",
+          "kind": "function",
+          "qualified_name": "example.com/bindings/gen/acme/v1.ReadText"
+        },
+        "relation": "reads",
+        "to": {
+          "repo": "bindings",
+          "kind": "field",
+          "qualified_name": "acme.v1.Envelope.text"
+        },
+        "source": {
+          "path": "gen/acme/v1/use.go",
+          "line": 4,
+          "column": 9
+        },
+        "properties": {
+          "api": "example.com/bindings/gen/acme/v1.Envelope.GetText",
+          "binding": "example.com/bindings/gen/acme/v1.Envelope.GetText",
+          "binding_id": "n:356f1dc1731469fc096c",
+          "evidence": "go/types",
+          "form": "getter",
+          "protocol": "protobuf",
+          "static_type": "*example.com/bindings/gen/acme/v1.Envelope"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
           "kind": "method",
           "qualified_name": "AcmeV1EnvelopeEnvelope.get_text"
         },
