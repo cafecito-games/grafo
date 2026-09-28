@@ -3,11 +3,13 @@ package indexer
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,14 +27,14 @@ type execGitRunner struct{}
 
 func (execGitRunner) Run(ctx context.Context, directory string, arguments ...string) ([]byte, error) {
 	command := exec.CommandContext(ctx, "git", append([]string{"-C", directory}, arguments...)...)
+	command.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
 	return command.Output()
 }
 
 type cachedGitIdentity struct {
 	identity string
 	origin   string
-	size     int64
-	modified int64
+	digest   [sha256.Size]byte
 }
 
 var gitIdentityCache = struct {
@@ -55,8 +57,14 @@ type GitSnapshot struct {
 	DetachedBranch   string
 	Commands         int
 	ProbeNS          int64
+	statusRecords    []gitStatusRecord
 	used             *atomic.Bool
 	runner           gitCommandRunner
+}
+
+type gitStatusRecord struct {
+	encoded string
+	paths   []string
 }
 
 func inspectGit(ctx context.Context, start string, runner gitCommandRunner) (GitSnapshot, bool, error) {
@@ -109,8 +117,7 @@ func inspectGitIdentity(ctx context.Context, root string, runner gitCommandRunne
 	cached, exists := gitIdentityCache.byRoot[root]
 	gitIdentityCache.Unlock()
 	if exists {
-		if info, err := os.Stat(cached.origin); err == nil && info.Mode().IsRegular() &&
-			info.Size() == cached.size && info.ModTime().UnixNano() == cached.modified {
+		if content, err := os.ReadFile(cached.origin); err == nil && sha256.Sum256(content) == cached.digest {
 			return cached.identity, 0, nil
 		}
 	}
@@ -120,6 +127,7 @@ func inspectGitIdentity(ctx context.Context, root string, runner gitCommandRunne
 		if ctx.Err() != nil || errors.Is(commandErr, context.Canceled) || errors.Is(commandErr, context.DeadlineExceeded) {
 			return "", 1, commandErr
 		}
+		cacheGitIdentity(root, root, gitConfigPath(root))
 		return root, 1, nil
 	}
 	parts := bytes.Split(output, []byte{0})
@@ -135,15 +143,44 @@ func inspectGitIdentity(ctx context.Context, root string, runner gitCommandRunne
 		origin = filepath.Join(root, filepath.FromSlash(origin))
 	}
 	if origin != "" {
-		if info, statErr := os.Stat(origin); statErr == nil && info.Mode().IsRegular() {
-			gitIdentityCache.Lock()
-			gitIdentityCache.byRoot[root] = cachedGitIdentity{
-				identity: identity, origin: origin, size: info.Size(), modified: info.ModTime().UnixNano(),
-			}
-			gitIdentityCache.Unlock()
-		}
+		cacheGitIdentity(root, identity, origin)
 	}
 	return identity, 1, nil
+}
+
+func cacheGitIdentity(root, identity, origin string) {
+	content, err := os.ReadFile(origin)
+	if err != nil {
+		return
+	}
+	gitIdentityCache.Lock()
+	gitIdentityCache.byRoot[root] = cachedGitIdentity{identity: identity, origin: origin, digest: sha256.Sum256(content)}
+	gitIdentityCache.Unlock()
+}
+
+func gitConfigPath(root string) string {
+	dotGit := filepath.Join(root, ".git")
+	info, err := os.Stat(dotGit)
+	if err == nil && info.IsDir() {
+		return filepath.Join(dotGit, "config")
+	}
+	content, err := os.ReadFile(dotGit)
+	if err != nil {
+		return ""
+	}
+	line := strings.TrimSpace(string(content))
+	if !strings.HasPrefix(line, "gitdir:") {
+		return ""
+	}
+	gitDir := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(root, gitDir)
+	}
+	commonDir := gitDir
+	if common, readErr := os.ReadFile(filepath.Join(gitDir, "commondir")); readErr == nil {
+		commonDir = filepath.Clean(filepath.Join(gitDir, strings.TrimSpace(string(common))))
+	}
+	return filepath.Join(commonDir, "config")
 }
 
 func refreshGitSnapshot(ctx context.Context, previous *GitSnapshot, runner gitCommandRunner) (*GitSnapshot, error) {
@@ -235,6 +272,9 @@ func parseGitStatusPorcelainV2(raw []byte) (GitSnapshot, error) {
 				return GitSnapshot{}, err
 			}
 			paths = append(paths, path)
+			snapshot.statusRecords = append(snapshot.statusRecords, gitStatusRecord{
+				encoded: strings.Join(fields[:8], " ") + " " + path, paths: []string{path},
+			})
 			if membershipStatus(fields[1]) && !PathIgnored(path) {
 				snapshot.MembershipStable = false
 			}
@@ -253,6 +293,9 @@ func parseGitStatusPorcelainV2(raw []byte) (GitSnapshot, error) {
 			}
 			index++
 			paths = append(paths, path, original)
+			snapshot.statusRecords = append(snapshot.statusRecords, gitStatusRecord{
+				encoded: strings.Join(fields[:9], " ") + " " + path + "\x00" + original, paths: []string{path, original},
+			})
 			if !PathIgnored(path) || !PathIgnored(original) {
 				snapshot.MembershipStable = false
 			}
@@ -266,6 +309,9 @@ func parseGitStatusPorcelainV2(raw []byte) (GitSnapshot, error) {
 				return GitSnapshot{}, err
 			}
 			paths = append(paths, path)
+			snapshot.statusRecords = append(snapshot.statusRecords, gitStatusRecord{
+				encoded: strings.Join(fields[:10], " ") + " " + path, paths: []string{path},
+			})
 			if !PathIgnored(path) {
 				snapshot.MembershipStable = false
 			}
@@ -278,6 +324,7 @@ func parseGitStatusPorcelainV2(raw []byte) (GitSnapshot, error) {
 				return GitSnapshot{}, err
 			}
 			paths = append(paths, path)
+			snapshot.statusRecords = append(snapshot.statusRecords, gitStatusRecord{encoded: "? " + path, paths: []string{path}})
 			if !PathIgnored(path) {
 				untracked = append(untracked, path)
 			}
@@ -296,6 +343,7 @@ func parseGitStatusPorcelainV2(raw []byte) (GitSnapshot, error) {
 		return GitSnapshot{}, fmt.Errorf("porcelain status omitted branch.head")
 	}
 	paths = uniquePaths(paths)
+	sort.Slice(snapshot.statusRecords, func(i, j int) bool { return snapshot.statusRecords[i].encoded < snapshot.statusRecords[j].encoded })
 	snapshot.Changed = append([]string(nil), paths...)
 	snapshot.Dirty = append([]string(nil), paths...)
 	snapshot.Untracked = uniquePaths(untracked)

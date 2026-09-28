@@ -2352,3 +2352,35 @@ func assertNoFailureTarget(t *testing.T, facts []graph.Fact, kind graph.EdgeKind
 		}
 	}
 }
+
+func TestWorkspaceSemanticEvidenceTracksExternalInputs(t *testing.T) {
+	root := t.TempDir()
+	external := filepath.Join(t.TempDir(), "go.work")
+	if err := os.WriteFile(external, []byte("go 1.26\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOWORK", external)
+	parser := golangparser.New()
+	first, err := parser.WorkspaceSemanticEvidenceKey(context.Background(), parserapi.Input{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(external, []byte("go 1.26\nuse ./service\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second, err := parser.WorkspaceSemanticEvidenceKey(context.Background(), parserapi.Input{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("external go.work content did not change workspace evidence")
+	}
+	t.Setenv("GOFLAGS", "-tags=freshness")
+	third, err := parser.WorkspaceSemanticEvidenceKey(context.Background(), parserapi.Input{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second == third {
+		t.Fatal("Go build environment did not change workspace evidence")
+	}
+}

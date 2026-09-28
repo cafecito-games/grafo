@@ -39,10 +39,25 @@ type WorkspaceSemanticKeyer interface {
 	WorkspaceSemanticKey(context.Context, Input) (string, error)
 }
 
+// WorkspaceSemanticEvidenceKeyer provides cheap evidence for semantic inputs
+// outside the repository snapshot. When every workspace keyer implements it,
+// callers may reuse a previously computed workspace key while Git proves all
+// in-repository inputs unchanged and these evidence keys still match.
+type WorkspaceSemanticEvidenceKeyer interface {
+	WorkspaceSemanticEvidenceKey(context.Context, Input) (string, error)
+}
+
 // SemanticDependencyProvider identifies repository files whose changes can
 // alter this parser's output for otherwise unchanged source files.
 type SemanticDependencyProvider interface {
 	SemanticDependencies() []string
+}
+
+// SemanticInputProvider recognizes repository files that contribute to a
+// parser's semantic model without necessarily being parsed as graph sources.
+// It covers dynamic dependency names that cannot be expressed as a fixed list.
+type SemanticInputProvider interface {
+	IsSemanticInput(string) bool
 }
 
 // SemanticChangeProvider expands incremental invalidation when a source or
@@ -111,6 +126,53 @@ func (r *Registry) WorkspaceSemanticKeys(ctx context.Context, input Input) (map[
 		result[languageParser.Language()] = key
 	}
 	return result, nil
+}
+
+// WorkspaceSemanticEvidenceKeys returns cheap external/configuration evidence
+// plus whether every workspace semantic key supports safe reuse.
+func (r *Registry) WorkspaceSemanticEvidenceKeys(ctx context.Context, input Input) (map[string]string, bool, error) {
+	result := map[string]string{}
+	cacheable := true
+	for _, languageParser := range r.parsers {
+		if _, ok := languageParser.(WorkspaceSemanticKeyer); !ok {
+			continue
+		}
+		keyer, ok := languageParser.(WorkspaceSemanticEvidenceKeyer)
+		if !ok {
+			cacheable = false
+			continue
+		}
+		key, err := keyer.WorkspaceSemanticEvidenceKey(ctx, input)
+		if err != nil {
+			return nil, false, fmt.Errorf("%s workspace semantic evidence: %w", languageParser.Language(), err)
+		}
+		result[languageParser.Language()] = key
+	}
+	return result, cacheable, nil
+}
+
+// IsSemanticDependency reports whether path is an explicit repository input
+// to any parser's semantic model, even when the parser does not parse that
+// file as a graph source itself.
+func (r *Registry) IsSemanticDependency(path string) bool {
+	path = filepath.ToSlash(strings.TrimPrefix(path, "./"))
+	base := filepath.Base(path)
+	for _, languageParser := range r.parsers {
+		if provider, ok := languageParser.(SemanticInputProvider); ok && provider.IsSemanticInput(path) {
+			return true
+		}
+		provider, ok := languageParser.(SemanticDependencyProvider)
+		if !ok {
+			continue
+		}
+		for _, dependency := range provider.SemanticDependencies() {
+			dependency = filepath.ToSlash(strings.TrimPrefix(dependency, "./"))
+			if path == dependency || base == dependency {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func FileNode(input Input, language string) graph.Node {

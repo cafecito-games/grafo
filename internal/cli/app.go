@@ -478,35 +478,79 @@ func (a *App) mcp(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
 		return fmt.Errorf("usage: grafo mcp [--repo path | --repos pathA,pathB]")
 	}
-	repository, projects, closeRepository, err := openRead(ctx, args)
+	roots, err := mcpRoots(args)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = closeRepository() }()
-	service := mcpserver.NewFederated(repository, projects).WithRefresh(func(refreshContext context.Context) error {
-		return refreshRead(refreshContext, repository, projects)
-	})
-	semanticService, err := newSemanticService(repository, args)
+	coordinator, generation, err := mcpserver.NewFreshnessCoordinator(ctx, roots, parserdefaults.NewRegistry(), mcpserver.FreshnessCoordinatorOptions{})
 	if err != nil {
 		return err
 	}
-	service.WithReusable(func(searchContext context.Context, text string, limit int) (semantic.SearchResult, error) {
-		if _, err := semanticService.Sync(searchContext); err != nil {
-			return semantic.SearchResult{}, err
+	defer func() { _ = coordinator.Close() }()
+	service := mcpserver.NewFederated(generation.Repository, generation.Projects).WithFreshness(coordinator)
+	sourceService, err := newSourceService(generation.Repository, generation.Projects)
+	if err != nil {
+		return err
+	}
+	service.WithSource(sourceService.ReadKind).WithSourceFactory(func(repository graph.ReadRepository, projects []indexer.Project) (func(context.Context, string, graph.NodeKind, int, int) (sourcecontext.Excerpt, error), error) {
+		reader, factoryErr := newSourceService(repository, projects)
+		if factoryErr != nil {
+			return nil, factoryErr
 		}
-		return semanticService.Search(searchContext, text, limit)
+		return reader.ReadKind, nil
 	})
-	sourceService, err := newSourceService(repository, projects)
+	searchService, err := newSearchService(generation.Repository, generation.Projects)
 	if err != nil {
 		return err
 	}
-	service.WithSource(sourceService.ReadKind)
-	searchService, err := newSearchService(repository, projects)
-	if err != nil {
-		return err
-	}
-	service.WithSearch(searchService)
+	service.WithSearch(searchService).WithSearchFactory(newSearchService)
+	service.WithReusableFactory(func(_ graph.ReadRepository, projects []indexer.Project) func(context.Context, string, int) (semantic.SearchResult, error) {
+		return func(searchContext context.Context, text string, limit int) (semantic.SearchResult, error) {
+			repository, closeRepository, openErr := openWritableProjects(searchContext, projects)
+			if openErr != nil {
+				return semantic.SearchResult{}, openErr
+			}
+			defer func() { _ = closeRepository() }()
+			semanticService, serviceErr := newSemanticService(repository, args)
+			if serviceErr != nil {
+				return semantic.SearchResult{}, serviceErr
+			}
+			if _, syncErr := semanticService.Sync(searchContext); syncErr != nil {
+				return semantic.SearchResult{}, syncErr
+			}
+			return semanticService.Search(searchContext, text, limit)
+		}
+	})
 	return service.Run(ctx, Version)
+}
+
+func mcpRoots(args parsedArguments) ([]string, error) {
+	if args.values["repo"] != "" && args.values["repos"] != "" {
+		return nil, fmt.Errorf("--repo and --repos cannot be used together")
+	}
+	if raw := args.values["repos"]; raw != "" {
+		roots := splitList(raw)
+		if len(roots) < 2 {
+			return nil, fmt.Errorf("federation requires at least two repository paths")
+		}
+		return roots, nil
+	}
+	return []string{repoPath(args)}, nil
+}
+
+func openWritableProjects(ctx context.Context, projects []indexer.Project) (graph.ReadRepository, func() error, error) {
+	if len(projects) == 1 {
+		repository, err := sqlite.Open(ctx, projects[0].IndexPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		return repository, repository.Close, nil
+	}
+	repository, err := federation.OpenProjects(ctx, projects)
+	if err != nil {
+		return nil, nil, err
+	}
+	return repository, repository.Close, nil
 }
 
 func (a *App) embed(ctx context.Context, args parsedArguments) error {
@@ -1951,19 +1995,7 @@ func openRead(ctx context.Context, args parsedArguments) (graph.ReadRepository, 
 }
 
 func requiresWritableRead(command string) bool {
-	return command == "mcp" || command == "reusable" || command == "find-reusable-code"
-}
-
-func refreshRead(ctx context.Context, repository graph.ReadRepository, projects []indexer.Project) error {
-	if federated, ok := repository.(*federation.Repository); ok {
-		return federated.Refresh(ctx, parserdefaults.NewRegistry())
-	}
-	indexed, ok := repository.(graph.IndexRepository)
-	if !ok || len(projects) != 1 {
-		return fmt.Errorf("repository does not support index refresh")
-	}
-	_, err := indexer.NewService(indexed, parserdefaults.NewRegistry()).Run(ctx, projects[0], indexer.Options{ReportDetail: indexer.ReportWithoutCounts})
-	return err
+	return command == "reusable" || command == "find-reusable-code"
 }
 
 func (a *App) printIndexReport(report indexer.Report, asJSON bool) error {

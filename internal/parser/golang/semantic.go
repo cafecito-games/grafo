@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	goast "go/ast"
 	"go/build"
@@ -1030,19 +1031,19 @@ func semanticWorkspaceKey(root string) (string, string, error) {
 		if err != nil || !info.Mode().IsRegular() {
 			return nil
 		}
-		name := entry.Name()
-		if filepath.Ext(name) != ".go" && name != "go.mod" && name != "go.sum" && name != "go.work" && name != "go.work.sum" && (name != "modules.txt" || filepath.Base(filepath.Dir(path)) != "vendor") {
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		relative = filepath.ToSlash(relative)
+		if !isGoSemanticInput(relative) {
 			return nil
 		}
 		content, err := os.ReadFile(path)
 		if err != nil {
 			return nil
 		}
-		relative, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		_, _ = digest.Write([]byte(filepath.ToSlash(relative)))
+		_, _ = digest.Write([]byte(relative))
 		_, _ = digest.Write([]byte{0})
 		_, _ = digest.Write(content)
 		_, _ = digest.Write([]byte{0})
@@ -1065,6 +1066,39 @@ func semanticWorkspaceKey(root string) (string, string, error) {
 		}
 	}
 	return hex.EncodeToString(digest.Sum(nil)), buildContext, nil
+}
+
+func semanticWorkspaceEvidenceKey(root string) (string, error) {
+	digest := sha256.New()
+	_, _ = digest.Write([]byte(buildContextString(root)))
+	workspace := discoverGoWorkspace(root)
+	if workspace == "" || workspace == "off" {
+		return hex.EncodeToString(digest.Sum(nil)), nil
+	}
+	absoluteRoot, rootErr := filepath.Abs(root)
+	absoluteWorkspace, workspaceErr := filepath.Abs(workspace)
+	if rootErr != nil || workspaceErr != nil {
+		return "", errors.Join(rootErr, workspaceErr)
+	}
+	relative, err := filepath.Rel(absoluteRoot, absoluteWorkspace)
+	if err != nil {
+		return "", err
+	}
+	if relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return hex.EncodeToString(digest.Sum(nil)), nil
+	}
+	for _, path := range []string{absoluteWorkspace, absoluteWorkspace + ".sum"} {
+		_, _ = digest.Write([]byte(path))
+		_, _ = digest.Write([]byte{0})
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			_, _ = digest.Write([]byte("missing:" + readErr.Error()))
+		} else {
+			_, _ = digest.Write(content)
+		}
+		_, _ = digest.Write([]byte{0})
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 func buildContextString(root ...string) string {
@@ -1149,6 +1183,9 @@ func isGoSemanticInput(path string) bool {
 		return true
 	}
 	base := filepath.Base(path)
+	if base == "modules.txt" && filepath.Base(filepath.Dir(path)) == "vendor" {
+		return true
+	}
 	for _, dependency := range semanticDependencies() {
 		if path == dependency || base == dependency {
 			return true

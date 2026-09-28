@@ -90,6 +90,33 @@ func Open(ctx context.Context, paths []string) (*Repository, error) {
 	return result, nil
 }
 
+// OpenProjects opens the exact already-discovered writable project indexes.
+// It is intended for generation-bound auxiliary writes such as embeddings;
+// source indexing remains owned by the freshness coordinator.
+func OpenProjects(ctx context.Context, projects []indexer.Project) (*Repository, error) {
+	if len(projects) < 2 {
+		return nil, fmt.Errorf("federation requires at least two distinct indexes")
+	}
+	ordered := append([]indexer.Project(nil), projects...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Root < ordered[j].Root })
+	result := &Repository{}
+	seen := map[string]bool{}
+	for _, project := range ordered {
+		if seen[project.IndexPath] {
+			_ = result.Close()
+			return nil, fmt.Errorf("federation projects share index %s", project.IndexPath)
+		}
+		seen[project.IndexPath] = true
+		repository, err := sqlite.Open(ctx, project.IndexPath)
+		if err != nil {
+			_ = result.Close()
+			return nil, err
+		}
+		result.members = append(result.members, member{project: project, repository: repository})
+	}
+	return result, nil
+}
+
 // OpenReadOnly opens existing compatible indexes without migrations or write
 // capabilities and federates their query surfaces.
 func OpenReadOnly(ctx context.Context, paths []string) (*ReadRepository, error) {
@@ -127,6 +154,36 @@ func OpenReadOnly(ctx context.Context, paths []string) (*ReadRepository, error) 
 		return nil, fmt.Errorf("federation requires at least two distinct indexes")
 	}
 	sort.Slice(result.members, func(i, j int) bool { return result.members[i].project.Root < result.members[j].project.Root })
+	return &ReadRepository{repository: result}, nil
+}
+
+// OpenReadOnlyProjects opens the exact discovered project generations supplied
+// by a freshness coordinator. Unlike OpenReadOnly, it does not rediscover roots
+// between the coordinator's stable post-refresh probe and publication.
+func OpenReadOnlyProjects(ctx context.Context, projects []indexer.Project) (*ReadRepository, error) {
+	if len(projects) < 2 {
+		return nil, fmt.Errorf("federation requires at least two distinct indexes")
+	}
+	ordered := append([]indexer.Project(nil), projects...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Root < ordered[j].Root })
+	result := &Repository{}
+	seen := map[string]bool{}
+	for _, project := range ordered {
+		if seen[project.IndexPath] {
+			continue
+		}
+		seen[project.IndexPath] = true
+		repository, err := sqlite.OpenReadOnly(ctx, project.IndexPath)
+		if err != nil {
+			_ = result.Close()
+			return nil, err
+		}
+		result.members = append(result.members, member{project: project, repository: repository})
+	}
+	if len(result.members) < 2 {
+		_ = result.Close()
+		return nil, fmt.Errorf("federation requires at least two distinct indexes")
+	}
 	return &ReadRepository{repository: result}, nil
 }
 

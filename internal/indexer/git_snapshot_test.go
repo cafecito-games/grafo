@@ -1,9 +1,11 @@
 package indexer
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -11,6 +13,50 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 )
+
+func TestOptionalLockStatusMatchesDefaultPorcelainEvidence(t *testing.T) {
+	root := t.TempDir()
+	snapshotRunGit(t, root, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(root, "staged.snap"), []byte("one"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "renamed.snap"), []byte("two"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	snapshotRunGit(t, root, "add", ".")
+	snapshotRunGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+	if err := os.WriteFile(filepath.Join(root, "staged.snap"), []byte("staged"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	snapshotRunGit(t, root, "add", "staged.snap")
+	if err := os.Rename(filepath.Join(root, "renamed.snap"), filepath.Join(root, "moved.snap")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "untracked.snap"), []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	arguments := []string{"status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"}
+	optimized, err := (execGitRunner{}).Run(context.Background(), root, arguments...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("git", append([]string{"-C", root}, arguments...)...)
+	baseline, err := command.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(optimized, baseline) {
+		t.Fatalf("optional-lock porcelain differs:\noptimized %q\nbaseline  %q", optimized, baseline)
+	}
+}
+
+func snapshotRunGit(t *testing.T, root string, arguments ...string) {
+	t.Helper()
+	command := exec.Command("git", append([]string{"-C", root}, arguments...)...)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v: %s", arguments, err, output)
+	}
+}
 
 type recordedGitCall struct {
 	directory string

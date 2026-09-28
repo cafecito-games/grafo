@@ -75,7 +75,13 @@ func (p *Parser) WorkspaceSemanticKey(ctx context.Context, input parserapi.Input
 	return p.SemanticKey(ctx, input)
 }
 
+func (*Parser) WorkspaceSemanticEvidenceKey(_ context.Context, input parserapi.Input) (string, error) {
+	return semanticWorkspaceEvidenceKey(input.Root)
+}
+
 func (*Parser) SemanticDependencies() []string { return semanticDependencies() }
+
+func (*Parser) IsSemanticInput(path string) bool { return isGoSemanticInput(path) }
 
 func (*Parser) SemanticAffectedPaths(allPaths, changedPaths []string) []string {
 	changed := false
