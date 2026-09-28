@@ -23,9 +23,12 @@ func TestMessageFlowRetainsFederatedRepositoryAndComponentEvidence(t *testing.T)
 	message := graph.Node{ID: "n:message", Kind: graph.KindType, Name: "Envelope", QualifiedName: "acme.v1.Envelope",
 		OwnerFile: "schema.proto", Language: "protobuf", Properties: map[string]string{"declaration": "message"}}
 	field := graph.Node{ID: "n:field", Kind: graph.KindField, Name: "text", QualifiedName: "acme.v1.Envelope.text", OwnerFile: "schema.proto", Language: "protobuf"}
-	seedCatalogIndex(t, ctx, schemaRoot, "schema.proto", graph.ParseResult{Nodes: []graph.Node{message, field}, Facts: []graph.Fact{{
-		ID: "f:field", FromID: message.ID, Kind: graph.EdgeHasField, TargetID: field.ID, OwnerFile: "schema.proto",
-	}}})
+	schemaComponent := graph.Node{ID: "n:schema-component", Kind: graph.KindComponent, Name: "schema-side", QualifiedName: "component:schema-side", OwnerFile: "__workspace__"}
+	schemaSamePath := graph.Node{ID: "n:schema-client-file", Kind: graph.KindFile, Name: "client.go", QualifiedName: "client.go", OwnerFile: "client.go", Location: graph.Location{Path: "client.go"}}
+	seedCatalogIndex(t, ctx, schemaRoot, "schema.proto", graph.ParseResult{Nodes: []graph.Node{message, field, schemaComponent, schemaSamePath}, Facts: []graph.Fact{
+		{ID: "f:field", FromID: message.ID, Kind: graph.EdgeHasField, TargetID: field.ID, OwnerFile: "schema.proto"},
+		{ID: "f:schema-component", FromID: schemaComponent.ID, Kind: graph.EdgeContains, TargetID: schemaSamePath.ID, OwnerFile: "schema.proto"},
+	}})
 	binding := graph.Node{ID: "n:binding", Kind: graph.KindType, Name: "Envelope", QualifiedName: "generated.Envelope",
 		OwnerFile: "client.go", Properties: map[string]string{"generator": "protoc-gen-go"}}
 	build := graph.Node{ID: "n:build", Kind: graph.KindFunction, Name: "Build", QualifiedName: "client.Build", OwnerFile: "client.go"}

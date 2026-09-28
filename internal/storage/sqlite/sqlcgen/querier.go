@@ -40,6 +40,7 @@ type Querier interface {
 	GetMeta(ctx context.Context, key string) (string, error)
 	GetNode(ctx context.Context, id string) (Node, error)
 	InsertEdge(ctx context.Context, arg InsertEdgeParams) error
+	ListCanonicalMessages(ctx context.Context, arg ListCanonicalMessagesParams) ([]Node, error)
 	ListDirtyFactBatch(ctx context.Context, limit int64) ([]ListDirtyFactBatchRow, error)
 	ListEdgesFrom(ctx context.Context, fromID string) ([]Edge, error)
 	ListEdgesTo(ctx context.Context, toID string) ([]Edge, error)

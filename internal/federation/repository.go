@@ -37,6 +37,7 @@ type Repository struct {
 
 var _ graph.ReadRepository = (*Repository)(nil)
 var _ graph.CatalogRepository = (*Repository)(nil)
+var _ graph.CanonicalMessageRepository = (*Repository)(nil)
 var _ semantic.Repository = (*Repository)(nil)
 var _ sourcecontext.ProjectLocator = (*Repository)(nil)
 
@@ -49,6 +50,7 @@ type ReadRepository struct {
 var _ graph.ReadRepository = (*ReadRepository)(nil)
 var _ graph.CatalogRepository = (*ReadRepository)(nil)
 var _ graph.TopologyRepository = (*ReadRepository)(nil)
+var _ graph.CanonicalMessageRepository = (*ReadRepository)(nil)
 var _ semantic.ReadRepository = (*ReadRepository)(nil)
 var _ sourcecontext.ProjectLocator = (*ReadRepository)(nil)
 
@@ -351,6 +353,9 @@ func (r *ReadRepository) Repositories(ctx context.Context) ([]string, error) {
 func (r *ReadRepository) ListNodesByKind(ctx context.Context, request graph.NodeListQuery) ([]graph.ScopedNode, error) {
 	return r.repository.ListNodesByKind(ctx, request)
 }
+func (r *ReadRepository) CanonicalMessages(ctx context.Context, request graph.CanonicalMessageQuery) (graph.CanonicalMessagePage, error) {
+	return r.repository.CanonicalMessages(ctx, request)
+}
 func (r *ReadRepository) MatchNodes(ctx context.Context, request graph.NodeMatchQuery) (graph.NodeMatchGroup, error) {
 	return r.repository.MatchNodes(ctx, request)
 }
@@ -437,10 +442,6 @@ func (r *Repository) ListNodesByKind(ctx context.Context, request graph.NodeList
 			return nil, err
 		}
 		for _, scoped := range scopedNodes {
-			if seen[scoped.Node.ID] {
-				continue
-			}
-			seen[scoped.Node.ID] = true
 			// Several members may record the same unresolved target, so
 			// attributing one of them would invent a home for a name no
 			// repository declares.
@@ -448,6 +449,11 @@ func (r *Repository) ListNodesByKind(ctx context.Context, request graph.NodeList
 			if !scoped.Node.External {
 				scoped.Repository = item.project.Name
 			}
+			key := scoped.Repository + "\x00" + scoped.Node.ID
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
 			result = append(result, scoped)
 		}
 	}
@@ -464,6 +470,58 @@ func (r *Repository) ListNodesByKind(ctx context.Context, request graph.NodeList
 		return result[i].Node.ID < result[j].Node.ID
 	})
 	return result, nil
+}
+
+// CanonicalMessages merges already-filtered member pages, then applies one
+// repository-qualified deterministic global bound.
+func (r *Repository) CanonicalMessages(ctx context.Context, request graph.CanonicalMessageQuery) (graph.CanonicalMessagePage, error) {
+	if err := request.Validate(); err != nil {
+		return graph.CanonicalMessagePage{}, err
+	}
+	page := graph.CanonicalMessagePage{Items: []graph.ScopedNode{}}
+	seen := map[string]bool{}
+	for _, item := range r.members {
+		if err := ctx.Err(); err != nil {
+			return graph.CanonicalMessagePage{}, err
+		}
+		if request.Repository != "" && request.Repository != item.project.Name {
+			continue
+		}
+		catalog, ok := item.repository.(graph.CanonicalMessageRepository)
+		if !ok {
+			return graph.CanonicalMessagePage{}, fmt.Errorf("repository %s does not support canonical message catalogs", item.project.Name)
+		}
+		memberRequest := request
+		memberRequest.Repository = ""
+		memberPage, err := catalog.CanonicalMessages(ctx, memberRequest)
+		if err != nil {
+			return graph.CanonicalMessagePage{}, err
+		}
+		page.Truncated = page.Truncated || memberPage.Truncated
+		for _, scoped := range memberPage.Items {
+			scoped.Repository = item.project.Name
+			key := scoped.Repository + "\x00" + scoped.Node.ID
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			page.Items = append(page.Items, scoped)
+		}
+	}
+	sort.Slice(page.Items, func(i, j int) bool {
+		if page.Items[i].Repository != page.Items[j].Repository {
+			return page.Items[i].Repository < page.Items[j].Repository
+		}
+		if page.Items[i].Node.QualifiedName != page.Items[j].Node.QualifiedName {
+			return page.Items[i].Node.QualifiedName < page.Items[j].Node.QualifiedName
+		}
+		return page.Items[i].Node.ID < page.Items[j].Node.ID
+	})
+	if len(page.Items) > request.Limit {
+		page.Truncated = true
+		page.Items = page.Items[:request.Limit]
+	}
+	return page, nil
 }
 
 // MatchNodes merges the per-member match evidence for a selector. Only the
@@ -636,6 +694,9 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 		if err != nil {
 			return graph.RelationEdgePage{}, err
 		}
+		for index := range page.Items {
+			page.Items[index].Repository = member.project.Name
+		}
 		truncated = truncated || page.Truncated
 		items = append(items, page.Items...)
 	}
@@ -694,6 +755,9 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 						})
 						if err != nil {
 							return graph.RelationEdgePage{}, err
+						}
+						for index := range page.Items {
+							page.Items[index].Repository = member.project.Name
 						}
 						truncated = truncated || page.Truncated
 						for _, item := range page.Items {
