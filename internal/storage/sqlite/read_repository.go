@@ -23,7 +23,7 @@ import (
 
 // ReadRepository is the capability-safe SQLite adapter for existing indexes.
 // It forwards only read methods from the shared adapter and therefore cannot
-// satisfy graph.IndexRepository or semantic.Repository.
+// satisfy graph.IndexRepository.
 type ReadRepository struct {
 	reader     *Repository
 	statements *readStatementCache
@@ -114,7 +114,7 @@ var _ graph.CanonicalMessageRepository = (*ReadRepository)(nil)
 var _ graph.FileCatalog = (*ReadRepository)(nil)
 var _ graph.ExternalEdgeRepository = (*ReadRepository)(nil)
 var _ graph.ExternalNodeRepository = (*ReadRepository)(nil)
-var _ semantic.ReadRepository = (*ReadRepository)(nil)
+var _ semantic.CandidateRepository = (*ReadRepository)(nil)
 
 // OpenReadOnly opens an existing, fully compatible index without creating,
 // migrating, preparing writer statements, or mutating it.
@@ -276,7 +276,7 @@ func validateStorageCompatibility(ctx context.Context, db *sql.DB) error {
 		return incompatibleIndexCause("inspect database schema", err)
 	}
 	defer func() { _ = rows.Close() }()
-	requiredNames := []string{"meta", "files", "nodes", "facts", "edges", "embeddings"}
+	requiredNames := []string{"meta", "files", "nodes", "facts", "edges"}
 	required := make(map[string]bool, len(requiredNames))
 	for _, name := range requiredNames {
 		required[name] = false
@@ -352,10 +352,4 @@ func (r *ReadRepository) Files(ctx context.Context) (map[string]graph.FileRecord
 }
 func (r *ReadRepository) CandidateNodes(ctx context.Context) ([]graph.Node, error) {
 	return r.reader.CandidateNodes(ctx)
-}
-func (r *ReadRepository) EmbeddingHashes(ctx context.Context, model string) (map[string]string, error) {
-	return r.reader.EmbeddingHashes(ctx, model)
-}
-func (r *ReadRepository) Embeddings(ctx context.Context, model string) ([]semantic.Embedding, error) {
-	return r.reader.Embeddings(ctx, model)
 }

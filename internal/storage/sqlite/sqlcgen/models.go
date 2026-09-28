@@ -36,15 +36,6 @@ type Edge struct {
 	Producer   string `json:"producer"`
 }
 
-type Embedding struct {
-	NodeID      string `json:"node_id"`
-	Model       string `json:"model"`
-	ContentHash string `json:"content_hash"`
-	Dimensions  int64  `json:"dimensions"`
-	VectorJson  string `json:"vector_json"`
-	UpdatedAt   string `json:"updated_at"`
-}
-
 type Fact struct {
 	ID         string `json:"id"`
 	FromID     string `json:"from_id"`

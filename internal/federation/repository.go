@@ -38,7 +38,7 @@ type Repository struct {
 var _ graph.ReadRepository = (*Repository)(nil)
 var _ graph.CatalogRepository = (*Repository)(nil)
 var _ graph.CanonicalMessageRepository = (*Repository)(nil)
-var _ semantic.Repository = (*Repository)(nil)
+var _ semantic.CandidateRepository = (*Repository)(nil)
 var _ sourcecontext.ProjectLocator = (*Repository)(nil)
 
 // ReadRepository exposes the federated read surface without refresh, indexing,
@@ -51,7 +51,7 @@ var _ graph.ReadRepository = (*ReadRepository)(nil)
 var _ graph.CatalogRepository = (*ReadRepository)(nil)
 var _ graph.TopologyRepository = (*ReadRepository)(nil)
 var _ graph.CanonicalMessageRepository = (*ReadRepository)(nil)
-var _ semantic.ReadRepository = (*ReadRepository)(nil)
+var _ semantic.CandidateRepository = (*ReadRepository)(nil)
 var _ sourcecontext.ProjectLocator = (*ReadRepository)(nil)
 
 func Open(ctx context.Context, paths []string) (*Repository, error) {
@@ -218,7 +218,7 @@ func (r *Repository) ProjectForNode(ctx context.Context, id string) (indexer.Pro
 func (r *Repository) CandidateNodes(ctx context.Context) ([]graph.Node, error) {
 	var result []graph.Node
 	for _, item := range r.members {
-		repository, ok := item.repository.(semantic.ReadRepository)
+		repository, ok := item.repository.(semantic.CandidateRepository)
 		if !ok {
 			return nil, fmt.Errorf("repository %s does not support semantic candidates", item.project.Name)
 		}
@@ -235,71 +235,6 @@ func (r *Repository) CandidateNodes(ctx context.Context) ([]graph.Node, error) {
 		return result[i].ID < result[j].ID
 	})
 	return result, nil
-}
-
-func (r *Repository) EmbeddingHashes(ctx context.Context, model string) (map[string]string, error) {
-	result := map[string]string{}
-	for _, item := range r.members {
-		repository, ok := item.repository.(semantic.ReadRepository)
-		if !ok {
-			return nil, fmt.Errorf("repository %s does not support embeddings", item.project.Name)
-		}
-		hashes, err := repository.EmbeddingHashes(ctx, model)
-		if err != nil {
-			return nil, err
-		}
-		for id, hash := range hashes {
-			result[id] = hash
-		}
-	}
-	return result, nil
-}
-
-func (r *Repository) Embeddings(ctx context.Context, model string) ([]semantic.Embedding, error) {
-	var result []semantic.Embedding
-	for _, item := range r.members {
-		repository, ok := item.repository.(semantic.ReadRepository)
-		if !ok {
-			return nil, fmt.Errorf("repository %s does not support embeddings", item.project.Name)
-		}
-		embeddings, err := repository.Embeddings(ctx, model)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, embeddings...)
-	}
-	sort.Slice(result, func(i, j int) bool { return result[i].NodeID < result[j].NodeID })
-	return result, nil
-}
-
-func (r *Repository) UpsertEmbedding(ctx context.Context, embedding semantic.Embedding) error {
-	for _, item := range r.members {
-		if _, err := item.repository.Node(ctx, embedding.NodeID); err != nil {
-			continue
-		}
-		repository, ok := item.repository.(semantic.Repository)
-		if !ok {
-			return fmt.Errorf("repository %s does not support embeddings", item.project.Name)
-		}
-		return repository.UpsertEmbedding(ctx, embedding)
-	}
-	return fmt.Errorf("embedding node %s does not belong to this federation", embedding.NodeID)
-}
-
-func (r *Repository) DeleteStaleEmbeddings(ctx context.Context, model string) (int64, error) {
-	var removed int64
-	for _, item := range r.members {
-		repository, ok := item.repository.(semantic.Repository)
-		if !ok {
-			return removed, fmt.Errorf("repository %s does not support embeddings", item.project.Name)
-		}
-		count, err := repository.DeleteStaleEmbeddings(ctx, model)
-		if err != nil {
-			return removed, err
-		}
-		removed += count
-	}
-	return removed, nil
 }
 
 func (r *Repository) Refresh(ctx context.Context, parsers *parserapi.Registry) error {
@@ -337,12 +272,6 @@ func (r *ReadRepository) ProjectForNode(ctx context.Context, id string) (indexer
 }
 func (r *ReadRepository) CandidateNodes(ctx context.Context) ([]graph.Node, error) {
 	return r.repository.CandidateNodes(ctx)
-}
-func (r *ReadRepository) EmbeddingHashes(ctx context.Context, model string) (map[string]string, error) {
-	return r.repository.EmbeddingHashes(ctx, model)
-}
-func (r *ReadRepository) Embeddings(ctx context.Context, model string) ([]semantic.Embedding, error) {
-	return r.repository.Embeddings(ctx, model)
 }
 func (r *ReadRepository) SearchNodes(ctx context.Context, term string, limit int) ([]graph.Node, error) {
 	return r.repository.SearchNodes(ctx, term, limit)

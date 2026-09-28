@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const SchemaVersion = 11
+const SchemaVersion = 12
 
 // Stable extraction producers identify the authority that created a fact.
 // Producer is deliberately separate from source language: one fact can point
