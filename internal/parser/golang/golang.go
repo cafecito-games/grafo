@@ -286,7 +286,7 @@ func parseFunction(b *parserapi.Builder, fset *token.FileSet, input parserapi.In
 func emitProtocolUses(b *parserapi.Builder, semantic SemanticView, registry protobufbinding.Registry) {
 	path := filepath.ToSlash(filepath.Clean(filepath.FromSlash(b.Input.Path)))
 	path = strings.TrimPrefix(path, "./")
-	if output, configured := registry.Outputs[path]; configured && output.Language == "go" {
+	if registry.ConfiguredOutput(path, "go") {
 		// A configured generated output remains implementation code even when
 		// its corroborating header has drifted. Keep ordinary syntax nodes and
 		// the provenance diagnostic, but never count its internals as application

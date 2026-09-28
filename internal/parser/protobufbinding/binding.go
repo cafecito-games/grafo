@@ -53,14 +53,28 @@ type Config struct {
 }
 
 type Registry struct {
-	Digest  string
-	Configs map[string]Config
-	Outputs map[string]GeneratedFile
+	Digest            string
+	Configs           map[string]Config
+	Outputs           map[string]GeneratedFile
+	conflictedOutputs map[string]map[string]bool
 }
 
 func (r Registry) Config(path string) (Config, bool) {
 	config, ok := r.Configs[clean(path)]
 	return config, ok
+}
+
+// ConfiguredOutput reports whether configuration claims path for language,
+// including a path rejected from Outputs because conflicting configurations
+// claimed it differently. Consumers use this broader provenance only to avoid
+// treating generated implementations as application behavior; GeneratedFile
+// remains the stricter corroboration contract for suppressing all declarations.
+func (r Registry) ConfiguredOutput(path, language string) bool {
+	path = clean(path)
+	if output, ok := r.Outputs[path]; ok && output.Language == language {
+		return true
+	}
+	return r.conflictedOutputs[path][language]
 }
 
 // GeneratedFile returns corroborated output provenance for path. Content is
@@ -262,7 +276,10 @@ type declaration struct {
 }
 
 func buildRegistry(ctx context.Context, input parserapi.Input, files []fileContent, digest string) Registry {
-	result := Registry{Digest: digest, Configs: map[string]Config{}, Outputs: map[string]GeneratedFile{}}
+	result := Registry{
+		Digest: digest, Configs: map[string]Config{}, Outputs: map[string]GeneratedFile{},
+		conflictedOutputs: map[string]map[string]bool{},
+	}
 	byPath := map[string][]byte{}
 	var inputDiagnostics []graph.Diagnostic
 	var declarations []declaration
@@ -319,6 +336,13 @@ func buildRegistry(ctx context.Context, input parserapi.Input, files []fileConte
 			}
 			if previous, exists := result.Outputs[path]; exists && previous != generated {
 				config.Diagnostics = append(config.Diagnostics, graph.Diagnostic{Path: file.path, Line: generatedLine(parsed.line), Level: "warning", Message: "generated output path is configured more than once: " + path})
+				languages := result.conflictedOutputs[path]
+				if languages == nil {
+					languages = map[string]bool{}
+					result.conflictedOutputs[path] = languages
+				}
+				languages[previous.Language] = true
+				languages[generated.Language] = true
 				delete(result.Outputs, path)
 				blockedOutputs[path] = true
 				result.Configs[file.path] = config
