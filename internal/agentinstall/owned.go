@@ -1,8 +1,8 @@
 package agentinstall
 
 import (
+	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/cafecito-games/grafo/internal/agentguide"
@@ -45,6 +45,18 @@ func CheckUserConfigRoot(reader Reader, path string) error {
 	return checkUserConfigRoot(reader, path)
 }
 
+// ResolveUserConfigPath returns the physical direct-write target after proving
+// it remains inside the configured user roots. The leaf stays unresolved.
+func ResolveUserConfigPath(reader Reader, path string) (string, error) {
+	return resolveUserConfigPath(reader, path)
+}
+
+// RevalidateUserConfigPath checks that a direct-write target still resolves to
+// the physical path captured during planning and that its leaf is not a symlink.
+func RevalidateUserConfigPath(reader Reader, path, expected string) error {
+	return revalidateUserConfigPath(reader, path, expected)
+}
+
 // Digest labels content the way receipts record it.
 func Digest(contents string) string { return agentguide.Digest(contents) }
 
@@ -61,11 +73,9 @@ func OwnedFile(reader Reader, owner, kind string) (Receipt, bool, error) {
 }
 
 // ProvesFile reports whether a receipt proves Grafo wrote exactly these bytes at
-// exactly this path. The path is compared literally, so callers whose path may be
-// spelled differently from the recorded target must establish path coverage with
-// OwnedFileAt first and then prove the content with ProvesContents.
-func ProvesFile(receipt Receipt, path, contents string) bool {
-	return ownership{receipt: receipt, found: receipt.Target != ""}.provesFile(path, contents)
+// exactly this resolved path.
+func ProvesFile(reader Reader, receipt Receipt, path, contents string) bool {
+	return ownership{receipt: receipt, found: receipt.Target != "", reader: reader}.provesFile(path, contents)
 }
 
 // ProvesContents reports whether a receipt's digest proves Grafo wrote exactly
@@ -89,32 +99,26 @@ func OwnedFileAt(reader Reader, owner, kind, path string) (Receipt, bool, error)
 	if err != nil || !found {
 		return Receipt{}, false, err
 	}
-	if strings.TrimSpace(receipt.Target) == "" {
-		return Receipt{}, false, nil
-	}
-	recorded, err := resolvePath(reader, receipt.Target)
-	if err != nil {
-		return Receipt{}, false, nil
-	}
-	resolved, err := resolvePath(reader, path)
-	if err != nil {
-		return Receipt{}, false, nil
-	}
-	if recorded != resolved {
+	if !(ownership{receipt: receipt, found: true, reader: reader}).provesPath(path) {
 		return Receipt{}, false, nil
 	}
 	return receipt, true, nil
 }
 
-// RecordOwnedFile records a non-client artifact Grafo has just written. It is
-// called only after the write succeeded, so a receipt never claims content that
-// is not on disk.
-func RecordOwnedFile(env Environment, owner, kind, target, contents string) error {
-	store, err := loadReceipts(Reader(env))
+// RecordOwnedFile records a non-client artifact Grafo has just written. The
+// resolved target must be the identity captured and checked before that write;
+// it is revalidated here so a later parent retarget cannot be recorded as the
+// destination of an earlier mutation.
+func RecordOwnedFile(env Environment, owner, kind, target, resolvedTarget, contents string) error {
+	reader := Reader(env)
+	store, err := loadReceipts(reader)
 	if err != nil {
 		return err
 	}
-	store.recordOwnedFile(owner, kind, target, agentguide.Digest(contents))
+	if err = revalidateUserConfigPath(reader, target, resolvedTarget); err != nil {
+		return fmt.Errorf("record owned file %s: %w", target, err)
+	}
+	store.recordOwnedFile(owner, kind, target, resolvedTarget, agentguide.Digest(contents))
 	return store.save(env)
 }
 
@@ -131,14 +135,15 @@ func ForgetOwnedFile(env Environment, owner, kind string) error {
 
 // recordOwnedFile stores a receipt for an artifact that belongs to no MCP
 // client, so it carries no guidance version or marker.
-func (s *receiptStore) recordOwnedFile(owner, kind, target, digest string) {
+func (s *receiptStore) recordOwnedFile(owner, kind, target, resolvedTarget, digest string) {
 	entry := Receipt{
-		Client:  owner,
-		Kind:    kind,
-		Target:  target,
-		Digest:  digest,
-		Grafo:   version.Value,
-		Updated: now().Format(time.RFC3339),
+		Client:         owner,
+		Kind:           kind,
+		Target:         target,
+		ResolvedTarget: resolvedTarget,
+		Digest:         digest,
+		Grafo:          version.Value,
+		Updated:        now().Format(time.RFC3339),
 	}
 	if index := slices.IndexFunc(s.entries, func(existing Receipt) bool {
 		return existing.Client == entry.Client && existing.Kind == entry.Kind
