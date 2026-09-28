@@ -470,8 +470,11 @@ func (s *MessageFlowService) resolveMessage(ctx context.Context, selector, repos
 type componentIdentity struct{ repository, name, id string }
 
 type componentResolver struct {
-	byFile      map[string]componentIdentity
-	byComponent map[string]componentIdentity
+	byFile       map[string]componentIdentity
+	fileIdentity map[string]string
+	weakAlias    map[string]bool
+	ambiguous    map[string]bool
+	byComponent  map[string]componentIdentity
 }
 
 func (s *MessageFlowService) componentIndex(ctx context.Context, repository string) (componentResolver, bool, error) {
@@ -484,7 +487,8 @@ func (s *MessageFlowService) componentIndex(ctx context.Context, repository stri
 	if truncated {
 		nodes = nodes[:MaxCatalogLimit]
 	}
-	resolver := componentResolver{byFile: map[string]componentIdentity{}, byComponent: map[string]componentIdentity{}}
+	resolver := componentResolver{byFile: map[string]componentIdentity{}, fileIdentity: map[string]string{},
+		weakAlias: map[string]bool{}, ambiguous: map[string]bool{}, byComponent: map[string]componentIdentity{}}
 	for _, component := range nodes {
 		identity := componentIdentity{repository: component.Repository, name: component.Node.Name, id: component.Node.ID}
 		resolver.byComponent[component.Repository+"\x00"+component.Node.ID] = identity
@@ -497,24 +501,54 @@ func (s *MessageFlowService) componentIndex(ctx context.Context, repository stri
 			if item.Counterpart.Kind != graph.KindFile {
 				continue
 			}
-			for _, key := range []string{item.Counterpart.ID, item.Counterpart.QualifiedName, item.Counterpart.Name,
+			fileIdentity := item.Counterpart.ID
+			for _, key := range []string{item.Counterpart.ID, item.Counterpart.QualifiedName,
 				item.Counterpart.Location.Path, item.Counterpart.OwnerFile} {
-				if key != "" {
-					qualified := component.Repository + "\x00" + key
-					if previous, ok := resolver.byFile[qualified]; ok && previous.id != identity.id {
-						left, right := previous, identity
-						if componentLabel(right) < componentLabel(left) {
-							left, right = right, left
-						}
-						return componentResolver{}, false, fmt.Errorf("file %q in repository %q belongs to conflicting components %s and %s",
-							key, component.Repository, componentLabel(left), componentLabel(right))
-					}
-					resolver.byFile[qualified] = identity
+				if err := resolver.addFileAlias(component.Repository, key, fileIdentity, identity, false); err != nil {
+					return componentResolver{}, false, err
 				}
+			}
+			if err := resolver.addFileAlias(component.Repository, item.Counterpart.Name, fileIdentity, identity, true); err != nil {
+				return componentResolver{}, false, err
 			}
 		}
 	}
 	return resolver, truncated, nil
+}
+
+func (r componentResolver) addFileAlias(repository, key, fileIdentity string, owner componentIdentity, weak bool) error {
+	if key == "" {
+		return nil
+	}
+	qualified := repository + "\x00" + key
+	if r.ambiguous[qualified] {
+		return nil
+	}
+	previous, ok := r.byFile[qualified]
+	if !ok {
+		r.byFile[qualified] = owner
+		r.fileIdentity[qualified] = fileIdentity
+		r.weakAlias[qualified] = weak
+		return nil
+	}
+	if r.fileIdentity[qualified] != fileIdentity {
+		if weak || r.weakAlias[qualified] {
+			delete(r.byFile, qualified)
+			delete(r.fileIdentity, qualified)
+			delete(r.weakAlias, qualified)
+			r.ambiguous[qualified] = true
+			return nil
+		}
+	}
+	if previous.id == owner.id {
+		return nil
+	}
+	left, right := previous, owner
+	if componentLabel(right) < componentLabel(left) {
+		left, right = right, left
+	}
+	return fmt.Errorf("file %q in repository %q belongs to conflicting components %s and %s",
+		key, repository, componentLabel(left), componentLabel(right))
 }
 
 func componentLabel(identity componentIdentity) string {

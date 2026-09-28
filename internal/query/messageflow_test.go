@@ -220,6 +220,33 @@ func TestMessageFlowRejectsContradictoryComponentOwnership(t *testing.T) {
 	}
 }
 
+func TestMessageFlowDoesNotConflateEqualFileBasenames(t *testing.T) {
+	repository := newMessageFlowFixture()
+	clientFile := repository.nodes["n:file-client"]
+	clientFile.Name = "client.go"
+	clientFile.QualifiedName = "a/client.go"
+	clientFile.OwnerFile = "a/client.go"
+	clientFile.Location.Path = "a/client.go"
+	repository.nodes[clientFile.ID] = clientFile
+	build := repository.nodes["n:build"]
+	build.OwnerFile = "a/client.go"
+	repository.nodes[build.ID] = build
+
+	repository.add("transport", graph.Node{ID: "n:component-other", Kind: graph.KindComponent,
+		Name: "other", QualifiedName: "component:other"})
+	repository.add("transport", graph.Node{ID: "n:file-other-client", Kind: graph.KindFile,
+		Name: "client.go", QualifiedName: "b/client.go", OwnerFile: "b/client.go", Location: graph.Location{Path: "b/client.go"}})
+	addMessageFlowEdge(repository, "e:owns-other-client", "n:component-other", "n:file-other-client", graph.EdgeContains, nil)
+
+	flow, err := query.NewMessageFlow(repository).Flow(context.Background(), "acme.v1.Envelope", query.MessageFlowOptions{Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(flow.Encoders) != 1 || flow.Encoders[0].Component != "client" {
+		t.Fatalf("path-qualified owner was lost: %#v", flow.Encoders)
+	}
+}
+
 func TestMessageFlowReportsOnlyGenuineComponentBounds(t *testing.T) {
 	t.Run("component enumeration", func(t *testing.T) {
 		repository := newMessageFlowFixture()

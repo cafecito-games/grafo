@@ -644,7 +644,7 @@ func (r *Repository) EdgesFrom(ctx context.Context, id string) ([]graph.Edge, er
 			continue
 		}
 		for _, candidate := range candidates {
-			result = append(result, federatedEdge(edge, candidate.ID))
+			result = append(result, federatedEdge(edge, candidate.Node.ID))
 		}
 	}
 	return uniqueEdges(result), nil
@@ -723,7 +723,7 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 			}
 			for _, candidate := range candidates {
 				projected = append(projected, graph.HydratedRelationEdge{
-					Edge: federatedEdge(item.Edge, candidate.ID), Counterpart: candidate,
+					Edge: federatedEdge(item.Edge, candidate.Node.ID), Counterpart: candidate.Node, Repository: candidate.Repository,
 				})
 			}
 		}
@@ -821,8 +821,8 @@ func (r *Repository) Meta(ctx context.Context, key string) (string, error) {
 	return strings.Join(values, ","), nil
 }
 
-func (r *Repository) exactCandidates(ctx context.Context, target graph.Node, relation graph.EdgeKind) ([]graph.Node, error) {
-	byID := map[string]graph.Node{}
+func (r *Repository) exactCandidates(ctx context.Context, target graph.Node, relation graph.EdgeKind) ([]graph.ScopedNode, error) {
+	byID := map[string]graph.ScopedNode{}
 	for _, term := range []string{target.QualifiedName, target.Name} {
 		if term == "" {
 			continue
@@ -837,20 +837,24 @@ func (r *Repository) exactCandidates(ctx context.Context, target graph.Node, rel
 					continue
 				}
 				if node.QualifiedName == target.QualifiedName || node.Name == target.QualifiedName || node.QualifiedName == target.Name || node.Name == target.Name {
-					byID[node.ID] = node
+					key := item.project.Name + "\x00" + node.ID
+					byID[key] = graph.ScopedNode{Repository: item.project.Name, Node: node}
 				}
 			}
 		}
 	}
-	result := make([]graph.Node, 0, len(byID))
+	result := make([]graph.ScopedNode, 0, len(byID))
 	for _, node := range byID {
 		result = append(result, node)
 	}
 	sort.Slice(result, func(i, j int) bool {
-		if result[i].QualifiedName != result[j].QualifiedName {
-			return result[i].QualifiedName < result[j].QualifiedName
+		if result[i].Repository != result[j].Repository {
+			return result[i].Repository < result[j].Repository
 		}
-		return result[i].ID < result[j].ID
+		if result[i].Node.QualifiedName != result[j].Node.QualifiedName {
+			return result[i].Node.QualifiedName < result[j].Node.QualifiedName
+		}
+		return result[i].Node.ID < result[j].Node.ID
 	})
 	return result, nil
 }
