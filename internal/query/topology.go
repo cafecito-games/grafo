@@ -1391,7 +1391,7 @@ func linkMatchesPathPrefixes(link ServiceLink, prefixes []string) bool {
 	}
 	for _, group := range [][]Resource{link.SourceNodes, link.TargetNodes} {
 		for _, resource := range group {
-			if resource.Repository != "" && matchesPathPrefixes(resource.Location.Path, prefixes) {
+			if !resource.Unresolved && resource.Repository != "" && matchesPathPrefixes(resource.Location.Path, prefixes) {
 				return true
 			}
 		}

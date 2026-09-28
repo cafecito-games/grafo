@@ -27,7 +27,8 @@ func TestFederatedCanonicalMessagesPreserveRepositoryQualifiedCollisions(t *test
 		}
 		seedCatalogIndex(t, ctx, root, "schema.proto", graph.ParseResult{Nodes: []graph.Node{
 			{ID: "shared-message-id", Kind: graph.KindType, Name: "Envelope", QualifiedName: "acme.v1.Envelope",
-				OwnerFile: "schema.proto", Properties: map[string]string{"declaration": "message"}},
+				OwnerFile: "schema.proto", Location: graph.Location{Path: "proto/schema.proto", Line: 1},
+				Properties: map[string]string{"declaration": "message"}},
 			{ID: "ordinary-" + filepath.Base(root), Kind: graph.KindType, Name: "Ordinary", QualifiedName: "aaa.Ordinary",
 				OwnerFile: "schema.proto", Properties: map[string]string{"declaration": "struct"}},
 			{ID: "shared-component-id", Kind: graph.KindComponent, Name: filepath.Base(root),
@@ -46,6 +47,14 @@ func TestFederatedCanonicalMessagesPreserveRepositoryQualifiedCollisions(t *test
 	}
 	if page.Truncated || len(page.Items) != 2 || page.Items[0].Repository != "alpha" || page.Items[1].Repository != "beta" {
 		t.Fatalf("repository-qualified messages = %#v", page)
+	}
+	pathPage, err := repository.CanonicalMessages(ctx, graph.CanonicalMessageQuery{PathPrefixes: []string{"proto"}, Limit: 10})
+	if err != nil || pathPage.Truncated || len(pathPage.Items) != 2 {
+		t.Fatalf("repository-relative path-filtered messages = %#v, %v", pathPage, err)
+	}
+	unmatched, err := repository.CanonicalMessages(ctx, graph.CanonicalMessageQuery{PathPrefixes: []string{"protocol"}, Limit: 10})
+	if err != nil || unmatched.Truncated || len(unmatched.Items) != 0 {
+		t.Fatalf("unmatched canonical path page = %#v, %v", unmatched, err)
 	}
 	bounded, err := repository.CanonicalMessages(ctx, graph.CanonicalMessageQuery{Limit: 1})
 	if err != nil {

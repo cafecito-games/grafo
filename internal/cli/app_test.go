@@ -65,6 +65,23 @@ func TestParseArgumentsAccumulatesRepeatablePathPrefixes(t *testing.T) {
 	if got := args.values["path-prefix"]; got != "internal/app,cmd,web" {
 		t.Fatalf("path-prefix = %q", got)
 	}
+	prefixes, err := pathPrefixOption(args)
+	if err != nil || len(prefixes) != 3 {
+		t.Fatalf("normalized path prefixes = %#v, %v", prefixes, err)
+	}
+	for _, arguments := range [][]string{
+		{"events", "--path-prefix", ""},
+		{"events", "--path-prefix", "internal,,cmd"},
+		{"events", "--path-prefix", "internal", "--path-prefix", ""},
+	} {
+		invalid, parseErr := parseArguments(arguments)
+		if parseErr != nil {
+			t.Fatalf("parse invalid transport option %v: %v", arguments, parseErr)
+		}
+		if _, err := pathPrefixOption(invalid); err == nil {
+			t.Fatalf("blank path prefix was accepted for %v", arguments)
+		}
+	}
 }
 
 func TestOpenReadRetainsSemanticWritesForReusableAlias(t *testing.T) {

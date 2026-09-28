@@ -75,7 +75,7 @@ func TestServerExposesEndpointAndServiceTopologyTools(t *testing.T) {
 	}
 
 	session := connect(t, mcpserver.New(repository, indexer.Project{Name: "shop", Branch: "main"}))
-	listed := call(t, session, "list_endpoints", map[string]any{"method": "GET", "route": "/orders"})
+	listed := call(t, session, "list_endpoints", map[string]any{"method": "GET", "route": "/orders", "path_prefixes": []string{"routes.go"}})
 	if endpoints, ok := listed["endpoints"].([]any); !ok || len(endpoints) != 1 {
 		t.Fatalf("unexpected endpoint catalog: %#v", listed)
 	} else if endpoint, ok := endpoints[0].(map[string]any); !ok {
@@ -83,7 +83,7 @@ func TestServerExposesEndpointAndServiceTopologyTools(t *testing.T) {
 	} else if middleware, ok := endpoint["middleware"].([]any); !ok || len(middleware) != 1 {
 		t.Fatalf("endpoint middleware evidence is missing: %#v", endpoint)
 	}
-	outbound := call(t, session, "list_outbound_requests", map[string]any{"method": "GET"})
+	outbound := call(t, session, "list_outbound_requests", map[string]any{"method": "GET", "path_prefixes": []string{"client.go"}})
 	if requests, ok := outbound["requests"].([]any); !ok || len(requests) != 1 {
 		t.Fatalf("unexpected outbound request catalog: %#v", outbound)
 	}
@@ -91,7 +91,7 @@ func TestServerExposesEndpointAndServiceTopologyTools(t *testing.T) {
 	if matches, ok := handlers["matches"].([]any); !ok || len(matches) != 1 {
 		t.Fatalf("unexpected handler result: %#v", handlers)
 	}
-	topology := call(t, session, "get_service_topology", map[string]any{"route": "/orders"})
+	topology := call(t, session, "get_service_topology", map[string]any{"route": "/orders", "path_prefixes": []string{"routes.go"}})
 	if links, ok := topology["links"].([]any); !ok || len(links) != 1 {
 		t.Fatalf("unexpected service topology: %#v", topology)
 	}
@@ -110,6 +110,7 @@ func TestServerExposesEndpointAndServiceTopologyTools(t *testing.T) {
 	}
 
 	callExpectingError(t, session, "get_service_topology", map[string]any{"direction": "sideways"})
+	callExpectingError(t, session, "list_endpoints", map[string]any{"path_prefixes": []string{"../outside"}})
 	callExpectingError(t, session, "get_service_topology", map[string]any{"direction": "outgoing"})
 	callExpectingError(t, session, "find_handler", map[string]any{"route": "/orders", "event": "order.placed"})
 }

@@ -85,11 +85,11 @@ func discoverFilesWithCatalog(ctx context.Context, project Project, registry *pa
 			if PathIgnored(path) {
 				continue
 			}
-			if !scope.Allows(path) {
-				result.scopedOut++
-				continue
-			}
 			if _, ok := registry.For(path); ok {
+				if !scope.Allows(path) {
+					result.scopedOut++
+					continue
+				}
 				result.paths = append(result.paths, path)
 			}
 		}
@@ -102,11 +102,11 @@ func discoverFilesWithCatalog(ctx context.Context, project Project, registry *pa
 			continue
 		}
 		seen[path] = true
-		if !scope.Allows(path) {
-			result.scopedOut++
+		if _, ok := registry.For(path); !ok {
 			continue
 		}
-		if _, ok := registry.For(path); !ok {
+		if !scope.Allows(path) {
+			result.scopedOut++
 			continue
 		}
 		info, err := os.Lstat(filepath.Join(project.Root, filepath.FromSlash(path)))

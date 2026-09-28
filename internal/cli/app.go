@@ -1490,12 +1490,29 @@ func splitList(raw string) []string {
 	return result
 }
 
+func pathPrefixOption(args parsedArguments) ([]string, error) {
+	raw, present := args.values["path-prefix"]
+	if !present {
+		return nil, nil
+	}
+	parts := strings.Split(raw, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return nil, fmt.Errorf("--path-prefix values must be non-empty")
+		}
+		values = append(values, part)
+	}
+	return query.NormalizePathPrefixes(values)
+}
+
 func (a *App) catalogOptions(args parsedArguments) (query.CatalogOptions, error) {
 	limit, err := intOption(args, "limit", query.DefaultCatalogLimit)
 	if err != nil {
 		return query.CatalogOptions{}, err
 	}
-	prefixes, err := query.NormalizePathPrefixes(splitList(args.values["path-prefix"]))
+	prefixes, err := pathPrefixOption(args)
 	if err != nil {
 		return query.CatalogOptions{}, err
 	}
@@ -1521,7 +1538,7 @@ func (a *App) topologyOptions(args parsedArguments) (query.TopologyOptions, erro
 	if err != nil {
 		return query.TopologyOptions{}, err
 	}
-	prefixes, err := query.NormalizePathPrefixes(splitList(args.values["path-prefix"]))
+	prefixes, err := pathPrefixOption(args)
 	if err != nil {
 		return query.TopologyOptions{}, err
 	}
@@ -1559,7 +1576,7 @@ func openMessageFlow(ctx context.Context, args parsedArguments) (*query.MessageF
 }
 
 func (a *App) messageFlowOptions(args parsedArguments) (query.MessageFlowOptions, error) {
-	if args.values["path-prefix"] != "" {
+	if _, present := args.values["path-prefix"]; present {
 		return query.MessageFlowOptions{}, fmt.Errorf("--path-prefix applies only to list queries, not message-flow")
 	}
 	limit, err := intOption(args, "limit", query.DefaultCatalogLimit)
@@ -1620,7 +1637,7 @@ func (a *App) messageCoverage(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	prefixes, err := query.NormalizePathPrefixes(splitList(args.values["path-prefix"]))
+	prefixes, err := pathPrefixOption(args)
 	if err != nil {
 		return err
 	}
@@ -1739,7 +1756,7 @@ func (a *App) findHandler(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	if len(options.PathPrefixes) > 0 {
+	if _, present := args.values["path-prefix"]; present {
 		return fmt.Errorf("--path-prefix applies only to list queries, not find-handler")
 	}
 	service, closeRepository, err := openTopology(ctx, args)
@@ -1860,7 +1877,7 @@ func (a *App) dataResourceUsage(ctx context.Context, args parsedArguments) error
 	if err != nil {
 		return err
 	}
-	if len(options.PathPrefixes) > 0 {
+	if _, present := args.values["path-prefix"]; present {
 		return fmt.Errorf("--path-prefix applies only to list queries, not data-usage")
 	}
 	catalog, closeRepository, err := openCatalog(ctx, args)
@@ -2256,8 +2273,8 @@ func parseArguments(arguments []string) (parsedArguments, error) {
 			}
 			value = arguments[index]
 		}
-		if name == "path-prefix" && result.values[name] != "" {
-			result.values[name] += "," + value
+		if previous, present := result.values[name]; name == "path-prefix" && present {
+			result.values[name] = previous + "," + value
 		} else {
 			result.values[name] = value
 		}

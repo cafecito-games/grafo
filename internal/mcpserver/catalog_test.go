@@ -27,6 +27,7 @@ func TestServerExposesCatalogTools(t *testing.T) {
 	}
 	orders := graph.Node{ID: graph.NodeID(graph.KindTable, "orders"), Kind: graph.KindTable,
 		Name: "orders", QualifiedName: "orders", OwnerFile: "schema.sql",
+		Location:   graph.Location{Path: "schema.sql", Line: 1},
 		Properties: map[string]string{"object_kind": "table", "dialect": "sqlite"}}
 	writer := graph.Node{ID: graph.NodeID(graph.KindFunction, "shop.CreateOrder"), Kind: graph.KindFunction,
 		Name: "CreateOrder", QualifiedName: "shop.CreateOrder", OwnerFile: "shop.go"}
@@ -62,7 +63,7 @@ func TestServerExposesCatalogTools(t *testing.T) {
 	defer func() { _ = clientSession.Close() }()
 
 	listed, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
-		Name: "list_data_resources", Arguments: map[string]any{"repository": "shop", "limit": 10},
+		Name: "list_data_resources", Arguments: map[string]any{"repository": "shop", "path_prefixes": []string{"schema.sql"}, "limit": 10},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -128,6 +129,15 @@ func TestServerExposesCatalogTools(t *testing.T) {
 	}
 	if !blank.IsError {
 		t.Fatalf("a kind list naming no kind must be rejected, not answered: %#v", blank.StructuredContent)
+	}
+	invalidPath, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "list_events", Arguments: map[string]any{"path_prefixes": []string{"../outside"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !invalidPath.IsError {
+		t.Fatalf("an unsafe path prefix must be rejected: %#v", invalidPath.StructuredContent)
 	}
 
 	ambiguous := graph.Node{ID: graph.NodeID(graph.KindTable, "archive.stock"), Kind: graph.KindTable,

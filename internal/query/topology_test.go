@@ -104,7 +104,11 @@ func TestEndpointMiddlewareEvidenceIsBounded(t *testing.T) {
 }
 
 func TestTopologyPathPrefixesSelectAnchorsAndRetainCounterparts(t *testing.T) {
-	service := query.NewTopology(newTopologyFixture())
+	repository := newTopologyFixture()
+	external := repository.nodes["n:external-missing"]
+	external.Location.Path = "external/missing.http"
+	repository.nodes[external.ID] = external
+	service := query.NewTopology(repository)
 	endpoints, err := service.Endpoints(context.Background(), query.TopologyOptions{PathPrefixes: []string{"routes.go"}, Limit: 20})
 	if err != nil {
 		t.Fatal(err)
@@ -139,6 +143,12 @@ func TestTopologyPathPrefixesSelectAnchorsAndRetainCounterparts(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("target-anchored topology link missing: %#v", topology)
+	}
+	externalOnly, err := service.ServiceTopology(context.Background(), query.TopologyOptions{
+		PathPrefixes: []string{"external/missing.http"}, Limit: 20,
+	})
+	if err != nil || len(externalOnly.Links) != 0 || len(externalOnly.Services) != 0 || externalOnly.Truncated {
+		t.Fatalf("external-only path created a scoped topology result: %#v, %v", externalOnly, err)
 	}
 }
 

@@ -27,12 +27,16 @@ func TestMessageFlowCommandsShareStructuredCoverageSemantics(t *testing.T) {
 	}
 
 	var coverage query.MessageCoverageList
-	runJSON(t, &coverage, "message-coverage", "--repo", root, "--package", "acme.v1", "--oneof", "payload", "--status", "unknown", "--json")
+	runJSON(t, &coverage, "message-coverage", "--repo", root, "--package", "acme.v1", "--oneof", "payload",
+		"--status", "unknown", "--path-prefix", "proto", "--json")
 	if len(coverage.Messages) != 1 || len(coverage.Messages[0].Members) != 4 || coverage.Messages[0].Status != query.CoverageUnknown {
 		t.Fatalf("message coverage filters changed service semantics: %#v", coverage)
 	}
 	if code, _, stderr := execute(t, "message-coverage", "--repo", root, "--status", "maybe"); code == 0 || !strings.Contains(stderr, "unknown message coverage status") {
 		t.Fatalf("invalid coverage status was accepted: code=%d stderr=%s", code, stderr)
+	}
+	if code, _, stderr := execute(t, "message-flow", "acme.v1.Envelope", "--repo", root, "--path-prefix", "proto"); code == 0 {
+		t.Fatalf("a path prefix was accepted by scalar message flow: %s", stderr)
 	}
 }
 
