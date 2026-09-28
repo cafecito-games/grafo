@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -178,10 +179,8 @@ func indexedByNames(query string) []string {
 // edges_from_v2 for INDEXED BY edges_from) cannot pass for it.
 func stepsReferenceIndex(steps []PlanStep, indexName string) bool {
 	for _, step := range steps {
-		for _, token := range strings.FieldsFunc(step.Detail, isIndexTokenSeparator) {
-			if token == indexName {
-				return true
-			}
+		if slices.Contains(strings.FieldsFunc(step.Detail, isIndexTokenSeparator), indexName) {
+			return true
 		}
 	}
 	return false
