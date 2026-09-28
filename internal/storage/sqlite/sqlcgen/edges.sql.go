@@ -248,3 +248,219 @@ func (q *Queries) ListExternalEdgesMatching(ctx context.Context, arg ListExterna
 	}
 	return items, nil
 }
+
+const listIncomingRelationEdges = `-- name: ListIncomingRelationEdges :many
+SELECT
+    edges.id AS edge_id,
+    edges.fact_id AS edge_fact_id,
+    edges.from_id AS edge_from_id,
+    edges.to_id AS edge_to_id,
+    edges.kind AS edge_kind,
+    edges.path AS edge_path,
+    edges.line AS edge_line,
+    edges.column_no AS edge_column_no,
+    edges.end_line AS edge_end_line,
+    edges.properties AS edge_properties,
+    COALESCE(nodes.id, '') AS counterpart_id,
+    COALESCE(nodes.kind, '') AS counterpart_kind,
+    COALESCE(nodes.name, '') AS counterpart_name,
+    COALESCE(nodes.qualified_name, '') AS counterpart_qualified_name,
+    COALESCE(nodes.language, '') AS counterpart_language,
+    COALESCE(nodes.path, '') AS counterpart_path,
+    COALESCE(nodes.line, 0) AS counterpart_line,
+    COALESCE(nodes.column_no, 0) AS counterpart_column_no,
+    COALESCE(nodes.end_line, 0) AS counterpart_end_line,
+    COALESCE(nodes.properties, '{}') AS counterpart_properties,
+    COALESCE(nodes.owner_file, '') AS counterpart_owner_file,
+    COALESCE(nodes.external, 0) AS counterpart_external
+FROM edges INDEXED BY edges_to
+LEFT JOIN nodes ON nodes.id = edges.from_id
+WHERE edges.to_id = ?1 AND edges.kind = ?2
+ORDER BY edges.from_id, edges.id
+LIMIT ?3
+`
+
+type ListIncomingRelationEdgesParams struct {
+	SubjectID  string `json:"subject_id"`
+	Relation   string `json:"relation"`
+	MaxResults int64  `json:"max_results"`
+}
+
+type ListIncomingRelationEdgesRow struct {
+	EdgeID                   string `json:"edge_id"`
+	EdgeFactID               string `json:"edge_fact_id"`
+	EdgeFromID               string `json:"edge_from_id"`
+	EdgeToID                 string `json:"edge_to_id"`
+	EdgeKind                 string `json:"edge_kind"`
+	EdgePath                 string `json:"edge_path"`
+	EdgeLine                 int64  `json:"edge_line"`
+	EdgeColumnNo             int64  `json:"edge_column_no"`
+	EdgeEndLine              int64  `json:"edge_end_line"`
+	EdgeProperties           string `json:"edge_properties"`
+	CounterpartID            string `json:"counterpart_id"`
+	CounterpartKind          string `json:"counterpart_kind"`
+	CounterpartName          string `json:"counterpart_name"`
+	CounterpartQualifiedName string `json:"counterpart_qualified_name"`
+	CounterpartLanguage      string `json:"counterpart_language"`
+	CounterpartPath          string `json:"counterpart_path"`
+	CounterpartLine          int64  `json:"counterpart_line"`
+	CounterpartColumnNo      int64  `json:"counterpart_column_no"`
+	CounterpartEndLine       int64  `json:"counterpart_end_line"`
+	CounterpartProperties    string `json:"counterpart_properties"`
+	CounterpartOwnerFile     string `json:"counterpart_owner_file"`
+	CounterpartExternal      int64  `json:"counterpart_external"`
+}
+
+func (q *Queries) ListIncomingRelationEdges(ctx context.Context, arg ListIncomingRelationEdgesParams) ([]ListIncomingRelationEdgesRow, error) {
+	rows, err := q.query(ctx, q.listIncomingRelationEdgesStmt, listIncomingRelationEdges, arg.SubjectID, arg.Relation, arg.MaxResults)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListIncomingRelationEdgesRow{}
+	for rows.Next() {
+		var i ListIncomingRelationEdgesRow
+		if err := rows.Scan(
+			&i.EdgeID,
+			&i.EdgeFactID,
+			&i.EdgeFromID,
+			&i.EdgeToID,
+			&i.EdgeKind,
+			&i.EdgePath,
+			&i.EdgeLine,
+			&i.EdgeColumnNo,
+			&i.EdgeEndLine,
+			&i.EdgeProperties,
+			&i.CounterpartID,
+			&i.CounterpartKind,
+			&i.CounterpartName,
+			&i.CounterpartQualifiedName,
+			&i.CounterpartLanguage,
+			&i.CounterpartPath,
+			&i.CounterpartLine,
+			&i.CounterpartColumnNo,
+			&i.CounterpartEndLine,
+			&i.CounterpartProperties,
+			&i.CounterpartOwnerFile,
+			&i.CounterpartExternal,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOutgoingRelationEdges = `-- name: ListOutgoingRelationEdges :many
+SELECT
+    edges.id AS edge_id,
+    edges.fact_id AS edge_fact_id,
+    edges.from_id AS edge_from_id,
+    edges.to_id AS edge_to_id,
+    edges.kind AS edge_kind,
+    edges.path AS edge_path,
+    edges.line AS edge_line,
+    edges.column_no AS edge_column_no,
+    edges.end_line AS edge_end_line,
+    edges.properties AS edge_properties,
+    COALESCE(nodes.id, '') AS counterpart_id,
+    COALESCE(nodes.kind, '') AS counterpart_kind,
+    COALESCE(nodes.name, '') AS counterpart_name,
+    COALESCE(nodes.qualified_name, '') AS counterpart_qualified_name,
+    COALESCE(nodes.language, '') AS counterpart_language,
+    COALESCE(nodes.path, '') AS counterpart_path,
+    COALESCE(nodes.line, 0) AS counterpart_line,
+    COALESCE(nodes.column_no, 0) AS counterpart_column_no,
+    COALESCE(nodes.end_line, 0) AS counterpart_end_line,
+    COALESCE(nodes.properties, '{}') AS counterpart_properties,
+    COALESCE(nodes.owner_file, '') AS counterpart_owner_file,
+    COALESCE(nodes.external, 0) AS counterpart_external
+FROM edges INDEXED BY edges_from
+LEFT JOIN nodes ON nodes.id = edges.to_id
+WHERE edges.from_id = ?1 AND edges.kind = ?2
+ORDER BY edges.to_id, edges.id
+LIMIT ?3
+`
+
+type ListOutgoingRelationEdgesParams struct {
+	SubjectID  string `json:"subject_id"`
+	Relation   string `json:"relation"`
+	MaxResults int64  `json:"max_results"`
+}
+
+type ListOutgoingRelationEdgesRow struct {
+	EdgeID                   string `json:"edge_id"`
+	EdgeFactID               string `json:"edge_fact_id"`
+	EdgeFromID               string `json:"edge_from_id"`
+	EdgeToID                 string `json:"edge_to_id"`
+	EdgeKind                 string `json:"edge_kind"`
+	EdgePath                 string `json:"edge_path"`
+	EdgeLine                 int64  `json:"edge_line"`
+	EdgeColumnNo             int64  `json:"edge_column_no"`
+	EdgeEndLine              int64  `json:"edge_end_line"`
+	EdgeProperties           string `json:"edge_properties"`
+	CounterpartID            string `json:"counterpart_id"`
+	CounterpartKind          string `json:"counterpart_kind"`
+	CounterpartName          string `json:"counterpart_name"`
+	CounterpartQualifiedName string `json:"counterpart_qualified_name"`
+	CounterpartLanguage      string `json:"counterpart_language"`
+	CounterpartPath          string `json:"counterpart_path"`
+	CounterpartLine          int64  `json:"counterpart_line"`
+	CounterpartColumnNo      int64  `json:"counterpart_column_no"`
+	CounterpartEndLine       int64  `json:"counterpart_end_line"`
+	CounterpartProperties    string `json:"counterpart_properties"`
+	CounterpartOwnerFile     string `json:"counterpart_owner_file"`
+	CounterpartExternal      int64  `json:"counterpart_external"`
+}
+
+func (q *Queries) ListOutgoingRelationEdges(ctx context.Context, arg ListOutgoingRelationEdgesParams) ([]ListOutgoingRelationEdgesRow, error) {
+	rows, err := q.query(ctx, q.listOutgoingRelationEdgesStmt, listOutgoingRelationEdges, arg.SubjectID, arg.Relation, arg.MaxResults)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListOutgoingRelationEdgesRow{}
+	for rows.Next() {
+		var i ListOutgoingRelationEdgesRow
+		if err := rows.Scan(
+			&i.EdgeID,
+			&i.EdgeFactID,
+			&i.EdgeFromID,
+			&i.EdgeToID,
+			&i.EdgeKind,
+			&i.EdgePath,
+			&i.EdgeLine,
+			&i.EdgeColumnNo,
+			&i.EdgeEndLine,
+			&i.EdgeProperties,
+			&i.CounterpartID,
+			&i.CounterpartKind,
+			&i.CounterpartName,
+			&i.CounterpartQualifiedName,
+			&i.CounterpartLanguage,
+			&i.CounterpartPath,
+			&i.CounterpartLine,
+			&i.CounterpartColumnNo,
+			&i.CounterpartEndLine,
+			&i.CounterpartProperties,
+			&i.CounterpartOwnerFile,
+			&i.CounterpartExternal,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

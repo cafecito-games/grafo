@@ -37,7 +37,9 @@ func NewFederated(repository graph.ReadRepository, projects []indexer.Project) *
 	service := &Service{repository: repository, query: query.NewService(repository), projects: projects}
 	if catalogRepository, ok := repository.(graph.CatalogRepository); ok {
 		service.catalog = query.NewCatalog(catalogRepository)
-		service.topology = query.NewTopology(catalogRepository)
+	}
+	if topologyRepository, ok := repository.(graph.TopologyRepository); ok {
+		service.topology = query.NewTopology(topologyRepository)
 	}
 	return service
 }
