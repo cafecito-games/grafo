@@ -1468,6 +1468,8 @@
           "column": 2
         },
         "properties": {
+          "adapter_source": "grafo.yaml:3",
+          "adapter_symbol": "AuthAPI.request_json",
           "evidence": "gdscript_scope",
           "federated": "true",
           "http_api": "AuthAPI.request_json",
@@ -2500,6 +2502,8 @@
               "column": 2
             },
             "properties": {
+              "adapter_source": "grafo.yaml:3",
+              "adapter_symbol": "AuthAPI.request_json",
               "evidence": "gdscript_scope",
               "federated": "true",
               "http_api": "AuthAPI.request_json",

@@ -260,6 +260,32 @@ func send(auth: AuthAPI, request: HTTPRequest, other, dynamic_path: String) -> v
 	}
 }
 
+func TestLegacyAndAdapterHTTPConfigurationShareOneProjection(t *testing.T) {
+	content := []byte("extends Node\nfunc send(auth: AuthAPI):\n\tauth.fetch(HTTPClient.METHOD_PATCH, \"/profiles/me?full=true\")\n")
+	parse := func(configuration string) graph.Fact {
+		t.Helper()
+		root := t.TempDir()
+		writeFile(t, root, "grafo.yaml", configuration)
+		result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+			Root: root, Path: "client.gd", Content: content, Repository: "sample", RepoID: "repo:sample",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return findFactWithTarget(t, result.Facts, graph.EdgeRequests, "PATCH /profiles/me")
+	}
+	legacy := parse("http:\n  request_apis:\n    - language: gdscript\n      symbol: AuthAPI.fetch\n      method_argument: 0\n      url_argument: 1\n")
+	adapter := parse("adapters:\n  - match: {language: gdscript, symbol: AuthAPI.fetch}\n    effects:\n      - kind: http.request\n        roles: {method: {argument: 0}, url: {argument: 1}}\n")
+	for _, key := range []string{"http_api", "http_method", "http_raw_method", "http_route", "http_raw_route", "http_query", "http_signature", "http_source"} {
+		if legacy.Properties[key] != adapter.Properties[key] {
+			t.Fatalf("legacy/new HTTP %s differ: legacy=%#v adapter=%#v", key, legacy.Properties, adapter.Properties)
+		}
+	}
+	if legacy.Properties["adapter_symbol"] != "AuthAPI.fetch" || adapter.Properties["adapter_symbol"] != "AuthAPI.fetch" {
+		t.Fatalf("legacy/new adapter provenance missing: legacy=%#v adapter=%#v", legacy.Properties, adapter.Properties)
+	}
+}
+
 func TestParserMapsOnlySymbolicGodotHTTPMethods(t *testing.T) {
 	content := []byte(`extends Node
 
@@ -384,7 +410,7 @@ func send() -> void:
 	}
 }
 
-func TestHTTPSemanticKeyAndDependencyTrackOnlyHTTPConfiguration(t *testing.T) {
+func TestAdapterSemanticKeyAndDependencyTrackOnlyAdapterConfiguration(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "grafo.yaml", "components:\n  - name: client\n    roots: [client]\n")
 	parser := gdscriptparser.New()
@@ -393,13 +419,21 @@ func TestHTTPSemanticKeyAndDependencyTrackOnlyHTTPConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, root, "grafo.yaml", "components:\n  - name: other\n    roots: [other]\nhttp:\n  request_apis:\n    - language: gdscript\n      symbol: AuthAPI.send\n      method_argument: 0\n      url_argument: 1\n")
+	writeFile(t, root, "grafo.yaml", "components:\n  - name: other\n    roots: [other]\nadapters:\n  - match: {language: gdscript, symbol: AuthAPI.send}\n    effects:\n      - kind: http.request\n        roles: {method: {argument: 0}, url: {argument: 1}}\n")
 	second, err := parser.SemanticKey(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first == second {
-		t.Fatalf("HTTP config edit did not change semantic key: %q", first)
+		t.Fatalf("adapter config edit did not change semantic key: %q", first)
+	}
+	writeFile(t, root, "grafo.yaml", "components:\n  - name: third\n    roots: [third]\nadapters:\n  - match: {language: gdscript, symbol: AuthAPI.send}\n    effects:\n      - kind: http.request\n        roles: {url: {argument: 1}, method: {argument: 0}}\n")
+	third, err := parser.SemanticKey(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second != third {
+		t.Fatalf("unrelated configuration or role order changed semantic key: %q != %q", second, third)
 	}
 	dependencies := parser.SemanticDependencies()
 	if len(dependencies) != 1 || dependencies[0] != "grafo.yaml" {
@@ -1692,6 +1726,147 @@ func on_ready_changed(_value: bool) -> void:
 	}
 	if publishes != 2 {
 		t.Fatalf("expected both emit forms to publish, got %d", publishes)
+	}
+}
+
+func TestParserProjectsConfiguredCallEffectsAndPreservesCalls(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "grafo.yaml", `adapters:
+  - match: {language: gdscript, symbol: Signals.wire}
+    effects:
+      - kind: event.subscribe
+        roles: {event: {argument: 0}, handler: {argument: 1}}
+  - match: {language: gdscript, symbol: Signals.unwire}
+    effects:
+      - kind: event.unsubscribe
+        roles: {event: {argument: 0}, handler: {argument: 1}}
+  - match: {language: gdscript, symbol: Signals.connected}
+    effects:
+      - kind: event.connection_test
+        roles: {event: {argument: 0}, handler: {argument: 1}}
+  - match: {language: gdscript, symbol: Signals.publish}
+    effects:
+      - kind: event.publish
+        roles: {event: {argument: 0}}
+  - match: {language: gdscript, symbol: AuthAPI.send}
+    effects:
+      - kind: http.request
+        roles: {method: {argument: 0}, url: {argument: 1}}
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "scripts/hub.gd", Repository: "sample", RepoID: "repo:sample",
+		Content: []byte(`class_name Hub extends Node
+
+signal round_started(value: int)
+
+func configure(auth: AuthAPI) -> void:
+	Signals.wire(round_started, on_round_started)
+	Signals.wire(round_started, func(_value): pass)
+	Signals.wire(round_started, on_round_started.bind(1))
+	round_started.connect(on_round_started)
+	Signals.unwire(round_started, on_round_started)
+	Signals.connected(round_started, on_round_started)
+	Signals.publish(round_started)
+	auth.send(HTTPClient.METHOD_POST, "/rounds")
+
+func on_round_started(_value: int) -> void:
+	pass
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"Signals.wire", "Signals.unwire", "Signals.connected", "Signals.publish", "AuthAPI.send"} {
+		assertHasFact(t, result.Facts, graph.EdgeCalls, target)
+	}
+	subscriptions := 0
+	handled := 0
+	var native, configured graph.Fact
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeSubscribes && (fact.Target == "Hub.round_started" || fact.TargetID != "") {
+			subscriptions++
+			if fact.Properties["adapter_symbol"] == "Signals.wire" && fact.Properties["handler"] == "Hub.on_round_started" {
+				configured = fact
+			} else if fact.Properties["handler"] == "Hub.on_round_started" {
+				native = fact
+			}
+			if fact.Properties["adapter_symbol"] != "" &&
+				(fact.Properties["adapter_symbol"] != "Signals.wire" || !strings.HasPrefix(fact.Properties["adapter_source"], "grafo.yaml:")) {
+				t.Fatalf("configured subscription provenance = %#v", fact.Properties)
+			}
+		}
+		if fact.Kind == graph.EdgeHandledBy && fact.Target == "Hub.on_round_started" {
+			handled++
+			if fact.Properties["adapter_symbol"] != "" && fact.Properties["adapter_symbol"] != "Signals.wire" {
+				t.Fatalf("configured handled_by provenance = %#v", fact.Properties)
+			}
+		}
+	}
+	if subscriptions != 4 || handled != 2 {
+		t.Fatalf("configured signal routes: subscriptions=%d handled=%d facts=%#v", subscriptions, handled, result.Facts)
+	}
+	if native.TargetID == "" || native.TargetID != configured.TargetID || native.FromID != configured.FromID ||
+		native.Properties["form"] != configured.Properties["form"] || native.Properties["signal"] != configured.Properties["signal"] {
+		t.Fatalf("native/configured subscriptions diverged: native=%#v configured=%#v", native, configured)
+	}
+	wantForms := map[string]bool{"emit": false, "signal_disconnect": false, "signal_connection_test": false}
+	for _, fact := range result.Facts {
+		if fact.Properties["signal"] != "Hub.round_started" {
+			continue
+		}
+		if _, wanted := wantForms[fact.Properties["form"]]; wanted {
+			wantForms[fact.Properties["form"]] = true
+		}
+	}
+	for form, found := range wantForms {
+		if !found {
+			t.Fatalf("missing configured signal form %q: %#v", form, result.Facts)
+		}
+	}
+	request := findFactWithTarget(t, result.Facts, graph.EdgeRequests, "POST /rounds")
+	if request.Properties["adapter_symbol"] != "AuthAPI.send" || request.Properties["http_signature"] != "configured" {
+		t.Fatalf("configured HTTP request = %#v", request)
+	}
+}
+
+func TestParserConfiguredCallEffectsFailClosed(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "grafo.yaml", `adapters:
+  - match: {language: gdscript, symbol: Signals.wire}
+    effects:
+      - kind: event.subscribe
+        roles: {event: {argument: 0}, handler: {argument: 1}}
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "scripts/hub.gd", Repository: "sample", RepoID: "repo:sample",
+		Content: []byte(`extends Node
+signal changed
+func run():
+	Signals.wire(changed)
+	var Signals = get_node("Signals")
+	Signals.wire(changed, callback)
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeSubscribes || fact.Kind == graph.EdgeHandledBy {
+			t.Fatalf("invalid or shadowed adapter call emitted signal semantics: %#v", fact)
+		}
+	}
+	wantDiagnostics := map[string]bool{"requires handler argument 1": false, "could not be resolved uniquely": false}
+	for _, diagnostic := range result.Diagnostics {
+		for text := range wantDiagnostics {
+			if strings.Contains(diagnostic.Message, text) {
+				wantDiagnostics[text] = true
+			}
+		}
+	}
+	for text, found := range wantDiagnostics {
+		if !found {
+			t.Fatalf("missing %q diagnostic: %#v", text, result.Diagnostics)
+		}
 	}
 }
 

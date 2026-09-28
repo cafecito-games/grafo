@@ -588,25 +588,39 @@ language source files are not reparsed.
 ## Endpoint and service topology
 
 Godot 4 `HTTPRequest.request` calls are indexed only when the receiver is
-typed or inferred as `HTTPRequest`. Projects can declare additional exact
-GDScript wrapper signatures in `grafo.yaml` without teaching Grafo
-application-specific class names:
+typed or inferred as `HTTPRequest`. Projects can describe an exact GDScript
+callable with one or more typed effects in repository-root `grafo.yaml`:
 
 ```yaml
-http:
-  request_apis:
-    - language: gdscript
-      symbol: AuthAPI.request_json
-      method_argument: 0
-      url_argument: 1
+adapters:
+  - match: {language: gdscript, symbol: Signals.wire}
+    effects:
+      - kind: event.subscribe
+        roles:
+          event: {argument: 0}
+          handler: {argument: 1}
+  - match: {language: gdscript, symbol: AuthAPI.request_json}
+    effects:
+      - kind: http.request
+        roles:
+          method: {argument: 0}
+          url: {argument: 1}
 ```
 
-Argument positions are zero-based; `route_argument` is accepted as an
-equivalent spelling of `url_argument`. Each entry must use `gdscript`, an exact
-qualified symbol, and distinct non-negative positions. Duplicate symbols,
-unknown fields, unsupported languages, and conflicting positions fail indexing
-before any durable graph mutation. Editing or removing this section invalidates
-otherwise unchanged GDScript files so stale request facts are reconciled.
+The V1 effect vocabulary is `event.publish`, `event.subscribe`,
+`event.unsubscribe`, `event.connection_test`, and `http.request`. Argument
+positions are zero-based. Symbols are exact qualified identities: wildcards,
+simple-name fallback, shadowed or unresolved receivers, unknown roles, and
+unsupported languages fail closed. Invalid declarations fail indexing before
+durable mutation. Emitted facts carry `adapter_symbol` and
+`adapter_source=grafo.yaml:<line>` while retaining the ordinary `calls` fact.
+Editing or removing adapters reparses GDScript and reconciles stale effects.
+
+The legacy `http.request_apis` section remains a compatibility alias and is
+normalized into the same `http.request` registry; `route_argument` remains an
+alias of `url_argument`. Declaring the same language/symbol through both forms
+is rejected. New configuration should use `adapters`; removal of the legacy
+form requires a separate compatibility decision.
 
 The extractor accepts Godot's symbolic `HTTPClient.METHOD_*` constants and
 bounded, fully known string literals, constants, assignments, concatenations,
