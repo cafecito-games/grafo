@@ -14,15 +14,24 @@ import (
 const (
 	claudeSkill    = linuxHome + "/.claude/skills/grafo/SKILL.md"
 	claudeSettings = linuxHome + "/.claude/settings.json"
+	codexSkill     = linuxHome + "/.agents/skills/grafo/SKILL.md"
 	codexAgents    = linuxHome + "/.codex/AGENTS.md"
+	geminiConfig   = linuxHome + "/.gemini/settings.json"
+	geminiGuide    = linuxHome + "/.gemini/GEMINI.md"
 )
 
 // guidanceEnvironment returns an environment where Claude Code and Codex are the
-// only detected clients, so guidance covers a skill file and a managed block.
+// only detected clients, so guidance covers both personal skill locations.
 func guidanceEnvironment() *fakeEnvironment {
 	environment := cliEnvironment(map[string]string{"claude": "/bin/claude", "codex": "/bin/codex"})
 	environment.outputs["/bin/claude mcp list"] = ""
 	environment.outputs["/bin/codex mcp list"] = ""
+	return environment
+}
+
+func instructionEnvironment() *fakeEnvironment {
+	environment := guidanceEnvironment()
+	environment.files[geminiConfig] = "{}\n"
 	return environment
 }
 
@@ -35,9 +44,10 @@ func findAction(t *testing.T, actions []Action, client, kind string) Action {
 	return matches[0]
 }
 
-func TestInstallWritesSkillAndManagedBlock(t *testing.T) {
+func TestInstallWritesPersonalSkillsAndMigratesManagedBlock(t *testing.T) {
 	environment := guidanceEnvironment()
-	environment.files[codexAgents] = "# My rules\n\nAlways run the tests.\n"
+	original := "# My rules\n\nAlways run the tests.\n"
+	environment.files[codexAgents] = original + "\n" + agentguide.Block()
 
 	actions, err := Install(context.Background(), environment, grafoPath, Options{})
 	if err != nil {
@@ -55,19 +65,56 @@ func TestInstallWritesSkillAndManagedBlock(t *testing.T) {
 		t.Error("installed skill does not mention impact analysis")
 	}
 
-	block := findAction(t, actions, "codex", KindInstructions)
-	if block.Target != codexAgents || block.Change != changeInstalled {
-		t.Fatalf("instructions action = %#v", block)
+	codex := findAction(t, actions, "codex", KindSkill)
+	if codex.Target != codexSkill || codex.Change != changeInstalled {
+		t.Fatalf("codex skill action = %#v", codex)
 	}
-	merged := environment.files[codexAgents]
-	if !strings.HasPrefix(merged, "# My rules\n\nAlways run the tests.\n") {
-		t.Fatalf("user content was not preserved: %q", merged)
+	if got := environment.files[codexSkill]; got != agentguide.Skill() {
+		t.Fatalf("codex skill file = %q", got)
 	}
-	if strings.Count(merged, agentguide.BeginMarker) != 1 {
-		t.Fatalf("managed block count is wrong: %q", merged)
+	legacy := findAction(t, actions, "codex", KindInstructions)
+	if legacy.Target != codexAgents || legacy.Change != changeRemoved {
+		t.Fatalf("legacy instructions action = %#v", legacy)
+	}
+	if got := environment.files[codexAgents]; got != original {
+		t.Fatalf("legacy instructions = %q, want %q", got, original)
 	}
 	if !slicesContainsPath(environment.mkdirs, linuxHome+"/.claude/skills/grafo") {
 		t.Fatalf("mkdirs = %v", environment.mkdirs)
+	}
+	if !slicesContainsPath(environment.mkdirs, linuxHome+"/.agents/skills/grafo") {
+		t.Fatalf("mkdirs = %v", environment.mkdirs)
+	}
+}
+
+func TestCodexMigrationDropsReceiptAfterManagedBlockWasRemoved(t *testing.T) {
+	environment := guidanceEnvironment()
+	environment.files[codexAgents] = "# My rules\n"
+	ledger, err := json.Marshal(receiptFile{Format: receiptFormat, Receipts: []Receipt{{
+		Client: "codex", Kind: KindInstructions, Target: codexAgents,
+		ResolvedTarget: codexAgents, Digest: agentguide.Digest("stale managed contents"),
+		Grafo: "0.1.0", Updated: "2026-01-01T00:00:00Z",
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment.files[receiptLedger] = string(ledger)
+
+	actions, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"codex"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := findAction(t, actions, "codex", KindInstructions); got.Change != changeUnchanged {
+		t.Fatalf("legacy instructions action = %#v", got)
+	}
+	receipts, err := Receipts(environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, receipt := range receipts {
+		if receipt.Client == "codex" && receipt.Kind == KindInstructions {
+			t.Fatalf("stale legacy receipt survived migration: %#v", receipt)
+		}
 	}
 }
 
@@ -99,7 +146,7 @@ func TestInstallIsIdempotentAcrossGuidance(t *testing.T) {
 		}
 	}
 	for _, write := range environment.writes {
-		if write.path == claudeSkill || write.path == codexAgents {
+		if write.path == claudeSkill || write.path == codexSkill || write.path == codexAgents {
 			t.Errorf("replay rewrote %s", write.path)
 		}
 	}
@@ -136,8 +183,6 @@ func TestInstallAnnouncesEveryTargetBeforeMutating(t *testing.T) {
 
 func TestDryRunReportsGuidanceWithoutWriting(t *testing.T) {
 	environment := guidanceEnvironment()
-	environment.files[codexAgents] = "# My rules\n"
-	before := environment.files[codexAgents]
 	environment.strict = true
 
 	actions, err := Install(context.Background(), environment, grafoPath, Options{DryRun: true})
@@ -145,11 +190,11 @@ func TestDryRunReportsGuidanceWithoutWriting(t *testing.T) {
 		t.Fatal(err)
 	}
 	environment.assertNoMutations(t)
-	if environment.files[codexAgents] != before {
-		t.Fatal("dry run changed the instruction file")
-	}
 	if _, exists := environment.files[claudeSkill]; exists {
 		t.Fatal("dry run created the skill file")
+	}
+	if _, exists := environment.files[codexSkill]; exists {
+		t.Fatal("dry run created the Codex skill file")
 	}
 	if _, exists := environment.files[receiptLedger]; exists {
 		t.Fatal("dry run wrote a receipt")
@@ -174,6 +219,9 @@ func TestMCPOnlySkipsGuidance(t *testing.T) {
 	if _, exists := environment.files[claudeSkill]; exists {
 		t.Fatal("--mcp-only installed a skill file")
 	}
+	if _, exists := environment.files[codexSkill]; exists {
+		t.Fatal("--mcp-only installed the Codex skill file")
+	}
 	if _, exists := environment.files[codexAgents]; exists {
 		t.Fatal("--mcp-only created an instruction file")
 	}
@@ -181,7 +229,7 @@ func TestMCPOnlySkipsGuidance(t *testing.T) {
 
 func TestRefreshUpdatesOnlyExistingArtifacts(t *testing.T) {
 	environment := guidanceEnvironment()
-	// A stale Grafo-owned skill exists; the Codex block does not.
+	// A stale Claude skill exists; the Codex skill does not.
 	environment.files[claudeSkill] = "---\nname: grafo\n---\n\n<!-- grafo-guidance version 0 -->\nold\n"
 
 	actions, err := Install(context.Background(), environment, grafoPath, Options{Refresh: true})
@@ -195,12 +243,12 @@ func TestRefreshUpdatesOnlyExistingArtifacts(t *testing.T) {
 	if environment.files[claudeSkill] != agentguide.Skill() {
 		t.Fatal("refresh did not replace the stale skill exactly")
 	}
-	block := findAction(t, actions, "codex", KindInstructions)
-	if block.Change != changeSkipped {
-		t.Fatalf("refresh installed a missing artifact: %#v", block)
+	codex := findAction(t, actions, "codex", KindSkill)
+	if codex.Change != changeSkipped {
+		t.Fatalf("refresh installed a missing artifact: %#v", codex)
 	}
-	if _, exists := environment.files[codexAgents]; exists {
-		t.Fatal("refresh created an instruction file")
+	if _, exists := environment.files[codexSkill]; exists {
+		t.Fatal("refresh created the Codex skill file")
 	}
 }
 
@@ -225,14 +273,14 @@ func TestInstallRefusesConflictingMarkers(t *testing.T) {
 	}
 	for name, contents := range cases {
 		t.Run(name, func(t *testing.T) {
-			environment := guidanceEnvironment()
-			environment.files[codexAgents] = contents
+			environment := instructionEnvironment()
+			environment.files[geminiGuide] = contents
 
-			_, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"codex"}})
+			_, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"gemini"}})
 			if err == nil || !strings.Contains(err.Error(), "grafo-guidance markers are") {
 				t.Fatalf("error = %v", err)
 			}
-			if environment.files[codexAgents] != contents {
+			if environment.files[geminiGuide] != contents {
 				t.Fatal("the conflicting file was rewritten")
 			}
 		})
@@ -241,39 +289,65 @@ func TestInstallRefusesConflictingMarkers(t *testing.T) {
 
 func TestInstallRefusesUnsafeGuidanceTargets(t *testing.T) {
 	t.Run("symlink", func(t *testing.T) {
-		environment := guidanceEnvironment()
-		environment.symlinks[codexAgents] = "/etc/passwd"
+		environment := instructionEnvironment()
+		environment.symlinks[geminiGuide] = "/etc/passwd"
 
-		_, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"codex"}})
+		_, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"gemini"}})
 		if err == nil || !strings.Contains(err.Error(), "symlink") {
 			t.Fatalf("error = %v", err)
 		}
 		for _, write := range environment.writes {
-			if write.path == codexAgents {
+			if write.path == geminiGuide {
 				t.Fatalf("wrote through the symlink: %v", write)
 			}
 		}
 	})
 	t.Run("world writable", func(t *testing.T) {
-		environment := guidanceEnvironment()
-		environment.files[codexAgents] = "# rules\n"
-		environment.modes[codexAgents] = 0o666
+		environment := instructionEnvironment()
+		environment.files[geminiGuide] = "# rules\n"
+		environment.modes[geminiGuide] = 0o666
 
-		_, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"codex"}})
+		_, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"gemini"}})
 		if err == nil || !strings.Contains(err.Error(), "world-writable") {
 			t.Fatalf("error = %v", err)
 		}
 	})
 }
 
+func TestCodexSymlinkedInstructionsDoNotBlockPersonalSkill(t *testing.T) {
+	environment := guidanceEnvironment()
+	environment.symlinks[codexAgents] = "../.claude/CLAUDE.md"
+	environment.files[linuxHome+"/.claude/CLAUDE.md"] = "# Shared instructions\n"
+
+	actions, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"codex"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := findAction(t, actions, "codex", KindSkill); got.Change != changeInstalled || got.Target != codexSkill {
+		t.Fatalf("codex skill action = %#v", got)
+	}
+	if got := findAction(t, actions, "codex", KindInstructions); got.Change != changeSkipped || !strings.Contains(got.Detail, "symlink") {
+		t.Fatalf("legacy instructions action = %#v", got)
+	}
+	if environment.symlinks[codexAgents] != "../.claude/CLAUDE.md" {
+		t.Fatal("the shared instruction symlink changed")
+	}
+	if environment.files[linuxHome+"/.claude/CLAUDE.md"] != "# Shared instructions\n" {
+		t.Fatal("the shared instruction target changed")
+	}
+	if environment.files[codexSkill] != agentguide.Skill() {
+		t.Fatal("Codex did not receive the Grafo personal skill")
+	}
+}
+
 // A symlinked ancestor must not be able to redirect an approved target out of
 // the user configuration tree; the lexical prefix check alone cannot see it.
 func TestInstallRefusesSymlinkedParentDirectory(t *testing.T) {
-	environment := guidanceEnvironment()
-	environment.symlinks[linuxHome+"/.codex"] = "/srv/repo/instructions"
+	environment := instructionEnvironment()
+	environment.symlinks[linuxHome+"/.gemini"] = "/srv/repo/instructions"
 	environment.dirs["/srv/repo/instructions"] = true
 
-	_, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"codex"}})
+	_, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"gemini"}})
 	if err == nil || !strings.Contains(err.Error(), "outside the user configuration roots") {
 		t.Fatalf("error = %v", err)
 	}
@@ -287,15 +361,15 @@ func TestInstallRefusesSymlinkedParentDirectory(t *testing.T) {
 // A symlinked ancestor that still resolves inside the user's own tree is a
 // normal dotfiles layout and must keep working.
 func TestInstallFollowsSymlinkedParentInsideUserTree(t *testing.T) {
-	environment := guidanceEnvironment()
-	environment.symlinks[linuxHome+"/.codex"] = linuxHome + "/dotfiles/codex"
-	environment.dirs[linuxHome+"/dotfiles/codex"] = true
+	environment := instructionEnvironment()
+	environment.symlinks[linuxHome+"/.gemini"] = linuxHome + "/dotfiles/gemini"
+	environment.dirs[linuxHome+"/dotfiles/gemini"] = true
 
-	actions, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"codex"}})
+	actions, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"gemini"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := findAction(t, actions, "codex", KindInstructions); got.Change != changeInstalled {
+	if got := findAction(t, actions, "gemini", KindInstructions); got.Change != changeInstalled {
 		t.Fatalf("instructions action = %#v", got)
 	}
 }
@@ -314,15 +388,15 @@ func TestGuidanceTargetsStayInsideUserConfigRoots(t *testing.T) {
 }
 
 func TestInstallPreservesGuidanceFileMode(t *testing.T) {
-	environment := guidanceEnvironment()
-	environment.files[codexAgents] = "# rules\n"
-	environment.modes[codexAgents] = 0o600
+	environment := instructionEnvironment()
+	environment.files[geminiGuide] = "# rules\n"
+	environment.modes[geminiGuide] = 0o600
 
-	if _, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"codex"}}); err != nil {
+	if _, err := Install(context.Background(), environment, grafoPath, Options{Targets: []string{"gemini"}}); err != nil {
 		t.Fatal(err)
 	}
 	for _, write := range environment.writes {
-		if write.path == codexAgents && write.perm != fs.FileMode(0o600) {
+		if write.path == geminiGuide && write.perm != fs.FileMode(0o600) {
 			t.Fatalf("wrote %s with mode %04o, want 0600", write.path, write.perm)
 		}
 	}
@@ -340,8 +414,8 @@ func TestUninstallRemovesGuidanceAndKeepsUserContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := findAction(t, actions, "codex", KindInstructions); got.Change != changeRemoved {
-		t.Fatalf("instructions action = %#v", got)
+	if got := findAction(t, actions, "codex", KindInstructions); got.Change != changeUnchanged {
+		t.Fatalf("retired instructions action = %#v", got)
 	}
 	if environment.files[codexAgents] != original {
 		t.Fatalf("instruction file = %q, want the original %q", environment.files[codexAgents], original)
@@ -351,6 +425,12 @@ func TestUninstallRemovesGuidanceAndKeepsUserContent(t *testing.T) {
 	}
 	if _, exists := environment.files[claudeSkill]; exists {
 		t.Fatal("the skill file survived uninstall")
+	}
+	if got := findAction(t, actions, "codex", KindSkill); got.Change != changeRemoved {
+		t.Fatalf("codex skill action = %#v", got)
+	}
+	if _, exists := environment.files[codexSkill]; exists {
+		t.Fatal("the Codex skill file survived uninstall")
 	}
 
 	// Replay: a second uninstall changes nothing.
@@ -818,14 +898,17 @@ func TestUninstallRemovesGuidanceWhenClientExecutableIsGone(t *testing.T) {
 			t.Errorf("claude %s action = %#v", kind, got)
 		}
 	}
-	if got := findAction(t, actions, "codex", KindInstructions); got.Change != changeRemoved {
-		t.Errorf("codex instructions action = %#v", got)
+	if got := findAction(t, actions, "codex", KindSkill); got.Change != changeRemoved {
+		t.Errorf("codex skill action = %#v", got)
+	}
+	if got := findAction(t, actions, "codex", KindInstructions); got.Change != changeUnchanged {
+		t.Errorf("codex retired instructions action = %#v", got)
 	}
 	if _, exists := environment.files[claudeSkill]; exists {
 		t.Error("the orphaned skill file survived")
 	}
-	if _, exists := environment.files[codexAgents]; exists {
-		t.Error("the orphaned instruction file survived")
+	if _, exists := environment.files[codexSkill]; exists {
+		t.Error("the orphaned Codex skill survived")
 	}
 	receipts, err := Receipts(environment)
 	if err != nil {
@@ -987,7 +1070,7 @@ func TestApplyRevalidatesTargetBeforeWriting(t *testing.T) {
 	options := Options{Targets: []string{"codex"}}
 	options.Announce = func([]Action) {
 		// Planning has finished; redirect the parent directory.
-		environment.symlinks[linuxHome+"/.codex"] = "/srv/repo/instructions"
+		environment.symlinks[linuxHome+"/.agents"] = "/srv/repo/instructions"
 		environment.dirs["/srv/repo/instructions"] = true
 	}
 
@@ -996,7 +1079,7 @@ func TestApplyRevalidatesTargetBeforeWriting(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 	for _, write := range environment.writes {
-		if strings.Contains(write.path, "AGENTS.md") {
+		if write.path == codexSkill {
 			t.Fatalf("wrote after the target was redirected: %v", write)
 		}
 	}

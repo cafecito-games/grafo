@@ -71,9 +71,9 @@ code before adding code; run bidirectional `get_blast_radius` before a
 behaviour-changing edit; and fall back to native tools deliberately when the
 content is not code or the branch has no index.
 
-Guidance is installed only through documented, user-scoped surfaces: an isolated
-Grafo-owned skill file for Claude Code, and one delimited managed block
-(`<!-- BEGIN grafo-guidance -->` … `<!-- END grafo-guidance -->`) for Codex,
+Guidance is installed only through documented, user-scoped surfaces: isolated
+Grafo-owned skill files for Claude Code and Codex, and one delimited managed
+block (`<!-- BEGIN grafo-guidance -->` … `<!-- END grafo-guidance -->`) for
 Gemini CLI, OpenCode, and Windsurf. Everything outside the markers is preserved
 byte-for-byte, a file with no Grafo ownership marker is never overwritten, and
 duplicated or half-present markers are reported instead of repaired.
