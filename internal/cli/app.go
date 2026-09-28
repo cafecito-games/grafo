@@ -133,6 +133,10 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		runErr = a.findHandler(ctx, parsed)
 	case "service-topology", "get-service-topology", "get_service_topology":
 		runErr = a.serviceTopology(ctx, parsed)
+	case "message-flow", "get-message-flow", "get_message_flow":
+		runErr = a.messageFlow(ctx, parsed)
+	case "message-coverage", "list-message-coverage", "list_message_coverage":
+		runErr = a.messageCoverage(ctx, parsed)
 	default:
 		if namespace, known := toolchainNamespaces[parsed.command]; known {
 			runErr = a.toolchainCommand(ctx, namespace, parsed)
@@ -1347,6 +1351,105 @@ func openTopology(ctx context.Context, args parsedArguments) (*query.Topology, f
 	return query.NewTopology(topologyRepository), closeRepository, nil
 }
 
+func openMessageFlow(ctx context.Context, args parsedArguments) (*query.MessageFlowService, func() error, error) {
+	repository, _, closeRepository, err := openRead(ctx, args)
+	if err != nil {
+		return nil, nil, err
+	}
+	topologyRepository, ok := repository.(graph.TopologyRepository)
+	if !ok {
+		_ = closeRepository()
+		return nil, nil, errors.New("repository does not support message-flow queries")
+	}
+	return query.NewMessageFlow(topologyRepository), closeRepository, nil
+}
+
+func (a *App) messageFlowOptions(args parsedArguments) (query.MessageFlowOptions, error) {
+	limit, err := intOption(args, "limit", query.DefaultCatalogLimit)
+	if err != nil {
+		return query.MessageFlowOptions{}, err
+	}
+	return query.MessageFlowOptions{Repository: args.values["repo-name"], Component: args.values["component"],
+		Direction: query.Direction(args.values["direction"]), Limit: limit}, nil
+}
+
+func (a *App) messageFlow(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) != 1 {
+		return fmt.Errorf("usage: grafo message-flow <message-or-id> [--repo-name name] [--component name] [--direction incoming|outgoing|both] [--limit 100] [--json]")
+	}
+	options, err := a.messageFlowOptions(args)
+	if err != nil {
+		return err
+	}
+	service, closeRepository, err := openMessageFlow(ctx, args)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = closeRepository() }()
+	result, err := service.Flow(ctx, args.positionals[0], options)
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, result)
+	}
+	a.printf("%-18s %-16s %s\n", result.Status, result.Message.Repository, result.Message.QualifiedName)
+	for _, member := range result.Members {
+		a.printf("  %-18s %-36s producers=%d consumers=%d", member.Status, member.Field.QualifiedName, len(member.Producers), len(member.Consumers))
+		if member.Oneof != "" {
+			a.printf(" oneof=%s", member.Oneof)
+		}
+		a.println()
+	}
+	for _, send := range result.Sends {
+		a.printf("  send    channel=%-6s reliability=%-12s %s\n", send.Channel, send.Reliability, send.Evidence.Node.QualifiedName)
+	}
+	for _, receive := range result.Receives {
+		a.printf("  receive channel=%-6s reliability=%-12s %s\n", receive.Channel, receive.Reliability, receive.Evidence.Node.QualifiedName)
+	}
+	a.printf("%d bindings · %d encoders · %d decoders · %d gaps", len(result.Bindings), len(result.Encoders), len(result.Decoders), len(result.Gaps))
+	if result.Truncated {
+		a.print(" · truncated")
+	}
+	a.println()
+	return nil
+}
+
+func (a *App) messageCoverage(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) != 0 {
+		return fmt.Errorf("usage: grafo message-coverage [--package name] [--message name] [--oneof name] [--direction incoming|outgoing|both] [--component name] [--status resolved|missing_evidence|unknown] [--repo-name name] [--limit 100] [--json]")
+	}
+	limit, err := intOption(args, "limit", query.DefaultCatalogLimit)
+	if err != nil {
+		return err
+	}
+	service, closeRepository, err := openMessageFlow(ctx, args)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = closeRepository() }()
+	result, err := service.Coverage(ctx, query.MessageCoverageOptions{Repository: args.values["repo-name"],
+		Package: args.values["package"], Message: args.values["message"], Oneof: args.values["oneof"],
+		Direction: query.Direction(args.values["direction"]), Component: args.values["component"],
+		Status: query.CoverageStatus(args.values["status"]), Limit: limit})
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, result)
+	}
+	for _, item := range result.Messages {
+		a.printf("%-18s %-16s %-48s gaps=%d unknown=%d\n", item.Status, item.Message.Repository,
+			item.Message.QualifiedName, len(item.Gaps), len(item.UnknownEvidence))
+	}
+	a.printf("%d messages", len(result.Messages))
+	if result.Truncated {
+		a.print(" · truncated")
+	}
+	a.println()
+	return nil
+}
+
 func (a *App) endpoints(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
 		return fmt.Errorf("usage: grafo endpoints [--method GET] [--route path] [--repo-name name] [--limit 100] [--json]")
@@ -1838,6 +1941,7 @@ var valueOptions = map[string]bool{
 	"max-matches-per-pattern": true, "client": true, "hook": true,
 	"kind": true, "name": true, "state-dir": true, "lines": true, "concurrency": true,
 	"filter": true, "method": true, "route": true, "event": true, "component": true,
+	"package": true, "message": true, "oneof": true, "status": true,
 }
 
 func parseArguments(arguments []string) (parsedArguments, error) {
@@ -2004,6 +2108,12 @@ Usage:
   grafo service-topology [--repo-name name] [--component name] [--method GET] [--route path | --event name]
                          [--direction incoming|outgoing|both] [--limit 100]
                          [--json | --mermaid]
+  grafo message-flow <message-or-id> [--repo-name name] [--component name]
+                     [--direction incoming|outgoing|both] [--limit 100] [--json]
+  grafo message-coverage [--package name] [--message name] [--oneof name]
+                         [--direction incoming|outgoing|both] [--component name]
+                         [--status resolved|missing_evidence|unknown] [--repo-name name]
+                         [--limit 100] [--json]
   grafo version
 
 Options may appear before or after positional arguments. All query commands
