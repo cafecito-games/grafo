@@ -191,7 +191,7 @@ func TestAttributionCheckpointDrainsWAL(t *testing.T) {
 	if _, err := db.Exec("CREATE TABLE t(a TEXT PRIMARY KEY, b TEXT)"); err != nil {
 		t.Fatalf("create table t: %v", err)
 	}
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		statement := fmt.Sprintf("INSERT INTO t(a, b) VALUES('%06d', '%s')", i, strings.Repeat("x", 512))
 		if _, err := db.Exec(statement); err != nil {
 			t.Fatalf("insert row %d: %v", i, err)
