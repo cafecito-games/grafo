@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "issues": [93, 94],
+  "samples_per_scenario": 30,
+  "iterations_per_sample": 10,
+  "command": "GOMAXPROCS=8 go test ./internal/indexer -run '^$' -bench 'BenchmarkCompat(Unchanged|QueryTriggered)Refresh$' -benchtime=10x -count=30",
+  "fixture": {
+    "files": 64,
+    "language": "markdown",
+    "git_branch": "main",
+    "remote": "git@example.invalid:fixtures/refresh.git",
+    "warmup": "one complete index before every timed sample",
+    "benchmark_source_sha256": "2994ff75f17c7d654df1ca8305c961856d54f1b9958354d9997859d99a4ca86b"
+  },
+  "environment": {
+    "workspace": "Coder container",
+    "os": "linux",
+    "architecture": "amd64",
+    "kernel": "6.8.0-137-generic",
+    "go_version": "go1.26.6",
+    "cpu": "AMD Ryzen 9 8945HS w/ Radeon 780M Graphics",
+    "cgroup_cpu_max": "800000 100000",
+    "cgroup_memory_max_bytes": 21474836480,
+    "gomaxprocs": 8
+  },
+  "baseline": {
+    "commit": "60028383c88b0e1578ac3df31b8da396831543c3",
+    "harness_state": "the identical compatibility benchmark was copied untracked into the detached baseline worktree",
+    "unchanged_refresh_ns_per_op": [
+      12142383, 11754414, 11290343, 11603198, 11819410, 12458284, 12653962, 16646196, 16528840, 14059172,
+      21143929, 22013361, 19412078, 21501313, 18820989, 22582034, 16911056, 21365057, 18697987, 18304199,
+      18674681, 16647628, 16893830, 14280869, 12485816, 12030343, 11465498, 12692076, 12096846, 11949051
+    ],
+    "query_triggered_refresh_ns_per_op": [
+      23703106, 24411090, 23960304, 24101387, 23512852, 23660262, 24418746, 24249222, 24653727, 23893282,
+      24660328, 23950930, 24109718, 24424449, 25133259, 23753571, 23749495, 24122645, 23748456, 23414038,
+      24518285, 24014016, 23748436, 23836333, 23226312, 24198716, 24093486, 24378718, 24471042, 24071273
+    ]
+  },
+  "current": {
+    "commit": "001e947bbbb6acf66f260a9552caede30f1d19de",
+    "unchanged_refresh_ns_per_op": [
+      3653670, 3619230, 3671402, 3408191, 3508064, 3667862, 3604279, 2940947, 3534308, 3524637,
+      3573967, 3147130, 3210717, 3213671, 3371567, 3500328, 3701458, 3404640, 3518234, 3550090,
+      2893515, 3908151, 3623062, 3368316, 3535299, 3775760, 3616655, 3627812, 3492758, 3286502
+    ],
+    "query_triggered_refresh_ns_per_op": [
+      10134327, 10440040, 10304420, 10915579, 10854473, 10283140, 10459528, 10588601, 10347762, 10665929,
+      10439138, 11672186, 10192373, 10633555, 10598101, 9889081, 11171936, 10374094, 10576792, 10513844,
+      10695692, 10556287, 10830885, 10822477, 10811548, 10423163, 10503646, 10588121, 10276390, 11833672
+    ]
+  },
+  "medians": {
+    "baseline_unchanged_refresh_ns": 15404854.5,
+    "current_unchanged_refresh_ns": 3529472.5,
+    "unchanged_refresh_speedup": 4.3646336669,
+    "baseline_query_triggered_refresh_ns": 24082379.5,
+    "current_query_triggered_refresh_ns": 10566539.5,
+    "query_triggered_refresh_speedup": 2.2791169711
+  }
+}
