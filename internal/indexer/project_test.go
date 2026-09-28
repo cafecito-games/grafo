@@ -72,7 +72,7 @@ func TestDiscoverProjectPreservesDetachedHeadAndRejectsRemoteIdentityChange(t *t
 	}
 }
 
-func runGit(t *testing.T, directory string, args ...string) {
+func runGit(t testing.TB, directory string, args ...string) {
 	t.Helper()
 	command := exec.Command("git", append([]string{"-C", directory}, args...)...)
 	if output, err := command.CombinedOutput(); err != nil {

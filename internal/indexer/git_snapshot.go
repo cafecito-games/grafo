@@ -124,6 +124,9 @@ func inspectGitIdentity(ctx context.Context, root string, runner gitCommandRunne
 	}
 	identity := strings.TrimSpace(string(parts[1]))
 	origin := strings.TrimPrefix(strings.TrimSpace(string(parts[0])), "file:")
+	if origin != "" && !filepath.IsAbs(origin) {
+		origin = filepath.Join(root, filepath.FromSlash(origin))
+	}
 	if origin != "" {
 		if info, statErr := os.Stat(origin); statErr == nil && info.Mode().IsRegular() {
 			gitIdentityCache.Lock()
