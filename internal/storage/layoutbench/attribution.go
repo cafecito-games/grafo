@@ -18,7 +18,7 @@ type Attribution struct {
 	PageSize        int64          `json:"page_size"`
 	PageCount       int64          `json:"page_count"`
 	FreelistPages   int64          `json:"freelist_pages"`
-	PrimaryBytes    int64          `json:"primary_bytes"`
+	PrimaryBytes    int64          `json:"primary_bytes"` // os.Stat of the main DB file; object bytes reconcile with it only after a checkpoint flushes the WAL
 	WALBytes        int64          `json:"wal_bytes"`
 	SHMBytes        int64          `json:"shm_bytes"`
 	PayloadStats    []TablePayload `json:"payload_stats,omitempty"`
@@ -45,7 +45,7 @@ type TablePayload struct {
 
 // queryObjectBytes reads per-object byte and page totals from the dbstat
 // virtual table. It is a variable so tests can simulate a build without
-// dbstat support.
+// dbstat support; it is not safe for concurrent mutation.
 var queryObjectBytes = func(ctx context.Context, db *sql.DB) ([]ObjectBytes, error) {
 	rows, err := db.QueryContext(ctx, "SELECT name, SUM(pgsize) AS bytes, COUNT(*) AS pages FROM dbstat GROUP BY name ORDER BY name")
 	if err != nil {
@@ -80,7 +80,11 @@ var payloadTables = []struct {
 // CaptureAttribution measures db. Whole-file metrics come from the SQLite
 // pragmas and os.Stat of path, path+"-wal", and path+"-shm"; per-object
 // metrics come from dbstat and degrade to a typed limitation when dbstat is
-// unavailable rather than being guessed.
+// unavailable rather than being guessed. Run Checkpoint first: while the WAL
+// holds frames, dbstat reflects the merged logical view, so object byte
+// totals diverge from PrimaryBytes (the main file size) by many pages.
+// Payload stats assume the graph column contract (id, owner_file except on
+// edges, properties) for any nodes/facts/edges tables present.
 func CaptureAttribution(ctx context.Context, db *sql.DB, path string) (Attribution, error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -120,8 +124,11 @@ func CaptureAttribution(ctx context.Context, db *sql.DB, path string) (Attributi
 	return attribution, nil
 }
 
-// Checkpoint flushes the WAL back into the main database, truncating the WAL
-// file afterwards when truncate is true.
+// Checkpoint flushes the WAL back into the main database. SQLite reports an
+// incomplete checkpoint through the busy result column rather than an error:
+// in PASSIVE mode a busy database may leave frames unflushed, which is
+// expected and stays non-fatal; when truncate is true an incomplete
+// checkpoint (busy != 0) means the WAL was not truncated, so it is an error.
 func Checkpoint(ctx context.Context, db *sql.DB, truncate bool) error {
 	statement := "PRAGMA wal_checkpoint(PASSIVE)"
 	if truncate {
@@ -131,6 +138,9 @@ func Checkpoint(ctx context.Context, db *sql.DB, truncate bool) error {
 	row := db.QueryRowContext(ctx, statement)
 	if err := row.Scan(&busy, &logFrames, &checkpointedFrames); err != nil {
 		return fmt.Errorf("checkpoint SQLite WAL: %w", err)
+	}
+	if truncate && busy != 0 {
+		return fmt.Errorf("checkpoint SQLite WAL: %s left the database busy", statement)
 	}
 	return nil
 }

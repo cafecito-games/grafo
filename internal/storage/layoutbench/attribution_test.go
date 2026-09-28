@@ -105,7 +105,7 @@ func TestAttributionCaptureRoundTrip(t *testing.T) {
 		}
 		objectBytes += object.Bytes
 	}
-	if difference := objectBytes - attribution.PrimaryBytes; difference < 0 && -difference > attribution.PageSize || difference > attribution.PageSize {
+	if difference := objectBytes - attribution.PrimaryBytes; difference < -attribution.PageSize || difference > attribution.PageSize {
 		t.Errorf("object bytes %d differ from primary bytes %d by more than page size %d", objectBytes, attribution.PrimaryBytes, attribution.PageSize)
 	}
 	if len(attribution.PayloadStats) != 0 {
@@ -182,6 +182,38 @@ func TestAttributionCapturesPayloadStatsForGraphTables(t *testing.T) {
 	edges := statsByTable["edges"]
 	if edges.Rows != 1 || edges.AvgOwnerLength != 0 {
 		t.Errorf("edges stats wrong: %+v", edges)
+	}
+}
+
+func TestAttributionCheckpointDrainsWAL(t *testing.T) {
+	ctx := context.Background()
+	db, path := openAttributionDatabase(t)
+	if _, err := db.Exec("CREATE TABLE t(a TEXT PRIMARY KEY, b TEXT)"); err != nil {
+		t.Fatalf("create table t: %v", err)
+	}
+	for i := 0; i < 20; i++ {
+		statement := fmt.Sprintf("INSERT INTO t(a, b) VALUES('%06d', '%s')", i, strings.Repeat("x", 512))
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("insert row %d: %v", i, err)
+		}
+	}
+
+	before, err := CaptureAttribution(ctx, db, path)
+	if err != nil {
+		t.Fatalf("capture before checkpoint: %v", err)
+	}
+	if before.WALBytes == 0 {
+		t.Fatal("WAL bytes zero before checkpoint")
+	}
+	if err := Checkpoint(ctx, db, true); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	after, err := CaptureAttribution(ctx, db, path)
+	if err != nil {
+		t.Fatalf("capture after checkpoint: %v", err)
+	}
+	if after.WALBytes != 0 {
+		t.Errorf("WAL bytes %d after truncate checkpoint", after.WALBytes)
 	}
 }
 
