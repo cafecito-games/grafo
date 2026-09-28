@@ -1312,7 +1312,11 @@ func semanticWorkspaceEvidenceKey(root string) (string, error) {
 	if relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		return hex.EncodeToString(digest.Sum(nil)), nil
 	}
-	for _, path := range []string{absoluteWorkspace, absoluteWorkspace + ".sum"} {
+	for _, path := range []string{
+		absoluteWorkspace,
+		absoluteWorkspace + ".sum",
+		filepath.Join(filepath.Dir(absoluteWorkspace), "vendor", "modules.txt"),
+	} {
 		_, _ = digest.Write([]byte(path))
 		_, _ = digest.Write([]byte{0})
 		content, readErr := os.ReadFile(path)
