@@ -252,6 +252,39 @@ func TestListNodesByKindEnumeratesExactKinds(t *testing.T) {
 	}
 }
 
+func TestListNodesByKindFiltersSegmentPathsBeforeLimit(t *testing.T) {
+	ctx := context.Background()
+	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	if err := repository.SetMeta(ctx, "root", "/tmp/example/checkout"); err != nil {
+		t.Fatal(err)
+	}
+	for index, candidate := range []struct{ name, path string }{
+		{name: "a", path: "internal/application/a.sql"},
+		{name: "b", path: "other/b.sql"},
+		{name: "c", path: "internal/app/c.sql"},
+		{name: "d", path: "internal/app/nested/d.sql"},
+	} {
+		node := graph.Node{ID: graph.NodeID(graph.KindTable, candidate.name), Kind: graph.KindTable,
+			Name: candidate.name, QualifiedName: candidate.name, OwnerFile: candidate.path,
+			Location: graph.Location{Path: candidate.path, Line: index + 1}}
+		if err := repository.ReplaceOwner(ctx, candidate.path, graph.ParseResult{Nodes: []graph.Node{node}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	listed, err := repository.ListNodesByKind(ctx, graph.NodeListQuery{Kinds: []graph.NodeKind{graph.KindTable},
+		PathPrefixes: []string{"internal/app"}, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].Node.Name != "c" {
+		t.Fatalf("path-filtered bounded nodes = %#v", listed)
+	}
+}
+
 func TestCanonicalMessagesFiltersBeforeOrderingAndBounds(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "graph.sqlite")
@@ -269,12 +302,15 @@ func TestCanonicalMessagesFiltersBeforeOrderingAndBounds(t *testing.T) {
 	for index := 0; index <= 1000; index++ {
 		nodes = append(nodes, graph.Node{ID: fmt.Sprintf("ordinary-%04d", index), Kind: graph.KindType,
 			Name: fmt.Sprintf("Ordinary%04d", index), QualifiedName: fmt.Sprintf("aaa.Ordinary%04d", index),
-			OwnerFile: "fixture.proto", Properties: map[string]string{"declaration": "struct"}})
+			OwnerFile: "fixture.proto", Location: graph.Location{Path: "bulk/fixture.proto"},
+			Properties: map[string]string{"declaration": "struct"}})
 	}
 	for _, qualified := range []string{"acme.v1.Alpha", "acme.v1.Bravo", "other.v1.Alpha"} {
 		name := qualified[strings.LastIndex(qualified, ".")+1:]
+		messagePath := "protocol/" + strings.ReplaceAll(qualified, ".", "/") + ".proto"
 		nodes = append(nodes, graph.Node{ID: "message-" + qualified, Kind: graph.KindType, Name: name,
-			QualifiedName: qualified, OwnerFile: "fixture.proto", Properties: map[string]string{"declaration": "message"}})
+			QualifiedName: qualified, OwnerFile: "fixture.proto", Location: graph.Location{Path: messagePath},
+			Properties: map[string]string{"declaration": "message"}})
 	}
 	if err := repository.ReplaceOwner(ctx, "fixture.proto", graph.ParseResult{Nodes: nodes}); err != nil {
 		t.Fatal(err)
@@ -301,6 +337,14 @@ func TestCanonicalMessagesFiltersBeforeOrderingAndBounds(t *testing.T) {
 	}
 	if len(exact.Items) != 1 || exact.Items[0].Node.QualifiedName != "other.v1.Alpha" {
 		t.Fatalf("qualified message filter = %#v", exact)
+	}
+	pathFiltered, err := repository.CanonicalMessages(ctx, graph.CanonicalMessageQuery{
+		PathPrefixes: []string{"protocol/acme/v1/Bravo.proto"}, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pathFiltered.Truncated || len(pathFiltered.Items) != 1 || pathFiltered.Items[0].Node.QualifiedName != "acme.v1.Bravo" {
+		t.Fatalf("path-filtered canonical page = %#v", pathFiltered)
 	}
 	foreign, err := repository.CanonicalMessages(ctx, graph.CanonicalMessageQuery{Repository: "billing", Limit: 10})
 	if err != nil || foreign.Truncated || len(foreign.Items) != 0 {

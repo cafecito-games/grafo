@@ -14,7 +14,8 @@ func TestTopologyCommandsExposeEndpointsRequestsHandlersAndServices(t *testing.T
 	run(t, "index", root)
 
 	var endpoints query.EndpointList
-	runJSON(t, &endpoints, "endpoints", "--repo", root, "--method", "GET", "--route", "/orders", "--json")
+	runJSON(t, &endpoints, "endpoints", "--repo", root, "--method", "GET", "--route", "/orders",
+		"--path-prefix", "server.go", "--json")
 	if len(endpoints.Endpoints) != 1 || endpoints.Endpoints[0].HandlerStatus != query.BoundaryResolved {
 		t.Fatalf("endpoint command lost its handler: %#v", endpoints)
 	}
@@ -30,7 +31,7 @@ func TestTopologyCommandsExposeEndpointsRequestsHandlersAndServices(t *testing.T
 	}
 
 	var requests query.OutboundRequestList
-	runJSON(t, &requests, "outbound-requests", "--repo", root, "--method", "GET", "--json")
+	runJSON(t, &requests, "outbound-requests", "--repo", root, "--method", "GET", "--path-prefix", "server.go", "--json")
 	if len(requests.Requests) != 1 || requests.Requests[0].Status != query.BoundaryResolved {
 		t.Fatalf("outbound request command did not resolve the local endpoint: %#v", requests)
 	}
@@ -43,7 +44,7 @@ func TestTopologyCommandsExposeEndpointsRequestsHandlersAndServices(t *testing.T
 	}
 
 	var topology query.ServiceTopology
-	runJSON(t, &topology, "service-topology", "--repo", root, "--route", "/orders", "--json")
+	runJSON(t, &topology, "service-topology", "--repo", root, "--route", "/orders", "--path-prefix", "server.go", "--json")
 	if len(topology.Services) != 1 || len(topology.Links) != 1 || topology.Links[0].Kind != query.LinkHTTP {
 		t.Fatalf("service topology command returned the wrong graph: %#v", topology)
 	}
@@ -70,6 +71,9 @@ func TestTopologyCommandsValidateFiltersAndBounds(t *testing.T) {
 	}
 	if code, _, stderr := execute(t, "outbound-requests", "--repo", root, "--limit", "0"); code == 0 {
 		t.Fatalf("a non-positive bound was accepted: %s", stderr)
+	}
+	if code, _, stderr := execute(t, "find-handler", "--repo", root, "--route", "/orders", "--path-prefix", "server.go"); code == 0 {
+		t.Fatalf("a path prefix was accepted by scalar handler lookup: %s", stderr)
 	}
 }
 

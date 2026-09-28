@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cafecito-games/grafo/internal/pathscope"
 	"gopkg.in/yaml.v3"
 )
 
@@ -37,7 +38,50 @@ type Config struct {
 	HTTP            HTTP
 	SQL             SQL
 	Tests           Tests
+	Index           IndexScope
 	UnknownSections map[string][]yaml.Node
+}
+
+// IndexScope is the repository-owned source membership policy. Empty Include
+// means every otherwise eligible file; Exclude always wins.
+type IndexScope struct {
+	Include []string
+	Exclude []string
+}
+
+// Allows reports whether a candidate is inside the configured scope. The root
+// control file is always retained so scope changes remain observable.
+func (s IndexScope) Allows(candidate string) bool {
+	if candidate == FileName {
+		return true
+	}
+	included := len(s.Include) == 0
+	for _, pattern := range s.Include {
+		included = included || pathscope.MatchGlob(pattern, candidate)
+	}
+	if !included {
+		return false
+	}
+	for _, pattern := range s.Exclude {
+		if pathscope.MatchGlob(pattern, candidate) {
+			return false
+		}
+	}
+	return true
+}
+
+// SemanticKey fingerprints normalized scope independently of YAML ordering.
+func (s IndexScope) SemanticKey() string {
+	include := append([]string(nil), s.Include...)
+	exclude := append([]string(nil), s.Exclude...)
+	sort.Strings(include)
+	sort.Strings(exclude)
+	encoded, _ := json.Marshal(struct {
+		Include []string `json:"include"`
+		Exclude []string `json:"exclude"`
+	}{include, exclude})
+	digest := sha256.Sum256(encoded)
+	return "index-scope-v1:" + hex.EncodeToString(digest[:])
 }
 
 // Tests is the fail-closed repository test-framework configuration. Invalid
@@ -247,9 +291,71 @@ func Parse(content []byte) (Config, error) {
 			}
 			seenOwned[key] = true
 			result.Tests = parseTests(valueNode)
+		case "index":
+			if seenOwned[key] {
+				return Config{}, fmt.Errorf("line %d: duplicate top-level section %q", keyNode.Line, key)
+			}
+			seenOwned[key] = true
+			result.Index, err = parseIndexScope(valueNode)
+			if err != nil {
+				return Config{}, err
+			}
 		default:
 			value := *valueNode
 			result.UnknownSections[key] = append(result.UnknownSections[key], value)
+		}
+	}
+	return result, nil
+}
+
+func parseIndexScope(node *yaml.Node) (IndexScope, error) {
+	if isEmptyYAMLValue(node) {
+		return IndexScope{}, nil
+	}
+	if node.Kind != yaml.MappingNode {
+		return IndexScope{}, fmt.Errorf("line %d: index must be a mapping", node.Line)
+	}
+	var result IndexScope
+	seen := map[string]bool{}
+	for index := 0; index < len(node.Content); index += 2 {
+		keyNode, valueNode := node.Content[index], node.Content[index+1]
+		key, err := stringScalar(keyNode)
+		if err != nil {
+			return IndexScope{}, fmt.Errorf("line %d: index setting name must be a string", keyNode.Line)
+		}
+		if seen[key] {
+			return IndexScope{}, fmt.Errorf("line %d: duplicate index setting %q", keyNode.Line, key)
+		}
+		seen[key] = true
+		var target *[]string
+		switch key {
+		case "include":
+			target = &result.Include
+		case "exclude":
+			target = &result.Exclude
+		default:
+			return IndexScope{}, fmt.Errorf("line %d: unknown index setting %q", keyNode.Line, key)
+		}
+		if isEmptyYAMLValue(valueNode) {
+			continue
+		}
+		if valueNode.Kind != yaml.SequenceNode {
+			return IndexScope{}, fmt.Errorf("line %d: index %s must be a sequence", valueNode.Line, key)
+		}
+		unique := map[string]bool{}
+		for _, patternNode := range valueNode.Content {
+			pattern, err := stringScalar(patternNode)
+			if err != nil {
+				return IndexScope{}, fmt.Errorf("line %d: index %s pattern must be a string", patternNode.Line, key)
+			}
+			normalized, err := pathscope.NormalizeGlob(pattern)
+			if err != nil {
+				return IndexScope{}, fmt.Errorf("line %d: invalid %s pattern %q: %w", patternNode.Line, key, pattern, err)
+			}
+			if !unique[normalized] {
+				*target = append(*target, normalized)
+				unique[normalized] = true
+			}
 		}
 	}
 	return result, nil

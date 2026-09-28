@@ -117,6 +117,15 @@ configuration changes (for example `grafo.yaml`) to otherwise unchanged source
 files. Any Git detection failure safely falls back to hashing every supported
 file; non-Git directories always use that fallback.
 
+The validated `projectconfig.IndexScope` is the sole source-membership policy.
+Discovery applies built-in safety ignores first and then the normalized scope
+before filesystem or parser work. Its semantic digest is committed as index
+metadata only after a successful run and participates in membership reuse; a
+scope change therefore rediscovers candidates and reconciles both additions and
+removals. Query list options carry separately validated path prefixes into
+storage enumeration so canonical anchors are filtered before bounds, while
+query services retain each selected subject's complete counterpart evidence.
+
 Workspace evidence is replaced independently on every run. It contains the
 repository node plus explicit component nodes and `contains` facts from the
 repository to each component and from each component to its eligible file

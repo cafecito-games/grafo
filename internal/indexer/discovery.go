@@ -11,6 +11,7 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	"github.com/cafecito-games/grafo/internal/projectconfig"
 )
 
 var ignoredDirectories = map[string]bool{
@@ -25,14 +26,15 @@ var ignoredFiles = map[string]bool{
 type discoveredFiles struct {
 	paths       []string
 	skipped     []string
+	scopedOut   int
 	gitCommands int
 }
 
 func discoverFiles(ctx context.Context, project Project, registry *parserapi.Registry) (discoveredFiles, error) {
-	return discoverFilesWithCatalog(ctx, project, registry, nil, false)
+	return discoverFilesWithCatalog(ctx, project, registry, nil, false, projectconfig.IndexScope{})
 }
 
-func discoverFilesWithCatalog(ctx context.Context, project Project, registry *parserapi.Registry, known map[string]graph.FileRecord, reuseKnown bool) (discoveredFiles, error) {
+func discoverFilesWithCatalog(ctx context.Context, project Project, registry *parserapi.Registry, known map[string]graph.FileRecord, reuseKnown bool, scope projectconfig.IndexScope) (discoveredFiles, error) {
 	var candidates []string
 	gitCommands := 0
 	if reuseKnown {
@@ -77,13 +79,26 @@ func discoverFilesWithCatalog(ctx context.Context, project Project, registry *pa
 			return discoveredFiles{}, err
 		}
 	}
+	// The root project configuration is a control-plane input even when Git
+	// excludes it from the ordinary candidate set. Keep the same regular-file
+	// and symlink safety boundary used for all other source membership.
+	if info, err := os.Lstat(filepath.Join(project.Root, projectconfig.FileName)); err == nil &&
+		info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+		candidates = append(candidates, projectconfig.FileName)
+	}
 	result := discoveredFiles{paths: make([]string, 0, len(candidates)), gitCommands: gitCommands}
 	if reuseKnown {
+		seen := map[string]bool{}
 		for _, path := range candidates {
-			if PathIgnored(path) {
+			if seen[path] || PathIgnored(path) {
 				continue
 			}
+			seen[path] = true
 			if _, ok := registry.For(path); ok {
+				if !scope.Allows(path) {
+					result.scopedOut++
+					continue
+				}
 				result.paths = append(result.paths, path)
 			}
 		}
@@ -95,7 +110,12 @@ func discoverFilesWithCatalog(ctx context.Context, project Project, registry *pa
 		if seen[path] || PathIgnored(path) {
 			continue
 		}
+		seen[path] = true
 		if _, ok := registry.For(path); !ok {
+			continue
+		}
+		if !scope.Allows(path) {
+			result.scopedOut++
 			continue
 		}
 		info, err := os.Lstat(filepath.Join(project.Root, filepath.FromSlash(path)))
@@ -103,14 +123,12 @@ func discoverFilesWithCatalog(ctx context.Context, project Project, registry *pa
 			continue
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			seen[path] = true
 			result.skipped = append(result.skipped, path)
 			continue
 		}
 		if !info.Mode().IsRegular() {
 			continue
 		}
-		seen[path] = true
 		result.paths = append(result.paths, path)
 	}
 	sort.Strings(result.paths)

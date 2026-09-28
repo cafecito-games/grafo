@@ -750,11 +750,19 @@ func (r *Repository) ListNodesByKind(ctx context.Context, request graph.NodeList
 	// The fragment is matched literally, so a name containing % or _ narrows
 	// the catalog instead of silently widening it.
 	fragment := foldName(request.Name)
+	prefixes := request.PathPrefixes
+	if prefixes == nil {
+		prefixes = []string{}
+	}
+	prefixesJSON, err := json.Marshal(prefixes)
+	if err != nil {
+		return nil, fmt.Errorf("encode node path prefixes: %w", err)
+	}
 	result := []graph.ScopedNode{}
 	for _, kind := range request.Kinds {
 		rows, err := r.queries.ListNodesByKind(ctx, sqlcgen.ListNodesByKindParams{
 			Kind: string(kind), MinExternal: minExternal, MaxExternal: maxExternal,
-			NameFragment: fragment, MaxResults: limit,
+			NameFragment: fragment, PathPrefixesJson: string(prefixesJSON), MaxResults: limit,
 		})
 		if err != nil {
 			return nil, err
@@ -783,9 +791,17 @@ func (r *Repository) CanonicalMessages(ctx context.Context, request graph.Canoni
 	if request.Limit == int(^uint(0)>>1) {
 		return graph.CanonicalMessagePage{}, fmt.Errorf("canonical message limit is too large")
 	}
+	prefixes := request.PathPrefixes
+	if prefixes == nil {
+		prefixes = []string{}
+	}
+	prefixesJSON, err := json.Marshal(prefixes)
+	if err != nil {
+		return graph.CanonicalMessagePage{}, fmt.Errorf("encode canonical message path prefixes: %w", err)
+	}
 	rows, err := r.queries.ListCanonicalMessages(ctx, sqlcgen.ListCanonicalMessagesParams{
 		PackageName: strings.TrimSuffix(request.Package, "."), MessageName: request.Message,
-		MaxResults: int64(request.Limit) + 1,
+		PathPrefixesJson: string(prefixesJSON), MaxResults: int64(request.Limit) + 1,
 	})
 	if err != nil {
 		return graph.CanonicalMessagePage{}, err
