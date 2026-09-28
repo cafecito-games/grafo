@@ -528,7 +528,7 @@ func TestImpactRelationSetsAreShared(t *testing.T) {
 	if len(upstream) == 0 || !reflect.DeepEqual(upstream, downstream) {
 		t.Fatalf("relation sets must be mirrored: %v vs %v", upstream, downstream)
 	}
-	required := []graph.EdgeKind{graph.EdgeCalls, graph.EdgeHandledBy, graph.EdgeImports, graph.EdgeExtends,
+	required := []graph.EdgeKind{graph.EdgeCalls, graph.EdgeHandledBy, graph.EdgeUsesMiddleware, graph.EdgeImports, graph.EdgeExtends,
 		graph.EdgeImplements, graph.EdgeEmbeds, graph.EdgeReferences, graph.EdgeReads, graph.EdgeWrites,
 		graph.EdgeEncodes, graph.EdgeDecodes,
 		graph.EdgeAssigns, graph.EdgeReturns, graph.EdgePasses, graph.EdgeRequests, graph.EdgeDependsOn}

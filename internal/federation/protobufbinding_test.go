@@ -44,3 +44,19 @@ func TestProtocolUsageFederationRequiresCanonicalProtobufDeclaration(t *testing.
 		}
 	}
 }
+
+func TestMiddlewareFederationRequiresCallableDeclaration(t *testing.T) {
+	for _, test := range []struct {
+		kind graph.NodeKind
+		want bool
+	}{
+		{graph.KindFunction, true},
+		{graph.KindMethod, true},
+		{graph.KindConfigKey, false},
+		{graph.KindEndpoint, false},
+	} {
+		if got := candidateAllowed(graph.EdgeUsesMiddleware, graph.Node{Kind: test.kind}); got != test.want {
+			t.Errorf("candidateAllowed(uses_middleware, %s) = %v, want %v", test.kind, got, test.want)
+		}
+	}
+}

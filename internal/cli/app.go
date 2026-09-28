@@ -1373,6 +1373,17 @@ func (a *App) endpoints(ctx context.Context, args parsedArguments) error {
 		for _, handler := range endpoint.Handlers {
 			a.printf("    handler      %-48s %s\n", handler.Node.QualifiedName, formatLocation(handler.Location))
 		}
+		for _, middleware := range endpoint.Middleware {
+			a.printf("    middleware %3s %-42s %-8s %s\n", middleware.Evidence["order"],
+				middleware.Node.QualifiedName, middleware.Evidence["form"], formatLocation(middleware.Location))
+		}
+		for _, middleware := range endpoint.UnresolvedMiddleware {
+			a.printf("    middleware?%3s %-42s %-8s %s\n", middleware.Evidence["order"],
+				middleware.Node.QualifiedName, middleware.Evidence["form"], formatLocation(middleware.Location))
+		}
+		if endpoint.MiddlewareTruncated {
+			a.println("    middleware evidence truncated")
+		}
 	}
 	a.printCatalogSummary(len(result.Endpoints), len(result.Unresolved), "endpoints", result.Truncated)
 	return nil

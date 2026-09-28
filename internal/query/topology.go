@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -47,6 +48,11 @@ type Endpoint struct {
 	Exposers      []UsageSite    `json:"exposers"`
 	Handlers      []UsageSite    `json:"handlers"`
 	HandlerStatus BoundaryStatus `json:"handler_status"`
+	// Middleware is the resolved outer-to-inner chain. UnresolvedMiddleware
+	// keeps dynamic boundaries explicit instead of silently dropping them.
+	Middleware           []UsageSite `json:"middleware"`
+	UnresolvedMiddleware []UsageSite `json:"unresolved_middleware"`
+	MiddlewareTruncated  bool        `json:"middleware_truncated"`
 }
 
 type EndpointList struct {
@@ -406,11 +412,43 @@ func (t *Topology) endpoint(ctx context.Context, scoped graph.ScopedNode, limit 
 	if err != nil {
 		return Endpoint{}, false, err
 	}
+	middleware, middlewareTruncated, err := t.catalog.outgoing(ctx, scoped.Node.ID, limit, graph.EdgeUsesMiddleware)
+	if err != nil {
+		return Endpoint{}, false, err
+	}
+	sortMiddleware(middleware)
+	resolvedMiddleware, unresolvedMiddleware := []UsageSite{}, []UsageSite{}
+	for _, site := range middleware {
+		if site.Node.External {
+			unresolvedMiddleware = append(unresolvedMiddleware, site)
+		} else {
+			resolvedMiddleware = append(resolvedMiddleware, site)
+		}
+	}
 	status := handlerStatus(handlers, handlersTruncated)
 	resource := newResource(scoped)
 	owners.annotate(&resource)
 	return Endpoint{Resource: resource, Method: method, Route: route,
-		Exposers: exposers, Handlers: handlers, HandlerStatus: status}, exposedTruncated || handlersTruncated, nil
+		Exposers: exposers, Handlers: handlers, HandlerStatus: status,
+		Middleware: resolvedMiddleware, UnresolvedMiddleware: unresolvedMiddleware,
+		MiddlewareTruncated: middlewareTruncated}, exposedTruncated || handlersTruncated || middlewareTruncated, nil
+}
+
+func sortMiddleware(sites []UsageSite) {
+	sort.SliceStable(sites, func(i, j int) bool {
+		left, leftErr := strconv.Atoi(sites[i].Evidence["order"])
+		right, rightErr := strconv.Atoi(sites[j].Evidence["order"])
+		if leftErr == nil && rightErr == nil && left != right {
+			return left < right
+		}
+		if leftErr == nil != (rightErr == nil) {
+			return leftErr == nil
+		}
+		if sites[i].Node.QualifiedName != sites[j].Node.QualifiedName {
+			return sites[i].Node.QualifiedName < sites[j].Node.QualifiedName
+		}
+		return sites[i].EdgeID < sites[j].EdgeID
+	})
 }
 
 func handlerStatus(handlers []UsageSite, truncated bool) BoundaryStatus {

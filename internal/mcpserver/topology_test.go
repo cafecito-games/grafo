@@ -30,6 +30,8 @@ func TestServerExposesEndpointAndServiceTopologyTools(t *testing.T) {
 		Name: "Routes", QualifiedName: "shop.Routes", OwnerFile: "routes.go"}
 	handler := graph.Node{ID: graph.NodeID(graph.KindFunction, "shop.Handler"), Kind: graph.KindFunction,
 		Name: "Handler", QualifiedName: "shop.Handler", OwnerFile: "routes.go"}
+	middleware := graph.Node{ID: graph.NodeID(graph.KindFunction, "shop.Authenticate"), Kind: graph.KindFunction,
+		Name: "Authenticate", QualifiedName: "shop.Authenticate", OwnerFile: "routes.go"}
 	caller := graph.Node{ID: graph.NodeID(graph.KindFunction, "shop.CallOrders"), Kind: graph.KindFunction,
 		Name: "CallOrders", QualifiedName: "shop.CallOrders", OwnerFile: "client.go"}
 	clientComponent := graph.Node{ID: "n:component-client", Kind: graph.KindComponent, Name: "client",
@@ -50,10 +52,12 @@ func TestServerExposesEndpointAndServiceTopologyTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := repository.ReplaceOwner(ctx, "routes.go", graph.ParseResult{
-		Nodes: []graph.Node{serverFile, endpoint, routes, handler},
+		Nodes: []graph.Node{serverFile, endpoint, routes, handler, middleware},
 		Facts: []graph.Fact{
 			{ID: "f:exposes", FromID: routes.ID, Kind: graph.EdgeExposes, TargetID: endpoint.ID, OwnerFile: "routes.go"},
 			{ID: "f:handler", FromID: endpoint.ID, Kind: graph.EdgeHandledBy, TargetID: handler.ID, OwnerFile: "routes.go"},
+			{ID: "f:middleware", FromID: endpoint.ID, Kind: graph.EdgeUsesMiddleware, TargetID: middleware.ID,
+				OwnerFile: "routes.go", Properties: map[string]string{"form": "use", "order": "0", "resolution": "go/types"}},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -74,6 +78,10 @@ func TestServerExposesEndpointAndServiceTopologyTools(t *testing.T) {
 	listed := call(t, session, "list_endpoints", map[string]any{"method": "GET", "route": "/orders"})
 	if endpoints, ok := listed["endpoints"].([]any); !ok || len(endpoints) != 1 {
 		t.Fatalf("unexpected endpoint catalog: %#v", listed)
+	} else if endpoint, ok := endpoints[0].(map[string]any); !ok {
+		t.Fatalf("endpoint JSON is not an object: %#v", endpoints[0])
+	} else if middleware, ok := endpoint["middleware"].([]any); !ok || len(middleware) != 1 {
+		t.Fatalf("endpoint middleware evidence is missing: %#v", endpoint)
 	}
 	outbound := call(t, session, "list_outbound_requests", map[string]any{"method": "GET"})
 	if requests, ok := outbound["requests"].([]any); !ok || len(requests) != 1 {

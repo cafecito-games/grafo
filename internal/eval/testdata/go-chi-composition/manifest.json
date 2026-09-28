@@ -1,0 +1,2676 @@
+{
+  "schema_version": 1,
+  "case_id": "go-chi-composition",
+  "repositories": [
+    {
+      "id": "chi-app",
+      "path": "repos/chi-app"
+    }
+  ],
+  "expect": {
+    "nodes": [
+      {
+        "repo": "chi-app",
+        "kind": "endpoint",
+        "qualified_name": "endpoint:ANY /fallback@routes.go:39:2"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "endpoint",
+        "qualified_name": "endpoint:GET /child/profile@routes.go:25:2"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "endpoint",
+        "qualified_name": "endpoint:GET /nested/profile@routes.go:25:2"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "endpoint",
+        "qualified_name": "endpoint:GET /staff/profile@routes.go:20:2"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "endpoint",
+        "qualified_name": "endpoint:GET /v1/auth/profile@routes.go:20:2"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "endpoint",
+        "qualified_name": "endpoint:PATCH /profile@routes.go:38:2"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "endpoint",
+        "qualified_name": "endpoint:POST /staff/login@routes.go:19:2"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "endpoint",
+        "qualified_name": "endpoint:POST /v1/auth/login@routes.go:19:2"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "external",
+        "qualified_name": "github.com/go-chi/chi/v5.Mux.Group",
+        "external": true
+      },
+      {
+        "repo": "chi-app",
+        "kind": "external",
+        "qualified_name": "github.com/go-chi/chi/v5.Mux.Mount",
+        "external": true
+      },
+      {
+        "repo": "chi-app",
+        "kind": "external",
+        "qualified_name": "github.com/go-chi/chi/v5.Mux.Route",
+        "external": true
+      },
+      {
+        "repo": "chi-app",
+        "kind": "external",
+        "qualified_name": "github.com/go-chi/chi/v5.Mux.Use",
+        "external": true
+      },
+      {
+        "repo": "chi-app",
+        "kind": "external",
+        "qualified_name": "github.com/go-chi/chi/v5.NewRouter",
+        "external": true
+      },
+      {
+        "repo": "chi-app",
+        "kind": "external",
+        "qualified_name": "github.com/go-chi/chi/v5.Router.Mount",
+        "external": true
+      },
+      {
+        "repo": "chi-app",
+        "kind": "external",
+        "qualified_name": "github.com/go-chi/chi/v5.Router.Use",
+        "external": true
+      },
+      {
+        "repo": "chi-app",
+        "kind": "external",
+        "qualified_name": "github.com/go-chi/chi/v5.Router.With",
+        "external": true
+      },
+      {
+        "repo": "chi-app",
+        "kind": "external",
+        "qualified_name": "http.Handler",
+        "external": true
+      },
+      {
+        "repo": "chi-app",
+        "kind": "file",
+        "qualified_name": "go.mod"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "file",
+        "qualified_name": "routes.go"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "file",
+        "qualified_name": "third_party/chi/chi.go"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "file",
+        "qualified_name": "third_party/chi/go.mod"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "function",
+        "qualified_name": "example.com/chiapp.NotARouter"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "function",
+        "qualified_name": "example.com/chiapp.Routes"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "function",
+        "qualified_name": "example.com/chiapp.audit"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "function",
+        "qualified_name": "example.com/chiapp.authRoutes"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "function",
+        "qualified_name": "example.com/chiapp.authenticate"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "function",
+        "qualified_name": "example.com/chiapp.childRoutes"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "function",
+        "qualified_name": "example.com/chiapp.cycleA"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "function",
+        "qualified_name": "example.com/chiapp.cycleB"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "function",
+        "qualified_name": "example.com/chiapp.login"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "function",
+        "qualified_name": "example.com/chiapp.profile"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "function",
+        "qualified_name": "example.com/chiapp.requestID"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "function",
+        "qualified_name": "example.com/chiapp/third_party/chi.NewRouter"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "interface",
+        "qualified_name": "example.com/chiapp/third_party/chi.Router"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "method",
+        "qualified_name": "example.com/chiapp.unrelated.Get"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "method",
+        "qualified_name": "example.com/chiapp/third_party/chi.Mux.Get"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "method",
+        "qualified_name": "example.com/chiapp/third_party/chi.Mux.Group"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "method",
+        "qualified_name": "example.com/chiapp/third_party/chi.Mux.HandleFunc"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "method",
+        "qualified_name": "example.com/chiapp/third_party/chi.Mux.MethodFunc"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "method",
+        "qualified_name": "example.com/chiapp/third_party/chi.Mux.Mount"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "method",
+        "qualified_name": "example.com/chiapp/third_party/chi.Mux.Post"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "method",
+        "qualified_name": "example.com/chiapp/third_party/chi.Mux.Route"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "method",
+        "qualified_name": "example.com/chiapp/third_party/chi.Mux.ServeHTTP"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "method",
+        "qualified_name": "example.com/chiapp/third_party/chi.Mux.Use"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "method",
+        "qualified_name": "example.com/chiapp/third_party/chi.Mux.With"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "method",
+        "qualified_name": "example.com/chiapp/third_party/chi.Router.Get"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "method",
+        "qualified_name": "example.com/chiapp/third_party/chi.Router.Group"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "method",
+        "qualified_name": "example.com/chiapp/third_party/chi.Router.HandleFunc"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "method",
+        "qualified_name": "example.com/chiapp/third_party/chi.Router.MethodFunc"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "method",
+        "qualified_name": "example.com/chiapp/third_party/chi.Router.Mount"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "method",
+        "qualified_name": "example.com/chiapp/third_party/chi.Router.Post"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "method",
+        "qualified_name": "example.com/chiapp/third_party/chi.Router.Route"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "method",
+        "qualified_name": "example.com/chiapp/third_party/chi.Router.Use"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "method",
+        "qualified_name": "example.com/chiapp/third_party/chi.Router.With"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "module",
+        "qualified_name": "example.com/chiapp"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "module",
+        "qualified_name": "github.com/go-chi/chi/v5"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "module",
+        "qualified_name": "net/http",
+        "external": true
+      },
+      {
+        "repo": "chi-app",
+        "kind": "parameter",
+        "qualified_name": "example.com/chiapp.Routes.dynamic"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "parameter",
+        "qualified_name": "example.com/chiapp.audit.next"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "parameter",
+        "qualified_name": "example.com/chiapp.authRoutes.router"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "parameter",
+        "qualified_name": "example.com/chiapp.authenticate.next"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "parameter",
+        "qualified_name": "example.com/chiapp.cycleA.router"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "parameter",
+        "qualified_name": "example.com/chiapp.cycleB.router"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "parameter",
+        "qualified_name": "example.com/chiapp.requestID.next"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "repository",
+        "qualified_name": "chi-app"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "type",
+        "qualified_name": "example.com/chiapp.unrelated"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "type",
+        "qualified_name": "example.com/chiapp/third_party/chi.Mux"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "variable",
+        "qualified_name": "example.com/chiapp.Routes.router@30"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "variable",
+        "qualified_name": "example.com/chiapp.childRoutes.router@24"
+      }
+    ],
+    "edges": [
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:ANY /fallback@routes.go:39:2"
+        },
+        "relation": "handled_by",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.profile"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 39,
+          "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:ANY /fallback@routes.go:39:2"
+        },
+        "relation": "uses_middleware",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.requestID"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 31,
+          "column": 13
+        },
+        "properties": {
+          "call_site": "routes.go:31:13",
+          "evidence": "go/types",
+          "form": "use",
+          "framework": "chi",
+          "order": "0",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /child/profile@routes.go:25:2"
+        },
+        "relation": "handled_by",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.profile"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 25,
+          "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /child/profile@routes.go:25:2"
+        },
+        "relation": "uses_middleware",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.requestID"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 31,
+          "column": 13
+        },
+        "properties": {
+          "call_site": "routes.go:31:13",
+          "evidence": "go/types",
+          "form": "use",
+          "framework": "chi",
+          "order": "0",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /nested/profile@routes.go:25:2"
+        },
+        "relation": "handled_by",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.profile"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 25,
+          "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /nested/profile@routes.go:25:2"
+        },
+        "relation": "uses_middleware",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.requestID"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 31,
+          "column": 13
+        },
+        "properties": {
+          "call_site": "routes.go:31:13",
+          "evidence": "go/types",
+          "form": "use",
+          "framework": "chi",
+          "order": "0",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /staff/profile@routes.go:20:2"
+        },
+        "relation": "handled_by",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.profile"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 20,
+          "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /staff/profile@routes.go:20:2"
+        },
+        "relation": "uses_middleware",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.authenticate"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 18,
+          "column": 13
+        },
+        "properties": {
+          "call_site": "routes.go:18:13",
+          "evidence": "go/types",
+          "form": "use",
+          "framework": "chi",
+          "order": "1",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /staff/profile@routes.go:20:2"
+        },
+        "relation": "uses_middleware",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.requestID"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 31,
+          "column": 13
+        },
+        "properties": {
+          "call_site": "routes.go:31:13",
+          "evidence": "go/types",
+          "form": "use",
+          "framework": "chi",
+          "order": "0",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /v1/auth/profile@routes.go:20:2"
+        },
+        "relation": "handled_by",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.profile"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 20,
+          "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /v1/auth/profile@routes.go:20:2"
+        },
+        "relation": "uses_middleware",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.authenticate"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 18,
+          "column": 13
+        },
+        "properties": {
+          "call_site": "routes.go:18:13",
+          "evidence": "go/types",
+          "form": "use",
+          "framework": "chi",
+          "order": "1",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /v1/auth/profile@routes.go:20:2"
+        },
+        "relation": "uses_middleware",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.requestID"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 31,
+          "column": 13
+        },
+        "properties": {
+          "call_site": "routes.go:31:13",
+          "evidence": "go/types",
+          "form": "use",
+          "framework": "chi",
+          "order": "0",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:PATCH /profile@routes.go:38:2"
+        },
+        "relation": "handled_by",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.profile"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 38,
+          "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:PATCH /profile@routes.go:38:2"
+        },
+        "relation": "uses_middleware",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.requestID"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 31,
+          "column": 13
+        },
+        "properties": {
+          "call_site": "routes.go:31:13",
+          "evidence": "go/types",
+          "form": "use",
+          "framework": "chi",
+          "order": "0",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:POST /staff/login@routes.go:19:2"
+        },
+        "relation": "handled_by",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.login"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 19,
+          "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:POST /staff/login@routes.go:19:2"
+        },
+        "relation": "uses_middleware",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.audit"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 19,
+          "column": 14
+        },
+        "properties": {
+          "call_site": "routes.go:19:14",
+          "evidence": "go/types",
+          "form": "with",
+          "framework": "chi",
+          "order": "2",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:POST /staff/login@routes.go:19:2"
+        },
+        "relation": "uses_middleware",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.authenticate"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 18,
+          "column": 13
+        },
+        "properties": {
+          "call_site": "routes.go:18:13",
+          "evidence": "go/types",
+          "form": "use",
+          "framework": "chi",
+          "order": "1",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:POST /staff/login@routes.go:19:2"
+        },
+        "relation": "uses_middleware",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.requestID"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 31,
+          "column": 13
+        },
+        "properties": {
+          "call_site": "routes.go:31:13",
+          "evidence": "go/types",
+          "form": "use",
+          "framework": "chi",
+          "order": "0",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:POST /v1/auth/login@routes.go:19:2"
+        },
+        "relation": "handled_by",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.login"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 19,
+          "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:POST /v1/auth/login@routes.go:19:2"
+        },
+        "relation": "uses_middleware",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.audit"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 19,
+          "column": 14
+        },
+        "properties": {
+          "call_site": "routes.go:19:14",
+          "evidence": "go/types",
+          "form": "with",
+          "framework": "chi",
+          "order": "2",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:POST /v1/auth/login@routes.go:19:2"
+        },
+        "relation": "uses_middleware",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.authenticate"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 18,
+          "column": 13
+        },
+        "properties": {
+          "call_site": "routes.go:18:13",
+          "evidence": "go/types",
+          "form": "use",
+          "framework": "chi",
+          "order": "1",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:POST /v1/auth/login@routes.go:19:2"
+        },
+        "relation": "uses_middleware",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.requestID"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 31,
+          "column": 13
+        },
+        "properties": {
+          "call_site": "routes.go:31:13",
+          "evidence": "go/types",
+          "form": "use",
+          "framework": "chi",
+          "order": "0",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "go.mod"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "module",
+          "qualified_name": "example.com/chiapp"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "routes.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.NotARouter"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 51,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "routes.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 29,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "routes.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.audit"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 13,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "routes.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.authRoutes"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 17,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "routes.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.authenticate"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 12,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "routes.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.childRoutes"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 23,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "routes.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.cycleA"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 45,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "routes.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.cycleB"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 46,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "routes.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.login"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 14,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "routes.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.profile"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 15,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "routes.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.requestID"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 11,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "routes.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "example.com/chiapp.unrelated.Get"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 50,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "routes.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "type",
+          "qualified_name": "example.com/chiapp.unrelated"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 48,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "routes.go"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "chi-app",
+          "kind": "module",
+          "qualified_name": "github.com/go-chi/chi/v5"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 6,
+          "column": 2
+        },
+        "properties": {
+          "alias": "v5"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "routes.go"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "chi-app",
+          "kind": "module",
+          "qualified_name": "net/http",
+          "external": true
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 4,
+          "column": 2
+        },
+        "properties": {
+          "alias": "http"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp/third_party/chi.NewRouter"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 20,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "interface",
+          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 5,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "example.com/chiapp/third_party/chi.Mux.Get"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 27,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "example.com/chiapp/third_party/chi.Mux.Group"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 24,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "example.com/chiapp/third_party/chi.Mux.HandleFunc"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 30,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "example.com/chiapp/third_party/chi.Mux.MethodFunc"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 29,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "example.com/chiapp/third_party/chi.Mux.Mount"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 26,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "example.com/chiapp/third_party/chi.Mux.Post"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 28,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "example.com/chiapp/third_party/chi.Mux.Route"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 25,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "example.com/chiapp/third_party/chi.Mux.ServeHTTP"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 21,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "example.com/chiapp/third_party/chi.Mux.Use"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 22,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "example.com/chiapp/third_party/chi.Mux.With"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 23,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "type",
+          "qualified_name": "example.com/chiapp/third_party/chi.Mux"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 18,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "chi-app",
+          "kind": "module",
+          "qualified_name": "net/http",
+          "external": true
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 3,
+          "column": 8
+        },
+        "properties": {
+          "alias": "http"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "third_party/chi/go.mod"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "module",
+          "qualified_name": "github.com/go-chi/chi/v5"
+        },
+        "source": {
+          "path": "third_party/chi/go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.NotARouter"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "example.com/chiapp.unrelated.Get"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 51,
+          "column": 50
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "external",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Group",
+          "external": true
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 34,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "external",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Mount",
+          "external": true
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 37,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "external",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Route",
+          "external": true
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 32,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "external",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Route",
+          "external": true
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 33,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "external",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Route",
+          "external": true
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 40,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "external",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Use",
+          "external": true
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 31,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "external",
+          "qualified_name": "github.com/go-chi/chi/v5.NewRouter",
+          "external": true
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 30,
+          "column": 12
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "external",
+          "qualified_name": "github.com/go-chi/chi/v5.Router.Mount",
+          "external": true
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 35,
+          "column": 3
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.childRoutes"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 35,
+          "column": 26
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.childRoutes"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 37,
+          "column": 25
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.cycleA"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 41,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "parameter",
+          "qualified_name": "example.com/chiapp.Routes.dynamic"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 29,
+          "column": 13
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "variable",
+          "qualified_name": "example.com/chiapp.Routes.router@30"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 30,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "exposes",
+        "to": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:ANY /fallback@routes.go:39:2"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 39,
+          "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "exposes",
+        "to": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:PATCH /profile@routes.go:38:2"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 38,
+          "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.audit"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "parameter",
+          "qualified_name": "example.com/chiapp.audit.next"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 13,
+          "column": 12
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.authRoutes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "external",
+          "qualified_name": "github.com/go-chi/chi/v5.Router.Use",
+          "external": true
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 18,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.authRoutes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "external",
+          "qualified_name": "github.com/go-chi/chi/v5.Router.With",
+          "external": true
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 19,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.authRoutes"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "parameter",
+          "qualified_name": "example.com/chiapp.authRoutes.router"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 17,
+          "column": 17
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.authRoutes"
+        },
+        "relation": "exposes",
+        "to": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /staff/profile@routes.go:20:2"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 20,
+          "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.authRoutes"
+        },
+        "relation": "exposes",
+        "to": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /v1/auth/profile@routes.go:20:2"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 20,
+          "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.authRoutes"
+        },
+        "relation": "exposes",
+        "to": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:POST /staff/login@routes.go:19:2"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 19,
+          "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.authRoutes"
+        },
+        "relation": "exposes",
+        "to": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:POST /v1/auth/login@routes.go:19:2"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 19,
+          "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.authenticate"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "parameter",
+          "qualified_name": "example.com/chiapp.authenticate.next"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 12,
+          "column": 19
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.childRoutes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "external",
+          "qualified_name": "github.com/go-chi/chi/v5.NewRouter",
+          "external": true
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 24,
+          "column": 12
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.childRoutes"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "variable",
+          "qualified_name": "example.com/chiapp.childRoutes.router@24"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 24,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.childRoutes"
+        },
+        "relation": "exposes",
+        "to": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /child/profile@routes.go:25:2"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 25,
+          "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.childRoutes"
+        },
+        "relation": "exposes",
+        "to": {
+          "repo": "chi-app",
+          "kind": "endpoint",
+          "qualified_name": "endpoint:GET /nested/profile@routes.go:25:2"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 25,
+          "column": 2
+        },
+        "properties": {
+          "evidence": "go/types",
+          "framework": "chi",
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.cycleA"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.cycleB"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 45,
+          "column": 34
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.cycleA"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "parameter",
+          "qualified_name": "example.com/chiapp.cycleA.router"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 45,
+          "column": 13
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.cycleB"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.cycleA"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 46,
+          "column": 34
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.cycleB"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "parameter",
+          "qualified_name": "example.com/chiapp.cycleB.router"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 46,
+          "column": 13
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.requestID"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "chi-app",
+          "kind": "parameter",
+          "qualified_name": "example.com/chiapp.requestID.next"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 11,
+          "column": 16
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "interface",
+          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+        },
+        "relation": "extends",
+        "to": {
+          "repo": "chi-app",
+          "kind": "external",
+          "qualified_name": "http.Handler",
+          "external": true
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 6,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "interface",
+          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "example.com/chiapp/third_party/chi.Router.Get"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 12,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "interface",
+          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "example.com/chiapp/third_party/chi.Router.Group"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 9,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "interface",
+          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "example.com/chiapp/third_party/chi.Router.HandleFunc"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 15,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "interface",
+          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "example.com/chiapp/third_party/chi.Router.MethodFunc"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 14,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "interface",
+          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "example.com/chiapp/third_party/chi.Router.Mount"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 11,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "interface",
+          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "example.com/chiapp/third_party/chi.Router.Post"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 13,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "interface",
+          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "example.com/chiapp/third_party/chi.Router.Route"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 10,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "interface",
+          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "example.com/chiapp/third_party/chi.Router.Use"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 7,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "interface",
+          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "example.com/chiapp/third_party/chi.Router.With"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 8,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "module",
+          "qualified_name": "example.com/chiapp"
+        },
+        "relation": "depends_on",
+        "to": {
+          "repo": "chi-app",
+          "kind": "module",
+          "qualified_name": "github.com/go-chi/chi/v5"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 5,
+          "column": 1
+        },
+        "properties": {
+          "ecosystem": "go",
+          "replacement": "./third_party/chi",
+          "scope": "runtime",
+          "version": "v5.0.0"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "parameter",
+          "qualified_name": "example.com/chiapp.Routes.dynamic"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "chi-app",
+          "kind": "external",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Route",
+          "external": true
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 40,
+          "column": 2
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "parameter",
+          "qualified_name": "example.com/chiapp.audit.next"
+        },
+        "relation": "returns",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.audit"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 13,
+          "column": 53
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "parameter",
+          "qualified_name": "example.com/chiapp.authenticate.next"
+        },
+        "relation": "returns",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.authenticate"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 12,
+          "column": 53
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "parameter",
+          "qualified_name": "example.com/chiapp.cycleA.router"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.cycleB"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 45,
+          "column": 34
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "parameter",
+          "qualified_name": "example.com/chiapp.cycleB.router"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.cycleA"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 46,
+          "column": 34
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "parameter",
+          "qualified_name": "example.com/chiapp.requestID.next"
+        },
+        "relation": "returns",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.requestID"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 11,
+          "column": 53
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "repository",
+          "qualified_name": "chi-app"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "go.mod"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "repository",
+          "qualified_name": "chi-app"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "routes.go"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "repository",
+          "qualified_name": "chi-app"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "third_party/chi/chi.go"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "repository",
+          "qualified_name": "chi-app"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "chi-app",
+          "kind": "file",
+          "qualified_name": "third_party/chi/go.mod"
+        },
+        "source": {
+          "path": "third_party/chi/go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "variable",
+          "qualified_name": "example.com/chiapp.Routes.router@30"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.cycleA"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 41,
+          "column": 2
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "variable",
+          "qualified_name": "example.com/chiapp.Routes.router@30"
+        },
+        "relation": "returns",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 42,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "variable",
+          "qualified_name": "example.com/chiapp.childRoutes.router@24"
+        },
+        "relation": "returns",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.childRoutes"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 26,
+          "column": 2
+        }
+      }
+    ],
+    "diagnostics": [
+      {
+        "repo": "chi-app",
+        "path": "routes.go",
+        "line": 40,
+        "level": "warning",
+        "message_contains": "dynamic Chi route prefix could not be proven; composition omitted"
+      },
+      {
+        "repo": "chi-app",
+        "path": "routes.go",
+        "line": 45,
+        "level": "warning",
+        "message_contains": "recursive Chi router composition exceeded the bounded package summary"
+      },
+      {
+        "repo": "chi-app",
+        "path": "third_party/chi/chi.go",
+        "level": "warning",
+        "message_contains": "Go semantic package omitted source; using syntax evidence"
+      }
+    ]
+  }
+}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -913,6 +915,222 @@ func Right() error { return &r.Problem{} }
 		"example.com/identity.Left", "example.com/identity/left.Problem", "return")
 	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgePropagatesError,
 		"example.com/identity.Right", "example.com/identity/right.Problem", "return")
+}
+
+func TestPackageSemanticLoaderComposesChiRoutesAndMiddleware(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), `module example.com/app
+
+go 1.26
+
+require github.com/go-chi/chi/v5 v5.0.0
+
+replace github.com/go-chi/chi/v5 => ./third_party/chi
+`)
+	writeFile(t, filepath.Join(root, "third_party", "chi", "go.mod"), "module github.com/go-chi/chi/v5\n\ngo 1.26\n")
+	writeFile(t, filepath.Join(root, "third_party", "chi", "chi.go"), `package chi
+
+import "net/http"
+
+type Router interface {
+	http.Handler
+	Use(...func(http.Handler) http.Handler)
+	With(...func(http.Handler) http.Handler) Router
+	Group(func(Router)) Router
+	Route(string, func(Router)) Router
+	Mount(string, http.Handler)
+	Get(string, http.HandlerFunc)
+	Post(string, http.HandlerFunc)
+	Method(string, string, http.Handler)
+	MethodFunc(string, string, http.HandlerFunc)
+	Handle(string, http.Handler)
+	HandleFunc(string, http.HandlerFunc)
+}
+
+func TestChiHelperEditInvalidatesEveryGoPackageView(t *testing.T) {
+	parser := golangparser.New()
+	got := parser.SemanticAffectedPaths(
+		[]string{"routes.go", "helpers.go", "nested/child.go", "README.md"},
+		[]string{"helpers.go"},
+	)
+	if !reflect.DeepEqual(got, []string{"routes.go", "helpers.go", "nested/child.go"}) {
+		t.Fatalf("affected paths = %v, want every Go package view", got)
+	}
+}
+
+type Mux struct{}
+func NewRouter() *Mux { return &Mux{} }
+func (*Mux) ServeHTTP(http.ResponseWriter, *http.Request) {}
+func (*Mux) Use(...func(http.Handler) http.Handler) {}
+func (*Mux) With(...func(http.Handler) http.Handler) Router { return &Mux{} }
+func (*Mux) Group(func(Router)) Router { return &Mux{} }
+func (*Mux) Route(string, func(Router)) Router { return &Mux{} }
+func (*Mux) Mount(string, http.Handler) {}
+func (*Mux) Get(string, http.HandlerFunc) {}
+func (*Mux) Post(string, http.HandlerFunc) {}
+func (*Mux) Method(string, string, http.Handler) {}
+func (*Mux) MethodFunc(string, string, http.HandlerFunc) {}
+func (*Mux) Handle(string, http.Handler) {}
+func (*Mux) HandleFunc(string, http.HandlerFunc) {}
+`)
+	content := []byte(`package app
+
+import (
+	"net/http"
+	"github.com/go-chi/chi/v5"
+)
+
+const api = "/v1"
+
+func outer(next http.Handler) http.Handler { return next }
+func authUse(next http.Handler) http.Handler { return next }
+func audit(next http.Handler) http.Handler { return next }
+func adminUse(next http.Handler) http.Handler { return next }
+func childUse(next http.Handler) http.Handler { return next }
+func login(http.ResponseWriter, *http.Request) {}
+func me(http.ResponseWriter, *http.Request) {}
+func list(http.ResponseWriter, *http.Request) {}
+
+func authRoutes(r chi.Router) {
+	r.Use(authUse)
+	r.With(audit).Post("/login", login)
+	alias := audit
+	r.With(alias).Post("/alias", login)
+	r.Get("/plain", me)
+	r.Group(func(group chi.Router) {
+		group.Get("/me", me)
+	})
+}
+
+func childRoutes() chi.Router {
+	r := chi.NewRouter()
+	r.Use(childUse)
+	r.Get("/items", list)
+	return r
+}
+
+func dynamicOnly(r chi.Router) { r.Get("/hidden", me) }
+
+func Routes(dynamic string) chi.Router {
+	r := chi.NewRouter()
+	r.Use(outer)
+	r.Route(api+"/auth", authRoutes)
+	r.Route("/one", authRoutes)
+	r.Route("/two", authRoutes)
+	r.Group(func(admin chi.Router) {
+		admin.Use(adminUse)
+		admin.Mount("/admin", childRoutes())
+	})
+	r.Mount("/child", childRoutes())
+	factory := childRoutes
+	r.Mount("/factory", factory())
+	r.MethodFunc(http.MethodPatch, "/method", me)
+	r.HandleFunc("/any", me)
+	if dynamic != "" {
+		r.Get("/conditional", me)
+	}
+	chosen := chooseRouter(dynamic != "", r, childRoutes())
+	chosen.Get("/ambiguous", me)
+	cycleA(r)
+	r.Route(dynamic, authRoutes)
+	r.Route(dynamic, dynamicOnly)
+	return r
+}
+
+func chooseRouter(first bool, left, right chi.Router) chi.Router {
+	if first { return left }
+	return right
+}
+func cycleA(r chi.Router) { cycleB(r) }
+func cycleB(r chi.Router) { cycleA(r) }
+
+type unrelated struct{}
+func (unrelated) Get(string, http.HandlerFunc) {}
+func NotARouter() { unrelated{}.Get("/invented", login) }
+`)
+	writeFile(t, filepath.Join(root, "routes.go"), string(content))
+
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "routes.go", Content: content, Repository: "app",
+		RepoID: "repo", GoModule: "example.com/app",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantMiddleware := map[string][]string{
+		"POST /v1/auth/login": {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
+		"POST /v1/auth/alias": {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
+		"GET /v1/auth/me":     {"example.com/app.outer", "example.com/app.authUse"},
+		"GET /v1/auth/plain":  {"example.com/app.outer", "example.com/app.authUse"},
+		"POST /one/login":     {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
+		"POST /two/login":     {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
+		"GET /admin/items":    {"example.com/app.outer", "example.com/app.adminUse", "example.com/app.childUse"},
+		"GET /child/items":    {"example.com/app.outer", "example.com/app.childUse"},
+		"GET /factory/items":  {"example.com/app.outer", "example.com/app.childUse"},
+		"PATCH /method":       {"example.com/app.outer"},
+		"ANY /any":            {"example.com/app.outer"},
+		"GET /conditional":    {"example.com/app.outer"},
+	}
+	endpoints := map[string]graph.Node{}
+	for _, node := range result.Nodes {
+		if node.Kind == graph.KindEndpoint {
+			endpoints[node.Name] = node
+		}
+	}
+	for name, middleware := range wantMiddleware {
+		endpoint, ok := endpoints[name]
+		if !ok {
+			t.Fatalf("missing composed endpoint %q; got %#v", name, endpoints)
+		}
+		got := make([]string, len(middleware))
+		for _, fact := range result.Facts {
+			if fact.FromID == endpoint.ID && fact.Kind == graph.EdgeKind("uses_middleware") {
+				order, orderErr := strconv.Atoi(fact.Properties["order"])
+				if orderErr != nil || order < 0 || order >= len(got) || fact.Properties["resolution"] != "go/types" {
+					t.Fatalf("middleware evidence is not ordered and typed: %#v", fact)
+				}
+				got[order] = fact.Target
+			}
+		}
+		if !reflect.DeepEqual(got, middleware) {
+			t.Fatalf("middleware for %s = %v, want %v", name, got, middleware)
+		}
+		wantHandler := "example.com/app.me"
+		if strings.Contains(name, "login") || strings.Contains(name, "alias") {
+			wantHandler = "example.com/app.login"
+		} else if strings.Contains(name, "items") {
+			wantHandler = "example.com/app.list"
+		}
+		foundHandler := false
+		for _, fact := range result.Facts {
+			foundHandler = foundHandler || fact.FromID == endpoint.ID && fact.Kind == graph.EdgeHandledBy &&
+				fact.Target == wantHandler && fact.Properties["resolution"] == "go/types"
+		}
+		if !foundHandler {
+			t.Fatalf("endpoint %s lost its exact handler %s", name, wantHandler)
+		}
+	}
+	for _, forbidden := range []string{"POST /login", "GET /me", "GET /items", "GET /hidden", "GET /invented", "GET /ambiguous"} {
+		if _, ok := endpoints[forbidden]; ok {
+			t.Fatalf("invented or uncomposed endpoint %q: %#v", forbidden, endpoints[forbidden])
+		}
+	}
+	foundDynamicDiagnostic, foundCycleDiagnostic, foundAmbiguousDiagnostic := false, false, false
+	for _, diagnostic := range result.Diagnostics {
+		foundDynamicDiagnostic = foundDynamicDiagnostic || strings.Contains(diagnostic.Message, "dynamic Chi route prefix")
+		foundCycleDiagnostic = foundCycleDiagnostic || strings.Contains(diagnostic.Message, "recursive Chi router composition")
+		foundAmbiguousDiagnostic = foundAmbiguousDiagnostic || strings.Contains(diagnostic.Message, "ambiguous Chi router helper result")
+	}
+	if !foundDynamicDiagnostic || !foundCycleDiagnostic || !foundAmbiguousDiagnostic {
+		t.Fatalf("dynamic Chi prefix was not diagnosed: %#v", result.Diagnostics)
+	}
+	conditional := endpoints["GET /conditional"]
+	for _, fact := range result.Facts {
+		if fact.FromID == conditional.ID && fact.Kind == graph.EdgeHandledBy && fact.Properties["conditional"] != "true" {
+			t.Fatalf("conditional registration lost its evidence: %#v", fact)
+		}
+	}
 }
 
 func writeFile(t *testing.T, path, content string) {
