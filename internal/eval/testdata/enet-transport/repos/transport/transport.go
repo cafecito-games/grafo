@@ -21,6 +21,22 @@ func send(peer *goenet.Peer, payload []byte) {
 	_ = peer.Send(gameplayChannel, &goenet.Packet{Data: payload, Flags: goenet.PacketFlagReliable})
 }
 
+// GamePeer narrows peer behaviour the way the uzir server does, embedding
+// goenet.PeerSender so the call keeps the upstream method identity.
+type GamePeer interface {
+	Close() error
+	goenet.PeerSender
+}
+
+func sendViaGamePeer(peer GamePeer, payload []byte) {
+	_ = peer.Send(gameplayChannel, &goenet.Packet{Data: payload, Flags: goenet.PacketFlagReliable})
+}
+
+func SendEnvelopeViaGamePeer(peer GamePeer, message *generated.Envelope) {
+	payload, _ := wire.Marshal(message)
+	sendViaGamePeer(peer, payload)
+}
+
 func SendEnvelope(peer *goenet.Peer, message *generated.Envelope) {
 	payload, _ := wire.Marshal(message)
 	send(peer, payload)

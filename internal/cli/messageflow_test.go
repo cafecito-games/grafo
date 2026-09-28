@@ -16,7 +16,10 @@ func TestMessageFlowCommandsShareStructuredCoverageSemantics(t *testing.T) {
 
 	var flow query.MessageFlow
 	runJSON(t, &flow, "message-flow", "acme.v1.Envelope", "--repo", root, "--json")
-	if flow.Message.QualifiedName != "acme.v1.Envelope" || len(flow.Sends) != 3 || len(flow.Members) != 4 {
+	// Four sends carry the envelope: two GDScript ENetPacketPeer.send calls, one
+	// through goenet's concrete Peer.Send, and one through a consumer interface
+	// embedding goenet.PeerSender.
+	if flow.Message.QualifiedName != "acme.v1.Envelope" || len(flow.Sends) != 4 || len(flow.Members) != 4 {
 		t.Fatalf("message-flow JSON lost structured evidence: %#v", flow)
 	}
 	if output := run(t, "message-flow", "acme.v1.Envelope", "--repo", root); !strings.Contains(output, "acme.v1.Envelope") || !strings.Contains(output, "channel=3") {

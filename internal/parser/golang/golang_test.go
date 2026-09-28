@@ -1268,6 +1268,9 @@ type Packet struct {
 	Data []byte
 	Flags PacketFlag
 }
+type PeerSender interface {
+	Send(channelID uint8, packet *Packet) error
+}
 type Peer struct{}
 func (p *Peer) Send(channelID uint8, packet *Packet) error { return nil }
 type Host struct{}
@@ -1338,6 +1341,30 @@ func UseTransport(peer *goenet.Peer, event goenet.Event, input *generated.Envelo
 	_ = event.ChannelID
 	_ = wire.Unmarshal(received, input)
 }
+// WrappedPeer narrows peer behaviour behind a local interface the way uzir's
+// transport.Peer does, but embeds goenet's PeerSender so the call keeps the
+// upstream method identity.
+type WrappedPeer interface {
+	Close() error
+	goenet.PeerSender
+}
+func sendViaSender(peer WrappedPeer, payload []byte) {
+	_ = peer.Send(gameplayChannel, &goenet.Packet{Data: payload, Flags: goenet.PacketFlagReliable})
+}
+func UseSenderInterface(peer WrappedPeer, input *generated.Envelope) {
+	payload, _ := wire.Marshal(input)
+	sendViaSender(peer, payload)
+}
+// RedeclaredPeer restates Send with goenet's exact signature instead of
+// embedding PeerSender, so its identity is local. It must not produce transport
+// evidence: it is indistinguishable from the Lookalike decoy below, which is why
+// grafo cannot resolve consumer interfaces that redeclare rather than embed.
+type RedeclaredPeer interface {
+	Send(channelID uint8, packet *goenet.Packet) error
+}
+func RedeclaredCall(peer RedeclaredPeer, payload []byte) {
+	_ = peer.Send(3, &goenet.Packet{Data: payload, Flags: goenet.PacketFlagReliable})
+}
 type Lookalike struct{}
 func (Lookalike) Send(channelID uint8, packet *goenet.Packet) error { return nil }
 func OrdinaryCall(value Lookalike, payload []byte) {
@@ -1378,6 +1405,16 @@ func UncertainTransport(peer *goenet.Peer, input *generated.Envelope, unknown []
 		t.Fatalf("locally bound packet evidence = %#v", bound.Properties)
 	}
 	assertTransportCarries(t, result.Facts, bound.ID, "acme.v1.Envelope")
+
+	senderID := nodeIDByQualified(t, result.Nodes, "example.com/app.UseSenderInterface")
+	viaSender := assertTransportOperation(t, result, senderID, graph.EdgeSends, "send",
+		"github.com/cafecito-games/goenet/pkg.PeerSender.Send")
+	if viaSender.Properties["channel"] != "3" || viaSender.Properties["channel_status"] != "proven" ||
+		viaSender.Properties["reliability"] != "reliable" || viaSender.Properties["payload_status"] != "proven" ||
+		viaSender.Properties["wrapper_depth"] != "1" {
+		t.Fatalf("embedded PeerSender evidence = %#v", viaSender.Properties)
+	}
+	assertTransportCarries(t, result.Facts, viaSender.ID, "acme.v1.Envelope")
 
 	parameterID := nodeIDByQualified(t, result.Nodes, "example.com/app.SendViaPacketParameter")
 	viaParameter := assertTransportOperation(t, result, parameterID, graph.EdgeSends, "send", "github.com/cafecito-games/goenet/pkg.Peer.Send")
@@ -1451,10 +1488,14 @@ func UncertainTransport(peer *goenet.Peer, input *generated.Envelope, unknown []
 		t.Fatalf("bounded wrapper evidence did not surface truncation: %#v", result.Nodes)
 	}
 	ordinaryID := nodeIDByQualified(t, result.Nodes, "example.com/app.OrdinaryCall")
+	redeclaredID := nodeIDByQualified(t, result.Nodes, "example.com/app.RedeclaredCall")
 	uncertainID := nodeIDByQualified(t, result.Nodes, "example.com/app.UncertainTransport")
 	for _, fact := range result.Facts {
 		if fact.FromID == ordinaryID && (fact.Kind == graph.EdgeSends || fact.Kind == graph.EdgeReceives) {
 			t.Fatalf("same-name non-ENet API produced transport fact: %#v", fact)
+		}
+		if fact.FromID == redeclaredID && (fact.Kind == graph.EdgeSends || fact.Kind == graph.EdgeReceives) {
+			t.Fatalf("interface redeclaring Send produced transport fact: %#v", fact)
 		}
 		if fact.FromID == uncertainID && fact.Kind == graph.EdgeSends {
 			for _, carried := range result.Facts {

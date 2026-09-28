@@ -27,11 +27,24 @@ const (
 	goENetReceiveAPI = goENetPackage + ".Event.Packet.Data"
 )
 
-// goENetAdapter matches goenet's send APIs. Both carry the channel positionally
-// and keep the payload and reliability inside the *Packet argument.
+// goENetAdapter matches goenet's send APIs. All of them carry the channel
+// positionally and keep the payload and reliability inside the *Packet argument.
+//
+// PeerSender.Send is listed alongside the concrete Peer.Send because goenet
+// exports PeerSender specifically so consumers can embed it when narrowing a
+// peer behind a local interface. Embedding preserves the package but changes the
+// receiver, so go/types reports the call against PeerSender and the concrete
+// identity alone would miss every such site. An interface that redeclares Send
+// instead of embedding PeerSender gets a local identity and is deliberately not
+// matched: it is indistinguishable from an unrelated same-signature method.
 var goENetAdapter transport.Adapter = transport.ExactAdapter{
 	goENetPackage + ".Peer.Send": {
 		Protocol: "enet", API: goENetPackage + ".Peer.Send", Direction: transport.Send,
+		ChannelPosition: 0, PayloadPosition: 1, PayloadField: "Data",
+		ReliabilityPosition: 1, ReliabilityField: "Flags",
+	},
+	goENetPackage + ".PeerSender.Send": {
+		Protocol: "enet", API: goENetPackage + ".PeerSender.Send", Direction: transport.Send,
 		ChannelPosition: 0, PayloadPosition: 1, PayloadField: "Data",
 		ReliabilityPosition: 1, ReliabilityField: "Flags",
 	},
