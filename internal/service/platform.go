@@ -144,7 +144,8 @@ func Install(ctx context.Context, env agentinstall.Environment, binary, stateDir
 	if err != nil {
 		return nil, err
 	}
-	if err := agentinstall.CheckUserConfigRoot(env, path); err != nil {
+	resolvedPath, err := agentinstall.ResolveUserConfigPath(env, path)
+	if err != nil {
 		return nil, fmt.Errorf("refusing to write service definition %s: %w", path, err)
 	}
 	generated, err := platform.Definition(binary, stateDir)
@@ -176,6 +177,9 @@ func Install(ctx context.Context, env agentinstall.Environment, binary, stateDir
 		return []Action{action, {Platform: platform.Name(), Kind: "activate", Target: Label, Change: ChangeUnchanged, DryRun: true}}, nil
 	}
 	if action.Change != ChangeUnchanged {
+		if err := agentinstall.RevalidateUserConfigPath(env, path, resolvedPath); err != nil {
+			return nil, fmt.Errorf("refusing to write service definition %s: %w", path, err)
+		}
 		if directory := agentinstall.ParentPath(env.GOOS(), path); directory != "" {
 			if err := env.MkdirAll(directory, 0o755); err != nil {
 				return nil, fmt.Errorf("create service directory %s: %w", directory, err)
@@ -184,13 +188,9 @@ func Install(ctx context.Context, env agentinstall.Environment, binary, stateDir
 		if err := env.WriteFileAtomic(path, []byte(generated), 0o644); err != nil {
 			return nil, fmt.Errorf("write service definition %s: %w", path, err)
 		}
-		if err := agentinstall.RecordOwnedFile(env, agentinstall.ServiceOwner, platform.Name(), path, generated); err != nil {
+		if err := agentinstall.RecordOwnedFile(env, agentinstall.ServiceOwner, platform.Name(), path, resolvedPath, generated); err != nil {
 			return nil, err
 		}
-	} else if err := agentinstall.RecordOwnedFile(env, agentinstall.ServiceOwner, platform.Name(), path, generated); err != nil {
-		// Recording an already-correct definition keeps the ledger accurate after a
-		// reinstall over content Grafo generated but never recorded.
-		return nil, err
 	}
 	actions := []Action{action}
 	activation := Action{Platform: platform.Name(), Kind: "activate", Target: Label, Change: ChangeInstalled}
@@ -216,6 +216,10 @@ func Uninstall(ctx context.Context, env agentinstall.Environment, dryRun bool) (
 	path, err := platform.DefinitionPath(env)
 	if err != nil {
 		return nil, err
+	}
+	resolvedPath, err := agentinstall.ResolveUserConfigPath(env, path)
+	if err != nil {
+		return nil, fmt.Errorf("refusing to remove service definition %s: %w", path, err)
 	}
 	receipt, covered, receiptErr := agentinstall.OwnedFileAt(env, agentinstall.ServiceOwner, platform.Name(), path)
 	if receiptErr != nil {
@@ -250,6 +254,11 @@ func Uninstall(ctx context.Context, env agentinstall.Environment, dryRun bool) (
 		return []Action{definition}, nil
 	}
 	definition.Change = ChangeRemoved
+	if err := agentinstall.RevalidateUserConfigPath(env, path, resolvedPath); err != nil {
+		definition.Change = ChangeSkipped
+		definition.Detail = "service definition target changed after inspection; it was left running untouched"
+		return []Action{definition}, fmt.Errorf("refusing to remove service definition %s: %w", path, err)
+	}
 	actions := []Action{deactivation(ctx, env, platform, dryRun)}
 	if dryRun {
 		return append(actions, definition), nil

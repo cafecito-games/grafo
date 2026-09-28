@@ -495,7 +495,7 @@ func checkAgents(ctx context.Context, env agentinstall.Environment, options Doct
 			contents, err := env.ReadFile(receipt.Target)
 			if err == nil {
 				artifact.Present = true
-				artifact.Matches = agentinstall.ProvesFile(receipt, receipt.Target, string(contents))
+				artifact.Matches = agentinstall.ProvesFile(env, receipt, receipt.Target, string(contents))
 			}
 			check.Artifacts = append(check.Artifacts, artifact)
 			if !artifact.Present {

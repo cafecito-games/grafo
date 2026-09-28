@@ -275,7 +275,7 @@ func TestDoctorRefreshesOnlyRecordedAgentArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := agentinstall.RecordOwnedFile(env, "codex", agentinstall.KindInstructions, target, "guidance"); err != nil {
+	if err := agentinstall.RecordOwnedFile(env, "codex", agentinstall.KindInstructions, target, resolvedUserTarget(t, env, target), "guidance"); err != nil {
 		t.Fatal(err)
 	}
 	options := doctorOptions(installedBinary(t))
@@ -370,7 +370,7 @@ func TestDoctorIgnoresAServiceReceiptRecordedForAnotherPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := agentinstall.RecordOwnedFile(env, agentinstall.ServiceOwner, "systemd", elsewhere, "[Service]\n"); err != nil {
+	if err := agentinstall.RecordOwnedFile(env, agentinstall.ServiceOwner, "systemd", elsewhere, resolvedUserTarget(t, env, elsewhere), "[Service]\n"); err != nil {
 		t.Fatal(err)
 	}
 	// Give the diagnosis a registered root so the service is worth reporting.
@@ -472,7 +472,7 @@ func TestDoctorRefusesToRepairFromAnEphemeralBinary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := agentinstall.RecordOwnedFile(env, agentinstall.ServiceOwner, "systemd", definition, generated); err != nil {
+	if err := agentinstall.RecordOwnedFile(env, agentinstall.ServiceOwner, "systemd", definition, resolvedUserTarget(t, env, definition), generated); err != nil {
 		t.Fatal(err)
 	}
 	ephemeral := filepath.Join(env.TempDir(), "go-build4242", "b001", "exe", "grafo")

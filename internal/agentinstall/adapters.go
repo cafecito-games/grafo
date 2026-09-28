@@ -66,10 +66,10 @@ type plan struct {
 	digest        string
 	ownedCommands []string
 	dropReceipt   bool
-	// guardRoot re-checks user-configuration containment immediately before each
-	// write and delete. It is set for guidance artifacts, whose targets are
-	// root-bounded, and not for client configuration files a client CLI owns.
-	guardRoot bool
+	// guardedTargets binds every direct filesystem mutation to the physical
+	// destination inspected during planning. The apply guard rejects both an
+	// escape and an in-root parent retarget before touching the filesystem.
+	guardedTargets map[string]string
 }
 
 // adapter owns one client's identity, detection, and command or file surface.
@@ -101,16 +101,51 @@ type adapter interface {
 // build-tagged platform code (it does not exist on Windows) without closing a
 // write-through hole.
 func (p plan) guard(reader Reader, display, path string) error {
-	if !p.guardRoot {
+	if len(p.guardedTargets) == 0 {
 		return nil
 	}
-	if err := checkUserConfigRoot(reader, path); err != nil {
+	expected, ok := p.guardedTargets[path]
+	if !ok {
+		return fmt.Errorf("refusing to mutate unguarded %s artifact %s", display, path)
+	}
+	if err := revalidateUserConfigPath(reader, path, expected); err != nil {
 		return fmt.Errorf("%s artifact %s: %w", display, path, err)
 	}
-	if info, err := reader.Lstat(path); err == nil && info.Mode()&fs.ModeSymlink != 0 {
-		return fmt.Errorf("refusing to mutate %s artifact %s: the path is a symlink", display, path)
+	return nil
+}
+
+// bindUserConfigTargets records the physical target of every pending direct
+// mutation. Planning calls this before announcing actions so dry runs validate
+// containment and apply can detect a later parent retarget.
+func (p *plan) bindUserConfigTargets(reader Reader) error {
+	paths := make([]string, 0, len(p.removes)+len(p.removeDirs)+1)
+	paths = append(paths, p.removes...)
+	paths = append(paths, p.removeDirs...)
+	if p.write != nil {
+		paths = append(paths, p.write.path)
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+	p.guardedTargets = make(map[string]string, len(paths))
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		resolved, err := resolveUserConfigPath(reader, path)
+		if err != nil {
+			return err
+		}
+		if err := revalidateUserConfigPath(reader, path, resolved); err != nil {
+			return err
+		}
+		p.guardedTargets[path] = resolved
 	}
 	return nil
+}
+
+func (p plan) receiptTarget(path string) string {
+	return p.guardedTargets[path]
 }
 
 func (p plan) apply(ctx context.Context, env Environment, display, executable string) error {
@@ -280,6 +315,10 @@ func (a fileAdapter) locate(_ context.Context, reader Reader) (location, error) 
 	path, err := a.configPath(reader)
 	if err != nil {
 		return location{}, fmt.Errorf("%s: %w", a.identity.Display, err)
+	}
+	_, err = resolveUserConfigPath(reader, path)
+	if err != nil {
+		return location{}, fmt.Errorf("%s configuration %s: %w", a.identity.Display, path, err)
 	}
 	place := location{target: path}
 	if _, statErr := reader.Stat(path); statErr == nil {

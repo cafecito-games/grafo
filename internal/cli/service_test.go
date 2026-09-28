@@ -155,6 +155,22 @@ func TestDoctorJSONCarriesItsFormatMarker(t *testing.T) {
 	}
 }
 
+func TestUninstallCLIRefusesFileBackedTargetOutsideUserRoots(t *testing.T) {
+	home := isolateConfiguration(t)
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(home, ".cursor")); err != nil {
+		t.Fatal(err)
+	}
+
+	status, output := runCLI(t, "uninstall", "cursor", "--mcp-only", "--dry-run")
+	if status == 0 || !strings.Contains(output, "outside the user configuration roots") {
+		t.Fatalf("uninstall = %d %q", status, output)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "mcp.json")); !os.IsNotExist(err) {
+		t.Fatalf("escaping target was created: %v", err)
+	}
+}
+
 func TestHelpDocumentsServiceAndDoctor(t *testing.T) {
 	_, output := runCLI(t, "help")
 	for _, want := range []string{"grafo service add", "grafo service install", "grafo doctor [--repair]"} {

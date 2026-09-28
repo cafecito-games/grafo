@@ -21,10 +21,11 @@ var now = func() time.Time { return time.Now().UTC() }
 // Receipt records one artifact Grafo installed, so a later uninstall or upgrade
 // can prove ownership instead of guessing from file contents alone.
 type Receipt struct {
-	Client string `json:"client"`
-	Kind   string `json:"kind"`
-	Target string `json:"target"`
-	Digest string `json:"digest,omitempty"`
+	Client         string `json:"client"`
+	Kind           string `json:"kind"`
+	Target         string `json:"target"`
+	ResolvedTarget string `json:"resolved_target,omitempty"`
+	Digest         string `json:"digest,omitempty"`
 	// Commands are the exact command lines Grafo installed for a hook artifact,
 	// in hookPhases order. Removal matches them exactly, so a user-authored
 	// entry that merely resembles one is never claimed.
@@ -43,9 +44,11 @@ type receiptFile struct {
 
 // receiptStore is the loaded receipt file plus the pending changes of one run.
 type receiptStore struct {
-	path    string
-	entries []Receipt
-	dirty   bool
+	path         string
+	resolvedPath string
+	entries      []Receipt
+	dirty        bool
+	reader       Reader
 }
 
 // receiptPath resolves the receipt file inside the Grafo configuration directory.
@@ -61,7 +64,11 @@ func loadReceipts(reader Reader) (*receiptStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	store := &receiptStore{path: path}
+	resolvedPath, err := resolveUserConfigPath(reader, path)
+	if err != nil {
+		return nil, fmt.Errorf("grafo receipt file %s: %w", path, err)
+	}
+	store := &receiptStore{path: path, resolvedPath: resolvedPath, reader: reader}
 	data, err := reader.ReadFile(path)
 	if err != nil {
 		return store, nil
@@ -89,7 +96,7 @@ func (s *receiptStore) lookup(client, kind string) ownership {
 	if index == -1 {
 		return ownership{}
 	}
-	return ownership{receipt: s.entries[index], found: true}
+	return ownership{receipt: s.entries[index], found: true, reader: s.reader}
 }
 
 // ownership is the receipt evidence Grafo has for one installed artifact.
@@ -99,18 +106,33 @@ func (s *receiptStore) lookup(client, kind string) ownership {
 type ownership struct {
 	receipt Receipt
 	found   bool
+	reader  Reader
+}
+
+// provesPath reports whether a receipt's historical physical target is the
+// current physical target. New receipts carry that identity explicitly. A
+// legacy receipt is trusted only when its lexical target already equals the
+// current resolved target, which preserves ordinary unsymlinked upgrades but
+// refuses an unknowable historical destination behind a symlink.
+func (o ownership) provesPath(path string) bool {
+	if !o.found || o.reader == nil || strings.TrimSpace(o.receipt.Target) == "" {
+		return false
+	}
+	resolved, err := resolveUserConfigPath(o.reader, path)
+	if err != nil {
+		return false
+	}
+	if o.receipt.ResolvedTarget != "" {
+		return o.receipt.ResolvedTarget == resolved
+	}
+	return o.receipt.Target == resolved
 }
 
 // provesFile reports whether a receipt proves Grafo wrote exactly these bytes at
 // exactly this path.
 func (o ownership) provesFile(path, contents string) bool {
-	return o.found && o.receipt.Target == path && o.receipt.Digest != "" &&
+	return o.provesPath(path) && o.receipt.Digest != "" &&
 		o.receipt.Digest == agentguide.Digest(contents)
-}
-
-// provesPath reports whether a receipt claims this exact target at all.
-func (o ownership) provesPath(path string) bool {
-	return o.found && o.receipt.Target == path
 }
 
 // commandsFor returns the exact command lines a receipt records, but only when
@@ -125,15 +147,16 @@ func (o ownership) commandsFor(path string) []string {
 }
 
 // record stores a receipt for an artifact whose mutation already succeeded.
-func (s *receiptStore) record(client Client, kind, target, digest string, commands []string) {
+func (s *receiptStore) record(client Client, kind, target, resolvedTarget, digest string, commands []string) {
 	entry := Receipt{
-		Client:   client.Name,
-		Kind:     kind,
-		Target:   target,
-		Digest:   digest,
-		Commands: commands,
-		Grafo:    version.Value,
-		Updated:  now().Format(time.RFC3339),
+		Client:         client.Name,
+		Kind:           kind,
+		Target:         target,
+		ResolvedTarget: resolvedTarget,
+		Digest:         digest,
+		Commands:       commands,
+		Grafo:          version.Value,
+		Updated:        now().Format(time.RFC3339),
 	}
 	if kind != KindMCP {
 		entry.Marker = agentguide.BeginMarker
@@ -181,6 +204,9 @@ func (s *receiptStore) save(env Environment) error {
 		return err
 	}
 	data = append(data, '\n')
+	if err = revalidateUserConfigPath(env, s.path, s.resolvedPath); err != nil {
+		return fmt.Errorf("write grafo receipt file %s: %w", s.path, err)
+	}
 	if directory := parentPath(env.GOOS(), s.path); directory != "" {
 		if err = env.MkdirAll(directory, 0o755); err != nil {
 			return fmt.Errorf("create grafo configuration directory %s: %w", directory, err)

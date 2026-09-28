@@ -137,15 +137,23 @@ const maxSymlinkHops = 32
 // any parent directory can otherwise redirect a lexically valid target - for
 // example into a repository-local instruction file, which Grafo must never write.
 func checkUserConfigRoot(reader Reader, path string) error {
+	_, err := resolveUserConfigPath(reader, path)
+	return err
+}
+
+// resolveUserConfigPath returns the physical target after resolving every
+// symlinked parent, but only when that target remains inside a configured user
+// root. The leaf stays unresolved so callers can reject it separately.
+func resolveUserConfigPath(reader Reader, path string) (string, error) {
 	separator := pathSeparator(reader.GOOS())
 	for _, element := range strings.Split(path, separator) {
 		if element == ".." {
-			return fmt.Errorf("path escapes the user configuration root")
+			return "", fmt.Errorf("path escapes the user configuration root")
 		}
 	}
 	resolved, err := resolvePath(reader, path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	for _, root := range userConfigRoots(reader) {
 		if strings.TrimSpace(root) == "" {
@@ -157,10 +165,28 @@ func checkUserConfigRoot(reader Reader, path string) error {
 		}
 		trimmed := strings.TrimRight(resolvedRoot, "/\\")
 		if resolved == trimmed || strings.HasPrefix(resolved, trimmed+separator) {
-			return nil
+			return resolved, nil
 		}
 	}
-	return fmt.Errorf("path %s is outside the user configuration roots", resolved)
+	return "", fmt.Errorf("path %s is outside the user configuration roots", resolved)
+}
+
+// revalidateUserConfigPath proves a direct mutation still addresses the same
+// physical destination inspected during planning and that its leaf is not a
+// symlink. The remaining check-to-syscall interval is the bounded local-user
+// race accepted by the installer threat model.
+func revalidateUserConfigPath(reader Reader, path, expected string) error {
+	resolved, err := resolveUserConfigPath(reader, path)
+	if err != nil {
+		return err
+	}
+	if resolved != expected {
+		return fmt.Errorf("resolved target changed from %s to %s", expected, resolved)
+	}
+	if info, err := reader.Lstat(path); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("the path is a symlink")
+	}
+	return nil
 }
 
 // resolvePath resolves every symlinked *parent* of path and returns the real
