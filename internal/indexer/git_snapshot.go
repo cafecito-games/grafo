@@ -55,7 +55,7 @@ type GitSnapshot struct {
 	DetachedBranch   string
 	Commands         int
 	ProbeNS          int64
-	used             atomic.Bool
+	used             *atomic.Bool
 	runner           gitCommandRunner
 }
 
@@ -192,7 +192,7 @@ func populateDetachedBranch(ctx context.Context, root string, snapshot *GitSnaps
 }
 
 func parseGitStatusPorcelainV2(raw []byte) (GitSnapshot, error) {
-	snapshot := GitSnapshot{MembershipStable: true}
+	snapshot := GitSnapshot{MembershipStable: true, used: &atomic.Bool{}}
 	tokens := bytes.Split(raw, []byte{0})
 	var paths []string
 	var untracked []string
