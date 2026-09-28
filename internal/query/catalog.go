@@ -684,55 +684,26 @@ func (c *Catalog) unresolvedCounterparts(ctx context.Context, event Event, index
 }
 
 func (c *Catalog) incoming(ctx context.Context, id string, limit int, relations ...graph.EdgeKind) ([]UsageSite, bool, error) {
-	edges, err := c.repository.EdgesTo(ctx, id)
-	if err != nil {
-		return nil, false, err
-	}
-	return c.sites(ctx, edges, id, limit, relations)
+	return c.sites(ctx, graph.RelationEdgeQuery{SubjectID: id, Direction: graph.IncomingRelations,
+		Relations: relations, Limit: limit})
 }
 
 func (c *Catalog) outgoing(ctx context.Context, id string, limit int, relations ...graph.EdgeKind) ([]UsageSite, bool, error) {
-	edges, err := c.repository.EdgesFrom(ctx, id)
+	return c.sites(ctx, graph.RelationEdgeQuery{SubjectID: id, Direction: graph.OutgoingRelations,
+		Relations: relations, Limit: limit})
+}
+
+// sites converts already bounded, deduplicated, and hydrated relation edges
+// into public evidence without any traversal adjacency or per-edge node reads.
+func (c *Catalog) sites(ctx context.Context, request graph.RelationEdgeQuery) ([]UsageSite, bool, error) {
+	page, err := c.repository.RelationEdges(ctx, request)
 	if err != nil {
 		return nil, false, err
 	}
-	return c.sites(ctx, edges, id, limit, relations)
-}
-
-// sites converts edges into evidence, deduplicating by edge ID so converging
-// edges are counted once without discarding their source sites.
-func (c *Catalog) sites(ctx context.Context, edges []graph.Edge, subject string, limit int,
-	relations []graph.EdgeKind) ([]UsageSite, bool, error) {
-	wanted := make(map[graph.EdgeKind]bool, len(relations))
-	for _, relation := range relations {
-		wanted[relation] = true
-	}
-	seen := map[string]bool{}
-	// Each relation carries its own budget. A shared budget consumed in edge
-	// order lets a busy relation starve another into looking empty, which would
-	// turn a bound into a false claim that no writer or no consumer exists.
-	kept := make(map[graph.EdgeKind]int, len(relations))
-	result := []UsageSite{}
-	truncated := false
-	for _, edge := range edges {
-		if !wanted[edge.Kind] || seen[edge.ID] {
-			continue
-		}
-		seen[edge.ID] = true
-		if kept[edge.Kind] >= limit {
-			truncated = true
-			continue
-		}
-		kept[edge.Kind]++
-		other := edge.FromID
-		if other == subject {
-			other = edge.ToID
-		}
-		node, err := c.repository.Node(ctx, other)
-		if err != nil {
-			return nil, false, err
-		}
-		site := UsageSite{Relation: edge.Kind, EdgeID: edge.ID, FactID: edge.FactID, Node: node,
+	result := make([]UsageSite, 0, len(page.Items))
+	for _, item := range page.Items {
+		edge := item.Edge
+		site := UsageSite{Relation: edge.Kind, EdgeID: edge.ID, FactID: edge.FactID, Node: item.Counterpart,
 			Location: edge.Location, Federated: edge.Properties["federated"] == "true"}
 		if len(edge.Properties) > 0 {
 			site.Evidence = edge.Properties
@@ -740,7 +711,7 @@ func (c *Catalog) sites(ctx context.Context, edges []graph.Edge, subject string,
 		result = append(result, site)
 	}
 	sortUsageSites(result)
-	return result, truncated, nil
+	return result, page.Truncated, nil
 }
 
 func newResource(scoped graph.ScopedNode) Resource {

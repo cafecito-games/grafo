@@ -46,8 +46,11 @@ type Querier interface {
 	ListEmbeddingHashesByModel(ctx context.Context, model string) ([]ListEmbeddingHashesByModelRow, error)
 	ListEmbeddingsByModel(ctx context.Context, model string) ([]Embedding, error)
 	ListExternalEdgesMatching(ctx context.Context, arg ListExternalEdgesMatchingParams) ([]Edge, error)
+	ListExternalNodesMatching(ctx context.Context, arg ListExternalNodesMatchingParams) ([]Node, error)
 	ListFiles(ctx context.Context) ([]File, error)
+	ListIncomingRelationEdges(ctx context.Context, arg ListIncomingRelationEdgesParams) ([]ListIncomingRelationEdgesRow, error)
 	ListNodesByKind(ctx context.Context, arg ListNodesByKindParams) ([]Node, error)
+	ListOutgoingRelationEdges(ctx context.Context, arg ListOutgoingRelationEdgesParams) ([]ListOutgoingRelationEdgesRow, error)
 	ListSemanticCandidateNodes(ctx context.Context) ([]Node, error)
 	MarkDirtyNode(ctx context.Context, nodeID string) error
 	MarkDirtyOwner(ctx context.Context, ownerFile string) error

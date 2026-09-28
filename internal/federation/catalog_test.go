@@ -126,6 +126,110 @@ type Bus interface{ Subscribe(string) }
 	}
 }
 
+func TestFederatedRelationEdgesProjectThenApplyGlobalBounds(t *testing.T) {
+	ctx := context.Background()
+	workspace := t.TempDir()
+	producerRoot := filepath.Join(workspace, "producer")
+	consumerRoot := filepath.Join(workspace, "consumer")
+	for _, root := range []string{producerRoot, consumerRoot} {
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	target := graph.Node{ID: graph.NodeID(graph.KindTable, "public.orders"), Kind: graph.KindTable, Name: "orders",
+		QualifiedName: "public.orders", OwnerFile: "schema.sql"}
+	source := graph.Node{ID: "n:consumer", Kind: graph.KindFunction, Name: "Consume",
+		QualifiedName: "consumer.Consume", OwnerFile: "consumer.go"}
+	seedCatalogIndex(t, ctx, producerRoot, "schema.sql", graph.ParseResult{
+		Nodes: []graph.Node{target, source},
+		Facts: []graph.Fact{{ID: "read-a", FromID: source.ID, Kind: graph.EdgeReads,
+			TargetID: target.ID, OwnerFile: "schema.sql"}},
+	})
+	facts := []graph.Fact{
+		{ID: "read-c", FromID: source.ID, Kind: graph.EdgeReads, Target: target.QualifiedName,
+			TargetKind: graph.KindTable, OwnerFile: "consumer.go"},
+		{ID: "read-a", FromID: source.ID, Kind: graph.EdgeReads, Target: target.QualifiedName,
+			TargetKind: graph.KindTable, OwnerFile: "consumer.go"},
+		{ID: "read-b", FromID: source.ID, Kind: graph.EdgeReads, Target: target.QualifiedName,
+			TargetKind: graph.KindTable, OwnerFile: "consumer.go"},
+		{ID: "write", FromID: source.ID, Kind: graph.EdgeWrites, Target: target.QualifiedName,
+			OwnerFile: "consumer.go"},
+	}
+	seedCatalogIndex(t, ctx, consumerRoot, "consumer.go", graph.ParseResult{Nodes: []graph.Node{source}, Facts: facts})
+
+	repository, err := federation.Open(ctx, []string{producerRoot, consumerRoot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	incoming, err := repository.RelationEdges(ctx, graph.RelationEdgeQuery{SubjectID: target.ID,
+		Direction: graph.IncomingRelations,
+		Relations: []graph.EdgeKind{graph.EdgeReads, graph.EdgeReads, graph.EdgeWrites}, Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !incoming.Truncated || len(incoming.Items) != 3 {
+		t.Fatalf("incoming = %#v", incoming)
+	}
+	seenEdges := map[string]bool{}
+	for _, item := range incoming.Items {
+		if seenEdges[item.Edge.ID] {
+			t.Fatalf("duplicate final edge = %#v", item.Edge)
+		}
+		seenEdges[item.Edge.ID] = true
+		if item.Edge.ToID != target.ID || item.Counterpart.ID != source.ID ||
+			item.Edge.Properties["federated"] != "true" {
+			t.Fatalf("incoming projection = %#v", item)
+		}
+	}
+	outgoing, err := repository.RelationEdges(ctx, graph.RelationEdgeQuery{SubjectID: source.ID,
+		Direction: graph.OutgoingRelations, Relations: []graph.EdgeKind{graph.EdgeReads}, Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !outgoing.Truncated || len(outgoing.Items) != 2 {
+		t.Fatalf("outgoing = %#v", outgoing)
+	}
+	federated := 0
+	for _, item := range outgoing.Items {
+		if item.Edge.ToID != target.ID || item.Counterpart.ID != target.ID {
+			t.Fatalf("outgoing projection = %#v", item)
+		}
+		if item.Edge.Properties["federated"] == "true" {
+			federated++
+		}
+	}
+	if federated == 0 {
+		t.Fatalf("outgoing evidence lost its federation markers: %#v", outgoing)
+	}
+
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := repository.RelationEdges(cancelled, graph.RelationEdgeQuery{SubjectID: target.ID,
+		Direction: graph.IncomingRelations, Relations: []graph.EdgeKind{graph.EdgeReads}, Limit: 1}); err == nil {
+		t.Fatal("member cancellation returned a partial page")
+	}
+}
+
+func seedCatalogIndex(t *testing.T, ctx context.Context, root, owner string, result graph.ParseResult) {
+	t.Helper()
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	if err := repository.ReplaceOwner(ctx, owner, result); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func indexWithDefaults(t *testing.T, ctx context.Context, root string) {
 	t.Helper()
 	project, err := indexer.DiscoverProject(ctx, root)
