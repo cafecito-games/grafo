@@ -32,8 +32,25 @@ func TestServerExposesEndpointAndServiceTopologyTools(t *testing.T) {
 		Name: "Handler", QualifiedName: "shop.Handler", OwnerFile: "routes.go"}
 	caller := graph.Node{ID: graph.NodeID(graph.KindFunction, "shop.CallOrders"), Kind: graph.KindFunction,
 		Name: "CallOrders", QualifiedName: "shop.CallOrders", OwnerFile: "client.go"}
+	clientComponent := graph.Node{ID: "n:component-client", Kind: graph.KindComponent, Name: "client",
+		QualifiedName: "shop/client", OwnerFile: "__workspace__"}
+	serverComponent := graph.Node{ID: "n:component-server", Kind: graph.KindComponent, Name: "server",
+		QualifiedName: "shop/server", OwnerFile: "__workspace__"}
+	clientFile := graph.Node{ID: "n:file-client", Kind: graph.KindFile, Name: "client.go",
+		QualifiedName: "shop/client.go", Location: graph.Location{Path: "client.go"}, OwnerFile: "client.go"}
+	serverFile := graph.Node{ID: "n:file-server", Kind: graph.KindFile, Name: "routes.go",
+		QualifiedName: "shop/routes.go", Location: graph.Location{Path: "routes.go"}, OwnerFile: "routes.go"}
+	if err := repository.ReplaceOwner(ctx, "__workspace__", graph.ParseResult{
+		Nodes: []graph.Node{clientComponent, serverComponent},
+		Facts: []graph.Fact{
+			{ID: "f:client-file", FromID: clientComponent.ID, Kind: graph.EdgeContains, TargetID: clientFile.ID, OwnerFile: "__workspace__"},
+			{ID: "f:server-file", FromID: serverComponent.ID, Kind: graph.EdgeContains, TargetID: serverFile.ID, OwnerFile: "__workspace__"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := repository.ReplaceOwner(ctx, "routes.go", graph.ParseResult{
-		Nodes: []graph.Node{endpoint, routes, handler},
+		Nodes: []graph.Node{serverFile, endpoint, routes, handler},
 		Facts: []graph.Fact{
 			{ID: "f:exposes", FromID: routes.ID, Kind: graph.EdgeExposes, TargetID: endpoint.ID, OwnerFile: "routes.go"},
 			{ID: "f:handler", FromID: endpoint.ID, Kind: graph.EdgeHandledBy, TargetID: handler.ID, OwnerFile: "routes.go"},
@@ -42,7 +59,7 @@ func TestServerExposesEndpointAndServiceTopologyTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := repository.ReplaceOwner(ctx, "client.go", graph.ParseResult{
-		Nodes: []graph.Node{caller},
+		Nodes: []graph.Node{clientFile, caller},
 		Facts: []graph.Fact{{ID: "f:request", FromID: caller.ID, Kind: graph.EdgeRequests,
 			Target: "GET /orders", TargetKind: graph.KindEndpoint, OwnerFile: "client.go",
 			Location: graph.Location{Path: "client.go", Line: 9}}},
@@ -69,6 +86,19 @@ func TestServerExposesEndpointAndServiceTopologyTools(t *testing.T) {
 	topology := call(t, session, "get_service_topology", map[string]any{"route": "/orders"})
 	if links, ok := topology["links"].([]any); !ok || len(links) != 1 {
 		t.Fatalf("unexpected service topology: %#v", topology)
+	}
+	componentTopology := call(t, session, "get_service_topology", map[string]any{
+		"component": "client", "direction": "outgoing", "route": "/orders",
+	})
+	if links, ok := componentTopology["links"].([]any); !ok || len(links) != 1 {
+		t.Fatalf("unexpected component topology: %#v", componentTopology)
+	}
+	if services, ok := componentTopology["services"].([]any); !ok || len(services) != 2 {
+		t.Fatalf("component services missing: %#v", componentTopology)
+	}
+	unknown := call(t, session, "get_service_topology", map[string]any{"component": "missing"})
+	if links, ok := unknown["links"].([]any); !ok || len(links) != 0 {
+		t.Fatalf("unknown component fell back to repository: %#v", unknown)
 	}
 
 	callExpectingError(t, session, "get_service_topology", map[string]any{"direction": "sideways"})

@@ -48,6 +48,8 @@ func NewCatalog(repository graph.CatalogRepository) *Catalog {
 // typed fields while the parser's own node properties remain available.
 type Resource struct {
 	Repository    string            `json:"repository,omitempty"`
+	Component     string            `json:"component,omitempty"`
+	ComponentID   string            `json:"component_id,omitempty"`
 	ID            string            `json:"id"`
 	Kind          graph.NodeKind    `json:"kind"`
 	Name          string            `json:"name"`

@@ -537,20 +537,30 @@ grafo endpoints --method GET --route /orders --json
 grafo outbound-requests --repo-name checkout --json
 grafo find-handler --event order.placed --json
 grafo service-topology --repo-name checkout --direction outgoing --json
+grafo service-topology --component client --direction outgoing --json
 grafo service-topology --mermaid
 ```
 
 The MCP equivalents are `list_endpoints`, `list_outbound_requests`,
 `find_handler`, and `get_service_topology`. Every query supports explicit
-bounds and repository/service filtering. HTTP methods are normalized and
+bounds and repository filtering. Service topology additionally accepts an exact
+component name, either alone across selected repositories or together with a
+repository filter. HTTP methods are normalized and
 matched exactly; route filters use the same canonical template compatibility
 as indexed evidence. Handler and topology queries can also filter by event.
-Service topology supports incoming, outgoing, or both directions relative to a
-selected service.
+Service topology supports incoming, outgoing, or both directions relative to
+every service matching the repository/component scope. An unknown component
+returns an empty result rather than falling back to its repository.
 
-Each indexed repository is one stable service identity. Endpoint and event
-nodes, source components, edge IDs, fact IDs, locations, and federation markers
-remain in the structured response beneath those service boundaries. HTTP route
+An explicitly owned component is one stable service identity; files with no
+component evidence retain the indexed repository's stable fallback service.
+Component service IDs derive from repository identity and the indexed component
+node ID, so equal component names in federated repositories never collide.
+Labels render as `repository/component`, while structured resources and service
+nodes expose repository, component name, and component node ID separately.
+Endpoint and event nodes, participating code resources, edge IDs, fact IDs,
+locations, and federation markers remain in the structured response beneath
+those service boundaries. HTTP route
 identity excludes queries, fragments, and trailing slashes, and template
 parameter names are canonicalized while regex constraints and catchalls remain
 distinct. Resolution ranks exact literals ahead of compatible single-segment

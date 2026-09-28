@@ -66,6 +66,32 @@ func TestTopologyCommandsValidateFiltersAndBounds(t *testing.T) {
 	}
 }
 
+func TestServiceTopologyCommandFiltersByIndexedComponent(t *testing.T) {
+	root := componentTopologyFixture(t)
+	run(t, "index", root)
+
+	var topology query.ServiceTopology
+	runJSON(t, &topology, "service-topology", "--repo", root, "--component", "client",
+		"--direction", "outgoing", "--json")
+	if len(topology.Links) != 1 || len(topology.Services) != 2 {
+		t.Fatalf("component-scoped topology = %#v", topology)
+	}
+	services := map[string]query.ServiceNode{}
+	for _, service := range topology.Services {
+		services[service.Component] = service
+	}
+	if services["client"].ComponentID == "" || services["server"].ComponentID == "" ||
+		services["client"].ID == services["server"].ID {
+		t.Fatalf("component identities missing from CLI JSON: %#v", topology.Services)
+	}
+
+	var unknown query.ServiceTopology
+	runJSON(t, &unknown, "service-topology", "--repo", root, "--component", "missing", "--json")
+	if len(unknown.Services) != 0 || len(unknown.Links) != 0 {
+		t.Fatalf("unknown component fell back to repository topology: %#v", unknown)
+	}
+}
+
 func TestTopologyRefusesAMixedFreshnessFederation(t *testing.T) {
 	indexed := topologyFixture(t)
 	run(t, "index", indexed)
@@ -105,5 +131,39 @@ func CallOrders() {
 	if err := os.WriteFile(filepath.Join(root, "server.go"), []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	return root
+}
+
+func componentTopologyFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	write := func(path, content string) {
+		t.Helper()
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("go.mod", "module example.com/topology\n\ngo 1.26\n")
+	write("grafo.yaml", "components:\n  - name: client\n    roots: [client]\n  - name: server\n    roots: [server]\n")
+	write("client/client.go", `package client
+
+import "net/http"
+
+func CallOrders() {
+	_, _ = http.Get("/orders")
+}
+`)
+	write("server/server.go", `package server
+
+func Handler() {}
+
+func Routes() {
+	router.Get("/orders", Handler)
+}
+`)
 	return root
 }

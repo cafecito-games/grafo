@@ -487,12 +487,28 @@ outbound-request, and service-link interpretation. It consumes the same narrow
 `graph.NodeListRepository` contract as the catalogs; storage and federation
 enumerate exact endpoint/event nodes but do not infer service semantics.
 
-Repository identity defines a service boundary. Presentation labels are kept
-separate from that identity, while the code components involved in a link stay
-nested under their service and retain qualified names, kinds, languages, and
-source locations. Links carry the endpoint or event node IDs plus every edge
-and fact ID used to construct them. Mermaid rendering is a deterministic,
-escaped view of this structure rather than a second source of truth.
+Persisted component-to-file membership defines a service boundary when it can
+be proven. The query builds ownership from `component contains file` edges and
+attributes parser nodes through their owner-file evidence; it never reopens
+`grafo.yaml` or infers ownership from a path prefix. Files without membership
+retain repository identity as a fallback service, while conflicting component
+owners fail the whole query without a partial topology. Component service IDs
+derive from repository identity plus component node ID, and presentation labels
+use `repository/component`. Structured service nodes and resources keep the
+repository, component name, and component node ID separate. The participating
+code resources stay nested under their service and retain qualified names,
+kinds, languages, and source locations. Links carry the endpoint or event node
+IDs plus every edge and fact ID used to construct them. Mermaid rendering is a
+deterministic, escaped view of this structure rather than a second source of
+truth.
+
+Repository filters match every component and fallback service in that
+repository. Component filters match that exact name across selected
+repositories, combined filters require both, and direction is evaluated against
+every service in the resulting scope. Unknown components return an empty result
+and never select the repository fallback. Equal component names in federated
+repositories remain distinct because their service IDs include repository and
+component-node identity.
 
 Outbound HTTP facts are grouped by fact identity so the unresolved edge and
 any federated replacement cannot become duplicate calls. `internal/httpmodel`

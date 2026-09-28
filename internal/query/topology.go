@@ -26,10 +26,11 @@ const (
 )
 
 // TopologyOptions filters and bounds endpoint, handler, request, and service
-// topology queries. Repository always names the stable indexed service
-// identity; labels are presentation-only.
+// topology queries. Repository and Component select independently stable
+// indexed ownership identities; labels are presentation-only.
 type TopologyOptions struct {
 	Repository string    `json:"repository,omitempty"`
+	Component  string    `json:"component,omitempty"`
 	Method     string    `json:"method,omitempty"`
 	Route      string    `json:"route,omitempty"`
 	Event      string    `json:"event,omitempty"`
@@ -106,14 +107,17 @@ const (
 	LinkEvent ServiceLinkKind = "event"
 )
 
-// ServiceNode separates stable repository identity from its presentation
-// label. External nodes are explicit unresolved or ambiguous destinations.
+// ServiceNode separates stable repository/component identity from its
+// presentation label. External nodes are explicit unresolved or ambiguous
+// destinations.
 type ServiceNode struct {
-	ID         string     `json:"id"`
-	Repository string     `json:"repository,omitempty"`
-	Label      string     `json:"label"`
-	External   bool       `json:"external,omitempty"`
-	Components []Resource `json:"components"`
+	ID          string     `json:"id"`
+	Repository  string     `json:"repository,omitempty"`
+	Component   string     `json:"component,omitempty"`
+	ComponentID string     `json:"component_id,omitempty"`
+	Label       string     `json:"label"`
+	External    bool       `json:"external,omitempty"`
+	Components  []Resource `json:"components"`
 }
 
 // LinkEvidence is the complete graph relation used to construct a topology
@@ -172,6 +176,7 @@ func NewTopology(repository graph.CatalogRepository) *Topology {
 
 func (t *Topology) normalize(ctx context.Context, options TopologyOptions) (TopologyOptions, int, error) {
 	options.Repository = strings.TrimSpace(options.Repository)
+	options.Component = strings.TrimSpace(options.Component)
 	options.Method = strings.Trim(options.Method, " ")
 	if options.Method != "" {
 		method, err := httpmodel.NormalizeMethod(options.Method)
@@ -218,16 +223,92 @@ func (t *Topology) scoped(ctx context.Context, kinds []graph.NodeKind, visibilit
 	return result, nil
 }
 
-func (t *Topology) ownership(ctx context.Context) (map[string]string, error) {
+type serviceIdentity struct {
+	Repository  string
+	Component   string
+	ComponentID string
+}
+
+type topologyOwnership struct {
+	byNode map[string]serviceIdentity
+}
+
+func (o *topologyOwnership) node(id string) serviceIdentity {
+	if o == nil {
+		return serviceIdentity{}
+	}
+	return o.byNode[id]
+}
+
+func (o *topologyOwnership) annotate(resource *Resource) {
+	identity := o.node(resource.ID)
+	resource.Repository = identity.Repository
+	resource.Component = identity.Component
+	resource.ComponentID = identity.ComponentID
+}
+
+func ownershipPathKey(repository, path string) string {
+	return repository + "\x00" + path
+}
+
+func (t *Topology) ownership(ctx context.Context) (*topologyOwnership, error) {
 	nodes, err := t.scoped(ctx, graph.NodeKinds(), graph.AllNodes)
 	if err != nil {
 		return nil, err
 	}
-	owners := make(map[string]string, len(nodes))
+	byID := make(map[string]graph.ScopedNode, len(nodes))
+	components := []graph.ScopedNode{}
 	for _, scoped := range nodes {
-		if !scoped.Node.External {
-			owners[scoped.Node.ID] = scoped.Repository
+		byID[scoped.Node.ID] = scoped
+		if scoped.Node.Kind == graph.KindComponent && !scoped.Node.External {
+			components = append(components, scoped)
 		}
+	}
+	sortScopedNodes(components)
+	fileComponents := map[string]serviceIdentity{}
+	pathComponents := map[string]serviceIdentity{}
+	for _, component := range components {
+		identity := serviceIdentity{Repository: component.Repository, Component: component.Node.Name,
+			ComponentID: component.Node.ID}
+		edges, err := t.repository.EdgesFrom(ctx, component.Node.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, edge := range edges {
+			if edge.Kind != graph.EdgeContains {
+				continue
+			}
+			file, ok := byID[edge.ToID]
+			if !ok || file.Node.External || file.Node.Kind != graph.KindFile || file.Repository != component.Repository {
+				continue
+			}
+			if prior, ok := fileComponents[file.Node.ID]; ok && prior.ComponentID != identity.ComponentID {
+				return nil, fmt.Errorf("file %q in repository %q belongs to multiple components %q and %q",
+					file.Node.Location.Path, component.Repository, prior.Component, identity.Component)
+			}
+			fileComponents[file.Node.ID] = identity
+			for _, path := range uniqueSorted([]string{file.Node.OwnerFile, file.Node.Location.Path}) {
+				key := ownershipPathKey(component.Repository, path)
+				if prior, ok := pathComponents[key]; ok && prior.ComponentID != identity.ComponentID {
+					return nil, fmt.Errorf("file %q in repository %q belongs to multiple components %q and %q",
+						path, component.Repository, prior.Component, identity.Component)
+				}
+				pathComponents[key] = identity
+			}
+		}
+	}
+	owners := &topologyOwnership{byNode: make(map[string]serviceIdentity, len(nodes))}
+	for _, scoped := range nodes {
+		if scoped.Node.External {
+			continue
+		}
+		identity := serviceIdentity{Repository: scoped.Repository}
+		if component, ok := fileComponents[scoped.Node.ID]; ok {
+			identity = component
+		} else if component, ok := pathComponents[ownershipPathKey(scoped.Repository, scoped.Node.OwnerFile)]; ok {
+			identity = component
+		}
+		owners.byNode[scoped.Node.ID] = identity
 	}
 	return owners, nil
 }
@@ -280,14 +361,14 @@ func endpointMatches(node graph.Node, options TopologyOptions) bool {
 }
 
 func (t *Topology) endpointReferencedByRepository(ctx context.Context, endpointID, repository string,
-	owners map[string]string,
+	owners *topologyOwnership,
 ) (bool, error) {
 	edges, err := t.repository.EdgesTo(ctx, endpointID)
 	if err != nil {
 		return false, err
 	}
 	for _, edge := range edges {
-		if edge.Kind == graph.EdgeRequests && owners[edge.FromID] == repository {
+		if edge.Kind == graph.EdgeRequests && owners.node(edge.FromID).Repository == repository {
 			return true, nil
 		}
 	}
@@ -313,7 +394,9 @@ func eventName(node graph.Node) string {
 	return strings.TrimSpace(node.QualifiedName)
 }
 
-func (t *Topology) endpoint(ctx context.Context, scoped graph.ScopedNode, limit int) (Endpoint, bool, error) {
+func (t *Topology) endpoint(ctx context.Context, scoped graph.ScopedNode, limit int,
+	owners *topologyOwnership,
+) (Endpoint, bool, error) {
 	method, route := endpointMethodRoute(scoped.Node)
 	exposers, exposedTruncated, err := t.catalog.incoming(ctx, scoped.Node.ID, limit, graph.EdgeExposes)
 	if err != nil {
@@ -324,7 +407,9 @@ func (t *Topology) endpoint(ctx context.Context, scoped graph.ScopedNode, limit 
 		return Endpoint{}, false, err
 	}
 	status := handlerStatus(handlers, handlersTruncated)
-	return Endpoint{Resource: newResource(scoped), Method: method, Route: route,
+	resource := newResource(scoped)
+	owners.annotate(&resource)
+	return Endpoint{Resource: resource, Method: method, Route: route,
 		Exposers: exposers, Handlers: handlers, HandlerStatus: status}, exposedTruncated || handlersTruncated, nil
 }
 
@@ -373,15 +458,15 @@ func (t *Topology) Endpoints(ctx context.Context, options TopologyOptions) (Endp
 	if err != nil {
 		return EndpointList{}, err
 	}
+	if options.Component != "" {
+		return EndpointList{}, fmt.Errorf("a component filter applies only to service topology")
+	}
 	if options.Event != "" {
 		return EndpointList{}, fmt.Errorf("an event filter does not apply to endpoint listings")
 	}
-	var owners map[string]string
-	if options.Repository != "" {
-		owners, err = t.ownership(ctx)
-		if err != nil {
-			return EndpointList{}, err
-		}
+	owners, err := t.ownership(ctx)
+	if err != nil {
+		return EndpointList{}, err
 	}
 	result := EndpointList{Endpoints: []Endpoint{}, Unresolved: []Endpoint{}}
 	for _, visibility := range []graph.NodeVisibility{graph.LocalNodes, graph.ExternalNodes} {
@@ -406,7 +491,7 @@ func (t *Topology) Endpoints(ctx context.Context, options TopologyOptions) (Endp
 			if !endpointMatches(scoped.Node, options) {
 				continue
 			}
-			endpoint, truncated, err := t.endpoint(ctx, scoped, limit)
+			endpoint, truncated, err := t.endpoint(ctx, scoped, limit, owners)
 			if err != nil {
 				return EndpointList{}, err
 			}
@@ -429,13 +514,13 @@ func (t *Topology) Endpoints(ctx context.Context, options TopologyOptions) (Endp
 	return result, nil
 }
 
-func handlerRepositories(subject Resource, handlers []UsageSite, owners map[string]string) []string {
+func handlerRepositories(subject Resource, handlers []UsageSite, owners *topologyOwnership) []string {
 	set := map[string]bool{}
 	if subject.Repository != "" {
 		set[subject.Repository] = true
 	}
 	for _, handler := range handlers {
-		if repository := owners[handler.Node.ID]; repository != "" {
+		if repository := owners.node(handler.Node.ID).Repository; repository != "" {
 			set[repository] = true
 		}
 	}
@@ -464,6 +549,9 @@ func (t *Topology) Handlers(ctx context.Context, options TopologyOptions) (Handl
 	if err != nil {
 		return HandlerList{}, err
 	}
+	if options.Component != "" {
+		return HandlerList{}, fmt.Errorf("a component filter applies only to service topology")
+	}
 	owners, err := t.ownership(ctx)
 	if err != nil {
 		return HandlerList{}, err
@@ -478,7 +566,7 @@ func (t *Topology) Handlers(ctx context.Context, options TopologyOptions) (Handl
 			if !endpointMatches(scoped.Node, options) {
 				continue
 			}
-			endpoint, truncated, err := t.endpoint(ctx, scoped, limit)
+			endpoint, truncated, err := t.endpoint(ctx, scoped, limit, owners)
 			if err != nil {
 				return HandlerList{}, err
 			}
@@ -507,6 +595,7 @@ func (t *Topology) Handlers(ctx context.Context, options TopologyOptions) (Handl
 			}
 			result.Truncated = result.Truncated || truncated
 			subject := newResource(scoped)
+			owners.annotate(&subject)
 			repositories := handlerRepositories(subject, handlers, owners)
 			if options.Repository != "" && !containsString(repositories, options.Repository) {
 				continue
@@ -603,7 +692,7 @@ func preferredEdge(edges []graph.Edge, targetID string, nodes map[string]graph.N
 }
 
 func (t *Topology) collectOutboundRequests(ctx context.Context, options TopologyOptions,
-	owners map[string]string) ([]OutboundRequest, error) {
+	owners *topologyOwnership) ([]OutboundRequest, error) {
 	limit := options.Limit
 	if limit <= 0 {
 		limit = DefaultCatalogLimit
@@ -671,12 +760,14 @@ func (t *Topology) collectOutboundRequests(ctx context.Context, options Topology
 		if err != nil {
 			return nil, err
 		}
-		sourceScoped := graph.ScopedNode{Repository: owners[source.ID], Node: source}
+		sourceOwner := owners.node(source.ID)
+		sourceScoped := graph.ScopedNode{Repository: sourceOwner.Repository, Node: source}
 		if options.Repository != "" && sourceScoped.Repository != options.Repository {
 			continue
 		}
 		request := OutboundRequest{Source: newResource(sourceScoped), Method: method, Route: route,
 			Scheme: routeModel.Scheme, Authority: routeModel.Authority, Candidates: []Endpoint{}}
+		owners.annotate(&request.Source)
 		if scheme := strings.TrimSpace(base.Properties["http_scheme"]); scheme != "" {
 			request.Scheme = strings.ToLower(scheme)
 		}
@@ -684,7 +775,7 @@ func (t *Topology) collectOutboundRequests(ctx context.Context, options Topology
 			request.Authority = authority
 		}
 		var requestTruncated bool
-		request.Target, requestTruncated, err = t.endpoint(ctx, scopes[target.ID], limit)
+		request.Target, requestTruncated, err = t.endpoint(ctx, scopes[target.ID], limit, owners)
 		if err != nil {
 			return nil, err
 		}
@@ -713,7 +804,7 @@ func (t *Topology) collectOutboundRequests(ctx context.Context, options Topology
 		case 0:
 			request.Status = BoundaryUnresolved
 			externalScoped := graph.ScopedNode{Node: target}
-			request.Destination, requestTruncated, err = t.endpoint(ctx, externalScoped, limit)
+			request.Destination, requestTruncated, err = t.endpoint(ctx, externalScoped, limit, owners)
 			if err != nil {
 				return nil, err
 			}
@@ -722,7 +813,7 @@ func (t *Topology) collectOutboundRequests(ctx context.Context, options Topology
 			base = preferredEdge(group.edges, "", nodes)
 		case 1:
 			request.Status = BoundaryResolved
-			request.Destination, requestTruncated, err = t.endpoint(ctx, candidates[0], limit)
+			request.Destination, requestTruncated, err = t.endpoint(ctx, candidates[0], limit, owners)
 			if err != nil {
 				return nil, err
 			}
@@ -735,7 +826,7 @@ func (t *Topology) collectOutboundRequests(ctx context.Context, options Topology
 				request.Truncated = true
 			}
 			for _, candidate := range candidates {
-				endpoint, endpointTruncated, endpointErr := t.endpoint(ctx, candidate, limit)
+				endpoint, endpointTruncated, endpointErr := t.endpoint(ctx, candidate, limit, owners)
 				if endpointErr != nil {
 					return nil, endpointErr
 				}
@@ -783,6 +874,9 @@ func (t *Topology) OutboundRequests(ctx context.Context, options TopologyOptions
 	if err != nil {
 		return OutboundRequestList{}, err
 	}
+	if options.Component != "" {
+		return OutboundRequestList{}, fmt.Errorf("a component filter applies only to service topology")
+	}
 	if options.Event != "" {
 		return OutboundRequestList{}, fmt.Errorf("an event filter does not apply to outbound HTTP requests")
 	}
@@ -803,6 +897,10 @@ func (t *Topology) OutboundRequests(ctx context.Context, options TopologyOptions
 
 func serviceID(repository string) string { return "service:" + repository }
 
+func componentServiceID(repository, componentID string) string {
+	return graph.StableID("service", repository, componentID)
+}
+
 func presentationLabel(repository string) string {
 	trimmed := strings.TrimRight(strings.TrimSpace(repository), "/")
 	if slash := strings.LastIndexByte(trimmed, '/'); slash >= 0 {
@@ -816,6 +914,20 @@ func repositoryService(repository string) ServiceNode {
 		Label: presentationLabel(repository), Components: []Resource{}}
 }
 
+func ownedService(identity serviceIdentity) ServiceNode {
+	if identity.ComponentID == "" {
+		return repositoryService(identity.Repository)
+	}
+	return ServiceNode{ID: componentServiceID(identity.Repository, identity.ComponentID),
+		Repository: identity.Repository, Component: identity.Component, ComponentID: identity.ComponentID,
+		Label: presentationLabel(identity.Repository) + "/" + identity.Component, Components: []Resource{}}
+}
+
+func resourceService(resource Resource) ServiceNode {
+	return ownedService(serviceIdentity{Repository: resource.Repository, Component: resource.Component,
+		ComponentID: resource.ComponentID})
+}
+
 func externalService(kind, name string) ServiceNode {
 	return ServiceNode{ID: graph.StableID("external-service", kind, name), Label: name,
 		External: true, Components: []Resource{}}
@@ -825,6 +937,9 @@ func sortResources(resources []Resource) {
 	sort.Slice(resources, func(i, j int) bool {
 		if resources[i].Repository != resources[j].Repository {
 			return resources[i].Repository < resources[j].Repository
+		}
+		if resources[i].ComponentID != resources[j].ComponentID {
+			return resources[i].ComponentID < resources[j].ComponentID
 		}
 		if resources[i].Location.Path != resources[j].Location.Path {
 			return resources[i].Location.Path < resources[j].Location.Path
@@ -932,7 +1047,7 @@ func preferResolvedEdge(current, candidate graph.Edge, nodes map[string]graph.No
 }
 
 func (t *Topology) eventLinks(ctx context.Context, options TopologyOptions,
-	owners map[string]string) ([]ServiceLink, error) {
+	owners *topologyOwnership) ([]ServiceLink, error) {
 	scoped, err := t.scoped(ctx, []graph.NodeKind{graph.KindEvent}, graph.AllNodes)
 	if err != nil {
 		return nil, err
@@ -993,33 +1108,35 @@ func (t *Topology) eventLinks(ctx context.Context, options TopologyOptions,
 			eventIDsTruncated = true
 		}
 		for _, publisher := range publishers {
-			fromRepository := owners[publisher.FromID]
-			if fromRepository == "" {
+			fromOwner := owners.node(publisher.FromID)
+			if fromOwner.Repository == "" {
 				continue
 			}
 			publisherNode, err := t.repository.Node(ctx, publisher.FromID)
 			if err != nil {
 				return nil, err
 			}
-			publisherResource := newResource(graph.ScopedNode{Repository: fromRepository, Node: publisherNode})
+			publisherResource := newResource(graph.ScopedNode{Repository: fromOwner.Repository, Node: publisherNode})
+			owners.annotate(&publisherResource)
 			for _, subscriber := range subscribers {
-				toRepository := owners[subscriber.FromID]
-				if toRepository == "" {
+				toOwner := owners.node(subscriber.FromID)
+				if toOwner.Repository == "" {
 					continue
 				}
 				subscriberNode, err := t.repository.Node(ctx, subscriber.FromID)
 				if err != nil {
 					return nil, err
 				}
-				subscriberResource := newResource(graph.ScopedNode{Repository: toRepository, Node: subscriberNode})
-				link := ServiceLink{FromServiceID: serviceID(fromRepository), ToServiceID: serviceID(toRepository),
+				subscriberResource := newResource(graph.ScopedNode{Repository: toOwner.Repository, Node: subscriberNode})
+				owners.annotate(&subscriberResource)
+				link := ServiceLink{FromServiceID: ownedService(fromOwner).ID, ToServiceID: ownedService(toOwner).ID,
 					Kind: LinkEvent, Name: name, Event: name, Status: BoundaryResolved,
 					EventIDs:    append([]string(nil), eventIDs...),
 					SourceNodes: []Resource{publisherResource}, TargetNodes: []Resource{subscriberResource},
 					Evidence:  []LinkEvidence{linkEvidence(publisher), linkEvidence(subscriber)},
 					Truncated: eventIDsTruncated}
 				finalizeLink(&link)
-				link.Federated = link.Federated || fromRepository != toRepository
+				link.Federated = link.Federated || fromOwner.Repository != toOwner.Repository
 				result = append(result, link)
 			}
 		}
@@ -1027,18 +1144,27 @@ func (t *Topology) eventLinks(ctx context.Context, options TopologyOptions,
 	return result, nil
 }
 
-func linkMatchesRepository(link ServiceLink, repository string, direction Direction) bool {
-	if repository == "" {
+func serviceMatchesScope(service ServiceNode, options TopologyOptions) bool {
+	if service.External {
+		return false
+	}
+	if options.Repository != "" && service.Repository != options.Repository {
+		return false
+	}
+	return options.Component == "" || service.Component == options.Component
+}
+
+func linkMatchesScope(from, to ServiceNode, options TopologyOptions) bool {
+	if options.Repository == "" && options.Component == "" {
 		return true
 	}
-	id := serviceID(repository)
-	switch direction {
+	switch options.Direction {
 	case Incoming:
-		return link.ToServiceID == id
+		return serviceMatchesScope(to, options)
 	case Outgoing:
-		return link.FromServiceID == id
+		return serviceMatchesScope(from, options)
 	default:
-		return link.FromServiceID == id || link.ToServiceID == id
+		return serviceMatchesScope(from, options) || serviceMatchesScope(to, options)
 	}
 }
 
@@ -1047,8 +1173,8 @@ func (t *Topology) ServiceTopology(ctx context.Context, options TopologyOptions)
 	if err != nil {
 		return ServiceTopology{}, err
 	}
-	if options.Repository == "" && options.Direction != Both {
-		return ServiceTopology{}, fmt.Errorf("a %s direction filter requires a repository", options.Direction)
+	if options.Repository == "" && options.Component == "" && options.Direction != Both {
+		return ServiceTopology{}, fmt.Errorf("a %s direction filter requires a repository or component", options.Direction)
 	}
 	options.Limit = limit
 	requestOptions := options
@@ -1071,7 +1197,7 @@ func (t *Topology) ServiceTopology(ctx context.Context, options TopologyOptions)
 			if request.Source.Repository == "" {
 				continue
 			}
-			from := repositoryService(request.Source.Repository)
+			from := resourceService(request.Source)
 			boundaryName := request.Method + " " + request.Route
 			if request.Authority != "" {
 				prefix := "//"
@@ -1085,7 +1211,7 @@ func (t *Topology) ServiceTopology(ctx context.Context, options TopologyOptions)
 			var targetNodes []Resource
 			switch request.Status {
 			case BoundaryResolved:
-				to = repositoryService(request.Destination.Repository)
+				to = resourceService(request.Destination.Resource)
 				endpointIDs = []string{request.Destination.ID}
 				targetNodes = []Resource{request.Destination.Resource}
 			case BoundaryAmbiguous:
@@ -1107,14 +1233,14 @@ func (t *Topology) ServiceTopology(ctx context.Context, options TopologyOptions)
 				SourceNodes: []Resource{request.Source}, TargetNodes: targetNodes,
 				Evidence: []LinkEvidence{request.Evidence}}
 			finalizeLink(&link)
-			if !linkMatchesRepository(link, options.Repository, options.Direction) {
+			if !linkMatchesScope(from, to, options) {
 				continue
 			}
 			addService(services, from, request.Source)
 			if request.Status == BoundaryAmbiguous {
 				addService(services, to, request.Target.Resource)
 				for _, candidate := range request.Candidates {
-					addService(services, repositoryService(candidate.Repository), candidate.Resource)
+					addService(services, resourceService(candidate.Resource), candidate.Resource)
 				}
 			} else {
 				addService(services, to, targetNodes...)
@@ -1128,13 +1254,16 @@ func (t *Topology) ServiceTopology(ctx context.Context, options TopologyOptions)
 			return ServiceTopology{}, err
 		}
 		for _, link := range events {
-			if !linkMatchesRepository(link, options.Repository, options.Direction) {
+			if len(link.SourceNodes) == 0 || len(link.TargetNodes) == 0 {
 				continue
 			}
-			fromRepository := strings.TrimPrefix(link.FromServiceID, "service:")
-			toRepository := strings.TrimPrefix(link.ToServiceID, "service:")
-			addService(services, repositoryService(fromRepository), link.SourceNodes...)
-			addService(services, repositoryService(toRepository), link.TargetNodes...)
+			from := resourceService(link.SourceNodes[0])
+			to := resourceService(link.TargetNodes[0])
+			if !linkMatchesScope(from, to, options) {
+				continue
+			}
+			addService(services, from, link.SourceNodes...)
+			addService(services, to, link.TargetNodes...)
 			links[link.ID] = link
 		}
 	}

@@ -1328,7 +1328,7 @@ func (a *App) topologyOptions(args parsedArguments) (query.TopologyOptions, erro
 		return query.TopologyOptions{}, err
 	}
 	return query.TopologyOptions{
-		Repository: args.values["repo-name"], Method: args.values["method"],
+		Repository: args.values["repo-name"], Component: args.values["component"], Method: args.values["method"],
 		Route: args.values["route"], Event: args.values["event"],
 		Direction: query.Direction(args.values["direction"]), Limit: limit,
 	}, nil
@@ -1456,7 +1456,7 @@ func (a *App) findHandler(ctx context.Context, args parsedArguments) error {
 
 func (a *App) serviceTopology(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo service-topology [--repo-name name] [--method GET] [--route path | --event name] [--direction incoming|outgoing|both] [--limit 100] [--json | --mermaid]")
+		return fmt.Errorf("usage: grafo service-topology [--repo-name name] [--component name] [--method GET] [--route path | --event name] [--direction incoming|outgoing|both] [--limit 100] [--json | --mermaid]")
 	}
 	if args.flags["json"] && args.flags["mermaid"] {
 		return errors.New("--json and --mermaid are mutually exclusive")
@@ -1826,7 +1826,7 @@ var valueOptions = map[string]bool{
 	"repo-name": true, "max-matches": true, "max-matches-per-file": true,
 	"max-matches-per-pattern": true, "client": true, "hook": true,
 	"kind": true, "name": true, "state-dir": true, "lines": true, "concurrency": true,
-	"filter": true, "method": true, "route": true, "event": true,
+	"filter": true, "method": true, "route": true, "event": true, "component": true,
 }
 
 func parseArguments(arguments []string) (parsedArguments, error) {
@@ -1990,7 +1990,7 @@ Usage:
   grafo outbound-requests [--method GET] [--route path] [--repo-name name] [--limit 100] [--json]
   grafo find-handler [--method GET] [--route path | --event name] [--repo-name name]
                      [--limit 100] [--json]
-  grafo service-topology [--repo-name name] [--method GET] [--route path | --event name]
+  grafo service-topology [--repo-name name] [--component name] [--method GET] [--route path | --event name]
                          [--direction incoming|outgoing|both] [--limit 100]
                          [--json | --mermaid]
   grafo version
@@ -2057,10 +2057,12 @@ The catalog commands accept --repo-name to restrict results to one indexed
 repository, and report truncation whenever a bound is reached. A --name fragment
 is matched literally and is trimmed, so a blank one narrows nothing.
 
-The endpoint and topology commands use each indexed repository as a stable
-service boundary. HTTP method matching is exact, route filters use canonical
-template compatibility, event filters are literal fragments, and unresolved or
-ambiguous destinations remain explicit.
+The endpoint and topology commands use indexed component ownership when present
+and retain each indexed repository as the fallback service boundary for
+unassigned files. --component selects that exact component name across the
+selected repositories. HTTP method matching is exact, route filters use
+canonical template compatibility, event filters are literal fragments, and
+unresolved or ambiguous destinations remain explicit.
 Service-topology JSON contains the endpoint/event node IDs and edge evidence;
 --mermaid renders that same result without replacing the structured evidence.
 `

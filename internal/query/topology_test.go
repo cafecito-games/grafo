@@ -2,6 +2,7 @@ package query_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -349,6 +350,202 @@ func TestServiceTopologyIncludesHTTPAndEventLinksWithEvidence(t *testing.T) {
 	if len(filtered.Links) != 1 || filtered.Links[0].Kind != query.LinkEvent {
 		t.Fatalf("service, event, and direction filters disagreed: %#v", filtered.Links)
 	}
+}
+
+func TestServiceTopologyUsesComponentOwnershipAndRepositoryFallback(t *testing.T) {
+	repository := newComponentTopologyFixture()
+	service := query.NewTopology(repository)
+	result, err := service.ServiceTopology(context.Background(), query.TopologyOptions{Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	services := map[string]query.ServiceNode{}
+	for _, node := range result.Services {
+		services[node.Repository+"/"+node.Component] = node
+	}
+	client := services["monorepo/client"]
+	server := services["monorepo/server"]
+	fallback := services["monorepo/"]
+	if client.ComponentID != "n:component-client" || client.Label != "monorepo/client" {
+		t.Fatalf("client component service identity = %#v", client)
+	}
+	if server.ComponentID != "n:component-server" || server.Label != "monorepo/server" {
+		t.Fatalf("server component service identity = %#v", server)
+	}
+	if fallback.ID != "service:monorepo" || fallback.Component != "" || fallback.ComponentID != "" {
+		t.Fatalf("unassigned evidence did not retain repository fallback: %#v", fallback)
+	}
+	if client.ID == server.ID || client.ID == fallback.ID || server.ID == fallback.ID {
+		t.Fatalf("component and fallback service IDs collided: %#v", result.Services)
+	}
+
+	links := map[string]query.ServiceLink{}
+	for _, link := range result.Links {
+		links[string(link.Kind)+":"+link.Name] = link
+	}
+	httpLink := links["http:GET /orders"]
+	if httpLink.FromServiceID != client.ID || httpLink.ToServiceID != server.ID {
+		t.Fatalf("HTTP component boundary = %#v", httpLink)
+	}
+	if len(httpLink.SourceNodes) != 1 || httpLink.SourceNodes[0].Component != "client" ||
+		httpLink.SourceNodes[0].ComponentID != client.ComponentID ||
+		len(httpLink.TargetNodes) != 1 || httpLink.TargetNodes[0].Component != "server" {
+		t.Fatalf("HTTP resources lost component identity: %#v", httpLink)
+	}
+	eventLink := links["event:order.placed"]
+	if eventLink.FromServiceID != client.ID || eventLink.ToServiceID != server.ID {
+		t.Fatalf("event component boundary = %#v", eventLink)
+	}
+	selfLink := links["event:client.refreshed"]
+	if selfLink.FromServiceID != client.ID || selfLink.ToServiceID != client.ID {
+		t.Fatalf("same-component event did not remain a self-link: %#v", selfLink)
+	}
+	fallbackLink := links["http:GET /health"]
+	if fallbackLink.FromServiceID != client.ID || fallbackLink.ToServiceID != fallback.ID {
+		t.Fatalf("component-to-unassigned boundary = %#v", fallbackLink)
+	}
+}
+
+func TestServiceTopologyFiltersExactComponentScope(t *testing.T) {
+	service := query.NewTopology(newComponentTopologyFixture())
+	tests := []struct {
+		name    string
+		options query.TopologyOptions
+		links   int
+	}{
+		{name: "repository", options: query.TopologyOptions{Repository: "monorepo", Limit: 20}, links: 4},
+		{name: "component", options: query.TopologyOptions{Component: "server", Limit: 20}, links: 2},
+		{name: "combined", options: query.TopologyOptions{Repository: "monorepo", Component: "client", Direction: query.Outgoing, Limit: 20}, links: 4},
+		{name: "incoming", options: query.TopologyOptions{Component: "server", Direction: query.Incoming, Limit: 20}, links: 2},
+		{name: "unknown", options: query.TopologyOptions{Component: "missing", Limit: 20}, links: 0},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := service.ServiceTopology(context.Background(), test.options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Links) != test.links {
+				t.Fatalf("links = %d, want %d: %#v", len(result.Links), test.links, result)
+			}
+		})
+	}
+	if _, err := service.ServiceTopology(context.Background(), query.TopologyOptions{Direction: query.Outgoing}); err == nil {
+		t.Fatal("direction without repository or component scope succeeded")
+	}
+	bounded, err := service.ServiceTopology(context.Background(), query.TopologyOptions{Component: "client", Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bounded.Links) != 1 || !bounded.Truncated {
+		t.Fatalf("component scope lost link truncation: %#v", bounded)
+	}
+}
+
+func TestTopologyJSONOmitsAbsentComponentIdentity(t *testing.T) {
+	encoded, err := json.Marshal(query.ServiceTopology{Services: []query.ServiceNode{{
+		ID: "service:shop", Repository: "shop", Label: "shop", Components: []query.Resource{{
+			ID: "n:caller", Repository: "shop", Kind: graph.KindFunction, Name: "Caller",
+		}},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), `"component"`) || strings.Contains(string(encoded), `"component_id"`) {
+		t.Fatalf("no-component JSON changed incompatibly: %s", encoded)
+	}
+}
+
+func TestServiceTopologyKeepsDuplicateComponentNamesDistinctAcrossRepositories(t *testing.T) {
+	repository := newComponentTopologyFixture()
+	repository.repositories = append(repository.repositories, "peer")
+	repository.add("peer", graph.Node{ID: "n:peer-component-client", Kind: graph.KindComponent, Name: "client",
+		QualifiedName: "peer/client", OwnerFile: "__workspace__"})
+	repository.add("peer", graph.Node{ID: "n:peer-file", Kind: graph.KindFile, Name: "client.go",
+		QualifiedName: "peer/client.go", Location: graph.Location{Path: "client.go"}, OwnerFile: "client.go"})
+	repository.add("peer", graph.Node{ID: "n:peer-subscriber", Kind: graph.KindFunction, Name: "PeerSubscriber",
+		QualifiedName: "peer.PeerSubscriber", OwnerFile: "client.go"})
+	repository.edges = append(repository.edges,
+		graph.Edge{ID: "e:peer-membership", FromID: "n:peer-component-client", ToID: "n:peer-file", Kind: graph.EdgeContains},
+		graph.Edge{ID: "e:peer-subscribe", FactID: "f:peer-subscribe", FromID: "n:peer-subscriber", ToID: "n:event-order", Kind: graph.EdgeSubscribes, Properties: map[string]string{"federated": "true"}},
+	)
+
+	result, err := query.NewTopology(repository).ServiceTopology(context.Background(), query.TopologyOptions{
+		Component: "client", Event: "order.placed", Limit: 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]string{}
+	for _, node := range result.Services {
+		if node.Component == "client" {
+			ids[node.Repository] = node.ID
+		}
+	}
+	if ids["monorepo"] == "" || ids["peer"] == "" || ids["monorepo"] == ids["peer"] {
+		t.Fatalf("federated component identities collided: %#v", result.Services)
+	}
+}
+
+func TestServiceTopologyRejectsCorruptMultipleComponentOwners(t *testing.T) {
+	repository := newComponentTopologyFixture()
+	repository.edges = append(repository.edges,
+		graph.Edge{ID: "e:corrupt-membership", FromID: "n:component-server", ToID: "n:file-client", Kind: graph.EdgeContains})
+	result, err := query.NewTopology(repository).ServiceTopology(context.Background(), query.TopologyOptions{Limit: 20})
+	if err == nil {
+		t.Fatalf("multiple component owners returned partial topology: %#v", result)
+	}
+	if len(result.Services) != 0 || len(result.Links) != 0 {
+		t.Fatalf("corrupt ownership returned partial topology: %#v", result)
+	}
+}
+
+func newComponentTopologyFixture() *catalogRepository {
+	repository := &catalogRepository{nodes: map[string]graph.Node{}, owners: map[string]string{}, repositories: []string{"monorepo"}}
+	for _, item := range []struct {
+		id, name, path string
+	}{
+		{id: "n:component-client", name: "client", path: "client/client.go"},
+		{id: "n:component-server", name: "server", path: "server/server.go"},
+	} {
+		repository.add("monorepo", graph.Node{ID: item.id, Kind: graph.KindComponent, Name: item.name,
+			QualifiedName: "monorepo/" + item.name, OwnerFile: "__workspace__"})
+		fileID := "n:file-" + item.name
+		repository.add("monorepo", graph.Node{ID: fileID, Kind: graph.KindFile, Name: item.path,
+			QualifiedName: "monorepo/" + item.path, Location: graph.Location{Path: item.path}, OwnerFile: item.path})
+		repository.edges = append(repository.edges, graph.Edge{ID: "e:membership-" + item.name,
+			FromID: item.id, ToID: fileID, Kind: graph.EdgeContains})
+	}
+	repository.add("monorepo", graph.Node{ID: "n:file-root", Kind: graph.KindFile, Name: "health.go",
+		QualifiedName: "monorepo/health.go", Location: graph.Location{Path: "health.go"}, OwnerFile: "health.go"})
+	repository.add("monorepo", graph.Node{ID: "n:client-call", Kind: graph.KindFunction, Name: "CallOrders",
+		QualifiedName: "client.CallOrders", OwnerFile: "client/client.go"})
+	repository.add("monorepo", graph.Node{ID: "n:server-endpoint", Kind: graph.KindEndpoint, Name: "GET /orders",
+		QualifiedName: "endpoint:GET /orders@server/server.go:5", OwnerFile: "server/server.go",
+		Properties: map[string]string{"method": "GET", "route": "/orders"}})
+	repository.add("monorepo", graph.Node{ID: "n:health-endpoint", Kind: graph.KindEndpoint, Name: "GET /health",
+		QualifiedName: "endpoint:GET /health@health.go:5", OwnerFile: "health.go",
+		Properties: map[string]string{"method": "GET", "route": "/health"}})
+	repository.add("monorepo", graph.Node{ID: "n:publisher", Kind: graph.KindFunction, Name: "PublishOrder",
+		QualifiedName: "client.PublishOrder", OwnerFile: "client/client.go"})
+	repository.add("monorepo", graph.Node{ID: "n:subscriber", Kind: graph.KindFunction, Name: "SubscribeOrder",
+		QualifiedName: "server.SubscribeOrder", OwnerFile: "server/server.go"})
+	repository.add("monorepo", graph.Node{ID: "n:client-subscriber", Kind: graph.KindFunction, Name: "RefreshClient",
+		QualifiedName: "client.RefreshClient", OwnerFile: "client/client.go"})
+	repository.add("monorepo", graph.Node{ID: "n:event-order", Kind: graph.KindEvent, Name: "order.placed",
+		QualifiedName: "order.placed", OwnerFile: "server/server.go"})
+	repository.add("monorepo", graph.Node{ID: "n:event-client", Kind: graph.KindEvent, Name: "client.refreshed",
+		QualifiedName: "client.refreshed", OwnerFile: "client/client.go"})
+	repository.edges = append(repository.edges,
+		graph.Edge{ID: "e:request-orders", FactID: "f:request-orders", FromID: "n:client-call", ToID: "n:server-endpoint", Kind: graph.EdgeRequests},
+		graph.Edge{ID: "e:request-health", FactID: "f:request-health", FromID: "n:client-call", ToID: "n:health-endpoint", Kind: graph.EdgeRequests},
+		graph.Edge{ID: "e:publish-order", FactID: "f:publish-order", FromID: "n:publisher", ToID: "n:event-order", Kind: graph.EdgePublishes},
+		graph.Edge{ID: "e:subscribe-order", FactID: "f:subscribe-order", FromID: "n:subscriber", ToID: "n:event-order", Kind: graph.EdgeSubscribes},
+		graph.Edge{ID: "e:publish-client", FactID: "f:publish-client", FromID: "n:publisher", ToID: "n:event-client", Kind: graph.EdgePublishes},
+		graph.Edge{ID: "e:subscribe-client", FactID: "f:subscribe-client", FromID: "n:client-subscriber", ToID: "n:event-client", Kind: graph.EdgeSubscribes},
+	)
+	return repository
 }
 
 func TestTopologyBoundsAndMermaidAreStableAndEscaped(t *testing.T) {
