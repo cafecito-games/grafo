@@ -370,6 +370,28 @@ func invalid_static_accessors() -> void:
 	assertHasFact(t, result.Facts, graph.EdgeCalls, "Node.set_text")
 }
 
+func TestParserInfersForwardFieldThroughGeneratedBase(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "buf.gen.yaml", "version: v2\nplugins:\n  - local: protoc-gen-gdscript\n    out: generated\n")
+	writeFile(t, root, "envelope.proto", "syntax = \"proto3\"; package acme.v1; message Envelope { string text = 1; }\n")
+	content := []byte(`class_name Forward extends AcmeV1EnvelopeEnvelope
+
+func use() -> void:
+	cached.set_text("forward")
+
+var cached = from_bytes(PackedByteArray())
+`)
+	writeFile(t, root, "forward.gd", string(content))
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "forward.gd", Content: content, RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	useID := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Forward.use").ID
+	assertProtocolFact(t, result.Facts, useID, graph.EdgeWrites, "acme.v1.Envelope.text", "set")
+}
+
 func TestParserRejectsAmbiguousProtobufGDScriptBindings(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "buf.yaml", "version: v2\nmodules:\n  - path: proto\n")

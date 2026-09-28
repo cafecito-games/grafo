@@ -293,29 +293,39 @@ func (e *extractor) extract(file *gdast.File) {
 		classID: classID, classBody: true, symbols: map[string]string{}, types: map[string]string{}, fields: map[string]string{},
 		fieldSymbols: map[string]string{}, fieldLocked: map[string]bool{}, locked: map[string]bool{}, signals: map[string]signalRef{}}
 	root.types[className] = qualified
+	base := fileBase(file.Statements)
+	// Field initializers are inferred while the class is prepared, so retain the
+	// raw base early enough for bare inherited generated APIs such as from_bytes.
+	if base != "" {
+		e.bases[qualified] = base
+	}
 	// Prepare inner class names before resolving the file base, because a script
 	// may extend a class declared later in the same file.
 	e.prepareClass(file.Statements, root)
-	for _, statement := range file.Statements {
+	if base != "" {
+		if resolved := e.resolveType(base, root); resolved != "" {
+			base = resolved
+		}
+		e.bases[qualified] = base
+	}
+	e.walkStatements(file.Statements, root)
+}
+
+func fileBase(statements []gdast.Statement) string {
+	base := ""
+	for _, statement := range statements {
 		directive, ok := statement.(*gdast.Directive)
 		if !ok {
 			continue
 		}
-		base := ""
 		switch {
 		case directive.Name == "extends":
 			base = expressionName(directive.Value)
 		case directive.Name == "class_name" && directive.Extends != nil:
 			base = expressionName(directive.Extends)
 		}
-		if base != "" {
-			if resolved := e.resolveType(base, root); resolved != "" {
-				base = resolved
-			}
-			e.bases[qualified] = base
-		}
 	}
-	e.walkStatements(file.Statements, root)
+	return base
 }
 
 func (e *extractor) prepareClass(statements []gdast.Statement, current scope) {
