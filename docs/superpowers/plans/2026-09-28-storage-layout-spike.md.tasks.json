@@ -73,7 +73,7 @@
     {
       "id": 7,
       "subject": "Task 8: Runner, schema-v2 report, gates, workload",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         3,
         4,
@@ -114,5 +114,5 @@
       "verifyCommand": "task check && go test -race ./internal/storage/sqlite ./internal/storagecompare ./internal/benchmark ./internal/storage/layoutbench -count=1"
     }
   ],
-  "lastUpdated": "2026-09-29T00:00:00Z"
+  "lastUpdated": "2026-09-29T12:00:00Z"
 }
