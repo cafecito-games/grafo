@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -47,6 +48,9 @@ func TestInspectIndexReportsMetadataAndCompatibilityWithoutMutation(t *testing.T
 	if inspection.Compatibility != CompatibilityCompatible || inspection.Metadata != metadata || inspection.Diagnostic != "" {
 		t.Fatalf("inspection = %#v", inspection)
 	}
+	if inspection.Metrics == nil || inspection.Metrics.PageSize <= 0 || inspection.Metrics.PageCount <= 0 {
+		t.Fatalf("inspection metrics = %#v", inspection.Metrics)
+	}
 	after, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -82,6 +86,44 @@ func TestInspectIndexReadsCommittedWALMetadata(t *testing.T) {
 	}
 	if inspection.Compatibility != CompatibilityCompatible || inspection.Metadata.Commit != "new" {
 		t.Fatalf("live WAL inspection = %#v", inspection)
+	}
+}
+
+func TestInspectIndexRetainsValidatedIdentityWhenMetricsFail(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "metrics-failure.sqlite")
+	repository, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := IndexMetadata{
+		Root: "/workspace/project", RepositoryID: "repo-1", Branch: "feature",
+		Commit: "abc123", IndexedAt: "2026-09-28T12:00:00Z",
+	}
+	for key, value := range map[string]string{
+		"root": metadata.Root, "repository_id": metadata.RepositoryID,
+		"branch": metadata.Branch, "commit": metadata.Commit,
+		"indexed_at": metadata.IndexedAt, "semantic_index_version": indexer.SemanticIndexVersion,
+	} {
+		if err := repository.SetMeta(ctx, key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	inspection, err := inspectIndex(ctx, path, func(context.Context, *sql.DB) (StorageMetrics, error) {
+		return StorageMetrics{}, errors.New("injected page metric failure")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.Metadata != metadata || inspection.Metrics != nil || inspection.Compatibility != CompatibilityUnverified {
+		t.Fatalf("metrics failure inspection = %#v", inspection)
+	}
+	if !strings.Contains(inspection.Diagnostic, "injected page metric failure") {
+		t.Fatalf("metrics failure diagnostic = %q", inspection.Diagnostic)
 	}
 }
 
