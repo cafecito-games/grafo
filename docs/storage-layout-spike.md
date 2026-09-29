@@ -148,7 +148,7 @@ incremental scenarios:
 | Restore total | 2.449 s (1.00x) | 2.627 s (1.07x) | 3.557 s (1.45x) | 2.502 s (1.02x) |
 | Branch switch total | 2.658 s (1.00x) | 2.603 s (0.98x) | 3.641 s (1.37x) | 2.597 s (0.98x) |
 | Resume unchanged total | 2.287 s (1.00x) | 2.384 s (1.04x) | 3.493 s (1.53x) | 2.333 s (1.02x) |
-| Incremental persistence (range) | 1.00x | 0.96x–1.14x | 1.41x–2.09x (cold 0.95x) | 0.97x–1.02x |
+| Incremental persistence (range, all 11 non-cold scenarios) | 1.00x | 0.96x–1.14x | 1.41x–2.09x (cold 0.95x) | 0.97x–1.02x |
 
 Query suite (13 patterns, 7 repetitions each, median ratio to control):
 
