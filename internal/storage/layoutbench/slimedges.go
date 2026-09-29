@@ -6,10 +6,10 @@ import (
 )
 
 // slimEdgesEmbedded holds the slim-edges candidate's Goose migrations. The
-// files mirror the production migration set with the same version numbers
-// (the pre-seed trick: a database already migrated by production opens
-// cleanly against the candidate), with the edges table replaced and
-// derived_edge_evidence added.
+// files mirror the production migration set with the same version numbers, so
+// Goose treats migration as a no-op on a version-matched database; a database
+// whose schema is otherwise incompatible (say one seeded by production, which
+// lacks derived_edge_evidence) fails closed at statement preparation.
 //
 //go:embed variants/slimedges/*.sql
 var slimEdgesEmbedded embed.FS

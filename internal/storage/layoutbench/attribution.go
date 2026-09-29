@@ -167,14 +167,16 @@ func fileSize(path string) (int64, error) {
 
 // tableColumnExists reports whether one column of a graph table is present;
 // candidate layouts may drop evidence columns the production schema carries.
-func tableColumnExists(ctx context.Context, db *sql.DB, table, column string) bool {
+// A query failure propagates so a broken probe cannot silently read as a
+// missing column.
+func tableColumnExists(ctx context.Context, db *sql.DB, table, column string) (bool, error) {
 	rows, err := db.QueryContext(ctx,
 		fmt.Sprintf("SELECT 1 FROM pragma_table_info('%s') WHERE name = ?", table), column)
 	if err != nil {
-		return false
+		return false, fmt.Errorf("probe %s columns: %w", table, err)
 	}
 	defer func() { _ = rows.Close() }()
-	return rows.Next()
+	return rows.Next(), rows.Err()
 }
 
 func capturePayloadStats(ctx context.Context, db *sql.DB) ([]TablePayload, error) {
@@ -199,7 +201,11 @@ func capturePayloadStats(ctx context.Context, db *sql.DB) ([]TablePayload, error
 			ownerAverage = "COALESCE(AVG(length(owner_file)), 0)"
 		}
 		propertiesAverage := "0"
-		if tableColumnExists(ctx, db, table.name, "properties") {
+		hasProperties, err := tableColumnExists(ctx, db, table.name, "properties")
+		if err != nil {
+			return nil, err
+		}
+		if hasProperties {
 			propertiesAverage = "COALESCE(AVG(length(properties)), 0)"
 		}
 		statement := fmt.Sprintf(

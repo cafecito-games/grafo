@@ -134,6 +134,11 @@ func SlimEdgesSpec(name string) LayoutSpec {
 			edgeStatement: `INSERT INTO edges(id, fact_id, from_id, to_id, kind) VALUES (?, ?, ?, ?, ?);`,
 			slimEdgesEvidenceInsertStatement: `INSERT OR REPLACE INTO derived_edge_evidence(edge_id, producer, path, line, column_no, end_line, properties)
 VALUES (?, ?, ?, ?, ?, ?, ?);`,
+			// The hydration statements INNER JOIN facts: edges are always
+			// written from facts read in the same transaction and deleted
+			// before their facts, so a dangling edge is unreachable — a LEFT
+			// JOIN would surface rather than hide any future integrity
+			// violation.
 			"ListEdgesFrom": `SELECT e.id, e.fact_id, e.from_id, e.to_id, e.kind,
        COALESCE(de.producer, f.producer) AS producer,
        COALESCE(de.path, f.path) AS path,
