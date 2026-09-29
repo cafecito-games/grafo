@@ -254,7 +254,7 @@ on live regressions.
 | Machine | Apple M3 Pro, macOS/arm64, 12 cores, 36 GB (`Christians-MacBook-Pro-2.local` — identical to issue #47's machine) |
 | Host limits | cgroup v2 unavailable on darwin; cpu and memory limits substituted from sysctl `hw.ncpu` and `hw.memsize` |
 | Go | 1.26.2 |
-| Grafo commit | `83354225ef2764831b07c76ac9241713c27b84e0` (clean; the commits after it on this branch are documentation only) |
+| Grafo commit | `83354225ef2764831b07c76ac9241713c27b84e0` (clean at measurement time; see the embeddings-removal caveat below) |
 | Uzir commit | `2decef60953660e10d6ab053e106cf864fd8d679` (detached; the same commit as issue #47's accepted run) |
 | Indexed files at pin | 11,338 |
 | Semantic index / graph schema | 29 / 11 |
@@ -265,6 +265,16 @@ on live regressions.
 The machine-readable report preserves every raw sample, median, ratio, count,
 write statistic, dbstat object, payload statistic, captured plan, and query
 suite repetition. This note rounds values only for readability.
+
+Embeddings-removal caveat: the measurements above predate main's removal of
+the embeddings subsystem (`00008_drop_embeddings`, merged after the run).
+Every layout measured carried the same embeddings b-tree, and the attribution
+placed it inside the queue/config cluster — 0.12% of the database — so the
+size deltas and gate outcomes are unaffected by the removal. After the merge,
+the benchmark adapter and equivalence harness were re-tracked to main's
+storage API (embeddings probes deleted, path-scoped listing and canonical
+message probes added) and all equivalence, plan, and isolation tests were
+re-verified; the measurement code paths are unchanged.
 
 ### Cold-total delta against issue #47
 
