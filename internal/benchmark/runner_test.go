@@ -3,10 +3,12 @@ package benchmark
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -355,5 +357,96 @@ func runTestGit(t *testing.T, root string, arguments ...string) {
 	command := exec.Command("git", append([]string{"-C", root}, arguments...)...)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("git %v: %v\n%s", arguments, err, output)
+	}
+}
+
+// TestRegisteredEngineInheritsSqliteStorageBehavior proves a registered engine
+// that declares the sqlite storage kind gets sqlite's artifact suffix, real
+// database and WAL size sampling, and sqlite's side-file cleanup, instead of
+// the unsupported metrics and pebble suffix an unknown engine would get.
+func TestRegisteredEngineInheritsSqliteStorageBehavior(t *testing.T) {
+	engine := "test:sqlite-delegate"
+	if err := RegisterEngine(engine, EngineRegistration{
+		Storage:     Storage{Engine: engine, Library: "modernc.org/sqlite"},
+		StorageKind: "sqlite",
+		Opener: func(context.Context, string) (graph.Repository, error) {
+			return nil, errors.New("not opened by this test")
+		},
+	}); err != nil {
+		t.Fatalf("RegisterEngine: %v", err)
+	}
+	if got := storageSuffix(engine); got != ".db" {
+		t.Errorf("storageSuffix(%q) = %q, want .db", engine, got)
+	}
+	directory := t.TempDir()
+	database := filepath.Join(directory, "resume.db")
+	if err := os.WriteFile(database, []byte("0123456789"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(database+"-wal", []byte("0123456789012345"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(database+"-shm", []byte("01"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	databaseBytes, journalBytes, journalSupported := storageSizes(engine, database)
+	if !journalSupported {
+		t.Errorf("sqlite-delegating engine reports an unsupported journal metric")
+	}
+	if databaseBytes != 10 {
+		t.Errorf("database size is %d, want 10", databaseBytes)
+	}
+	if journalBytes != 16 {
+		t.Errorf("wal size is %d, want 16", journalBytes)
+	}
+	if err := removeDatabase(engine, database); err != nil {
+		t.Fatalf("removeDatabase: %v", err)
+	}
+	for _, removed := range []string{database, database + "-wal", database + "-shm"} {
+		if _, err := os.Stat(removed); !os.IsNotExist(err) {
+			t.Errorf("removeDatabase left %s behind (stat error %v)", removed, err)
+		}
+	}
+}
+
+// TestRegisteredEngineWithoutStorageKindStaysUnsupported proves the default for
+// engines that declare no storage kind: no journal metric and the generic
+// artifact suffix, so an undeclared engine fails visibly rather than silently
+// reporting zeroes.
+func TestRegisteredEngineWithoutStorageKindStaysUnsupported(t *testing.T) {
+	engine := "test:opaque"
+	if err := RegisterEngine(engine, EngineRegistration{
+		Storage: Storage{Engine: engine},
+		Opener: func(context.Context, string) (graph.Repository, error) {
+			return nil, errors.New("not opened by this test")
+		},
+	}); err != nil {
+		t.Fatalf("RegisterEngine: %v", err)
+	}
+	database := filepath.Join(t.TempDir(), "resume.db")
+	if err := os.WriteFile(database, []byte("0123456789"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, journalBytes, journalSupported := storageSizes(engine, database)
+	if journalSupported || journalBytes != 0 {
+		t.Errorf("engine without a storage kind reported journal bytes %d (supported %v), want unsupported zeroes", journalBytes, journalSupported)
+	}
+	if got := storageSuffix(engine); got != ".pebble" {
+		t.Errorf("storageSuffix(%q) = %q, want the generic .pebble fallback", engine, got)
+	}
+}
+
+// TestRegisterEngineRejectsUnknownStorageKind proves a mistyped storage kind is
+// rejected at registration instead of degrading size sampling later.
+func TestRegisterEngineRejectsUnknownStorageKind(t *testing.T) {
+	err := RegisterEngine("test:broken-kind", EngineRegistration{
+		Storage:     Storage{Engine: "test:broken-kind"},
+		StorageKind: "sqlite-vacuum",
+		Opener: func(context.Context, string) (graph.Repository, error) {
+			return nil, errors.New("not opened by this test")
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "sqlite-vacuum") {
+		t.Fatalf("unknown storage kind accepted: %v", err)
 	}
 }

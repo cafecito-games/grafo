@@ -3,6 +3,7 @@ package storagecompare
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -36,6 +37,12 @@ const (
 	// the Coder workspace observation was never reproduced, so every ratio in
 	// this report compares same-machine runs only.
 	layoutControlObservation = "uncorroborated, no Coder run performed; owner directed local substitution"
+	// layoutPeakRSSLimitation records why peak RSS never enters the perf gate:
+	// every layout runs sequentially in one process with the control first, so
+	// a later layout's ps-sampled RSS median inherits the heap of the layouts
+	// before it and the ordering alone could fail the gate. The raw per-layout
+	// metric stays in the report for observation.
+	layoutPeakRSSLimitation = "peak RSS is captured per layout but excluded from the cross-layout performance gate: sequential in-process sampling is order-biased because the control runs first"
 )
 
 const (
@@ -97,11 +104,14 @@ type LayoutResult struct {
 	Name        string                    `json:"name"`
 	Correctness LayoutCorrectness         `json:"correctness"`
 	Fixture     FixtureResult             `json:"fixture"`
-	Corpus      CorpusResult              `json:"corpus"`
+	Corpus      LayoutCorpusResult        `json:"corpus"`
 	Attribution []AttributionSample       `json:"attribution"`
 	Plans       []layoutbench.PlanCapture `json:"plans"`
 	QuerySuite  []layoutbench.QueryMetric `json:"query_suite"`
 	Gates       GateEvaluation            `json:"gates"`
+	// Limitations records measurement caveats that qualify this layout's
+	// numbers without invalidating them.
+	Limitations []string `json:"limitations,omitempty"`
 }
 
 // LayoutCorrectness folds the control-versus-candidate equivalence result into
@@ -134,6 +144,28 @@ type LayoutMetric struct {
 	Raw            []int64 `json:"raw"`
 	Median         int64   `json:"median"`
 	RatioToControl float64 `json:"ratio_to_control"`
+}
+
+// LayoutCorpusResult summarizes the corpus scenario samples of one layout. It
+// is layout-local so its ratios serialize as ratio_to_control: the v1 engine
+// comparison reuses ratio_to_sqlite for engine-versus-sqlite ratios, and this
+// report compares candidates against the control layout.
+type LayoutCorpusResult struct {
+	Scenarios map[string]LayoutScenarioSamples `json:"scenarios"`
+}
+
+// LayoutScenarioSamples reduces one corpus scenario's per-sample measurements
+// to medians with ratios against the control layout's medians. PeakRSSBytes is
+// recorded for observation only; see layoutPeakRSSLimitation.
+type LayoutScenarioSamples struct {
+	Counts            graph.Counts       `json:"counts"`
+	TotalNS           LayoutMetric       `json:"total_ns"`
+	PersistenceNS     LayoutMetric       `json:"persistence_ns"`
+	ReconciliationNS  LayoutMetric       `json:"reconciliation_ns"`
+	DatabaseBytes     LayoutMetric       `json:"database_bytes"`
+	AuxiliaryLogBytes LayoutMetric       `json:"auxiliary_log_bytes"`
+	PeakRSSBytes      LayoutMetric       `json:"peak_rss_bytes"`
+	Writes            []graph.WriteStats `json:"writes"`
 }
 
 // AttributionSample is one attribution capture at a named lifecycle point of
@@ -202,6 +234,7 @@ func registerLayoutEngines(descriptors []layoutDescriptor) error {
 		storage := benchmark.Storage{Engine: descriptor.engine, Library: "modernc.org/sqlite", LibraryVersion: "v1.57.0",
 			Durability: "WAL with synchronous=NORMAL; atomic file and reconciliation transactions"}
 		if err := benchmark.RegisterEngine(descriptor.engine, benchmark.EngineRegistration{Storage: storage,
+			StorageKind: "sqlite",
 			Opener: func(ctx context.Context, path string) (graph.Repository, error) {
 				return opener(ctx, path)
 			}}); err != nil {
@@ -331,7 +364,7 @@ func runOneLayout(ctx context.Context, descriptor layoutDescriptor, options Layo
 	output string, corpusEnabled bool) (LayoutResult, []benchmark.Report, error) {
 	result := LayoutResult{Name: descriptor.name, Correctness: LayoutCorrectness{},
 		Fixture:     FixtureResult{Writes: []graph.WriteStats{}},
-		Corpus:      CorpusResult{Scenarios: map[string]ScenarioSamples{}},
+		Corpus:      LayoutCorpusResult{Scenarios: map[string]LayoutScenarioSamples{}},
 		Attribution: []AttributionSample{}, Plans: []layoutbench.PlanCapture{},
 		QuerySuite: []layoutbench.QueryMetric{}}
 
@@ -378,7 +411,7 @@ func runOneLayout(ctx context.Context, descriptor layoutDescriptor, options Layo
 				AttributionSample{Scope: attributionScopeCorpusPreCompact, Sample: sample + 1, Capture: measured.preCompact},
 				AttributionSample{Scope: attributionScopeCorpusPostCompact, Sample: sample + 1, Capture: measured.postCompact})
 		}
-		result.Corpus = summarizeCorpus(corpusReports)
+		result.Corpus = summarizeLayoutCorpus(corpusReports)
 	}
 	return result, corpusReports, nil
 }
@@ -409,12 +442,9 @@ func runLayoutFixtureSample(ctx context.Context, descriptor layoutDescriptor, fi
 	}
 	measured.reconciliationNS = time.Since(reconciliationStarted).Nanoseconds()
 	measured.totalNS = time.Since(started).Nanoseconds()
-	if pending, err := repository.ReconciliationPending(ctx); err != nil {
+	if err := requireNoPendingReconciliation(ctx, descriptor, repository); err != nil {
 		_ = repository.Close()
-		return measured, fmt.Errorf("read reconciliation status: %w", err)
-	} else if pending {
-		_ = repository.Close()
-		return measured, fmt.Errorf("%s left pending reconciliation after reconcile; refusing to compact", descriptor.name)
+		return measured, err
 	}
 	if measured.counts, err = repository.Counts(ctx); err != nil {
 		_ = repository.Close()
@@ -425,24 +455,14 @@ func runLayoutFixtureSample(ctx context.Context, descriptor layoutDescriptor, fi
 		return measured, fmt.Errorf("close %s: %w", descriptor.name, err)
 	}
 
-	measured.preCompact, measured.postCompact, err = maintainAndCapture(ctx, path)
+	measured.preCompact, measured.postCompact, measured.queries, err = measureMaintainedDatabase(ctx, descriptor, path,
+		func(ctx context.Context, repository layoutbench.EquivalenceRepository) ([]layoutbench.QueryMetric, error) {
+			return layoutbench.RunQuerySuite(ctx, repository,
+				layoutbench.BuildQueryWorkload(layoutbench.FixtureWorkloadParameters()), queryRepetitions)
+		})
 	if err != nil {
-		return measured, fmt.Errorf("%s maintenance: %w", descriptor.name, err)
+		return measured, err
 	}
-
-	repository, err = descriptor.opener(ctx, path)
-	if err != nil {
-		return measured, fmt.Errorf("reopen %s: %w", descriptor.name, err)
-	}
-	queries, suiteErr := layoutbench.RunQuerySuite(ctx, repository,
-		layoutbench.BuildQueryWorkload(layoutbench.FixtureWorkloadParameters()), queryRepetitions)
-	if closeErr := repository.Close(); closeErr != nil {
-		return measured, fmt.Errorf("close %s: %w", descriptor.name, closeErr)
-	}
-	if suiteErr != nil {
-		return measured, fmt.Errorf("%s query workload: %w", descriptor.name, suiteErr)
-	}
-	measured.queries = queries
 	return measured, nil
 }
 
@@ -468,42 +488,66 @@ func runLayoutCorpusSample(ctx context.Context, descriptor layoutDescriptor, opt
 	if err != nil {
 		return measured, fmt.Errorf("open %s corpus database: %w", descriptor.name, err)
 	}
-	if pending, err := repository.ReconciliationPending(ctx); err != nil {
+	if err := requireNoPendingReconciliation(ctx, descriptor, repository); err != nil {
 		_ = repository.Close()
-		return measured, fmt.Errorf("read corpus reconciliation status: %w", err)
-	} else if pending {
-		_ = repository.Close()
-		return measured, fmt.Errorf("%s corpus database left pending reconciliation; refusing to compact", descriptor.name)
+		return measured, fmt.Errorf("%s corpus database: %w", descriptor.name, err)
 	}
 	if err := repository.Close(); err != nil {
 		return measured, fmt.Errorf("close %s corpus database: %w", descriptor.name, err)
 	}
 
-	if measured.preCompact, measured.postCompact, err = maintainAndCapture(ctx, database); err != nil {
-		return measured, fmt.Errorf("%s corpus maintenance: %w", descriptor.name, err)
+	if measured.preCompact, measured.postCompact, measured.queries, err = measureMaintainedDatabase(ctx, descriptor, database,
+		func(ctx context.Context, repository layoutbench.EquivalenceRepository) ([]layoutbench.QueryMetric, error) {
+			parameters, err := layoutbench.DeriveWorkloadParameters(ctx, repository)
+			if err != nil {
+				return nil, err
+			}
+			return layoutbench.RunQuerySuite(ctx, repository,
+				layoutbench.BuildQueryWorkload(parameters), options.QueryRepetitions)
+		}); err != nil {
+		return measured, err
 	}
-
-	repository, err = descriptor.opener(ctx, database)
-	if err != nil {
-		return measured, fmt.Errorf("reopen %s corpus database: %w", descriptor.name, err)
-	}
-	parameters, deriveErr := layoutbench.DeriveWorkloadParameters(ctx, repository)
-	var queries []layoutbench.QueryMetric
-	if deriveErr == nil {
-		queries, deriveErr = layoutbench.RunQuerySuite(ctx, repository,
-			layoutbench.BuildQueryWorkload(parameters), options.QueryRepetitions)
-	}
-	if closeErr := repository.Close(); closeErr != nil {
-		return measured, fmt.Errorf("close %s corpus database: %w", descriptor.name, closeErr)
-	}
-	if deriveErr != nil {
-		return measured, fmt.Errorf("%s corpus query workload: %w", descriptor.name, deriveErr)
-	}
-	measured.queries = queries
 	if err := os.RemoveAll(directory); err != nil {
 		return measured, fmt.Errorf("remove summarized corpus sample: %w", err)
 	}
 	return measured, nil
+}
+
+// requireNoPendingReconciliation fails closed when a database still holds
+// reconciliation work: compacting or timing such a database would measure a
+// transient state instead of the final layout.
+func requireNoPendingReconciliation(ctx context.Context, descriptor layoutDescriptor, repository layoutbench.EquivalenceRepository) error {
+	pending, err := repository.ReconciliationPending(ctx)
+	if err != nil {
+		return fmt.Errorf("read reconciliation status: %w", err)
+	}
+	if pending {
+		return fmt.Errorf("%s left pending reconciliation after reconcile; refusing to compact", descriptor.name)
+	}
+	return nil
+}
+
+// measureMaintainedDatabase performs the final-database tail shared by the
+// fixture and corpus samples: checkpoint, pre-compaction attribution,
+// compaction, post-compaction attribution, a reopen, and the timed query
+// workload. The workload and close errors are joined so neither is discarded.
+func measureMaintainedDatabase(ctx context.Context, descriptor layoutDescriptor, path string,
+	workload func(ctx context.Context, repository layoutbench.EquivalenceRepository) ([]layoutbench.QueryMetric, error),
+) (layoutbench.Attribution, layoutbench.Attribution, []layoutbench.QueryMetric, error) {
+	preCompact, postCompact, err := maintainAndCapture(ctx, path)
+	if err != nil {
+		return preCompact, postCompact, nil, fmt.Errorf("%s maintenance: %w", descriptor.name, err)
+	}
+	repository, err := descriptor.opener(ctx, path)
+	if err != nil {
+		return preCompact, postCompact, nil, fmt.Errorf("reopen %s: %w", descriptor.name, err)
+	}
+	queries, workloadErr := workload(ctx, repository)
+	closeErr := repository.Close()
+	if err := errors.Join(workloadErr, closeErr); err != nil {
+		return preCompact, postCompact, queries, fmt.Errorf("%s final measurement: %w", descriptor.name, err)
+	}
+	return preCompact, postCompact, queries, nil
 }
 
 // maintainAndCapture checkpoints the WAL, captures attribution, compacts, and
@@ -605,6 +649,37 @@ func summarizeFixtureSamples(samples []layoutFixtureSample) FixtureResult {
 	return result
 }
 
+// summarizeLayoutCorpus reduces per-sample corpus reports to per-scenario
+// medians over the layout-local metric type, so the artifact's corpus ratios
+// read as candidate-versus-control rather than candidate-versus-sqlite.
+func summarizeLayoutCorpus(corpus []benchmark.Report) LayoutCorpusResult {
+	result := LayoutCorpusResult{Scenarios: map[string]LayoutScenarioSamples{}}
+	for _, report := range corpus {
+		for _, scenario := range report.Scenarios {
+			summary := result.Scenarios[scenario.Name]
+			summary.Counts = scenario.Index.Counts
+			summary.TotalNS.Raw = append(summary.TotalNS.Raw, scenario.Index.Phases.TotalNS)
+			summary.PersistenceNS.Raw = append(summary.PersistenceNS.Raw, scenario.Index.Phases.PersistenceNS)
+			summary.ReconciliationNS.Raw = append(summary.ReconciliationNS.Raw, scenario.Index.Phases.ReconciliationNS)
+			summary.DatabaseBytes.Raw = appendOptional(summary.DatabaseBytes.Raw, scenario.Resources.DatabaseBytes)
+			summary.AuxiliaryLogBytes.Raw = appendOptional(summary.AuxiliaryLogBytes.Raw, scenario.Resources.FinalWALBytes)
+			summary.PeakRSSBytes.Raw = appendOptional(summary.PeakRSSBytes.Raw, scenario.Resources.PeakRSSBytes)
+			summary.Writes = append(summary.Writes, scenario.Index.Writes)
+			result.Scenarios[scenario.Name] = summary
+		}
+	}
+	for name, scenario := range result.Scenarios {
+		finalizeLayoutMetric(&scenario.TotalNS)
+		finalizeLayoutMetric(&scenario.PersistenceNS)
+		finalizeLayoutMetric(&scenario.ReconciliationNS)
+		finalizeLayoutMetric(&scenario.DatabaseBytes)
+		finalizeLayoutMetric(&scenario.AuxiliaryLogBytes)
+		finalizeLayoutMetric(&scenario.PeakRSSBytes)
+		result.Scenarios[name] = scenario
+	}
+	return result
+}
+
 // combineQuerySuites reduces per-sample suite medians to one median per
 // pattern, preserving the workload's pattern order.
 func combineQuerySuites(perSample [][]layoutbench.QueryMetric) []layoutbench.QueryMetric {
@@ -654,6 +729,7 @@ func finalizeLayoutReport(results []LayoutResult, corpusReports [][]benchmark.Re
 	controlSizeBytes := attributionPrimaryMedian(*control, sizeScope)
 	for index := range results {
 		candidate := &results[index]
+		candidate.Limitations = []string{layoutPeakRSSLimitation}
 		setLayoutRatio(&candidate.Fixture.ColdPersistenceNS, control.Fixture.ColdPersistenceNS.Median)
 		setLayoutRatio(&candidate.Fixture.ReconciliationNS, control.Fixture.ReconciliationNS.Median)
 		setLayoutRatio(&candidate.Fixture.ColdTotalNS, control.Fixture.ColdTotalNS.Median)
@@ -663,12 +739,18 @@ func finalizeLayoutReport(results []LayoutResult, corpusReports [][]benchmark.Re
 		if corpusEnabled {
 			for name, scenario := range candidate.Corpus.Scenarios {
 				controlScenario := control.Corpus.Scenarios[name]
-				setRatio(&scenario.TotalNS, controlScenario.TotalNS.Median)
-				setRatio(&scenario.PersistenceNS, controlScenario.PersistenceNS.Median)
-				setRatio(&scenario.ReconciliationNS, controlScenario.ReconciliationNS.Median)
-				setRatio(&scenario.PeakRSSBytes, controlScenario.PeakRSSBytes.Median)
+				setLayoutRatio(&scenario.TotalNS, controlScenario.TotalNS.Median)
+				setLayoutRatio(&scenario.PersistenceNS, controlScenario.PersistenceNS.Median)
+				setLayoutRatio(&scenario.ReconciliationNS, controlScenario.ReconciliationNS.Median)
+				setLayoutRatio(&scenario.DatabaseBytes, controlScenario.DatabaseBytes.Median)
+				setLayoutRatio(&scenario.AuxiliaryLogBytes, controlScenario.AuxiliaryLogBytes.Median)
+				setLayoutRatio(&scenario.PeakRSSBytes, controlScenario.PeakRSSBytes.Median)
 				candidate.Corpus.Scenarios[name] = scenario
 			}
+		}
+		if index == 0 {
+			candidate.Gates = controlLayoutGateEvaluation()
+			continue
 		}
 		plansValid := true
 		for _, plan := range candidate.Plans {
@@ -688,6 +770,15 @@ func finalizeLayoutReport(results []LayoutResult, corpusReports [][]benchmark.Re
 	}
 }
 
+// controlLayoutGateEvaluation marks the control layout's gate row as not
+// applicable: the control defines the baseline the candidates are gated
+// against, so evaluating it against itself would only restate a 0% reduction
+// as a failure.
+func controlLayoutGateEvaluation() GateEvaluation {
+	return GateEvaluation{Reasons: []string{
+		"control layout defines the comparison baseline; retain gates apply to candidate layouts only (not applicable)"}}
+}
+
 func applyQuerySuiteRatios(candidate, control *LayoutResult) {
 	controlMedians := make(map[string]int64, len(control.QuerySuite))
 	for _, metric := range control.QuerySuite {
@@ -704,7 +795,9 @@ func applyQuerySuiteRatios(candidate, control *LayoutResult) {
 
 // layoutPerfRatios aggregates every ratio the perf gate covers: fixture cold
 // total, persistence, reconciliation, each query-suite pattern, and (when the
-// corpus ran) each scenario's total and peak RSS.
+// corpus ran) each scenario's total. Peak RSS is deliberately excluded — its
+// sequential in-process sampling is order-biased (see layoutPeakRSSLimitation,
+// recorded in each layout's Limitations).
 func layoutPerfRatios(result LayoutResult, corpusEnabled bool) []float64 {
 	ratios := []float64{
 		result.Fixture.ColdTotalNS.RatioToControl,
@@ -721,8 +814,7 @@ func layoutPerfRatios(result LayoutResult, corpusEnabled bool) []float64 {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		scenario := result.Corpus.Scenarios[name]
-		ratios = append(ratios, scenario.TotalNS.RatioToSQLite, scenario.PeakRSSBytes.RatioToSQLite)
+		ratios = append(ratios, result.Corpus.Scenarios[name].TotalNS.RatioToControl)
 	}
 	return ratios
 }
@@ -757,8 +849,10 @@ type layoutGateInput struct {
 
 // evaluateGates applies the retain gates: at least a 25% median size
 // reduction, no perf ratio above 1.20 (a missing ratio counts as failed),
-// equivalence, and plan validation. Provenance rejection suppresses the size
-// ratio as well, because sizes of different-code runs are not comparable.
+// equivalence, and plan validation. A missing control or candidate size median
+// rejects the size gate rather than scoring a free pass. Provenance rejection
+// suppresses the size ratio as well, because sizes of different-code runs are
+// not comparable.
 func evaluateGates(input layoutGateInput) GateEvaluation {
 	gates := GateEvaluation{}
 	reasons := []string{}
@@ -767,10 +861,13 @@ func evaluateGates(input layoutGateInput) GateEvaluation {
 		controlSizeBytes = 0
 		reasons = append(reasons, "corpus provenance mismatch between layouts: ratios rejected")
 	}
-	if controlSizeBytes > 0 {
-		gates.SizeReduction = 1 - float64(input.candidateSizeBytes)/float64(controlSizeBytes)
-	} else {
+	switch {
+	case controlSizeBytes <= 0:
 		reasons = append(reasons, fmt.Sprintf("control %s size median unavailable; size reduction rejected", input.sizeScope))
+	case input.candidateSizeBytes <= 0:
+		reasons = append(reasons, fmt.Sprintf("candidate %s size median unavailable; size reduction rejected", input.sizeScope))
+	default:
+		gates.SizeReduction = 1 - float64(input.candidateSizeBytes)/float64(controlSizeBytes)
 	}
 	gates.MeetsSizeGate = gates.SizeReduction >= layoutSizeGateMinimum
 	if !gates.MeetsSizeGate {

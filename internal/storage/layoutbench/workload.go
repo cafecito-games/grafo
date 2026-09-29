@@ -252,11 +252,11 @@ func PlanInventoryForSpec(spec LayoutSpec) ([]PlanQuery, error) {
 	}
 	for _, name := range unmatched {
 		_, placeholders := rewriteNamedParameters(spec.SQL[name])
-		params := make([]any, placeholders)
-		for index := range params {
-			params[index] = planOwner
+		parameters := make([]any, placeholders)
+		for index := range parameters {
+			parameters[index] = planOwner
 		}
-		queries = append(queries, PlanQuery{Name: name, SQL: spec.SQL[name], Params: params})
+		queries = append(queries, PlanQuery{Name: name, SQL: spec.SQL[name], Params: parameters})
 	}
 	sort.Slice(queries, func(first, second int) bool { return queries[first].Name < queries[second].Name })
 	return queries, nil

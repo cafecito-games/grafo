@@ -92,6 +92,17 @@ func TestEvaluateLayoutGatesFailsClosed(t *testing.T) {
 		t.Error("a missing control size median passed the size gate")
 	}
 
+	noCandidateSize := evaluateGates(layoutGateInput{
+		controlSizeBytes: 1000, sizeScope: attributionScopeFixturePostCompact,
+		perfRatios: []float64{1.0}, correctnessValid: true, plansValid: true,
+	})
+	if noCandidateSize.MeetsSizeGate || noCandidateSize.Valid {
+		t.Errorf("a missing candidate size median scored a free pass: %+v", noCandidateSize)
+	}
+	if joined := strings.Join(noCandidateSize.Reasons, "; "); !strings.Contains(joined, "candidate fixture-final-post-compact size median unavailable") {
+		t.Errorf("missing candidate size not reported as such: %v", noCandidateSize.Reasons)
+	}
+
 	brokenCorrectness := evaluateGates(layoutGateInput{
 		controlSizeBytes: 1000, candidateSizeBytes: 750, sizeScope: attributionScopeFixturePostCompact,
 		perfRatios: []float64{1.0}, plansValid: true,
@@ -219,9 +230,15 @@ func TestRunLayoutFixtureOnlyDryRun(t *testing.T) {
 					t.Errorf("control query pattern %s ratio is %f, want 1", metric.Pattern, metric.RatioToControl)
 				}
 			}
-			if !layout.Gates.MeetsPerfGates || !layout.Gates.MeetsCorrectness || !layout.Gates.MeetsPlanGate {
-				t.Errorf("control failed a gate it defines trivially: %+v", layout.Gates)
+			if layout.Gates.Valid || layout.Gates.MeetsSizeGate {
+				t.Errorf("control layout was gated instead of marked not applicable: %+v", layout.Gates)
 			}
+			if len(layout.Gates.Reasons) == 0 || !strings.Contains(layout.Gates.Reasons[0], "not applicable") {
+				t.Errorf("control gate row lacks the not-applicable reason: %v", layout.Gates.Reasons)
+			}
+		}
+		if len(layout.Limitations) == 0 || !strings.Contains(strings.Join(layout.Limitations, "; "), "peak RSS") {
+			t.Errorf("%s does not record the peak RSS exclusion limitation: %v", layout.Name, layout.Limitations)
 		}
 	}
 	for _, scope := range []string{attributionScopeFixturePreCompact, attributionScopeFixturePostCompact} {
@@ -285,5 +302,70 @@ func TestRequirePinnedCleanWorktree(t *testing.T) {
 	}
 	if _, err := requirePinnedCleanWorktree(ctx, filepath.Join(root, "missing")); err == nil {
 		t.Fatal("missing corpus directory accepted")
+	}
+}
+
+// TestFinalizeLayoutReportGatesOnlyCandidates proves finalizeLayoutReport
+// evaluates only the candidate rows: the control's gate row is marked not
+// applicable, a candidate's inflated peak RSS ratio never enters the perf gate,
+// and the corpus scenario ratios serialize under the honest ratio_to_control
+// key rather than v1's ratio_to_sqlite.
+func TestFinalizeLayoutReportGatesOnlyCandidates(t *testing.T) {
+	results := []LayoutResult{
+		{Name: layoutControlName, Correctness: LayoutCorrectness{Valid: true},
+			Attribution: []AttributionSample{
+				{Scope: attributionScopeFixturePostCompact, Capture: layoutbench.Attribution{PrimaryBytes: 1000}},
+				{Scope: attributionScopeCorpusPostCompact, Capture: layoutbench.Attribution{PrimaryBytes: 1000}},
+			},
+			Plans:      []layoutbench.PlanCapture{{Valid: true}},
+			QuerySuite: []layoutbench.QueryMetric{{Pattern: "node-lookup-hub", MedianNS: 5}},
+			Fixture: FixtureResult{ColdTotalNS: LayoutMetric{Raw: []int64{10}, Median: 10},
+				ColdPersistenceNS:        LayoutMetric{Raw: []int64{10}, Median: 10},
+				ReconciliationNS:         LayoutMetric{Raw: []int64{10}, Median: 10},
+				DatabaseBytesPostCompact: LayoutMetric{Raw: []int64{1000}, Median: 1000}},
+			Corpus: LayoutCorpusResult{Scenarios: map[string]LayoutScenarioSamples{"cold": {
+				TotalNS:      LayoutMetric{Raw: []int64{10}, Median: 10},
+				PeakRSSBytes: LayoutMetric{Raw: []int64{10}, Median: 10}}}},
+		},
+		{Name: "candidate", Correctness: LayoutCorrectness{Valid: true},
+			Attribution: []AttributionSample{
+				{Scope: attributionScopeFixturePostCompact, Capture: layoutbench.Attribution{PrimaryBytes: 500}},
+				{Scope: attributionScopeCorpusPostCompact, Capture: layoutbench.Attribution{PrimaryBytes: 500}},
+			},
+			Plans:      []layoutbench.PlanCapture{{Valid: true}},
+			QuerySuite: []layoutbench.QueryMetric{{Pattern: "node-lookup-hub", MedianNS: 5}},
+			Fixture: FixtureResult{ColdTotalNS: LayoutMetric{Raw: []int64{12}, Median: 12},
+				ColdPersistenceNS:        LayoutMetric{Raw: []int64{12}, Median: 12},
+				ReconciliationNS:         LayoutMetric{Raw: []int64{12}, Median: 12},
+				DatabaseBytesPostCompact: LayoutMetric{Raw: []int64{500}, Median: 500}},
+			Corpus: LayoutCorpusResult{Scenarios: map[string]LayoutScenarioSamples{"cold": {
+				TotalNS:      LayoutMetric{Raw: []int64{12}, Median: 12},
+				PeakRSSBytes: LayoutMetric{Raw: []int64{100}, Median: 100}}}},
+		},
+	}
+	finalizeLayoutReport(results, nil, true)
+	control, candidate := &results[0], &results[1]
+	if control.Gates.Valid || !strings.Contains(strings.Join(control.Gates.Reasons, "; "), "not applicable") {
+		t.Fatalf("control gate row is evaluated instead of not applicable: %+v", control.Gates)
+	}
+	if !candidate.Gates.Valid {
+		t.Fatalf("candidate failed gates it meets: %+v", candidate.Gates)
+	}
+	if candidate.Corpus.Scenarios["cold"].PeakRSSBytes.RatioToControl != 10 {
+		t.Fatalf("candidate peak RSS ratio is %f, want 10 (recorded for observation)",
+			candidate.Corpus.Scenarios["cold"].PeakRSSBytes.RatioToControl)
+	}
+	if !candidate.Gates.MeetsPerfGates {
+		t.Fatalf("peak RSS leaked into the perf gate: %+v", candidate.Gates)
+	}
+	encoded, err := json.Marshal(candidate.Corpus)
+	if err != nil {
+		t.Fatalf("marshal corpus result: %v", err)
+	}
+	if !strings.Contains(string(encoded), "\"ratio_to_control\"") || strings.Contains(string(encoded), "ratio_to_sqlite") {
+		t.Fatalf("corpus ratios do not serialize under ratio_to_control: %s", encoded)
+	}
+	if len(candidate.Limitations) == 0 || !strings.Contains(strings.Join(candidate.Limitations, "; "), "peak RSS") {
+		t.Fatalf("candidate lacks the peak RSS limitation: %v", candidate.Limitations)
 	}
 }

@@ -570,6 +570,10 @@ func writeJSONArtifact(path, temporaryPattern string, payload any) error {
 	}
 	temporaryPath := temporary.Name()
 	defer func() { _ = os.Remove(temporaryPath) }()
+	if err := temporary.Chmod(0o644); err != nil {
+		_ = temporary.Close()
+		return err
+	}
 	if _, err := temporary.Write(content); err != nil {
 		_ = temporary.Close()
 		return err

@@ -194,7 +194,8 @@ func dependencyVersion(path, fallback string) string {
 }
 
 func storageSuffix(engine string) string {
-	if engine == "sqlite" || engine == string(kvbench.EngineBolt) {
+	kind := effectiveStorageKind(engine)
+	if kind == "sqlite" || kind == string(kvbench.EngineBolt) {
 		return ".db"
 	}
 	return ".pebble"
@@ -211,6 +212,11 @@ type EngineOpener func(ctx context.Context, path string) (graph.Repository, erro
 type EngineRegistration struct {
 	Storage Storage
 	Opener  EngineOpener
+	// StorageKind names the physical storage a registered engine delegates to
+	// ("sqlite", "bbolt", or "pebble") so size sampling, artifact naming, and
+	// database cleanup follow that storage's on-disk shape. Empty means the
+	// engine brings its own shape and its storage metrics stay unsupported.
+	StorageKind string
 }
 
 var registeredEngines sync.Map
@@ -227,8 +233,28 @@ func RegisterEngine(engine string, registration EngineRegistration) error {
 	if registration.Opener == nil {
 		return fmt.Errorf("engine %q registered without an opener", normalized)
 	}
+	switch registration.StorageKind {
+	case "", "sqlite", string(kvbench.EngineBolt), string(kvbench.EnginePebble):
+	default:
+		return fmt.Errorf("engine %q registered with unsupported storage kind %q", normalized, registration.StorageKind)
+	}
 	registeredEngines.Store(normalized, registration)
 	return nil
+}
+
+// effectiveStorageKind resolves the physical storage an engine name behaves
+// like on disk: a built-in engine maps to itself, a registered engine maps to
+// its declared StorageKind, and anything else maps to itself so the callers'
+// unsupported fallbacks keep firing.
+func effectiveStorageKind(engine string) string {
+	switch engine {
+	case "", "sqlite", string(kvbench.EngineBolt), string(kvbench.EnginePebble):
+		return engine
+	}
+	if registration, found := lookupEngine(engine); found && registration.StorageKind != "" {
+		return registration.StorageKind
+	}
+	return engine
 }
 
 func lookupEngine(engine string) (EngineRegistration, bool) {
@@ -1098,8 +1124,12 @@ func fileSize(path string) int64 {
 	return info.Size()
 }
 
+// storageSizes reports an engine's database and journal sizes. Registered
+// engines resolve through their declared StorageKind, so an engine delegating
+// to sqlite reports real WAL bytes instead of an unsupported metric.
 func storageSizes(engine, path string) (database, journal int64, journalSupported bool) {
-	switch engine {
+	kind := effectiveStorageKind(engine)
+	switch kind {
 	case "sqlite":
 		return fileSize(path), fileSize(path + "-wal"), true
 	case string(kvbench.EngineBolt):
@@ -1127,7 +1157,7 @@ func storageSizes(engine, path string) (database, journal int64, journalSupporte
 }
 
 func removeDatabase(engine, path string) error {
-	if engine == string(kvbench.EnginePebble) {
+	if effectiveStorageKind(engine) == string(kvbench.EnginePebble) {
 		return os.RemoveAll(path)
 	}
 	for _, candidate := range []string{path, path + "-wal", path + "-shm"} {
