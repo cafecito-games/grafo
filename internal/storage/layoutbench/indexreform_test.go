@@ -145,7 +145,6 @@ func TestIndexReformPlansRemainCovered(t *testing.T) {
 		{query: "EnqueueDirtyFacts", index: "facts_source", requireSeek: true},
 		{query: "EnqueueDirtyFacts", index: "facts_target", requireSeek: true},
 		{query: "DeleteFactsByOwner", index: "facts_owner", requireSeek: true},
-		{query: "ListEmbeddingsByModel", index: "embeddings_model", requireSeek: true},
 	}
 	for _, seek := range seeks {
 		capture, found := byName[seek.query]

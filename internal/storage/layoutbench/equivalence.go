@@ -25,13 +25,14 @@ import (
 type EquivalenceRepository interface {
 	graph.Repository
 	graph.CatalogRepository
+	graph.CanonicalMessageRepository
 	graph.RelationEdgeRepository
 	graph.ExternalEdgeRepository
 	graph.ExternalNodeRepository
 	graph.InstrumentedIndexRepository
 	graph.InstrumentedWriteRepository
 	graph.ReconciliationStatusRepository
-	semantic.Repository
+	semantic.CandidateRepository
 }
 
 // RepositoryOpener opens one adapter instance at path.
@@ -62,8 +63,7 @@ type EquivalenceResult struct {
 }
 
 const (
-	equivalenceEmbeddingModel = "equivalence-model"
-	equivalenceRoot           = "/equivalence/fixture"
+	equivalenceRoot = "/equivalence/fixture"
 )
 
 // errEquivalenceInterrupt stops reconciliation after one committed batch; it
@@ -343,29 +343,16 @@ func renderRelationPage(page graph.RelationEdgePage) string {
 	return fmt.Sprintf("truncated=%t items[%s]", page.Truncated, strings.Join(items, ";"))
 }
 
-func renderEmbeddings(embeddings []semantic.Embedding) string {
-	sorted := make([]semantic.Embedding, len(embeddings))
-	copy(sorted, embeddings)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].NodeID < sorted[j].NodeID })
-	rendered := make([]string, 0, len(sorted))
-	for _, embedding := range sorted {
-		rendered = append(rendered, fmt.Sprintf("%s|%s|%s|%d|%v|%s", embedding.NodeID, embedding.Model,
-			embedding.ContentHash, len(embedding.Vector), embedding.Vector, embedding.UpdatedAt))
+func renderCanonicalPage(page graph.CanonicalMessagePage) string {
+	items := make([]string, 0, len(page.Items))
+	repositories := ""
+	for index, item := range page.Items {
+		items = append(items, renderNode(item.Node))
+		if index == 0 {
+			repositories = item.Repository
+		}
 	}
-	return strings.Join(rendered, ";")
-}
-
-func renderHashes(hashes map[string]string) string {
-	ids := make([]string, 0, len(hashes))
-	for id := range hashes {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	rendered := make([]string, 0, len(ids))
-	for _, id := range ids {
-		rendered = append(rendered, id+"="+hashes[id])
-	}
-	return strings.Join(rendered, ";")
+	return fmt.Sprintf("truncated=%t repository=%s items[%s]", page.Truncated, repositories, strings.Join(items, ";"))
 }
 
 // renderWriteStats renders the behavioral write contract: batches and rows.
@@ -459,7 +446,8 @@ func (session *equivalenceSession) stateDigest(ctx context.Context, sweep bool) 
 
 // probeSuite renders the shared access-pattern surface: counts, files, node
 // lookups, adjacency, relation pages, search, selector matching, kind
-// enumeration, external federation lookups, embeddings, and metadata.
+// enumeration (including path scoping), canonical message coverage, external
+// federation lookups, and metadata.
 func (session *equivalenceSession) probeSuite(ctx context.Context, sweep bool) (string, error) {
 	repository := session.repository
 	hubID := longNodeID("hub", 0)
@@ -592,6 +580,12 @@ func (session *equivalenceSession) probeSuite(ctx context.Context, sweep bool) (
 			Visibility: graph.ExternalNodes, Limit: 9}},
 		{name: "wrong-repository", request: graph.NodeListQuery{Kinds: []graph.NodeKind{graph.KindFunction},
 			Repository: "elsewhere"}},
+		{name: "path-scoped", request: graph.NodeListQuery{Kinds: []graph.NodeKind{graph.KindFunction},
+			Visibility: graph.LocalNodes, PathPrefixes: []string{"src/equivalence"}, Limit: 7}},
+		{name: "path-scoped-file", request: graph.NodeListQuery{Kinds: []graph.NodeKind{graph.KindType},
+			Visibility: graph.LocalNodes, PathPrefixes: []string{"src/equivalence/messages/protocol.go"}, Limit: 7}},
+		{name: "path-scoped-empty", request: graph.NodeListQuery{Kinds: []graph.NodeKind{graph.KindFunction},
+			Visibility: graph.LocalNodes, PathPrefixes: []string{"src/nonexistent"}, Limit: 7}},
 	}
 	for _, list := range lists {
 		if scoped, err := repository.ListNodesByKind(ctx, list.request); err != nil {
@@ -606,6 +600,29 @@ func (session *equivalenceSession) probeSuite(ctx context.Context, sweep bool) (
 				}
 			}
 			session.record("list-"+list.name, fmt.Sprintf("repository=%s %s", repositoryNames, renderNodes(nodes)))
+		}
+	}
+
+	canonicals := []struct {
+		name    string
+		request graph.CanonicalMessageQuery
+	}{
+		{name: "all", request: graph.CanonicalMessageQuery{Limit: 10}},
+		{name: "package", request: graph.CanonicalMessageQuery{Package: "pkgMessages", Limit: 10}},
+		{name: "message", request: graph.CanonicalMessageQuery{Message: "UserCreated", Limit: 10}},
+		{name: "package-and-message", request: graph.CanonicalMessageQuery{Package: "pkgMessages.Nested",
+			Message: "Detail", Limit: 10}},
+		{name: "missing-message", request: graph.CanonicalMessageQuery{Message: "NoSuchMessage", Limit: 10}},
+		{name: "truncated", request: graph.CanonicalMessageQuery{Limit: 1}},
+		{name: "path-scoped", request: graph.CanonicalMessageQuery{PathPrefixes: []string{"src/equivalence/messages"},
+			Limit: 10}},
+		{name: "wrong-repository", request: graph.CanonicalMessageQuery{Repository: "elsewhere", Limit: 10}},
+	}
+	for _, canonical := range canonicals {
+		if page, err := repository.CanonicalMessages(ctx, canonical.request); err != nil {
+			return "", err
+		} else {
+			session.record("canonical-"+canonical.name, renderCanonicalPage(page))
 		}
 	}
 
@@ -648,11 +665,13 @@ func (session *equivalenceSession) probeSuite(ctx context.Context, sweep bool) (
 	return session.stateDigest(ctx, sweep)
 }
 
-// The equivalence corpus adds four small files to the fixture: a folding probe
-// (Turkish dotted capital I, ASCII case, CJK), an orphan-producing textual
-// fact, and a textual fact whose declaration arrives later.
+// The equivalence corpus adds small files to the fixture: a folding probe
+// (Turkish dotted capital I, ASCII case, CJK), canonical protocol-message
+// declarations, an orphan-producing textual fact, and a textual fact whose
+// declaration arrives later.
 const (
 	foldingOwnerPath    = "src/equivalence/folding.go"
+	messagesOwnerPath   = "src/equivalence/messages/protocol.go"
 	orphanOwnerPath     = "src/equivalence/orphan.go"
 	convergenceAPath    = "src/equivalence/convergence_a.go"
 	convergenceBPath    = "src/equivalence/convergence_b.go"
@@ -695,6 +714,29 @@ func foldingFile(ordinal int) FixtureFile {
 		Parsed: graph.ParseResult{Nodes: nodes, Facts: facts}}
 }
 
+// messagesFile declares the canonical protocol-message shapes the
+// CanonicalMessages probes enumerate: two top-level messages, one nested
+// behind a package prefix, and a plain type declaration that must never pass
+// the declaration filter.
+func messagesFile(ordinal int) FixtureFile {
+	messageNode := func(id, name, qualifiedName string, line int) graph.Node {
+		node := equivalenceNode(id, graph.KindType, name, qualifiedName, messagesOwnerPath, line)
+		node.Properties["declaration"] = "message"
+		return node
+	}
+	userCreated := messageNode("n:equivalence/messages/user-created", "UserCreated",
+		"pkgMessages.UserCreated", 10)
+	orderShipped := messageNode("n:equivalence/messages/order-shipped", "OrderShipped",
+		"pkgMessages.OrderShipped", 20)
+	nestedDetail := messageNode("n:equivalence/messages/nested-detail", "Detail",
+		"pkgMessages.Nested.Detail", 30)
+	plainRecord := equivalenceNode("n:equivalence/messages/plain-record", graph.KindType,
+		"PlainRecord", "pkgMessages.PlainRecord", messagesOwnerPath, 40)
+	nodes := []graph.Node{userCreated, orderShipped, nestedDetail, plainRecord}
+	return FixtureFile{Record: equivalenceFileRecord(messagesOwnerPath, ordinal, len(nodes)),
+		Parsed: graph.ParseResult{Nodes: nodes}}
+}
+
 func orphanFile(ordinal int) FixtureFile {
 	sender := equivalenceNode("n:equivalence/orphan/sender", graph.KindFunction,
 		"OrphanSender", "pkgEquivalence.OrphanSender", orphanOwnerPath, 10)
@@ -729,7 +771,7 @@ func convergenceBFile(ordinal int) FixtureFile {
 // equivalenceCorpus is the shared starting corpus of the main, incremental,
 // cancellation, and boundary scenarios: the fixture plus the extra probes.
 func equivalenceCorpus(fixture Fixture) []FixtureFile {
-	corpus := []FixtureFile{foldingFile(1), orphanFile(2), convergenceAFile(3)}
+	corpus := []FixtureFile{foldingFile(1), messagesFile(2), orphanFile(3), convergenceAFile(4)}
 	return append(corpus, fixture.Files...)
 }
 
@@ -743,9 +785,9 @@ func openSession(ctx context.Context, opener RepositoryOpener, directory, name s
 }
 
 // runMainScenario indexes the corpus, then exercises the whole read surface,
-// embeddings, metadata, a later declaration that resolves a textual fact, and
-// orphan external-node cleanup. It returns the baseline state digest the
-// boundary scenarios converge to.
+// metadata, a later declaration that resolves a textual fact, and orphan
+// external-node cleanup. It returns the baseline state digest the boundary
+// scenarios converge to.
 func runMainScenario(ctx context.Context, opener RepositoryOpener, directory string,
 	fixture Fixture, log *sessionLog) (string, error) {
 	session, err := openSession(ctx, opener, directory, "main", log)
@@ -775,63 +817,6 @@ func runMainScenario(ctx context.Context, opener RepositoryOpener, directory str
 		return "", err
 	}
 
-	// Embeddings for two candidate nodes; the second one's owner file is not
-	// touched again, the first one is updated in place.
-	istanbulID := "n:equivalence/folding/istanbul"
-	embeddings := []semantic.Embedding{
-		{NodeID: istanbulID, Model: equivalenceEmbeddingModel,
-			ContentHash: graph.StableID("embedding", istanbulID, "1"),
-			Vector:      []float32{0.25, -1.5, 2}, UpdatedAt: "2026-01-02T03:04:05Z"},
-		{NodeID: longNodeID("population", 0), Model: equivalenceEmbeddingModel,
-			ContentHash: graph.StableID("embedding", longNodeID("population", 0), "1"),
-			Vector:      []float32{-0.125, 3.5}, UpdatedAt: "2026-01-02T03:04:06Z"},
-	}
-	for _, embedding := range embeddings {
-		if err := repository.UpsertEmbedding(ctx, embedding); err != nil {
-			return "", err
-		}
-	}
-	embeddings[0].Vector = []float32{9, 8, 7, 6}
-	embeddings[0].ContentHash = graph.StableID("embedding", istanbulID, "2")
-	if err := repository.UpsertEmbedding(ctx, embeddings[0]); err != nil {
-		return "", err
-	}
-	if stored, err := repository.Embeddings(ctx, equivalenceEmbeddingModel); err != nil {
-		return "", err
-	} else {
-		session.record("embeddings", renderEmbeddings(stored))
-	}
-	if hashes, err := repository.EmbeddingHashes(ctx, equivalenceEmbeddingModel); err != nil {
-		return "", err
-	} else {
-		session.record("embedding-hashes", renderHashes(hashes))
-	}
-
-	// A third embedding whose node is not a semantic candidate must be removed
-	// by DeleteStaleEmbeddings while the candidate ones survive.
-	staleID := "n:equivalence/noncandidate"
-	staleEmbedding := semantic.Embedding{NodeID: staleID, Model: equivalenceEmbeddingModel,
-		ContentHash: graph.StableID("embedding", staleID, "1"),
-		Vector:      []float32{0.5}, UpdatedAt: "2026-01-02T03:04:07Z"}
-	if err := repository.UpsertEmbedding(ctx, staleEmbedding); err != nil {
-		return "", err
-	}
-	removed, err := repository.DeleteStaleEmbeddings(ctx, equivalenceEmbeddingModel)
-	if err != nil {
-		return "", err
-	}
-	session.record("stale-embeddings-removed", strconv.FormatInt(removed, 10))
-	if stored, err := repository.Embeddings(ctx, equivalenceEmbeddingModel); err != nil {
-		return "", err
-	} else {
-		session.record("embeddings-after-stale-removal", renderEmbeddings(stored))
-	}
-	if hashes, err := repository.EmbeddingHashes(ctx, equivalenceEmbeddingModel); err != nil {
-		return "", err
-	} else {
-		session.record("embedding-hashes-after-stale-removal", renderHashes(hashes))
-	}
-
 	if err := repository.SetMeta(ctx, "run_id", "equivalence-run-001"); err != nil {
 		return "", err
 	}
@@ -845,7 +830,7 @@ func runMainScenario(ctx context.Context, opener RepositoryOpener, directory str
 
 	// A later declaration converges the earlier textual fact onto the real
 	// node and orphans the materialized external placeholder.
-	if err := repository.ReplaceFile(ctx, convergenceBFile(4).Record, convergenceBFile(4).Parsed); err != nil {
+	if err := repository.ReplaceFile(ctx, convergenceBFile(5).Record, convergenceBFile(5).Parsed); err != nil {
 		return "", err
 	}
 	if err := repository.Reconcile(ctx); err != nil {
@@ -870,7 +855,7 @@ func runMainScenario(ctx context.Context, opener RepositoryOpener, directory str
 
 	// Replacing the orphan file with a different textual target orphans the
 	// old external node; reconciliation cleanup must remove it.
-	if err := repository.ReplaceFile(ctx, orphanReplacementFile(5).Record, orphanReplacementFile(5).Parsed); err != nil {
+	if err := repository.ReplaceFile(ctx, orphanReplacementFile(6).Record, orphanReplacementFile(6).Parsed); err != nil {
 		return "", err
 	}
 	if err := repository.Reconcile(ctx); err != nil {

@@ -53,7 +53,8 @@ var _ graph.ExternalNodeRepository = (*VariantRepository)(nil)
 var _ graph.InstrumentedIndexRepository = (*VariantRepository)(nil)
 var _ graph.InstrumentedWriteRepository = (*VariantRepository)(nil)
 var _ graph.ReconciliationStatusRepository = (*VariantRepository)(nil)
-var _ semantic.Repository = (*VariantRepository)(nil)
+var _ graph.CanonicalMessageRepository = (*VariantRepository)(nil)
+var _ semantic.CandidateRepository = (*VariantRepository)(nil)
 
 func (r *VariantRepository) Close() error { return errors.Join(r.statements.Close(), r.db.Close()) }
 func (r *VariantRepository) Path() string { return r.path }
@@ -88,67 +89,6 @@ func (r *VariantRepository) CandidateNodes(ctx context.Context) ([]graph.Node, e
 		return nil, err
 	}
 	return scanNodes(rows)
-}
-
-func (r *VariantRepository) Embeddings(ctx context.Context, model string) ([]semantic.Embedding, error) {
-	rows, err := r.statements.query(ctx, "ListEmbeddingsByModel", model)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	result := []semantic.Embedding{}
-	for rows.Next() {
-		var nodeID, rowModel, contentHash, vectorJSON, updatedAt string
-		var dimensions int64
-		if err := rows.Scan(&nodeID, &rowModel, &contentHash, &dimensions, &vectorJSON, &updatedAt); err != nil {
-			return nil, err
-		}
-		var vector []float32
-		if err := json.Unmarshal([]byte(vectorJSON), &vector); err != nil {
-			return nil, fmt.Errorf("decode embedding for %s: %w", nodeID, err)
-		}
-		if int64(len(vector)) != dimensions {
-			return nil, fmt.Errorf("embedding for %s declares %d dimensions but stores %d", nodeID, dimensions, len(vector))
-		}
-		result = append(result, semantic.Embedding{NodeID: nodeID, Model: rowModel,
-			ContentHash: contentHash, Vector: vector, UpdatedAt: updatedAt})
-	}
-	return result, rows.Err()
-}
-
-func (r *VariantRepository) EmbeddingHashes(ctx context.Context, model string) (map[string]string, error) {
-	rows, err := r.statements.query(ctx, "ListEmbeddingHashesByModel", model)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	result := map[string]string{}
-	for rows.Next() {
-		var nodeID, contentHash string
-		if err := rows.Scan(&nodeID, &contentHash); err != nil {
-			return nil, err
-		}
-		result[nodeID] = contentHash
-	}
-	return result, rows.Err()
-}
-
-func (r *VariantRepository) UpsertEmbedding(ctx context.Context, embedding semantic.Embedding) error {
-	vector, err := json.Marshal(embedding.Vector)
-	if err != nil {
-		return err
-	}
-	_, err = r.statements.exec(ctx, "UpsertEmbedding", embedding.NodeID, embedding.Model,
-		embedding.ContentHash, int64(len(embedding.Vector)), string(vector), embedding.UpdatedAt)
-	return err
-}
-
-func (r *VariantRepository) DeleteStaleEmbeddings(ctx context.Context, model string) (int64, error) {
-	result, err := r.statements.exec(ctx, "DeleteStaleEmbeddings", model)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
 }
 
 func (r *VariantRepository) Files(ctx context.Context) (map[string]graph.FileRecord, error) {
@@ -818,10 +758,18 @@ func (r *VariantRepository) ListNodesByKind(ctx context.Context, request graph.N
 	// The fragment is matched literally, so a name containing % or _ narrows
 	// the catalog instead of silently widening it.
 	fragment := foldName(request.Name)
+	prefixes := request.PathPrefixes
+	if prefixes == nil {
+		prefixes = []string{}
+	}
+	prefixesJSON, err := json.Marshal(prefixes)
+	if err != nil {
+		return nil, fmt.Errorf("encode node path prefixes: %w", err)
+	}
 	result := []graph.ScopedNode{}
 	for _, kind := range request.Kinds {
 		rows, err := r.statements.query(ctx, "ListNodesByKind", string(kind),
-			minExternal, maxExternal, fragment, limit)
+			minExternal, maxExternal, fragment, string(prefixesJSON), limit)
 		if err != nil {
 			return nil, err
 		}
@@ -834,6 +782,52 @@ func (r *VariantRepository) ListNodesByKind(ctx context.Context, request graph.N
 		}
 	}
 	return result, nil
+}
+
+// CanonicalMessages enumerates authoritative protocol-message declarations.
+// Filtering happens in SQLite before the deterministic order and bound, so
+// unrelated type declarations cannot hide or truncate message coverage.
+func (r *VariantRepository) CanonicalMessages(ctx context.Context, request graph.CanonicalMessageQuery) (graph.CanonicalMessagePage, error) {
+	if err := request.Validate(); err != nil {
+		return graph.CanonicalMessagePage{}, err
+	}
+	name, err := r.repositoryName(ctx)
+	if err != nil {
+		return graph.CanonicalMessagePage{}, err
+	}
+	if request.Repository != "" && request.Repository != name {
+		return graph.CanonicalMessagePage{Items: []graph.ScopedNode{}}, nil
+	}
+	if request.Limit == int(^uint(0)>>1) {
+		return graph.CanonicalMessagePage{}, fmt.Errorf("canonical message limit is too large")
+	}
+	prefixes := request.PathPrefixes
+	if prefixes == nil {
+		prefixes = []string{}
+	}
+	prefixesJSON, err := json.Marshal(prefixes)
+	if err != nil {
+		return graph.CanonicalMessagePage{}, fmt.Errorf("encode canonical message path prefixes: %w", err)
+	}
+	rows, err := r.statements.query(ctx, "ListCanonicalMessages",
+		strings.TrimSuffix(request.Package, "."), request.Message, string(prefixesJSON),
+		int64(request.Limit)+1)
+	if err != nil {
+		return graph.CanonicalMessagePage{}, err
+	}
+	nodes, err := scanNodes(rows)
+	if err != nil {
+		return graph.CanonicalMessagePage{}, err
+	}
+	page := graph.CanonicalMessagePage{Items: make([]graph.ScopedNode, 0, min(len(nodes), request.Limit))}
+	if len(nodes) > request.Limit {
+		page.Truncated = true
+		nodes = nodes[:request.Limit]
+	}
+	for _, node := range nodes {
+		page.Items = append(page.Items, graph.ScopedNode{Repository: name, Node: node})
+	}
+	return page, nil
 }
 
 func (r *VariantRepository) repositoryName(ctx context.Context) (string, error) {

@@ -78,6 +78,14 @@ WHERE kind = @kind
   AND external >= @min_external
   AND external <= @max_external
   AND (instr(name_folded, @name_fragment) > 0 OR instr(qualified_name_folded, @name_fragment) > 0)
+  AND (
+    @path_prefixes_json = '[]'
+    OR EXISTS (
+      SELECT 1 FROM json_each(@path_prefixes_json) AS prefix
+      WHERE nodes.path = prefix.value
+         OR substr(nodes.path, 1, length(prefix.value) + 1) = prefix.value || '/'
+    )
+  )
 ORDER BY qualified_name, id
 LIMIT @max_results;`,
 	"ListSemanticCandidateNodes": `SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line,
@@ -86,6 +94,31 @@ FROM nodes
 WHERE external = 0
   AND kind IN ('function', 'method', 'type', 'class', 'interface', 'endpoint')
 ORDER BY qualified_name, id;`,
+	"ListCanonicalMessages": `SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line,
+       properties, owner_file, external, name_folded, qualified_name_folded
+FROM nodes
+WHERE kind = 'type'
+  AND external = 0
+  AND json_extract(properties, '$.declaration') = 'message'
+  AND (
+      CAST(@package_name AS TEXT) = ''
+      OR substr(qualified_name, 1, length(CAST(@package_name AS TEXT)) + 1) = CAST(@package_name AS TEXT) || '.'
+  )
+  AND (
+      CAST(@message_name AS TEXT) = ''
+      OR name = CAST(@message_name AS TEXT)
+      OR qualified_name = CAST(@message_name AS TEXT)
+  )
+  AND (
+    @path_prefixes_json = '[]'
+    OR EXISTS (
+      SELECT 1 FROM json_each(@path_prefixes_json) AS prefix
+      WHERE nodes.path = prefix.value
+         OR substr(nodes.path, 1, length(prefix.value) + 1) = prefix.value || '/'
+    )
+  )
+ORDER BY qualified_name, id
+LIMIT @max_results;`,
 	"ListEdgesFrom": `SELECT id, fact_id, from_id, to_id, kind, path, line, column_no, end_line, properties, producer
 FROM edges WHERE from_key = ? ORDER BY kind, to_id, id;`,
 	"ListEdgesTo": `SELECT id, fact_id, from_id, to_id, kind, path, line, column_no, end_line, properties, producer

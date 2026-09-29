@@ -20,7 +20,7 @@ import (
 // named placeholders to numbered ?N parameters, so both kinds bind through
 // database/sql positional arguments against any SQLite schema.
 //
-// HighCardinality marks queries whose nodes/facts/edges/embeddings access
+// HighCardinality marks queries whose nodes/facts/edges access
 // must stay index-backed at graph scale. Queries that enumerate a bounded
 // queue table, aggregate a whole table through a covering index, or accept a
 // substring scan by design are false: flagging them would turn the accepted
@@ -143,7 +143,9 @@ func ValidatePlan(capture PlanCapture) PlanCapture {
 // "SCAN table USING INDEX ..." or "SCAN table USING COVERING INDEX ...";
 // everything else after "SCAN" walks the table b-tree itself. Subquery
 // materializations ("SCAN subquery N", "SCAN (subquery N)") are not table
-// scans: the planner explains their inner steps as separate rows.
+// scans: the planner explains their inner steps as separate rows. Neither are
+// virtual-table scans ("SCAN alias VIRTUAL TABLE INDEX ..."): a json_each
+// prefix filter walks a bounded in-memory ephemeris, never a graph table.
 func isUncoveredScan(detail string) bool {
 	rest, found := strings.CutPrefix(detail, "SCAN ")
 	if !found {
@@ -151,6 +153,9 @@ func isUncoveredScan(detail string) bool {
 	}
 	target := strings.ToLower(strings.TrimSpace(rest))
 	if strings.HasPrefix(target, "subquery") || strings.HasPrefix(target, "(") {
+		return false
+	}
+	if strings.Contains(detail, "VIRTUAL TABLE") {
 		return false
 	}
 	return !strings.Contains(detail, "USING INDEX") && !strings.Contains(detail, "USING COVERING INDEX")
@@ -350,7 +355,6 @@ const (
 	planName          = "Function000001"
 	planQualifiedName = "pkg.Function000001"
 	planRelation      = "calls"
-	planModel         = "test-model"
 	planLimit         = 25
 )
 
@@ -628,47 +632,13 @@ ORDER BY edges.kind, edges.from_id, edges.id;`,
 			SQL:  `SELECT kind, COUNT(*) AS count FROM edges GROUP BY kind ORDER BY kind;`,
 		},
 
-		// embeddings.sql
+		// candidates.sql
 		{
 			Name: "ListSemanticCandidateNodes",
 			SQL: `SELECT * FROM nodes
 WHERE external = 0
   AND kind IN ('function', 'method', 'type', 'class', 'interface', 'endpoint')
 ORDER BY qualified_name, id;`,
-			HighCardinality: true,
-		},
-		{
-			Name:            "ListEmbeddingsByModel",
-			SQL:             `SELECT * FROM embeddings WHERE model = ? ORDER BY node_id;`,
-			Params:          []any{planModel},
-			HighCardinality: true,
-		},
-		{
-			Name:            "ListEmbeddingHashesByModel",
-			SQL:             `SELECT node_id, content_hash FROM embeddings WHERE model = ? ORDER BY node_id;`,
-			Params:          []any{planModel},
-			HighCardinality: true,
-		},
-		{
-			Name: "UpsertEmbedding",
-			SQL: `INSERT INTO embeddings(node_id, model, content_hash, dimensions, vector_json, updated_at)
-VALUES (?, ?, ?, ?, ?, ?)
-ON CONFLICT(node_id, model) DO UPDATE SET
-    content_hash = excluded.content_hash,
-    dimensions = excluded.dimensions,
-    vector_json = excluded.vector_json,
-    updated_at = excluded.updated_at;`,
-			Params: []any{planNodeID, planModel, "0123456789abcdef", 3, "[0.25,0.5,0.75]", "2026-01-01T00:00:00Z"},
-		},
-		{
-			Name: "DeleteStaleEmbeddings",
-			SQL: `DELETE FROM embeddings
-WHERE model = ? AND node_id NOT IN (
-    SELECT id FROM nodes
-    WHERE external = 0
-      AND kind IN ('function', 'method', 'type', 'class', 'interface', 'endpoint')
-);`,
-			Params:          []any{planModel},
 			HighCardinality: true,
 		},
 
@@ -883,9 +853,45 @@ WHERE kind = @kind
   AND external >= @min_external
   AND external <= @max_external
   AND (instr(name_folded, @name_fragment) > 0 OR instr(qualified_name_folded, @name_fragment) > 0)
+  AND (
+    @path_prefixes_json = '[]'
+    OR EXISTS (
+      SELECT 1 FROM json_each(@path_prefixes_json) AS prefix
+      WHERE nodes.path = prefix.value
+         OR substr(nodes.path, 1, length(prefix.value) + 1) = prefix.value || '/'
+    )
+  )
 ORDER BY qualified_name, id
 LIMIT @max_results;`,
-			Params:          []any{"function", 0, 0, planName, planLimit},
+			Params:          []any{"function", 0, 0, planName, "[]", planLimit},
+			HighCardinality: true,
+		},
+		{
+			Name: "ListCanonicalMessages",
+			SQL: `SELECT * FROM nodes
+WHERE kind = 'type'
+  AND external = 0
+  AND json_extract(properties, '$.declaration') = 'message'
+  AND (
+      CAST(@package_name AS TEXT) = ''
+      OR substr(qualified_name, 1, length(CAST(@package_name AS TEXT)) + 1) = CAST(@package_name AS TEXT) || '.'
+  )
+  AND (
+      CAST(@message_name AS TEXT) = ''
+      OR name = CAST(@message_name AS TEXT)
+      OR qualified_name = CAST(@message_name AS TEXT)
+  )
+  AND (
+    @path_prefixes_json = '[]'
+    OR EXISTS (
+      SELECT 1 FROM json_each(@path_prefixes_json) AS prefix
+      WHERE nodes.path = prefix.value
+         OR substr(nodes.path, 1, length(prefix.value) + 1) = prefix.value || '/'
+    )
+  )
+ORDER BY qualified_name, id
+LIMIT @max_results;`,
+			Params:          []any{"pkg", "Message", "[]", planLimit},
 			HighCardinality: true,
 		},
 		{
