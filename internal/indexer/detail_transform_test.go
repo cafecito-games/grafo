@@ -39,7 +39,10 @@ func TestBenchmarkTransformSwitchesProfilesAndConverges(t *testing.T) {
 		t.Fatalf("full assigns = %d", full.Counts.ByEdge[string(graph.EdgeAssigns)])
 	}
 
-	structuralProjector := detailprofile.NewProjector(detailprofile.Options{Profile: detailprofile.ProfileStructural})
+	structuralProjector, err := detailprofile.NewProjector(detailprofile.Options{Profile: detailprofile.ProfileStructural})
+	if err != nil {
+		t.Fatal(err)
+	}
 	structural, err := service.Run(ctx, project, indexer.Options{ResultTransform: structuralProjector})
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +56,28 @@ func TestBenchmarkTransformSwitchesProfilesAndConverges(t *testing.T) {
 	}
 	if unchanged.Unchanged != 1 || len(unchanged.Updated) != 0 || unchanged.Counts.Nodes != structural.Counts.Nodes {
 		t.Fatalf("structural refresh did not converge: %#v", unchanged)
+	}
+	fixturePath := filepath.Join(root, "app.profile")
+	if err := os.WriteFile(fixturePath, []byte("fixture changed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	edited, err := service.Run(ctx, project, indexer.Options{ResultTransform: structuralProjector})
+	if err != nil || len(edited.Updated) != 1 || edited.Counts.ByEdge[string(graph.EdgeAssigns)] != 0 {
+		t.Fatalf("structural edit = %#v, %v", edited, err)
+	}
+	if err := os.Remove(fixturePath); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := service.Run(ctx, project, indexer.Options{ResultTransform: structuralProjector})
+	if err != nil || len(deleted.Removed) != 1 || deleted.Counts.Files != 0 {
+		t.Fatalf("structural delete = %#v, %v", deleted, err)
+	}
+	if err := os.WriteFile(fixturePath, []byte("fixture"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	profileRestored, err := service.Run(ctx, project, indexer.Options{ResultTransform: structuralProjector})
+	if err != nil || len(profileRestored.Updated) != 1 || profileRestored.Counts.Nodes != structural.Counts.Nodes {
+		t.Fatalf("structural restore = %#v, %v", profileRestored, err)
 	}
 
 	restored, err := service.Run(ctx, project, indexer.Options{})

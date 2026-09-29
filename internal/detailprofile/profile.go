@@ -2,12 +2,16 @@ package detailprofile
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	"github.com/cafecito-games/grafo/internal/pathscope"
 	"github.com/cafecito-games/grafo/internal/projectconfig"
 )
 
@@ -54,14 +58,41 @@ type Decision struct {
 	Reason   string  `json:"reason"`
 }
 
-type Projector struct{ options Options }
+type Projector struct {
+	options Options
+	mu      sync.Mutex
+	matched map[string]bool
+}
 
-func NewProjector(options Options) *Projector { return &Projector{options: options} }
+func NewProjector(options Options) (*Projector, error) {
+	if options.Profile == "" {
+		options.Profile = ProfileFull
+	}
+	if options.Profile != ProfileFull && options.Profile != ProfileStructural && options.Profile != ProfileScopedFull {
+		return nil, fmt.Errorf("unknown detail profile %q", options.Profile)
+	}
+	normalized := make([]string, 0, len(options.FullDetailRoots))
+	seen := map[string]bool{}
+	for _, pattern := range options.FullDetailRoots {
+		value, err := pathscope.NormalizeGlob(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("invalid full-detail pattern %q: %w", pattern, err)
+		}
+		if !seen[value] {
+			seen[value] = true
+			normalized = append(normalized, value)
+		}
+	}
+	if options.Profile == ProfileScopedFull && len(normalized) == 0 {
+		return nil, fmt.Errorf("scoped-full-v1 requires at least one full-detail pattern")
+	}
+	sort.Strings(normalized)
+	options.FullDetailRoots = normalized
+	return &Projector{options: options, matched: map[string]bool{}}, nil
+}
 
 func (p *Projector) SemanticKey() string {
-	roots := append([]string(nil), p.options.FullDetailRoots...)
-	sort.Strings(roots)
-	return "detail-profile-v1:" + string(p.options.Profile) + ":" + p.options.Membership.SemanticKey() + ":" + strings.Join(roots, ",")
+	return "detail-profile-v1:" + string(p.options.Profile) + ":" + p.options.Membership.SemanticKey() + ":" + strings.Join(p.options.FullDetailRoots, ",")
 }
 
 func (p *Projector) Project(ctx context.Context, input parserapi.Input, parsed graph.ParseResult) (graph.ParseResult, Decision, error) {
@@ -74,16 +105,39 @@ func (p *Projector) Project(ctx context.Context, input parserapi.Input, parsed g
 	profile := p.options.Profile
 	if profile == ProfileScopedFull {
 		profile = ProfileStructural
-		for _, root := range p.options.FullDetailRoots {
-			root = strings.Trim(strings.TrimSpace(root), "/")
-			if root == "." || input.Path == root || strings.HasPrefix(input.Path, root+"/") {
+		for _, pattern := range p.options.FullDetailRoots {
+			if pathscope.MatchGlob(pattern, input.Path) {
 				profile = ProfileFull
+				p.mu.Lock()
+				p.matched[pattern] = true
+				p.mu.Unlock()
 				break
 			}
 		}
 	}
 	result, err := project(profile, parsed)
 	return result, Decision{Profile: profile, Reason: "profile selected after index-scope membership"}, err
+}
+
+// ValidateCoverage rejects a scoped-full benchmark whose validated patterns
+// matched no indexed input. A typo can therefore never silently measure the
+// all-structural candidate.
+func (p *Projector) ValidateCoverage() error {
+	if p.options.Profile != ProfileScopedFull {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var unmatched []string
+	for _, pattern := range p.options.FullDetailRoots {
+		if !p.matched[pattern] {
+			unmatched = append(unmatched, pattern)
+		}
+	}
+	if len(unmatched) > 0 {
+		return fmt.Errorf("full-detail patterns matched no indexed files: %s", strings.Join(unmatched, ", "))
+	}
+	return nil
 }
 
 func (p *Projector) Transform(ctx context.Context, input parserapi.Input, parsed graph.ParseResult) (graph.ParseResult, error) {
@@ -248,6 +302,160 @@ func matchingNodeIDs(nodes []graph.Node, selector string, kind graph.NodeKind) [
 	}
 	sort.Strings(result)
 	return result
+}
+
+// AggregateResolutionValidator proves retained named locators against the
+// whole corpus. Per-file validation cannot see declarations owned by another
+// parser result, which is precisely where projection can manufacture a unique
+// match or a guessed external boundary.
+type AggregateResolutionValidator struct {
+	full      map[resolutionKey]candidateSignature
+	projected map[resolutionKey]candidateSignature
+	locators  map[namedLocator]string
+}
+
+type resolutionKey struct {
+	form  byte
+	kind  graph.NodeKind
+	value string
+}
+
+type namedLocator struct {
+	value     string
+	kind      graph.NodeKind
+	edge      graph.EdgeKind
+	direction endpointDirection
+}
+
+type endpointDirection byte
+
+const (
+	sourceEndpoint endpointDirection = iota
+	targetEndpoint
+)
+
+type candidateSignature struct {
+	count uint64
+	sum   [4]uint64
+}
+
+func NewAggregateResolutionValidator() *AggregateResolutionValidator {
+	return &AggregateResolutionValidator{
+		full: map[resolutionKey]candidateSignature{}, projected: map[resolutionKey]candidateSignature{},
+		locators: map[namedLocator]string{},
+	}
+}
+
+func (v *AggregateResolutionValidator) Observe(full, projected graph.ParseResult) {
+	indexCandidates(v.full, full.Nodes)
+	indexCandidates(v.projected, projected.Nodes)
+	for _, fact := range projected.Facts {
+		if fact.FromID == "" && fact.Source != "" {
+			locator := namedLocator{value: fact.Source, kind: fact.SourceKind, edge: fact.Kind, direction: sourceEndpoint}
+			if _, exists := v.locators[locator]; !exists {
+				v.locators[locator] = fact.ID
+			}
+		}
+		if fact.TargetID == "" && fact.Target != "" {
+			locator := namedLocator{value: fact.Target, kind: fact.TargetKind, edge: fact.Kind, direction: targetEndpoint}
+			if _, exists := v.locators[locator]; !exists {
+				v.locators[locator] = fact.ID
+			}
+		}
+	}
+}
+
+func (v *AggregateResolutionValidator) Validate() error {
+	locators := make([]namedLocator, 0, len(v.locators))
+	for locator := range v.locators {
+		locators = append(locators, locator)
+	}
+	sort.Slice(locators, func(i, j int) bool {
+		if locators[i].kind != locators[j].kind {
+			return locators[i].kind < locators[j].kind
+		}
+		if locators[i].edge != locators[j].edge {
+			return locators[i].edge < locators[j].edge
+		}
+		if locators[i].direction != locators[j].direction {
+			return locators[i].direction < locators[j].direction
+		}
+		return locators[i].value < locators[j].value
+	})
+	for _, locator := range locators {
+		before := resolutionCandidateSignature(v.full, locator)
+		after := resolutionCandidateSignature(v.projected, locator)
+		if before != after {
+			return fmt.Errorf("fact %q aggregate resolution drift for %q (%s %s): candidate count %d -> %d", v.locators[locator], locator.value, locator.edge, directionName(locator.direction), before.count, after.count)
+		}
+	}
+	return nil
+}
+
+func indexCandidates(index map[resolutionKey]candidateSignature, nodes []graph.Node) {
+	for _, node := range nodes {
+		digest := sha256.Sum256([]byte(node.ID))
+		for _, kind := range []graph.NodeKind{"", node.Kind} {
+			for _, candidate := range []resolutionKey{
+				{form: 'q', kind: kind, value: node.QualifiedName},
+				{form: 'n', kind: kind, value: node.Name},
+			} {
+				if candidate.value == "" {
+					continue
+				}
+				// FindNodesExact's name arm excludes a declaration already
+				// returned by the qualified-name arm.
+				if candidate.form == 'n' && node.QualifiedName == node.Name {
+					continue
+				}
+				signature := index[candidate]
+				addCandidate(&signature, digest)
+				index[candidate] = signature
+			}
+		}
+	}
+}
+
+func addCandidate(signature *candidateSignature, digest [32]byte) {
+	signature.count++
+	for part := range signature.sum {
+		signature.sum[part] += binary.LittleEndian.Uint64(digest[part*8 : (part+1)*8])
+	}
+}
+
+func mergeCandidateSignature(left, right candidateSignature) candidateSignature {
+	left.count += right.count
+	for part := range left.sum {
+		left.sum[part] += right.sum[part]
+	}
+	return left
+}
+
+func resolutionCandidateSignature(index map[resolutionKey]candidateSignature, locator namedLocator) candidateSignature {
+	if locator.kind != "" || locator.direction == sourceEndpoint {
+		return signatureForKind(index, locator.value, locator.kind)
+	}
+	var result candidateSignature
+	for _, kind := range graph.NodeKinds() {
+		if graph.AllowsResolutionKind(locator.edge, kind) {
+			result = mergeCandidateSignature(result, signatureForKind(index, locator.value, kind))
+		}
+	}
+	return result
+}
+
+func signatureForKind(index map[resolutionKey]candidateSignature, value string, kind graph.NodeKind) candidateSignature {
+	return mergeCandidateSignature(
+		index[resolutionKey{form: 'q', kind: kind, value: value}],
+		index[resolutionKey{form: 'n', kind: kind, value: value}],
+	)
+}
+
+func directionName(direction endpointDirection) string {
+	if direction == sourceEndpoint {
+		return "source"
+	}
+	return "target"
 }
 
 type CapabilityError struct {

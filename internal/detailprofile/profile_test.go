@@ -34,9 +34,22 @@ func TestMatrixClassifiesClosedVocabulariesAndProductionProducers(t *testing.T) 
 	}
 }
 
+func TestMatrixRejectsOperationAnchorThatDoesNotNameAFunction(t *testing.T) {
+	matrix := detailprofile.Matrix()
+	for index := range matrix.Operations {
+		if matrix.Operations[index].Name == "search" {
+			matrix.Operations[index].Anchor.Line--
+			break
+		}
+	}
+	if err := matrix.Validate(); err == nil || !strings.Contains(err.Error(), "function declaration") {
+		t.Fatalf("invalid operation anchor error = %v", err)
+	}
+}
+
 func TestFullProjectionPreservesParseResultExactly(t *testing.T) {
 	input := fixture()
-	got, err := detailprofile.NewProjector(detailprofile.Options{Profile: detailprofile.ProfileFull}).Transform(
+	got, err := mustProjector(t, detailprofile.Options{Profile: detailprofile.ProfileFull}).Transform(
 		context.Background(), parserapi.Input{Path: "app/main.go"}, input)
 	if err != nil {
 		t.Fatal(err)
@@ -48,7 +61,7 @@ func TestFullProjectionPreservesParseResultExactly(t *testing.T) {
 
 func TestStructuralProjectionDropsLocalPropagationAndPreservesClosure(t *testing.T) {
 	input := fixture()
-	got, err := detailprofile.NewProjector(detailprofile.Options{Profile: detailprofile.ProfileStructural}).Transform(
+	got, err := mustProjector(t, detailprofile.Options{Profile: detailprofile.ProfileStructural}).Transform(
 		context.Background(), parserapi.Input{Path: "app/main.go"}, input)
 	if err != nil {
 		t.Fatal(err)
@@ -92,11 +105,33 @@ func TestProjectionRejectsDanglingExactEndpointsAndResolutionDrift(t *testing.T)
 	}
 }
 
+func TestAggregateResolutionRejectsCrossFileAmbiguityAndGuessedExternalDrift(t *testing.T) {
+	projector := mustProjector(t, detailprofile.Options{Profile: detailprofile.ProfileStructural})
+	caller := graph.ParseResult{Nodes: []graph.Node{{ID: "caller", Kind: graph.KindFunction, Name: "Caller", QualifiedName: "app.Caller", Language: "go"}}, Facts: []graph.Fact{{
+		ID: "cross-file", FromID: "caller", Kind: graph.EdgeCalls, Target: "value", TargetKind: graph.KindVariable,
+	}}}
+	declaration := graph.ParseResult{Nodes: []graph.Node{{ID: "value", Kind: graph.KindVariable, Name: "value", QualifiedName: "other.value", Language: "typescript"}}}
+	projectedCaller, err := projector.Transform(context.Background(), parserapi.Input{Path: "app.go"}, caller)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectedDeclaration, err := projector.Transform(context.Background(), parserapi.Input{Path: "other.ts"}, declaration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validator := detailprofile.NewAggregateResolutionValidator()
+	validator.Observe(caller, projectedCaller)
+	validator.Observe(declaration, projectedDeclaration)
+	if err := validator.Validate(); err == nil || !strings.Contains(err.Error(), "aggregate resolution drift") {
+		t.Fatalf("aggregate validation error = %v", err)
+	}
+}
+
 func TestScopedFullComposesWithIndexScopeBeforeDetailProjection(t *testing.T) {
-	projector := detailprofile.NewProjector(detailprofile.Options{
+	projector := mustProjector(t, detailprofile.Options{
 		Profile:         detailprofile.ProfileScopedFull,
 		Membership:      projectconfig.IndexScope{Include: []string{"app/**", "vendor/**"}, Exclude: []string{"app/generated/**"}},
-		FullDetailRoots: []string{"app"},
+		FullDetailRoots: []string{"app/**"},
 	})
 	for _, test := range []struct {
 		path       string
@@ -127,6 +162,19 @@ func TestScopedFullComposesWithIndexScopeBeforeDetailProjection(t *testing.T) {
 	}
 }
 
+func TestScopedFullValidatesGlobSyntaxAndRequiresEveryPatternToMatch(t *testing.T) {
+	if _, err := detailprofile.NewProjector(detailprofile.Options{Profile: detailprofile.ProfileScopedFull, FullDetailRoots: []string{"apps/**api"}}); err == nil {
+		t.Fatal("invalid #108 glob syntax was accepted")
+	}
+	projector := mustProjector(t, detailprofile.Options{Profile: detailprofile.ProfileScopedFull, FullDetailRoots: []string{"apps/api/**", "apps/missing/**"}})
+	if _, _, err := projector.Project(context.Background(), parserapi.Input{Path: "apps/api/main.go"}, fixture()); err != nil {
+		t.Fatal(err)
+	}
+	if err := projector.ValidateCoverage(); err == nil || !strings.Contains(err.Error(), "apps/missing/**") {
+		t.Fatalf("coverage validation error = %v", err)
+	}
+}
+
 func TestCapabilityGateFailsBeforeRepositoryReadAndAttributesFederationMembers(t *testing.T) {
 	reads := 0
 	err := detailprofile.RunOperation(detailprofile.ProfileCapabilities(detailprofile.ProfileStructural), "impact", func() error {
@@ -151,8 +199,36 @@ func TestCapabilityGateFailsBeforeRepositoryReadAndAttributesFederationMembers(t
 	}
 }
 
+func TestEveryClassifiedOperationPreflightsAgainstEachProfile(t *testing.T) {
+	for _, profile := range []detailprofile.Profile{detailprofile.ProfileFull, detailprofile.ProfileStructural, detailprofile.ProfileScopedFull} {
+		capabilities := detailprofile.ProfileCapabilities(profile)
+		for _, operation := range detailprofile.Matrix().Operations {
+			t.Run(string(profile)+"/"+operation.Name, func(t *testing.T) {
+				reads := 0
+				err := detailprofile.RunOperation(capabilities, operation.Name, func() error {
+					reads++
+					return nil
+				})
+				claimed := true
+				for _, capability := range operation.Capabilities {
+					claimed = claimed && capabilities.Has(capability)
+				}
+				if claimed && (err != nil || reads != 1) {
+					t.Fatalf("claimed operation result = (%v, reads=%d)", err, reads)
+				}
+				if !claimed {
+					var capabilityErr *detailprofile.CapabilityError
+					if !errors.As(err, &capabilityErr) || reads != 0 {
+						t.Fatalf("unsupported operation result = (%v, reads=%d)", err, reads)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestProjectionIsDeterministicAndHonorsCancellation(t *testing.T) {
-	projector := detailprofile.NewProjector(detailprofile.Options{Profile: detailprofile.ProfileStructural})
+	projector := mustProjector(t, detailprofile.Options{Profile: detailprofile.ProfileStructural})
 	first, err := projector.Transform(context.Background(), parserapi.Input{Path: "app/main.go"}, fixture())
 	if err != nil {
 		t.Fatal(err)
@@ -191,6 +267,15 @@ func fixture() graph.ParseResult {
 		{ID: "request", FromID: "caller", Kind: graph.EdgeRequests, TargetID: "endpoint", OwnerFile: "app/main.go"},
 		{ID: "tests", FromID: "test", Kind: graph.EdgeTests, TargetID: "caller", OwnerFile: "app/main.go"},
 	}, Diagnostics: []graph.Diagnostic{{Path: "app/main.go", Level: "warning", Message: "fixture"}}}
+}
+
+func mustProjector(t *testing.T, options detailprofile.Options) *detailprofile.Projector {
+	t.Helper()
+	projector, err := detailprofile.NewProjector(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return projector
 }
 
 func stringifyNodes(values []graph.NodeKind) []string {

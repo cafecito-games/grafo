@@ -39,6 +39,9 @@ type BenchmarkOptions struct {
 	Samples         int
 	Baseline        string
 	KeepDatabases   bool
+	// AllowDirtyGrafo exists only so repository tests can exercise the harness
+	// while their own uncommitted source is under test. The command never sets it.
+	AllowDirtyGrafo bool
 }
 
 type BenchmarkReport struct {
@@ -68,12 +71,14 @@ type GitProvenance struct {
 }
 
 type BenchmarkEnvironment struct {
-	CPUQuota       string `json:"cpu_quota"`
-	EffectiveCPUs  int64  `json:"effective_cpus"`
-	MemoryMaxBytes int64  `json:"memory_max_bytes"`
-	Filesystem     string `json:"filesystem"`
-	OutputPath     string `json:"output_path"`
-	RSSMethod      string `json:"rss_method"`
+	CPUQuota                 string `json:"cpu_quota"`
+	EffectiveCPUs            int64  `json:"effective_cpus"`
+	MemoryMaxBytes           int64  `json:"memory_max_bytes"`
+	Filesystem               string `json:"filesystem"`
+	FilesystemDevice         uint64 `json:"filesystem_device"`
+	FilesystemAvailableBytes uint64 `json:"filesystem_available_bytes"`
+	OutputPath               string `json:"output_path"`
+	RSSMethod                string `json:"rss_method"`
 }
 
 type ScopeEvidence struct {
@@ -178,10 +183,16 @@ func RunBenchmark(ctx context.Context, options BenchmarkOptions) (BenchmarkRepor
 	if err != nil {
 		return BenchmarkReport{}, err
 	}
-	projector := NewProjector(Options{Profile: options.Profile, Membership: configuration.Index, FullDetailRoots: options.FullDetailRoots})
+	projector, err := NewProjector(Options{Profile: options.Profile, Membership: configuration.Index, FullDetailRoots: options.FullDetailRoots})
+	if err != nil {
+		return BenchmarkReport{}, err
+	}
 	grafo, err := inspectGit(ctx, ".")
 	if err != nil {
 		return BenchmarkReport{}, fmt.Errorf("inspect Grafo: %w", err)
+	}
+	if grafo.Dirty && !options.AllowDirtyGrafo {
+		return BenchmarkReport{}, fmt.Errorf("grafo worktree %s is dirty; refusing incomparable measurement", grafo.Path)
 	}
 	environment, err := inspectEnvironment(output)
 	if err != nil {
@@ -257,6 +268,11 @@ func runDetailSample(ctx context.Context, root, rawDir string, number int, proje
 		rss.stop()
 		return DetailSample{}, coldErr
 	}
+	if err := recorder.validate(); err != nil {
+		_ = repository.Close()
+		rss.stop()
+		return DetailSample{}, err
+	}
 	incrementalStarted := time.Now()
 	incremental, incrementalErr := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{ResultTransform: recorder})
 	incrementalElapsed := time.Since(incrementalStarted).Nanoseconds()
@@ -301,16 +317,17 @@ func runDetailSample(ctx context.Context, root, rawDir string, number int, proje
 }
 
 type recordingTransform struct {
-	projector *Projector
-	mu        sync.Mutex
-	value     ProjectionCounts
+	projector  *Projector
+	mu         sync.Mutex
+	value      ProjectionCounts
+	resolution *AggregateResolutionValidator
 }
 
 func newRecordingTransform(projector *Projector) *recordingTransform {
 	return &recordingTransform{projector: projector, value: ProjectionCounts{
 		InputNodesByKind: map[string]int{}, OutputNodesByKind: map[string]int{}, InputFactsByKind: map[string]int{}, OutputFactsByKind: map[string]int{},
 		InputFactsByProducer: map[string]int{}, OutputFactsByProducer: map[string]int{},
-	}}
+	}, resolution: NewAggregateResolutionValidator()}
 }
 
 func (r *recordingTransform) SemanticKey() string { return r.projector.SemanticKey() }
@@ -329,6 +346,7 @@ func (r *recordingTransform) Transform(ctx context.Context, input parserapi.Inpu
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.resolution.Observe(parsed, projected)
 	r.value.InputNodes += len(parsed.Nodes)
 	r.value.OutputNodes += len(projected.Nodes)
 	r.value.InputFacts += len(parsed.Facts)
@@ -362,6 +380,15 @@ func (r *recordingTransform) counts() ProjectionCounts {
 	return r.value
 }
 
+func (r *recordingTransform) validate() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.resolution.Validate(); err != nil {
+		return err
+	}
+	return r.projector.ValidateCoverage()
+}
+
 func capabilityFingerprints(ctx context.Context, path string) (map[Capability]string, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -382,6 +409,7 @@ func capabilityFingerprints(ctx context.Context, path string) (map[Capability]st
 		writers[capability] = sha256.New()
 	}
 	nodeKinds := map[string]string{}
+	externalNodes := map[string]string{}
 	rows, err := db.QueryContext(ctx, `SELECT id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, external FROM nodes ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -394,7 +422,8 @@ func capabilityFingerprints(ctx context.Context, path string) (map[Capability]st
 			return nil, err
 		}
 		nodeKinds[id] = kind
-		if kind == string(graph.KindExternal) {
+		if external != 0 {
+			externalNodes[id] = strings.Join([]string{"X", id, kind, name, qualified, language, sourcePath, strconv.FormatInt(line, 10), strconv.FormatInt(column, 10), strconv.FormatInt(endLine, 10), properties, strconv.FormatInt(external, 10)}, "\x00") + "\n"
 			continue
 		}
 		encoded := strings.Join([]string{"N", id, kind, name, qualified, language, sourcePath, strconv.FormatInt(line, 10), strconv.FormatInt(column, 10), strconv.FormatInt(endLine, 10), properties, strconv.FormatInt(external, 10)}, "\x00") + "\n"
@@ -429,6 +458,12 @@ func capabilityFingerprints(ctx context.Context, path string) (map[Capability]st
 				continue
 			}
 			_, _ = writers[capability].Write([]byte(encoded))
+			if external := externalNodes[fromID]; external != "" {
+				_, _ = writers[capability].Write([]byte(external))
+			}
+			if external := externalNodes[toID]; external != "" {
+				_, _ = writers[capability].Write([]byte(external))
+			}
 		}
 	}
 	if err := rows.Close(); err != nil {
@@ -508,8 +543,14 @@ func compareBenchmark(baseline, candidate BenchmarkReport) (ProfileComparison, e
 	if baseline.Profile != ProfileFull {
 		return ProfileComparison{}, fmt.Errorf("baseline profile is %q, want full", baseline.Profile)
 	}
-	if baseline.Corpus.Commit != candidate.Corpus.Commit || baseline.Scope.SemanticKey != candidate.Scope.SemanticKey || baseline.Environment.EffectiveCPUs != candidate.Environment.EffectiveCPUs || baseline.Environment.MemoryMaxBytes != candidate.Environment.MemoryMaxBytes {
-		return ProfileComparison{}, fmt.Errorf("baseline corpus, scope, CPU, or memory provenance differs")
+	if baseline.Grafo.Dirty || candidate.Grafo.Dirty || baseline.Corpus.Dirty || candidate.Corpus.Dirty {
+		return ProfileComparison{}, fmt.Errorf("baseline or candidate has dirty Grafo/corpus provenance")
+	}
+	if baseline.Grafo.Commit != candidate.Grafo.Commit || baseline.Corpus.Commit != candidate.Corpus.Commit || baseline.Corpus.Path != candidate.Corpus.Path ||
+		baseline.Scope.SemanticKey != candidate.Scope.SemanticKey || baseline.Environment.CPUQuota != candidate.Environment.CPUQuota ||
+		baseline.Environment.MemoryMaxBytes != candidate.Environment.MemoryMaxBytes || baseline.Environment.Filesystem != candidate.Environment.Filesystem ||
+		baseline.Environment.FilesystemDevice != candidate.Environment.FilesystemDevice || baseline.Environment.OutputPath != candidate.Environment.OutputPath {
+		return ProfileComparison{}, fmt.Errorf("baseline Grafo/corpus, scope, cgroup, filesystem, or output provenance differs")
 	}
 	comparison := ProfileComparison{BaselineProfile: baseline.Profile, BaselineCommit: baseline.Grafo.Commit}
 	comparison.SizeSavingsPercent = percentDecrease(baseline.Summary.MedianCompactedBytes, candidate.Summary.MedianCompactedBytes)
@@ -656,8 +697,17 @@ func inspectEnvironment(output string) (BenchmarkEnvironment, error) {
 	if err := syscall.Statfs(output, &stat); err != nil {
 		return BenchmarkEnvironment{}, err
 	}
+	outputInfo, err := os.Stat(output)
+	if err != nil {
+		return BenchmarkEnvironment{}, err
+	}
+	statInfo, ok := outputInfo.Sys().(*syscall.Stat_t)
+	if !ok {
+		return BenchmarkEnvironment{}, fmt.Errorf("output filesystem device identity is unavailable")
+	}
 	return BenchmarkEnvironment{CPUQuota: strings.TrimSpace(string(cpuRaw)), EffectiveCPUs: cpus, MemoryMaxBytes: memory,
-		Filesystem: fmt.Sprintf("type=0x%x block_size=%d available_bytes=%d", stat.Type, stat.Bsize, stat.Bavail*uint64(stat.Bsize)), OutputPath: output,
+		Filesystem: fmt.Sprintf("type=0x%x block_size=%d", stat.Type, stat.Bsize), FilesystemDevice: statInfo.Dev,
+		FilesystemAvailableBytes: stat.Bavail * uint64(stat.Bsize), OutputPath: output,
 		RSSMethod: "50ms samples of /proc/self/status VmRSS; absolute process peak includes Go runtime state retained from earlier samples"}, nil
 }
 

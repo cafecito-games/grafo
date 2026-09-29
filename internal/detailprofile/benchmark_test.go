@@ -25,7 +25,7 @@ func TestBenchmarkProducesComparableRawProfileEvidence(t *testing.T) {
 	output := t.TempDir()
 
 	full, err := detailprofile.RunBenchmark(context.Background(), detailprofile.BenchmarkOptions{
-		Repository: root, Output: output, Profile: detailprofile.ProfileFull, Samples: 1,
+		Repository: root, Output: output, Profile: detailprofile.ProfileFull, Samples: 1, AllowDirtyGrafo: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -38,13 +38,15 @@ func TestBenchmarkProducesComparableRawProfileEvidence(t *testing.T) {
 	}
 
 	structural, err := detailprofile.RunBenchmark(context.Background(), detailprofile.BenchmarkOptions{
-		Repository: root, Output: output, Profile: detailprofile.ProfileStructural, Samples: 1, Baseline: full.Artifacts.Report,
+		Repository: root, Output: output, Profile: detailprofile.ProfileStructural, Samples: 1, AllowDirtyGrafo: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if structural.Comparison == nil || !structural.Comparison.ClaimedEquivalent {
-		t.Fatalf("structural comparison = %#v", structural.Comparison)
+	for capability := range detailprofile.ProfileCapabilities(detailprofile.ProfileStructural) {
+		if full.Equivalence[capability] != structural.Equivalence[capability] {
+			t.Fatalf("claimed capability %s differs", capability)
+		}
 	}
 	if structural.Samples[0].Projection.OutputNodes >= structural.Samples[0].Projection.InputNodes {
 		t.Fatalf("structural projection did not reduce local evidence: %#v", structural.Samples[0].Projection)

@@ -5,6 +5,12 @@ package detailprofile
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -100,6 +106,7 @@ func (m EvidenceMatrix) Validate() error {
 		return fmt.Errorf("matrix schema %q, want %q", m.Schema, MatrixSchema)
 	}
 	known := map[Capability]bool{}
+	anchorFiles := map[string][]string{}
 	for _, capability := range capabilities {
 		known[capability] = true
 	}
@@ -125,6 +132,9 @@ func (m EvidenceMatrix) Validate() error {
 				if anchor.Path == "" || anchor.Line <= 0 {
 					return fmt.Errorf("%s %q has invalid anchor %#v", category, item.Name, anchor)
 				}
+				if err := validateAnchor(anchor, anchorFiles); err != nil {
+					return fmt.Errorf("%s %q: %w", category, item.Name, err)
+				}
 			}
 		}
 		return nil
@@ -148,6 +158,9 @@ func (m EvidenceMatrix) Validate() error {
 			return fmt.Errorf("invalid or duplicate operation classification %q", operation.Name)
 		}
 		seenOperations[operation.Name] = true
+		if err := validateOperationAnchor(operation.Anchor, anchorFiles); err != nil {
+			return fmt.Errorf("operation %q: %w", operation.Name, err)
+		}
 		for _, capability := range operation.Capabilities {
 			if !known[capability] {
 				return fmt.Errorf("operation %q uses unknown capability %q", operation.Name, capability)
@@ -155,6 +168,57 @@ func (m EvidenceMatrix) Validate() error {
 		}
 	}
 	return nil
+}
+
+func validateAnchor(anchor Anchor, cache map[string][]string) error {
+	cleaned := filepath.ToSlash(filepath.Clean(anchor.Path))
+	if cleaned != anchor.Path || strings.HasPrefix(cleaned, "../") || filepath.IsAbs(cleaned) {
+		return fmt.Errorf("anchor path %q is not a canonical repository-relative path", anchor.Path)
+	}
+	lines, ok := cache[cleaned]
+	if !ok {
+		_, source, _, callerOK := runtime.Caller(0)
+		if !callerOK {
+			return fmt.Errorf("cannot resolve matrix source root")
+		}
+		root := filepath.Clean(filepath.Join(filepath.Dir(source), "..", ".."))
+		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(cleaned)))
+		if err != nil {
+			return fmt.Errorf("anchor %s:%d is unreadable: %w", anchor.Path, anchor.Line, err)
+		}
+		lines = strings.Split(string(content), "\n")
+		cache[cleaned] = lines
+	}
+	if anchor.Line > len(lines) {
+		return fmt.Errorf("anchor %s:%d exceeds %d source lines", anchor.Path, anchor.Line, len(lines))
+	}
+	if strings.TrimSpace(lines[anchor.Line-1]) == "" {
+		return fmt.Errorf("anchor %s:%d points at a blank line", anchor.Path, anchor.Line)
+	}
+	return nil
+}
+
+func validateOperationAnchor(anchor Anchor, cache map[string][]string) error {
+	if err := validateAnchor(anchor, cache); err != nil {
+		return err
+	}
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		return fmt.Errorf("cannot resolve matrix source root")
+	}
+	path := filepath.Join(filepath.Clean(filepath.Join(filepath.Dir(source), "..", "..")), filepath.FromSlash(anchor.Path))
+	files := token.NewFileSet()
+	parsed, err := parser.ParseFile(files, path, nil, 0)
+	if err != nil {
+		return fmt.Errorf("operation anchor %s:%d is not parseable Go: %w", anchor.Path, anchor.Line, err)
+	}
+	for _, declaration := range parsed.Decls {
+		function, functionOK := declaration.(*ast.FuncDecl)
+		if functionOK && files.Position(function.Pos()).Line == anchor.Line {
+			return nil
+		}
+	}
+	return fmt.Errorf("operation anchor %s:%d does not identify a function declaration", anchor.Path, anchor.Line)
 }
 
 func joinNodeKinds(values []graph.NodeKind) string {
@@ -203,7 +267,7 @@ func nodeEvidence() []Evidence {
 		}
 		items = append(items, Evidence{Name: string(kind), Role: role, Capabilities: uniqueCaps(caps), Producers: all,
 			Consumers: []string{"resolution", "source", "semantic", "query", "federation"},
-			Anchors:   []Anchor{{Path: "internal/graph/model.go", Line: 25}, {Path: "internal/query/service.go", Line: 112}}, Notes: notes})
+			Anchors:   []Anchor{{Path: "internal/graph/model.go", Line: 26}, {Path: "internal/query/service.go", Line: 112}}, Notes: notes})
 	}
 	return items
 }
@@ -226,7 +290,7 @@ func edgeEvidence() []Evidence {
 			caps, consumer, line = []Capability{CapabilityFailureFlow}, "failure flow", 78
 			notes = "omitted as one fail-closed failure-flow capability"
 		case graph.EdgeEncodes, graph.EdgeDecodes:
-			caps, consumer, line = []Capability{CapabilityMessageFieldFlow, CapabilityTransportFlow}, "message and codec flow", 154
+			caps, consumer, line = []Capability{CapabilityMessageFieldFlow, CapabilityTransportFlow}, "message and codec flow", 151
 		case graph.EdgeSends, graph.EdgeReceives, graph.EdgeCarries:
 			caps, consumer, line = []Capability{CapabilityTransportFlow}, "transport flow", 210
 		case graph.EdgeTests:
@@ -240,13 +304,13 @@ func edgeEvidence() []Evidence {
 			consumer, line = "catalogs and topology", 501
 		case graph.EdgeGeneratedFrom, graph.EdgeHasField:
 			caps = append(caps, CapabilityMessageFieldFlow)
-			consumer, line = "canonical message flow", 154
+			consumer, line = "canonical message flow", 151
 		case graph.EdgeDocuments:
 			caps = append(caps, CapabilitySourceLookup)
 		}
 		items = append(items, Evidence{Name: string(kind), Role: RoleRequired, Capabilities: uniqueCaps(caps), Producers: all,
 			Consumers: []string{consumer, "reconciliation", "federation"},
-			Anchors:   []Anchor{{Path: "internal/graph/model.go", Line: 112}, {Path: consumerPath(consumer), Line: line}}, Notes: notes})
+			Anchors:   []Anchor{{Path: "internal/graph/model.go", Line: 120}, {Path: consumerPath(consumer), Line: line}}, Notes: notes})
 	}
 	return items
 }
@@ -282,7 +346,7 @@ func propertyEvidence() []Evidence {
 	values := []item{
 		{"node.signature/type/receiver", "selector display and semantic candidate context", []Capability{CapabilitySemanticReuse, CapabilityStructural}, "internal/parser/golang/golang.go", 260},
 		{"node.method/route", "canonical HTTP endpoint identity", []Capability{CapabilityCatalogTopology}, "internal/query/topology.go", 501},
-		{"node.protocol_package/protocol_message/protocol_field/oneof", "canonical message and field identity", []Capability{CapabilityMessageFieldFlow}, "internal/query/messageflow.go", 154},
+		{"node.protocol_package/protocol_message/protocol_field/oneof", "canonical message and field identity", []Capability{CapabilityMessageFieldFlow}, "internal/query/messageflow.go", 151},
 		{"node.generated_binding/generator/canonical", "generated projection authority", []Capability{CapabilityMessageFieldFlow}, "internal/parser/protobufbinding/binding.go", 732},
 		{"node.test_framework/test_subtype/test_package/test_role", "static test declaration semantics", []Capability{CapabilityTestCoverage}, "internal/query/testcoverage.go", 55},
 		{"node.root/branch", "repository and component ownership", []Capability{CapabilityCatalogTopology}, "internal/indexer/components.go", 15},
@@ -336,32 +400,32 @@ func operationEvidence() []Operation {
 		path string
 		line int
 	}{
-		{"find", []Capability{CapabilityStructural}, "internal/query/service.go", 100},
-		{"show", []Capability{CapabilityStructural}, "internal/query/service.go", 112},
-		{"source", []Capability{CapabilityStructural, CapabilitySourceLookup}, "internal/source/service.go", 45},
-		{"neighbors", []Capability{CapabilityStructural}, "internal/query/service.go", 214},
-		{"callers", []Capability{CapabilityStructural}, "internal/query/service.go", 300},
-		{"callees", []Capability{CapabilityStructural}, "internal/query/service.go", 300},
-		{"path", []Capability{CapabilityStructural}, "internal/query/service.go", 390},
+		{"find", []Capability{CapabilityStructural}, "internal/query/service.go", 110},
+		{"show", []Capability{CapabilityStructural}, "internal/query/service.go", 124},
+		{"source", []Capability{CapabilityStructural, CapabilitySourceLookup}, "internal/source/service.go", 63},
+		{"neighbors", []Capability{CapabilityStructural}, "internal/query/service.go", 323},
+		{"callers", []Capability{CapabilityStructural}, "internal/query/service.go", 323},
+		{"callees", []Capability{CapabilityStructural}, "internal/query/service.go", 323},
+		{"path", []Capability{CapabilityStructural}, "internal/query/service.go", 398},
 		{"impact", []Capability{CapabilityImpactDataflow}, "internal/query/impact.go", 193},
-		{"failure-flow", []Capability{CapabilityFailureFlow}, "internal/query/failureflow.go", 78},
-		{"godot-composition", []Capability{CapabilityGodotComposition}, "internal/query/godot.go", 98},
-		{"godot-interactions", []Capability{CapabilityGodotInteraction}, "internal/query/godotinteractions.go", 225},
-		{"search", []Capability{CapabilitySourceLookup}, "internal/source/search.go", 1},
-		{"data-resources", []Capability{CapabilityCatalogTopology}, "internal/query/catalog.go", 180},
-		{"data-usage", []Capability{CapabilityCatalogTopology}, "internal/query/catalog.go", 246},
-		{"config-keys", []Capability{CapabilityCatalogTopology}, "internal/query/catalog.go", 500},
-		{"events", []Capability{CapabilityCatalogTopology}, "internal/query/catalog.go", 580},
-		{"orphaned-events", []Capability{CapabilityCatalogTopology}, "internal/query/catalog.go", 620},
+		{"failure-flow", []Capability{CapabilityFailureFlow}, "internal/query/failureflow.go", 57},
+		{"godot-composition", []Capability{CapabilityGodotComposition}, "internal/query/godot.go", 69},
+		{"godot-interactions", []Capability{CapabilityGodotInteraction}, "internal/query/godotinteractions.go", 130},
+		{"search", []Capability{CapabilitySourceLookup}, "internal/search/service.go", 170},
+		{"data-resources", []Capability{CapabilityCatalogTopology}, "internal/query/catalog.go", 194},
+		{"data-usage", []Capability{CapabilityCatalogTopology}, "internal/query/catalog.go", 243},
+		{"config-keys", []Capability{CapabilityCatalogTopology}, "internal/query/catalog.go", 283},
+		{"events", []Capability{CapabilityCatalogTopology}, "internal/query/catalog.go", 319},
+		{"orphaned-events", []Capability{CapabilityCatalogTopology}, "internal/query/catalog.go", 356},
 		{"endpoints", []Capability{CapabilityCatalogTopology}, "internal/query/topology.go", 501},
-		{"outbound-requests", []Capability{CapabilityCatalogTopology}, "internal/query/topology.go", 745},
+		{"outbound-requests", []Capability{CapabilityCatalogTopology}, "internal/query/topology.go", 920},
 		{"find-handler", []Capability{CapabilityCatalogTopology}, "internal/query/topology.go", 592},
 		{"service-topology", []Capability{CapabilityCatalogTopology}, "internal/query/topology.go", 1235},
-		{"message-flow", []Capability{CapabilityMessageFieldFlow, CapabilityTransportFlow}, "internal/query/messageflow.go", 154},
-		{"message-coverage", []Capability{CapabilityMessageFieldFlow, CapabilityTransportFlow}, "internal/query/messageflow.go", 355},
-		{"find-tests", []Capability{CapabilityTestCoverage}, "internal/query/testcoverage.go", 55},
-		{"test-coverage", []Capability{CapabilityTestCoverage}, "internal/query/testcoverage.go", 100},
-		{"semantic-reuse", []Capability{CapabilitySemanticReuse}, "internal/semantic/service.go", 40},
+		{"message-flow", []Capability{CapabilityMessageFieldFlow, CapabilityTransportFlow}, "internal/query/messageflow.go", 155},
+		{"message-coverage", []Capability{CapabilityMessageFieldFlow, CapabilityTransportFlow}, "internal/query/messageflow.go", 358},
+		{"find-tests", []Capability{CapabilityTestCoverage}, "internal/query/testcoverage.go", 87},
+		{"test-coverage", []Capability{CapabilityTestCoverage}, "internal/query/testcoverage.go", 74},
+		{"semantic-reuse", []Capability{CapabilitySemanticReuse}, "internal/semantic/service.go", 205},
 	}
 	result := make([]Operation, 0, len(values))
 	for _, value := range values {

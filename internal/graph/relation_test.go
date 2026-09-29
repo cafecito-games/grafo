@@ -1,6 +1,14 @@
 package graph_test
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"path/filepath"
+	"reflect"
+	"runtime"
+	"sort"
+	"strconv"
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -46,5 +54,56 @@ func TestEdgeKindsReturnsDefensiveClosedVocabulary(t *testing.T) {
 	first[0] = "mutated"
 	if second := graph.EdgeKinds(); second[0] != graph.EdgeContains {
 		t.Fatalf("caller mutated shared vocabulary: %v", second)
+	}
+}
+
+func TestClosedKindAccessorsCoverEveryDeclaredConstant(t *testing.T) {
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve test source")
+	}
+	parsed, err := parser.ParseFile(token.NewFileSet(), filepath.Join(filepath.Dir(source), "model.go"), nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	declared := map[string][]string{"NodeKind": {}, "EdgeKind": {}}
+	for _, declaration := range parsed.Decls {
+		general, ok := declaration.(*ast.GenDecl)
+		if !ok || general.Tok != token.CONST {
+			continue
+		}
+		for _, specification := range general.Specs {
+			value, ok := specification.(*ast.ValueSpec)
+			if !ok || len(value.Names) != 1 || len(value.Values) != 1 {
+				continue
+			}
+			kind, ok := value.Type.(*ast.Ident)
+			literal, literalOK := value.Values[0].(*ast.BasicLit)
+			if !ok || !literalOK || (kind.Name != "NodeKind" && kind.Name != "EdgeKind") {
+				continue
+			}
+			decoded, err := strconv.Unquote(literal.Value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			declared[kind.Name] = append(declared[kind.Name], decoded)
+		}
+	}
+	nodes := make([]string, len(graph.NodeKinds()))
+	for index, kind := range graph.NodeKinds() {
+		nodes[index] = string(kind)
+	}
+	edges := make([]string, len(graph.EdgeKinds()))
+	for index, kind := range graph.EdgeKinds() {
+		edges[index] = string(kind)
+	}
+	for _, values := range [][]string{declared["NodeKind"], declared["EdgeKind"], nodes, edges} {
+		sort.Strings(values)
+	}
+	if !reflect.DeepEqual(declared["NodeKind"], nodes) {
+		t.Fatalf("NodeKinds() = %v, declared %v", nodes, declared["NodeKind"])
+	}
+	if !reflect.DeepEqual(declared["EdgeKind"], edges) {
+		t.Fatalf("EdgeKinds() = %v, declared %v", edges, declared["EdgeKind"])
 	}
 }
