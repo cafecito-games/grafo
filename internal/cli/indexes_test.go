@@ -33,6 +33,8 @@ func TestIndexesOptionsAndUsageFailBeforeRepositoryAccess(t *testing.T) {
 		{[]string{"indexes", "prune", missing, "--keep", "-1", "--yes"}, "must not be negative"},
 		{[]string{"indexes", "prune", missing, "--keep", "0"}, "requires --yes"},
 		{[]string{"indexes", "list", missing, "--keep", "1"}, "not supported"},
+		{[]string{"indexes", "compact", missing}, "requires --yes"},
+		{[]string{"indexes", "compact", missing, "--older-than", "1h", "--dry-run"}, "not supported"},
 		{[]string{"indexes", "unknown", missing}, "usage: grafo indexes"},
 	} {
 		_, stderr, code := output(t, test.arguments...)
@@ -80,6 +82,9 @@ func TestIndexesListAndPruneTextJSONParity(t *testing.T) {
 	if len(inventory.Indexes) != 2 || !inventory.Indexes[0].Current || inventory.Indexes[1].Filename != "old.sqlite" {
 		t.Fatalf("JSON inventory = %#v", inventory)
 	}
+	if inventory.Indexes[0].Metrics == nil || inventory.Indexes[0].Metrics.PageSize <= 0 {
+		t.Fatalf("JSON inventory metrics = %#v", inventory.Indexes[0].Metrics)
+	}
 	textOutput, stderr, code := output(t, "indexes", "list", root)
 	if code != 0 {
 		t.Fatalf("text list: code=%d stderr=%q", code, stderr)
@@ -93,6 +98,38 @@ func TestIndexesListAndPruneTextJSONParity(t *testing.T) {
 		if !strings.Contains(textOutput, required) {
 			t.Fatalf("text inventory omitted required metadata %q:\n%s", required, textOutput)
 		}
+	}
+	for _, required := range []string{"PAGE_SIZE", "RECLAIMABLE", "COMPACT_RECOMMENDED"} {
+		if !strings.Contains(textOutput, required) {
+			t.Fatalf("text inventory omitted storage column %q:\n%s", required, textOutput)
+		}
+	}
+
+	beforeDryRun, err := os.ReadFile(project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compactJSON, stderr, code := output(t, "indexes", "compact", root, "--dry-run", "--json")
+	if code != 0 {
+		t.Fatalf("compact dry run: code=%d stderr=%q", code, stderr)
+	}
+	var compact branchindexes.CompactReport
+	if err := json.Unmarshal([]byte(compactJSON), &compact); err != nil {
+		t.Fatal(err)
+	}
+	if !compact.DryRun || compact.After != nil || compact.Before.Metrics.PageCount <= 0 || compact.ExpectedUpperBoundBytes != compact.Before.Metrics.LiveAllocatedBytes {
+		t.Fatalf("compact dry report = %#v", compact)
+	}
+	afterDryRun, err := os.ReadFile(project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(beforeDryRun) != string(afterDryRun) {
+		t.Fatal("CLI compact dry run changed primary database")
+	}
+	compactText, stderr, code := output(t, "indexes", "compact", root, "--yes")
+	if code != 0 || !strings.Contains(compactText, "before database=") || !strings.Contains(compactText, "after database=") || !strings.Contains(compactText, "reclaimed database=") {
+		t.Fatalf("compact real: code=%d stdout=%q stderr=%q", code, compactText, stderr)
 	}
 
 	dryJSON, stderr, code := output(t, "indexes", "prune", root, "--keep", "1", "--dry-run", "--json")
