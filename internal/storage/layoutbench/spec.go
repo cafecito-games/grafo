@@ -261,6 +261,22 @@ ORDER BY edges.kind, edges.from_id, edges.id;`,
 	}
 }
 
+// IntegerKeysSpec returns the compact integer internal keys candidate: public
+// textual ids stay unchanged at every repository boundary while adjacency and
+// the node-id secondary indexes key on a VACUUM-stable integer surrogate the
+// writer maintains — facts resolve their surrogate references through write
+// time triggers, a node deletion retires the surrogate it owned, and every
+// adjacency lookup resolves the public id once through ResolveNodeKey.
+func IntegerKeysSpec(name string) LayoutSpec {
+	return LayoutSpec{
+		Name:        name,
+		Migrations:  integerKeysMigrations,
+		SQL:         integerKeysStatements,
+		EdgeInsert:  integerKeysInsertEdge,
+		IntegerKeys: true,
+	}
+}
+
 // slimEdgesInsertEdge writes one edge row through the bounded batch and, for
 // a DirectTestEdge derivation whose evidence is not the fact row, records the
 // exact evidence in the override table.
