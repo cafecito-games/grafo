@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -728,10 +729,35 @@ func inspectCgroupLimits(root string) (cgroupLimits, error) {
 	quota, quotaErr := os.ReadFile(filepath.Join(cpuRoot, "cpu.cfs_quota_us"))
 	period, periodErr := os.ReadFile(filepath.Join(cpuRoot, "cpu.cfs_period_us"))
 	memory, memoryErr := os.ReadFile(filepath.Join(root, "memory", "memory.limit_in_bytes"))
+	if errors.Is(quotaErr, os.ErrNotExist) && errors.Is(periodErr, os.ErrNotExist) && errors.Is(memoryErr, os.ErrNotExist) {
+		return inspectHostLimits()
+	}
 	if quotaErr != nil || periodErr != nil || memoryErr != nil {
 		return cgroupLimits{}, fmt.Errorf("read cgroup v1 limits: quota: %v; period: %v; memory: %v", quotaErr, periodErr, memoryErr)
 	}
 	return parseCgroupLimits("v1:"+strings.TrimSpace(string(quota))+" "+strings.TrimSpace(string(period)), strings.TrimSpace(string(memory)))
+}
+
+func inspectHostLimits() (cgroupLimits, error) {
+	logicalCPUs := runtime.NumCPU()
+	if logicalCPUs <= 0 {
+		return cgroupLimits{}, fmt.Errorf("host logical CPU count is unavailable")
+	}
+	var info syscall.Sysinfo_t
+	if err := syscall.Sysinfo(&info); err != nil {
+		return cgroupLimits{}, fmt.Errorf("inspect host memory: %w", err)
+	}
+	totalRAM := uint64(info.Totalram)
+	memoryUnit := uint64(info.Unit)
+	const maxInt64 = uint64(1<<63 - 1)
+	if totalRAM == 0 || memoryUnit == 0 || totalRAM > maxInt64/memoryUnit {
+		return cgroupLimits{}, fmt.Errorf("host memory size is unavailable")
+	}
+	return cgroupLimits{
+		cpuQuota:       fmt.Sprintf("host:logical-cpus=%d", logicalCPUs),
+		effectiveCPUs:  int64(logicalCPUs),
+		memoryMaxBytes: int64(totalRAM * memoryUnit),
+	}, nil
 }
 
 func parseCgroupLimits(cpu, memory string) (cgroupLimits, error) {

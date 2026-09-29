@@ -1,8 +1,10 @@
 package detailprofile
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -69,6 +71,17 @@ func TestInspectCgroupLimitsRejectsPartialV1Provenance(t *testing.T) {
 	_, err := inspectCgroupLimits(root)
 	if err == nil || !strings.Contains(err.Error(), "memory.limit_in_bytes") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestInspectCgroupLimitsFallsBackToHostWhenCgroupIsAbsent(t *testing.T) {
+	limits, err := inspectCgroupLimits(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantQuota := fmt.Sprintf("host:logical-cpus=%d", runtime.NumCPU())
+	if limits.cpuQuota != wantQuota || limits.effectiveCPUs != int64(runtime.NumCPU()) || limits.memoryMaxBytes <= 0 {
+		t.Fatalf("limits = %#v", limits)
 	}
 }
 
