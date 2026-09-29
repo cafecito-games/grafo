@@ -136,6 +136,73 @@ func TestStrictCheckpointRejectsAnIncompleteBusyCheckpoint(t *testing.T) {
 	}
 }
 
+func TestCompactCheckpointFailurePreservesIntegrityAndEvidence(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "busy-compact.sqlite")
+	repository := openMaintenanceFixture(t, path)
+	if err := repository.SetMeta(ctx, "opaque_future_key", "preserved"); err != nil {
+		t.Fatal(err)
+	}
+	countsBefore, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reader, err := sql.Open("sqlite", readOnlyDSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction, err := reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var value string
+	if err := transaction.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = 'schema_version'").Scan(&value); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.SetMeta(ctx, "checkpoint_busy_fixture", "new WAL evidence"); err != nil {
+		t.Fatal(err)
+	}
+	metadataBefore, err := repository.Metadata(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.Compact(ctx); err == nil || !strings.Contains(err.Error(), "checkpoint") {
+		t.Fatalf("busy compaction error = %v", err)
+	}
+	if err := transaction.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := OpenMaintenance(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maintained := reopened.(*Repository)
+	defer func() { _ = maintained.Close() }()
+	metadataAfter, err := maintained.Metadata(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	countsAfter, err := maintained.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(metadataBefore, metadataAfter) || !reflect.DeepEqual(countsBefore, countsAfter) {
+		t.Fatalf("failed compaction changed evidence: metadata=%t counts=%t",
+			reflect.DeepEqual(metadataBefore, metadataAfter), reflect.DeepEqual(countsBefore, countsAfter))
+	}
+	if err := integrityCheck(ctx, maintained.db); err != nil {
+		t.Fatalf("failed compaction damaged index: %v", err)
+	}
+}
+
 func TestOpenMaintenanceDoesNotCreateOrMigrate(t *testing.T) {
 	ctx := context.Background()
 	missing := filepath.Join(t.TempDir(), "missing.sqlite")
@@ -176,6 +243,44 @@ func TestOpenMaintenanceUsesNormalWritableSettings(t *testing.T) {
 	}
 	if strings.ToLower(settings.JournalMode) != "wal" || settings.Synchronous != 1 {
 		t.Fatalf("maintenance settings = %#v, want WAL/NORMAL", settings)
+	}
+}
+
+func TestOpenMaintenanceRefusesNonWALWithoutChangingJournalMode(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "delete-mode.sqlite")
+	repository := openMaintenanceFixture(t, path)
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+	database, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mode string
+	if err := database.QueryRowContext(ctx, "PRAGMA journal_mode=DELETE").Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ToLower(mode) != "delete" {
+		t.Fatalf("fixture journal mode = %q, want delete", mode)
+	}
+
+	if _, err := OpenMaintenance(ctx, path); err == nil || !strings.Contains(strings.ToLower(err.Error()), "journal mode") {
+		t.Fatalf("non-WAL maintenance error = %v", err)
+	}
+	database, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	if err := database.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ToLower(mode) != "delete" {
+		t.Fatalf("refused maintenance changed journal mode to %q", mode)
 	}
 }
 

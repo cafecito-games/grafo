@@ -58,6 +58,15 @@ func OpenMaintenance(ctx context.Context, path string) (MaintenanceRepository, e
 		_ = db.Close()
 		return nil, err
 	}
+	settings, err := readMaintenanceSettings(ctx, db)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if !strings.EqualFold(settings.JournalMode, "wal") {
+		_ = db.Close()
+		return nil, fmt.Errorf("current index journal mode is %q, want WAL; run 'grafo index' before compaction", settings.JournalMode)
+	}
 	if err := configureWritableConnection(ctx, db); err != nil {
 		_ = db.Close()
 		return nil, err

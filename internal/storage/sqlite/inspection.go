@@ -50,6 +50,10 @@ type IndexInspection struct {
 // reports bounded evidence. Compatibility failures are data in the report;
 // cancellation remains an operation error.
 func InspectIndex(ctx context.Context, path string) (IndexInspection, error) {
+	return inspectIndex(ctx, path, readStorageMetrics)
+}
+
+func inspectIndex(ctx context.Context, path string, metricsReader func(context.Context, *sql.DB) (StorageMetrics, error)) (IndexInspection, error) {
 	mode := "ro"
 	if _, err := os.Lstat(path + "-wal"); errors.Is(err, os.ErrNotExist) {
 		// Without a WAL there is no newer committed state to discover. Immutable
@@ -77,9 +81,16 @@ func InspectIndex(ctx context.Context, path string) (IndexInspection, error) {
 		failure.Metadata = metadata
 		return failure, nil
 	}
-	metrics, err := readStorageMetrics(ctx, db)
+	metrics, err := metricsReader(ctx, db)
 	if err != nil {
-		return IndexInspection{}, err
+		if ctx.Err() != nil {
+			return IndexInspection{}, ctx.Err()
+		}
+		return IndexInspection{
+			Metadata:      metadata,
+			Compatibility: CompatibilityUnverified,
+			Diagnostic:    boundedInspectionDiagnostic(fmt.Sprintf("read SQLite storage metrics: %v", err)),
+		}, nil
 	}
 	return IndexInspection{Metadata: metadata, Metrics: &metrics, Compatibility: CompatibilityCompatible}, nil
 }
