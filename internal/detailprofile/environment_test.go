@@ -74,6 +74,20 @@ func TestInspectCgroupLimitsRejectsPartialV1Provenance(t *testing.T) {
 	}
 }
 
+func TestInspectCgroupLimitsDoesNotHideAlternateV1CPUController(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "cpu"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeEnvironmentFile(t, filepath.Join(root, "cpu,cpuacct", "cpu.cfs_quota_us"), "100000\n")
+	writeEnvironmentFile(t, filepath.Join(root, "cpu,cpuacct", "cpu.cfs_period_us"), "100000\n")
+
+	_, err := inspectCgroupLimits(root)
+	if err == nil || !strings.Contains(err.Error(), "CPU controller present: true") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestInspectCgroupLimitsFallsBackToHostWhenCgroupIsAbsent(t *testing.T) {
 	limits, err := inspectCgroupLimits(t.TempDir())
 	if err != nil {

@@ -722,20 +722,36 @@ func inspectCgroupLimits(root string) (cgroupLimits, error) {
 		return cgroupLimits{}, fmt.Errorf("read cgroup v2 limits: cpu: %v; memory: %v", cpuV2Err, memoryV2Err)
 	}
 
-	cpuRoot := filepath.Join(root, "cpu")
-	if _, err := os.Stat(cpuRoot); errors.Is(err, os.ErrNotExist) {
-		cpuRoot = filepath.Join(root, "cpu,cpuacct")
+	quota, period, cpuV1Present, err := readCgroupV1CPU(filepath.Join(root, "cpu"))
+	if err != nil {
+		return cgroupLimits{}, err
 	}
-	quota, quotaErr := os.ReadFile(filepath.Join(cpuRoot, "cpu.cfs_quota_us"))
-	period, periodErr := os.ReadFile(filepath.Join(cpuRoot, "cpu.cfs_period_us"))
+	if !cpuV1Present {
+		quota, period, cpuV1Present, err = readCgroupV1CPU(filepath.Join(root, "cpu,cpuacct"))
+		if err != nil {
+			return cgroupLimits{}, err
+		}
+	}
 	memory, memoryErr := os.ReadFile(filepath.Join(root, "memory", "memory.limit_in_bytes"))
-	if errors.Is(quotaErr, os.ErrNotExist) && errors.Is(periodErr, os.ErrNotExist) && errors.Is(memoryErr, os.ErrNotExist) {
+	if !cpuV1Present && errors.Is(memoryErr, os.ErrNotExist) {
 		return inspectHostLimits()
 	}
-	if quotaErr != nil || periodErr != nil || memoryErr != nil {
-		return cgroupLimits{}, fmt.Errorf("read cgroup v1 limits: quota: %v; period: %v; memory: %v", quotaErr, periodErr, memoryErr)
+	if !cpuV1Present || memoryErr != nil {
+		return cgroupLimits{}, fmt.Errorf("read cgroup v1 limits: CPU controller present: %t; memory: %v", cpuV1Present, memoryErr)
 	}
 	return parseCgroupLimits("v1:"+strings.TrimSpace(string(quota))+" "+strings.TrimSpace(string(period)), strings.TrimSpace(string(memory)))
+}
+
+func readCgroupV1CPU(root string) ([]byte, []byte, bool, error) {
+	quota, quotaErr := os.ReadFile(filepath.Join(root, "cpu.cfs_quota_us"))
+	period, periodErr := os.ReadFile(filepath.Join(root, "cpu.cfs_period_us"))
+	if quotaErr == nil && periodErr == nil {
+		return quota, period, true, nil
+	}
+	if errors.Is(quotaErr, os.ErrNotExist) && errors.Is(periodErr, os.ErrNotExist) {
+		return nil, nil, false, nil
+	}
+	return nil, nil, false, fmt.Errorf("read cgroup v1 CPU limits under %s: quota: %v; period: %v", root, quotaErr, periodErr)
 }
 
 func inspectHostLimits() (cgroupLimits, error) {
