@@ -203,7 +203,7 @@ func stepsReferenceIndex(steps []PlanStep, indexName string) bool {
 }
 
 func isIndexTokenSeparator(char rune) bool {
-	return !(char == '_' || unicode.IsLetter(char) || unicode.IsDigit(char))
+	return char != '_' && !unicode.IsLetter(char) && !unicode.IsDigit(char)
 }
 
 // rewriteNamedParameters converts @name placeholders to numbered ?N

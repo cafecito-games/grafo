@@ -222,13 +222,13 @@ func scanBalancedGroup(statement string, groupStart int) (int, error) {
 	depth := 0
 	index := groupStart
 	for index < len(statement) {
-		switch {
-		case statement[index] == '\'':
+		switch statement[index] {
+		case '\'':
 			index = skipStringLiteral(statement, index)
-		case statement[index] == '(':
+		case '(':
 			depth++
 			index++
-		case statement[index] == ')':
+		case ')':
 			depth--
 			index++
 			if depth == 0 {
@@ -249,19 +249,19 @@ func normalizeTuple(tuple string) (string, int) {
 	binds := 0
 	index := 0
 	for index < len(tuple) {
-		switch {
-		case tuple[index] == '\'':
+		switch tuple[index] {
+		case '\'':
 			end := skipStringLiteral(tuple, index)
 			rewritten.WriteString(tuple[index:end])
 			index = end
-		case tuple[index] == '?':
+		case '?':
 			index++
 			for index < len(tuple) && tuple[index] >= '0' && tuple[index] <= '9' {
 				index++
 			}
 			rewritten.WriteByte('?')
 			binds++
-		case tuple[index] == '@':
+		case '@':
 			end := index + 1
 			for end < len(tuple) && isIdentifierByte(tuple[end]) {
 				end++

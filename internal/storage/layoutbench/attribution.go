@@ -51,7 +51,7 @@ var queryObjectBytes = func(ctx context.Context, db *sql.DB) ([]ObjectBytes, err
 	if err != nil {
 		return nil, fmt.Errorf("query dbstat: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var objects []ObjectBytes
 	for rows.Next() {
 		var object ObjectBytes
