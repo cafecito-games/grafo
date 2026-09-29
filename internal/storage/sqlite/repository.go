@@ -42,7 +42,7 @@ const (
 var _ graph.Repository = (*Repository)(nil)
 var _ graph.CatalogRepository = (*Repository)(nil)
 var _ graph.CanonicalMessageRepository = (*Repository)(nil)
-var _ semantic.Repository = (*Repository)(nil)
+var _ semantic.CandidateRepository = (*Repository)(nil)
 
 func Open(ctx context.Context, path string) (*Repository, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -131,52 +131,6 @@ func (r *Repository) CandidateNodes(ctx context.Context) ([]graph.Node, error) {
 		result = append(result, nodeFromRow(row))
 	}
 	return result, nil
-}
-
-func (r *Repository) Embeddings(ctx context.Context, model string) ([]semantic.Embedding, error) {
-	rows, err := r.queries.ListEmbeddingsByModel(ctx, model)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]semantic.Embedding, 0, len(rows))
-	for _, row := range rows {
-		var vector []float32
-		if err := json.Unmarshal([]byte(row.VectorJson), &vector); err != nil {
-			return nil, fmt.Errorf("decode embedding for %s: %w", row.NodeID, err)
-		}
-		if int64(len(vector)) != row.Dimensions {
-			return nil, fmt.Errorf("embedding for %s declares %d dimensions but stores %d", row.NodeID, row.Dimensions, len(vector))
-		}
-		result = append(result, semantic.Embedding{NodeID: row.NodeID, Model: row.Model,
-			ContentHash: row.ContentHash, Vector: vector, UpdatedAt: row.UpdatedAt})
-	}
-	return result, nil
-}
-
-func (r *Repository) EmbeddingHashes(ctx context.Context, model string) (map[string]string, error) {
-	rows, err := r.queries.ListEmbeddingHashesByModel(ctx, model)
-	if err != nil {
-		return nil, err
-	}
-	result := make(map[string]string, len(rows))
-	for _, row := range rows {
-		result[row.NodeID] = row.ContentHash
-	}
-	return result, nil
-}
-
-func (r *Repository) UpsertEmbedding(ctx context.Context, embedding semantic.Embedding) error {
-	vector, err := json.Marshal(embedding.Vector)
-	if err != nil {
-		return err
-	}
-	return r.queries.UpsertEmbedding(ctx, sqlcgen.UpsertEmbeddingParams{NodeID: embedding.NodeID,
-		Model: embedding.Model, ContentHash: embedding.ContentHash, Dimensions: int64(len(embedding.Vector)),
-		VectorJson: string(vector), UpdatedAt: embedding.UpdatedAt})
-}
-
-func (r *Repository) DeleteStaleEmbeddings(ctx context.Context, model string) (int64, error) {
-	return r.queries.DeleteStaleEmbeddings(ctx, model)
 }
 
 func (r *Repository) Files(ctx context.Context) (map[string]graph.FileRecord, error) {

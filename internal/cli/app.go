@@ -14,6 +14,7 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/agentguide"
 	"github.com/cafecito-games/grafo/internal/agentinstall"
+	embeddingcache "github.com/cafecito-games/grafo/internal/embedding/cache"
 	"github.com/cafecito-games/grafo/internal/embedding/ollama"
 	"github.com/cafecito-games/grafo/internal/federation"
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -112,6 +113,8 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		runErr = a.mcp(ctx, parsed)
 	case "embed":
 		runErr = a.embed(ctx, parsed)
+	case "embed-cache":
+		runErr = a.embedCache(ctx, parsed)
 	case "reusable", "find-reusable-code":
 		runErr = a.reusable(ctx, parsed)
 	case "find":
@@ -408,7 +411,7 @@ func (a *App) indexes(ctx context.Context, args parsedArguments) error {
 	}
 	switch subcommand {
 	case "list":
-		if err := rejectUnsupportedIndexOptions(args, map[string]bool{"json": true}, nil); err != nil {
+		if err := rejectUnsupportedOptions(args, "indexes "+subcommand, map[string]bool{"json": true}, nil); err != nil {
 			return err
 		}
 		inventory, err := branchindexes.List(ctx, root)
@@ -417,7 +420,7 @@ func (a *App) indexes(ctx context.Context, args parsedArguments) error {
 		}
 		return a.printIndexInventory(inventory, args.flags["json"])
 	case "prune":
-		if err := rejectUnsupportedIndexOptions(args,
+		if err := rejectUnsupportedOptions(args, "indexes "+subcommand,
 			map[string]bool{"json": true, "dry-run": true, "yes": true},
 			map[string]bool{"older-than": true, "keep": true}); err != nil {
 			return err
@@ -481,7 +484,7 @@ func indexPrunePolicy(args parsedArguments) (branchindexes.Policy, error) {
 	return policy, nil
 }
 
-func rejectUnsupportedIndexOptions(args parsedArguments, allowedFlags, allowedValues map[string]bool) error {
+func rejectUnsupportedOptions(args parsedArguments, command string, allowedFlags, allowedValues map[string]bool) error {
 	var unsupported []string
 	for name, enabled := range args.flags {
 		if enabled && !allowedFlags[name] {
@@ -497,7 +500,7 @@ func rejectUnsupportedIndexOptions(args parsedArguments, allowedFlags, allowedVa
 		return nil
 	}
 	sort.Strings(unsupported)
-	return fmt.Errorf("%s is not supported by grafo indexes %s", strings.Join(unsupported, ", "), args.positionals[0])
+	return fmt.Errorf("%s is not supported by grafo %s", strings.Join(unsupported, ", "), command)
 }
 
 func (a *App) printIndexInventory(inventory branchindexes.Inventory, asJSON bool) error {
@@ -756,15 +759,16 @@ func (a *App) mcp(ctx context.Context, args parsedArguments) error {
 	service.WithSearch(searchService).WithSearchFactory(newSearchService)
 	service.WithReusableFactory(func(_ graph.ReadRepository, projects []indexer.Project) func(context.Context, string, int) (semantic.SearchResult, error) {
 		return func(searchContext context.Context, text string, limit int) (semantic.SearchResult, error) {
-			repository, closeRepository, openErr := openWritableProjects(searchContext, projects)
+			repository, closeRepository, openErr := openReadOnlyProjects(searchContext, projects)
 			if openErr != nil {
 				return semantic.SearchResult{}, openErr
 			}
 			defer func() { _ = closeRepository() }()
-			semanticService, serviceErr := newSemanticService(repository, args)
+			semanticService, closeCache, serviceErr := newSemanticService(searchContext, repository, args)
 			if serviceErr != nil {
 				return semantic.SearchResult{}, serviceErr
 			}
+			defer func() { _ = closeCache() }()
 			if _, syncErr := semanticService.Sync(searchContext); syncErr != nil {
 				return semantic.SearchResult{}, syncErr
 			}
@@ -788,15 +792,15 @@ func mcpRoots(args parsedArguments) ([]string, error) {
 	return []string{repoPath(args)}, nil
 }
 
-func openWritableProjects(ctx context.Context, projects []indexer.Project) (graph.ReadRepository, func() error, error) {
+func openReadOnlyProjects(ctx context.Context, projects []indexer.Project) (graph.ReadRepository, func() error, error) {
 	if len(projects) == 1 {
-		repository, err := sqlite.Open(ctx, projects[0].IndexPath)
+		repository, err := sqlite.OpenReadOnly(ctx, projects[0].IndexPath)
 		if err != nil {
 			return nil, nil, err
 		}
 		return repository, repository.Close, nil
 	}
-	repository, err := federation.OpenProjects(ctx, projects)
+	repository, err := federation.OpenReadOnlyProjects(ctx, projects)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -813,10 +817,11 @@ func (a *App) embed(ctx context.Context, args parsedArguments) error {
 		return err
 	}
 	defer func() { _ = repository.Close() }()
-	service, err := newSemanticService(repository, args)
+	service, closeCache, err := newSemanticService(ctx, repository, args)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = closeCache() }()
 	report, err := service.Sync(ctx)
 	if err != nil {
 		return err
@@ -843,10 +848,11 @@ func (a *App) reusable(ctx context.Context, args parsedArguments) error {
 		return err
 	}
 	defer func() { _ = closeRepository() }()
-	service, err := newSemanticService(repository, args)
+	service, closeCache, err := newSemanticService(ctx, repository, args)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = closeCache() }()
 	if _, err := service.Sync(ctx); err != nil {
 		return err
 	}
@@ -864,24 +870,128 @@ func (a *App) reusable(ctx context.Context, args parsedArguments) error {
 	return nil
 }
 
-func newSemanticService(repository graph.ReadRepository, args parsedArguments) (*semantic.Service, error) {
-	semanticRepository, ok := repository.(semantic.Repository)
+func newSemanticService(ctx context.Context, repository graph.ReadRepository, args parsedArguments) (*semantic.Service, func() error, error) {
+	candidates, ok := repository.(semantic.CandidateRepository)
 	if !ok {
-		return nil, fmt.Errorf("repository does not support semantic candidate discovery")
+		return nil, nil, fmt.Errorf("repository does not support semantic candidate discovery")
+	}
+	batchSize, err := intOption(args, "batch-size", 32)
+	if err != nil {
+		return nil, nil, err
 	}
 	model := firstValue(args.values["model"], os.Getenv("GRAFO_EMBED_MODEL"), ollama.DefaultModel)
 	baseURL := firstValue(args.values["ollama-url"], os.Getenv("GRAFO_OLLAMA_URL"), ollama.DefaultURL)
 	embedder, err := ollama.New(baseURL, model)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	batchSize, err := intOption(args, "batch-size", 32)
+	cache, err := embeddingcache.OpenDefault(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return semantic.NewService(semanticRepository, repository, embedder).
+	return semantic.NewService(candidates, repository, cache, embedder).
 		WithBatchSize(batchSize).
-		WithForce(args.command == "embed" && args.flags["force"]), nil
+		WithForce(args.command == "embed" && args.flags["force"]), cache.Close, nil
+}
+
+func (a *App) embedCache(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) != 1 || (args.positionals[0] != "status" && args.positionals[0] != "prune") {
+		return fmt.Errorf("usage: grafo embed-cache status [--json] | grafo embed-cache prune [--model name] [--older-than duration] [--max-bytes n] [--dry-run] [--yes] [--json]")
+	}
+	operation := args.positionals[0]
+	allowedFlags := map[string]bool{"json": true}
+	var allowedValues map[string]bool
+	if operation == "prune" {
+		allowedFlags["dry-run"] = true
+		allowedFlags["yes"] = true
+		allowedValues = map[string]bool{"model": true, "older-than": true, "max-bytes": true}
+	}
+	if err := rejectUnsupportedOptions(args, "embed-cache "+operation, allowedFlags, allowedValues); err != nil {
+		return err
+	}
+	path, err := embeddingcache.ResolvePath()
+	if err != nil {
+		return err
+	}
+	if operation == "status" {
+		store, err := embeddingcache.OpenReadOnly(ctx, path)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = store.Close() }()
+		status, err := store.Status(ctx)
+		if err != nil {
+			return err
+		}
+		if args.flags["json"] {
+			return writeJSON(a.stdout, status)
+		}
+		a.printf("embedding cache %s · schema %d\n", status.Path, status.SchemaVersion)
+		a.printf("%d rows · %d vector bytes · %d database bytes · %d WAL bytes · %d SHM bytes · %d reclaimable bytes\n",
+			status.Rows, status.BlobBytes, status.DatabaseBytes, status.WALBytes, status.SHMBytes, status.ReclaimableBytes)
+		for _, model := range status.Models {
+			a.printf("%s · %d rows · dimensions %v · %d vector bytes · used %s..%s\n",
+				model.Model, model.Rows, model.Dimensions, model.BlobBytes, model.OldestUsedAt, model.NewestUsedAt)
+		}
+		return nil
+	}
+	options, err := pruneOptions(args)
+	if err != nil {
+		return err
+	}
+	if !options.DryRun && !args.flags["yes"] {
+		return errors.New("embedding cache prune requires --yes (or use --dry-run)")
+	}
+	var store *embeddingcache.Cache
+	if options.DryRun {
+		store, err = embeddingcache.OpenReadOnly(ctx, path)
+	} else {
+		store, err = embeddingcache.Open(ctx, path)
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	report, err := store.Prune(ctx, options)
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, report)
+	}
+	verb := "pruned"
+	if report.DryRun {
+		verb = "would prune"
+	}
+	a.printf("%s %d rows · %d logical vector bytes\n", verb, report.DeletedRows, report.FreedBlobBytes)
+	a.printf("%d rows · %d vector bytes remain · %d database bytes · %d reclaimable bytes\n",
+		report.RemainingRows, report.RemainingBlobBytes, report.DatabaseBytes, report.ReclaimableBytes)
+	return nil
+}
+
+func pruneOptions(args parsedArguments) (embeddingcache.PruneOptions, error) {
+	result := embeddingcache.PruneOptions{DryRun: args.flags["dry-run"]}
+	if model, present := args.values["model"]; present {
+		if strings.TrimSpace(model) == "" {
+			return result, errors.New("--model cannot be empty")
+		}
+		result.Model = model
+	}
+	if value := args.values["older-than"]; value != "" {
+		duration, err := time.ParseDuration(value)
+		if err != nil || duration <= 0 {
+			return result, errors.New("--older-than must be a positive duration such as 24h")
+		}
+		result.OlderThan = duration
+	}
+	if value := args.values["max-bytes"]; value != "" {
+		maximum, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || maximum < 0 {
+			return result, errors.New("--max-bytes must be a non-negative integer")
+		}
+		result.MaxBytes = &maximum
+	}
+	return result, nil
 }
 
 func firstValue(values ...string) string {
@@ -2346,7 +2456,7 @@ func openStatusRead(ctx context.Context, args parsedArguments, observer indexer.
 }
 
 func requiresWritableRead(command string) bool {
-	return command == "reusable" || command == "find-reusable-code"
+	return false
 }
 
 func (a *App) printIndexReport(report indexer.Report, asJSON bool) error {
@@ -2417,7 +2527,7 @@ var valueOptions = map[string]bool{
 	"kind": true, "name": true, "state-dir": true, "lines": true, "concurrency": true,
 	"filter": true, "method": true, "route": true, "event": true, "component": true,
 	"package": true, "message": true, "oneof": true, "status": true,
-	"progress": true, "older-than": true, "keep": true,
+	"progress": true, "older-than": true, "max-bytes": true, "keep": true,
 }
 
 // pathPrefixCommands is the adapter boundary for the one globally parsed
@@ -2580,6 +2690,8 @@ Usage:
   grafo status [path] [--repos pathA,pathB] [--json] [--progress auto|human|json|off]
   grafo mcp [--repo path | --repos pathA,pathB] [--model embeddinggemma]
   grafo embed [path] [--model embeddinggemma] [--ollama-url http://localhost:11434] [--force]
+  grafo embed-cache status [--json]
+  grafo embed-cache prune [--model name] [--older-than duration] [--max-bytes n] [--dry-run] [--yes] [--json]
   grafo reusable <description> [--repo path | --repos pathA,pathB] [--limit 5] [--json]
   grafo find <text> [--limit 20] [--repo path | --repos pathA,pathB] [--json]
   grafo show <symbol-or-id> [--kind function] [--repo path | --repos pathA,pathB] [--json]
@@ -2687,6 +2799,10 @@ depends on, plus impacted files, cross-repository hops, and config, data, and
 event relationships. 'grafo failure-flow' separates typed error-return
 declarations, escaping and wrapped errors, handlers, panics and recoveries,
 and deferred cleanup while keeping conditional and unresolved evidence explicit.
+'grafo embed-cache status' inspects the user-level content-addressed vector
+cache without contacting the provider. 'grafo embed-cache prune' evicts the
+oldest rows matching every supplied filter; dry runs are read-only and actual
+deletion requires --yes. Pruning checkpoints but never vacuums the cache.
 'grafo search' reads only files that belong to a refreshed
 index and never persists source text.
 

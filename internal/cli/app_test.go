@@ -99,7 +99,7 @@ func TestRunRejectsPathPrefixForEveryUnsupportedCommandBeforeWork(t *testing.T) 
 	}
 }
 
-func TestOpenReadRetainsSemanticWritesForReusableAlias(t *testing.T) {
+func TestOpenReadUsesReadOnlyGraphForReusableAlias(t *testing.T) {
 	root := indexedRepository(t)
 	args, err := parseArguments([]string{"find-reusable-code", "payment helper", "--repo", root})
 	if err != nil {
@@ -110,11 +110,11 @@ func TestOpenReadRetainsSemanticWritesForReusableAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = closeRepository() }()
-	if _, ok := repository.(graph.IndexRepository); !ok {
-		t.Fatal("find-reusable-code alias lost index-write capability required by semantic sync")
+	if _, ok := repository.(graph.IndexRepository); ok {
+		t.Fatal("find-reusable-code alias retained graph write capability")
 	}
-	if _, ok := repository.(semantic.Repository); !ok {
-		t.Fatal("find-reusable-code alias lost semantic-write capability")
+	if _, ok := repository.(semantic.CandidateRepository); !ok {
+		t.Fatal("find-reusable-code alias lost semantic candidate capability")
 	}
 }
 
