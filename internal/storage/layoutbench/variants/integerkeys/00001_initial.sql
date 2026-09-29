@@ -82,7 +82,9 @@ CREATE INDEX edges_to ON edges(to_key, kind, from_key);
 -- does not exist yet; reconciliation is the authority and re-derives the
 -- edge, whose insert re-resolves. Keys are only refreshed by these triggers
 -- and by node deletion below, so a stored nonzero key is always the
--- referenced node's current surrogate.
+-- referenced node's current surrogate — an invariant that holds for every
+-- key-bearing row: facts and edges here, and the dirty-node queue the
+-- later migrations add under the same retire/heal parity.
 -- +goose StatementBegin
 CREATE TRIGGER facts_resolve_node_keys_after_insert AFTER INSERT ON facts
 BEGIN

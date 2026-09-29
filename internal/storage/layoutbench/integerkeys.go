@@ -37,6 +37,11 @@ var integerKeysMigrations = func() fs.FS {
 // lookup, the edge write resolves both surrogates at write time, and the
 // dirty-node enqueue arms match a fact whose stored key is either the dirty
 // node's surrogate or 0 (unresolved or retired) paired with the textual id.
+// Across facts, edges, and the dirty-node queue itself, a stored nonzero
+// key is always the referenced node's current surrogate — the migration
+// triggers retire keys with their node and heal them on re-insert — so the
+// key-equality arms guard against node_key = 0 to avoid matching every
+// unresolved fact.
 var integerKeysStatements = map[string]string{
 	ResolveNodeKeyStatementName: `SELECT node_key FROM nodes WHERE id = ?;`,
 	"InsertEdge": `INSERT INTO edges(
@@ -167,7 +172,7 @@ UNION ALL
 SELECT facts.id, facts.owner_file
 FROM dirty_nodes
 CROSS JOIN facts INDEXED BY facts_from_id
-WHERE (facts.from_key = dirty_nodes.node_key
+WHERE (dirty_nodes.node_key != 0 AND facts.from_key = dirty_nodes.node_key
        OR (facts.from_key = 0 AND facts.from_id = dirty_nodes.node_id))
   AND (
     NOT EXISTS (
@@ -183,8 +188,8 @@ UNION ALL
 SELECT facts.id, facts.owner_file
 FROM dirty_nodes
 CROSS JOIN facts INDEXED BY facts_target_id
-WHERE facts.target_key = dirty_nodes.node_key
-   OR (facts.target_key = 0 AND facts.target_id = dirty_nodes.node_id)
+WHERE (dirty_nodes.node_key != 0 AND facts.target_key = dirty_nodes.node_key
+   OR (facts.target_key = 0 AND facts.target_id = dirty_nodes.node_id))
 UNION ALL
 SELECT facts.id, facts.owner_file
 FROM dirty_targets

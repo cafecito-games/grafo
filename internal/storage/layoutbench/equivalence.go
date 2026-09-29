@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -139,14 +140,16 @@ func RunEquivalence(ctx context.Context, input EquivalenceInput) (EquivalenceRes
 // cancellation atomicity, and resume equivalence. A missing or false entry
 // means the run itself is broken, not merely different from the other adapter.
 var selfCheckProbes = map[string]bool{
-	"interrupted":               true,
-	"atomic":                    true,
-	"converged":                 true,
-	"resume-converged":          true,
-	"matches-main-baseline":     true,
-	"restored-converged":        true,
-	"branch-restored-converged": true,
-	"replace-owner-unchanged":   true,
+	"interrupted":                  true,
+	"atomic":                       true,
+	"converged":                    true,
+	"resume-converged":             true,
+	"matches-main-baseline":        true,
+	"restored-converged":           true,
+	"branch-restored-converged":    true,
+	"replace-owner-unchanged":      true,
+	"retargeted-drops-tests-edge":  true,
+	"retarget-restored-tests-edge": true,
 }
 
 // assertSelfChecks fails when any self-check probe is missing or did not hold.
@@ -944,6 +947,27 @@ func branchHubFile(file FixtureFile) FixtureFile {
 	}(), Parsed: graph.ParseResult{Nodes: []graph.Node{hub, file.Parsed.Nodes[1]}}}
 }
 
+// testSupportSharedFile re-parses the shared file with the production target
+// promoted to test support: node ids, kinds, names, and facts all survive, so
+// only the property change can explain any derived-state difference. The
+// unchanged test file's exact calls fact targets that symbol, so the derived
+// tests edge has to disappear until the original content returns — this is
+// the cross-file shape a layout that resolves references at write time must
+// re-derive through its dirty queues.
+func testSupportSharedFile(file FixtureFile) FixtureFile {
+	nodes := make([]graph.Node, len(file.Parsed.Nodes))
+	for index, node := range file.Parsed.Nodes {
+		node.Properties = copyProperties(node.Properties)
+		if node.ID == longNodeID("production", 0) {
+			node.Properties["test_role"] = "helper"
+		}
+		nodes[index] = node
+	}
+	record := file.Record
+	record.Hash = graph.StableID("equivalence-test-support", file.Record.Path)
+	return FixtureFile{Record: record, Parsed: graph.ParseResult{Nodes: nodes, Facts: file.Parsed.Facts}}
+}
+
 func branchSharedFile(file FixtureFile) FixtureFile {
 	probe := file.Parsed.Nodes[1]
 	productionTarget := file.Parsed.Nodes[2]
@@ -1026,6 +1050,49 @@ func runIncrementalScenario(ctx context.Context, opener RepositoryOpener, direct
 		session.record("edited-edges", renderEdges(edges))
 	}
 
+	sharedFile, err := fileByPath(fixture, sharedOwnerPath(fixturePopulationFileCount(fixture)+2))
+	if err != nil {
+		return err
+	}
+
+	// Re-parsing the shared file with only a derivation-relevant property
+	// changed — node ids survive — must re-derive the foreign exact-id fact
+	// in the test file: promoting the production target to test support
+	// drops the derived tests edge even though the test file itself never
+	// changed, and restoring the original content brings the edge back.
+	testSource := longNodeID("test", 0)
+	retargetedShared := testSupportSharedFile(sharedFile)
+	if err := repository.ReplaceFile(ctx, retargetedShared.Record, retargetedShared.Parsed); err != nil {
+		return err
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		return err
+	}
+	if edges, err := repository.EdgesFrom(ctx, testSource); err != nil {
+		return err
+	} else {
+		session.record("retargeted-test-edges", renderEdges(edges))
+		session.record("retargeted-drops-tests-edge",
+			strconv.FormatBool(!slices.ContainsFunc(edges, func(edge graph.Edge) bool {
+				return edge.Kind == graph.EdgeTests
+			})))
+	}
+	if err := repository.ReplaceFile(ctx, sharedFile.Record, sharedFile.Parsed); err != nil {
+		return err
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		return err
+	}
+	if edges, err := repository.EdgesFrom(ctx, testSource); err != nil {
+		return err
+	} else {
+		session.record("retarget-restored-test-edges", renderEdges(edges))
+		session.record("retarget-restored-tests-edge",
+			strconv.FormatBool(slices.ContainsFunc(edges, func(edge graph.Edge) bool {
+				return edge.Kind == graph.EdgeTests
+			})))
+	}
+
 	if err := repository.RemoveFiles(ctx, []string{callersFile.Record.Path}); err != nil {
 		return err
 	}
@@ -1063,10 +1130,6 @@ func runIncrementalScenario(ctx context.Context, opener RepositoryOpener, direct
 
 	moduleCount := fixturePopulationFileCount(fixture)
 	hubFile, err := fileByPath(fixture, hubOwnerPath(moduleCount+3))
-	if err != nil {
-		return err
-	}
-	sharedFile, err := fileByPath(fixture, sharedOwnerPath(moduleCount+2))
 	if err != nil {
 		return err
 	}
