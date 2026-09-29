@@ -37,3 +37,14 @@ func TestRelationEdgeQueryValidatesBoundedExactRequests(t *testing.T) {
 		})
 	}
 }
+
+func TestEdgeKindsReturnsDefensiveClosedVocabulary(t *testing.T) {
+	first := graph.EdgeKinds()
+	if len(first) == 0 || first[0] != graph.EdgeContains || first[len(first)-1] != graph.EdgeUsesGroup {
+		t.Fatalf("unexpected edge vocabulary: %v", first)
+	}
+	first[0] = "mutated"
+	if second := graph.EdgeKinds(); second[0] != graph.EdgeContains {
+		t.Fatalf("caller mutated shared vocabulary: %v", second)
+	}
+}

@@ -35,6 +35,18 @@ type Options struct {
 	Boundary         BoundaryHook
 	ProgressObserver ProgressObserver
 	ReportDetail     ReportDetail
+	// ResultTransform is a benchmark/test-only interception point after parsing
+	// and before any durable mutation. Production CLI, MCP, watch, and service
+	// composition leave it nil. Its semantic key participates in each file hash
+	// so switching a prototype profile reparses instead of reusing stale detail.
+	ResultTransform ParseResultTransform
+}
+
+// ParseResultTransform supports isolated fidelity experiments without adding a
+// production detail setting or coupling the indexer to a candidate profile.
+type ParseResultTransform interface {
+	SemanticKey() string
+	Transform(context.Context, parserapi.Input, graph.ParseResult) (graph.ParseResult, error)
 }
 
 // ReportDetail selects optional work whose result is used only for reporting.
@@ -425,6 +437,10 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		_, _ = digest.Write(content)
 		_, _ = digest.Write([]byte{0})
 		_, _ = digest.Write([]byte(SemanticIndexVersion))
+		if options.ResultTransform != nil {
+			_, _ = digest.Write([]byte{0})
+			_, _ = digest.Write([]byte(options.ResultTransform.SemanticKey()))
+		}
 		if _, ok := languageParser.(parserapi.WorkspaceSemanticKeyer); ok {
 			semanticKey := workspaceSemanticKeys[languageParser.Language()]
 			_, _ = digest.Write([]byte{0})
@@ -451,6 +467,14 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		report.Phases.ParseNS += time.Since(parseStarted).Nanoseconds()
 		if parseErr != nil {
 			parsed.Diagnostics = append(parsed.Diagnostics, graph.Diagnostic{Path: path, Level: "error", Message: parseErr.Error()})
+		}
+		if options.ResultTransform != nil {
+			transformStarted := time.Now()
+			parsed, err = options.ResultTransform.Transform(ctx, input, parsed)
+			report.Phases.ParseNS += time.Since(transformStarted).Nanoseconds()
+			if err != nil {
+				return report, fmt.Errorf("transform parsed evidence for %s: %w", path, err)
+			}
 		}
 		if err := progress.emit(ProgressParse, ProgressProgress, "files", len(report.Updated)+1, 0, ""); err != nil {
 			return report, err

@@ -75,3 +75,8 @@ tasks:
     desc: Compare SQLite, bbolt, and Pebble with repeated generated and corpus samples
     cmds:
       - go run ./cmd/grafo-storage-benchmark
+
+  bench:detail-profiles:
+    desc: Run the opt-in capability-safe detail-profile spike benchmark
+    cmds:
+      - go run ./cmd/grafo-detail-benchmark
