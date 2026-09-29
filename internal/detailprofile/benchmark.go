@@ -763,7 +763,7 @@ func inspectHostLimits() (cgroupLimits, error) {
 	if err := syscall.Sysinfo(&info); err != nil {
 		return cgroupLimits{}, fmt.Errorf("inspect host memory: %w", err)
 	}
-	totalRAM := info.Totalram
+	totalRAM := widenUnsigned(info.Totalram)
 	memoryUnit := uint64(info.Unit)
 	const maxInt64 = uint64(1<<63 - 1)
 	if totalRAM == 0 || memoryUnit == 0 || totalRAM > maxInt64/memoryUnit {
@@ -774,6 +774,10 @@ func inspectHostLimits() (cgroupLimits, error) {
 		effectiveCPUs:  int64(logicalCPUs),
 		memoryMaxBytes: int64(totalRAM * memoryUnit),
 	}, nil
+}
+
+func widenUnsigned[T ~uint32 | ~uint64](value T) uint64 {
+	return uint64(value)
 }
 
 func parseCgroupLimits(cpu, memory string) (cgroupLimits, error) {
