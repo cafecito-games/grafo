@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 
 	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 	"github.com/pressly/goose/v3"
 	modernsqlite "modernc.org/sqlite"
 )
@@ -213,6 +215,38 @@ func OpenVariant(ctx context.Context, spec LayoutSpec, path string) (*VariantRep
 		return nil, err
 	}
 	return repository, nil
+}
+
+// OpenPreSeeded pre-seeds the database at path by applying the given Goose
+// migrations, then opens it with the production adapter. Goose records
+// version ids only, so a variant migration set that mirrors the production
+// version numbers leaves the production adapter seeing a fully migrated
+// database: it skips migration and prepares its unmodified statements
+// against the pre-seeded DDL. A pure-DDL candidate therefore runs through
+// the production adapter itself — the same adapter code on both sides of an
+// equivalence run, with no VariantRepository in between.
+func OpenPreSeeded(ctx context.Context, migrationFS fs.FS, path string) (*sqlite.Repository, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, fmt.Errorf("create index directory: %w", err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, fmt.Errorf("open pre-seeded graph: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	provider, err := goose.NewProvider(goose.DialectSQLite3, db, migrationFS)
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("create migration provider: %w", err)
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate pre-seeded graph database: %w", err)
+	}
+	if err := db.Close(); err != nil {
+		return nil, fmt.Errorf("close pre-seeded graph database: %w", err)
+	}
+	return sqlite.Open(ctx, path)
 }
 
 func activeVariableLimit(ctx context.Context, db *sql.DB) (int, error) {

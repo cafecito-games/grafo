@@ -261,6 +261,22 @@ ORDER BY edges.kind, edges.from_id, edges.id;`,
 	}
 }
 
+// IndexReformSpec returns the pure-DDL index-reform candidate: the
+// production statement text runs unchanged against reformed B-trees, so the
+// spec carries no overrides. The small natural-key tables (meta, files, and
+// the dirty queues) are stored WITHOUT ROWID, dropping one implicit
+// primary-key autoindex each. The candidate's one index consolidation
+// attempt — one COLLATE NOCASE composite per node lookup column replacing
+// the NOCASE single plus the binary resolve pair — reverted after the
+// captured plans showed the binary-collation resolution queries degrading
+// from a covering seek to a full index scan; IndexReformReportEvidence
+// records every keep/reform/revert decision with its plan evidence. The
+// canonical way to run this layout is OpenPreSeeded, which drives the
+// production adapter itself over the reformed DDL.
+func IndexReformSpec(name string) LayoutSpec {
+	return LayoutSpec{Name: name, Migrations: indexReformMigrations, SQL: map[string]string{}}
+}
+
 // IntegerKeysSpec returns the compact integer internal keys candidate: public
 // textual ids stay unchanged at every repository boundary while adjacency and
 // the node-id secondary indexes key on a VACUUM-stable integer surrogate the
