@@ -243,10 +243,13 @@ func RunBenchmark(ctx context.Context, options BenchmarkOptions) (BenchmarkRepor
 	return report, nil
 }
 
-func runDetailSample(ctx context.Context, root, rawDir string, number int, projector *Projector, keep bool) (DetailSample, error) {
+func runDetailSample(ctx context.Context, root, rawDir string, number int, projector *Projector, keep bool) (sample DetailSample, returnErr error) {
 	database := filepath.Join(rawDir, fmt.Sprintf("sample-%02d.sqlite", number))
 	for _, suffix := range []string{"", "-wal", "-shm"} {
 		_ = os.Remove(database + suffix)
+	}
+	if !keep {
+		defer func() { returnErr = errors.Join(returnErr, removeSQLiteFiles(database)) }()
 	}
 	project, err := indexer.DiscoverProject(ctx, root)
 	if err != nil {
@@ -302,18 +305,23 @@ func runDetailSample(ctx context.Context, root, rawDir string, number int, proje
 	if err != nil {
 		return DetailSample{}, err
 	}
-	sample := DetailSample{Number: number, Database: database,
+	sample = DetailSample{Number: number, Database: database,
 		Cold: DetailRun{ElapsedNS: coldElapsed, Report: cold}, Incremental: DetailRun{ElapsedNS: incrementalElapsed, Report: incremental},
 		CompactedBytes: primary, FinalWALBytes: wal, PeakRSSBytes: rss.peak(), Projection: recorder.counts(), Fingerprints: fingerprints}
 	if !keep {
-		for _, suffix := range []string{"", "-wal", "-shm"} {
-			if removeErr := os.Remove(database + suffix); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-				return DetailSample{}, removeErr
-			}
-		}
 		sample.Database = ""
 	}
 	return sample, nil
+}
+
+func removeSQLiteFiles(database string) error {
+	var result error
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if err := os.Remove(database + suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
+			result = errors.Join(result, err)
+		}
+	}
+	return result
 }
 
 type recordingTransform struct {

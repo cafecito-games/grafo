@@ -19,6 +19,15 @@ If any condition fails, Grafo retains full-only indexing. The versioned raw
 report under `docs/benchmarks/issue-113/` owns the measured recommendation;
 this note describes the contract used to reach it.
 
+The pinned Uzir measurement rejects both reduced candidates. `structural-v1`
+saved 57.35% of compacted primary bytes and improved every measured resource
+metric, but its claimed `catalogs_topology` fingerprint differed from `full`.
+`scoped-full-v1` with `apps/api/**` failed even earlier: aggregate validation
+proved that a retained `wraps_error` locator changed from one candidate to
+none outside the full-detail root. Grafo therefore retains full-only indexing;
+no production profile issue is justified by this spike. See the versioned
+[`results.json`](benchmarks/issue-113/results.json) for exact evidence.
+
 ## Prototype boundary
 
 `internal/detailprofile` is benchmark/test-only. A dependency test proves that
@@ -148,8 +157,8 @@ Projection is deterministic and preserves input order. The prototype rejects:
 
 1. a retained fact whose exact source or target ID is absent from the aggregate
    projected corpus;
-2. any retained named locator whose exact local candidate set differs from the
-   full parse result;
+2. any retained named locator whose reconciliation candidate set differs
+   across the aggregate corpus from the full parse results;
 3. a candidate that creates a new external/unresolved node through omitted
    declarations;
 4. a claimed capability whose sorted semantic fingerprint differs from full;
@@ -221,9 +230,19 @@ memory between samples. For a release decision, run each profile in a fresh
 process and use at least three samples; a single sample remains raw exploratory
 evidence, not a statistically strong gate.
 
-## Future implementation boundary
+The retained run is one fresh-process sample per completed profile, so its
+resource values are honest raw observations rather than statistically strong
+medians. That limitation cannot weaken the negative recommendation: the
+structural semantic mismatch and scoped aggregate-resolution failure are
+deterministic correctness failures, not timing uncertainty. The full control
+completed in 14.61 minutes and therefore did not corroborate the approximate
+31-minute owner observation.
 
-Only after a candidate clears every gate:
+## Rejected production boundary
+
+No candidate cleared every gate, so the following production work is not
+authorized by this spike. A future independently justified design would still
+need to:
 
 1. move the reviewed capability/matrix vocabulary into a production-neutral
    owner under `internal/graph`;

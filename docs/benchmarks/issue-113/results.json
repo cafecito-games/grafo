@@ -1,0 +1,361 @@
+{
+  "schema": "grafo.detail-profile-spike-result/v1",
+  "generated_at": "2026-09-29T04:15:00Z",
+  "recommendation": "retain full-only indexing; neither reduced-detail candidate is capability-safe",
+  "sample_strength": {
+    "fresh_process_samples_per_completed_profile": 1,
+    "production_grade_minimum": 3,
+    "interpretation": "resource measurements are raw observations, while the semantic failures are deterministic correctness gates"
+  },
+  "provenance": {
+    "grafo_commit": "1ecfe0dbac5a00e4d60b87e8dcf76797d63e21f3",
+    "grafo_dirty": false,
+    "corpus_path": "/home/coder/workspace/uzir",
+    "corpus_commit": "7f51e418eca71094b61bdd7252fe7f254cf395e3",
+    "corpus_dirty": false,
+    "scope_semantic_key": "index-scope-v1:457d65632be73544d9cec4a13aa112ae9e6f6d77afbc6b9692743baa5a286046",
+    "scope_include": null,
+    "scope_exclude": null,
+    "scope_accounting": "no path exclusions; scoped_out is separate from fidelity savings",
+    "cpu_quota": "800000 100000",
+    "effective_cpus": 8,
+    "memory_max_bytes": 21474836480,
+    "filesystem": "type=0x58465342 block_size=4096",
+    "filesystem_device": 64514,
+    "output_path": "/home/coder/grafo-detail-profiles/issue-113",
+    "rss_method": "50ms samples of /proc/self/status VmRSS; absolute process peak includes Go runtime state retained from earlier samples"
+  },
+  "raw_reports": {
+    "full": {
+      "path": "/home/coder/grafo-detail-profiles/issue-113/full-report.json",
+      "bytes": 2169553,
+      "sha256": "9f8a9fc9e00f1b077bbca4b944247cee5b83f5baf8a3ea16cd863283dbfc33f7"
+    },
+    "structural_v1": {
+      "path": "/home/coder/grafo-detail-profiles/issue-113/structural-v1-report.json",
+      "bytes": 2168989,
+      "sha256": "5306ab78ad5d5aa1eaab86470c8eb85da20dc8825ccf1c4478c83a6fcd510568"
+    }
+  },
+  "profiles": {
+    "full": {
+      "status": "completed",
+      "cold_elapsed_ns": 876624702749,
+      "incremental_elapsed_ns": 1951207044,
+      "compacted_primary_bytes": 2550439936,
+      "final_wal_bytes": 0,
+      "peak_rss_bytes": 5861285888,
+      "corroborates_approximate_31_minute_observation": false,
+      "cold_phases_ns": {
+        "git_probe": 25296738,
+        "membership": 70409273,
+        "discovery": 70409473,
+        "read_hash": 33049222742,
+        "parse": 59250945396,
+        "persistence": 316258321597,
+        "reconciliation": 452780431084,
+        "total": 876624682172
+      },
+      "incremental_phases_ns": {
+        "git_probe": 23695268,
+        "membership": 5438352,
+        "discovery": 5438543,
+        "read_hash": 32160,
+        "parse": 0,
+        "persistence": 1328302226,
+        "reconciliation": 0,
+        "total": 1951185564
+      },
+      "counts": {
+        "files": 11621,
+        "nodes": 613903,
+        "facts": 2401622,
+        "edges": 2479365,
+        "external_nodes": 43381,
+        "nodes_by_kind": {
+          "class": 2543,
+          "column": 5180,
+          "component": 11,
+          "config_key": 31300,
+          "document_section": 10838,
+          "endpoint": 209,
+          "event": 1347,
+          "external": 38461,
+          "field": 56245,
+          "file": 11711,
+          "function": 22285,
+          "godot_autoload": 9,
+          "godot_resource": 606,
+          "godot_scene": 129,
+          "godot_scene_node": 1694,
+          "index": 338,
+          "interface": 2607,
+          "method": 42092,
+          "module": 6119,
+          "parameter": 98159,
+          "repository": 1,
+          "table": 669,
+          "test": 25943,
+          "transport_operation": 51,
+          "type": 12661,
+          "variable": 242695
+        },
+        "edges_by_kind": {
+          "assigns": 287213,
+          "attaches_script": 153,
+          "autoloads": 9,
+          "calls": 657292,
+          "carries": 2,
+          "contains": 32634,
+          "declares": 443720,
+          "decodes": 150,
+          "defers": 2072,
+          "defines": 31080,
+          "depends_on": 426,
+          "documents": 720,
+          "embeds": 2247,
+          "encodes": 44,
+          "exports": 8924,
+          "exposes": 140,
+          "extends": 1640,
+          "generated_from": 14063,
+          "handled_by": 142,
+          "handles_error": 1871,
+          "has_field": 60548,
+          "implements": 2627,
+          "imports": 53357,
+          "instantiates": 162,
+          "panics": 1899,
+          "passes": 649441,
+          "propagates_error": 19140,
+          "publishes": 1383,
+          "reads": 5257,
+          "reads_config": 137,
+          "receives": 3,
+          "recovers": 21,
+          "references": 6516,
+          "requests": 268,
+          "returns": 84009,
+          "returns_error": 12227,
+          "sends": 48,
+          "subscribes": 1778,
+          "tests": 77743,
+          "uses_middleware": 469,
+          "wraps_error": 10410,
+          "writes": 7380
+        }
+      },
+      "projection": {
+        "input_nodes": 570510,
+        "output_nodes": 570510,
+        "input_facts": 2379727,
+        "output_facts": 2379727
+      }
+    },
+    "structural_v1": {
+      "status": "completed_but_semantically_invalid",
+      "cold_elapsed_ns": 475895675201,
+      "incremental_elapsed_ns": 1063152155,
+      "compacted_primary_bytes": 1087721472,
+      "final_wal_bytes": 0,
+      "peak_rss_bytes": 5759049728,
+      "cold_phases_ns": {
+        "git_probe": 28609080,
+        "membership": 72466902,
+        "discovery": 72467142,
+        "read_hash": 31642616668,
+        "parse": 64352717066,
+        "persistence": 145997196573,
+        "reconciliation": 233101098036,
+        "total": 475895659812
+      },
+      "incremental_phases_ns": {
+        "git_probe": 22134320,
+        "membership": 5937479,
+        "discovery": 5937600,
+        "read_hash": 32510,
+        "parse": 0,
+        "persistence": 518076217,
+        "reconciliation": 0,
+        "total": 1063121088
+      },
+      "counts": {
+        "files": 11621,
+        "nodes": 272392,
+        "facts": 980099,
+        "edges": 1057842,
+        "external_nodes": 38996,
+        "nodes_by_kind": {
+          "class": 2543,
+          "column": 5180,
+          "component": 11,
+          "config_key": 31300,
+          "document_section": 10838,
+          "endpoint": 209,
+          "event": 1347,
+          "external": 34367,
+          "field": 56245,
+          "file": 11711,
+          "function": 22285,
+          "godot_autoload": 9,
+          "godot_resource": 606,
+          "godot_scene": 129,
+          "godot_scene_node": 1694,
+          "index": 338,
+          "interface": 2607,
+          "method": 42092,
+          "module": 6119,
+          "parameter": 105,
+          "repository": 1,
+          "table": 669,
+          "test": 25943,
+          "transport_operation": 51,
+          "type": 12654,
+          "variable": 3339
+        },
+        "edges_by_kind": {
+          "attaches_script": 153,
+          "autoloads": 9,
+          "calls": 657292,
+          "carries": 2,
+          "contains": 32634,
+          "declares": 103137,
+          "decodes": 150,
+          "defines": 31080,
+          "depends_on": 426,
+          "documents": 720,
+          "embeds": 2247,
+          "encodes": 44,
+          "exports": 8924,
+          "exposes": 140,
+          "extends": 1640,
+          "generated_from": 14063,
+          "handled_by": 142,
+          "has_field": 60548,
+          "implements": 2627,
+          "imports": 53357,
+          "instantiates": 162,
+          "publishes": 1383,
+          "reads_config": 137,
+          "receives": 3,
+          "references": 6516,
+          "requests": 268,
+          "sends": 48,
+          "subscribes": 1778,
+          "tests": 77743,
+          "uses_middleware": 469
+        }
+      },
+      "projection": {
+        "input_nodes": 570510,
+        "output_nodes": 233384,
+        "input_facts": 2379727,
+        "output_facts": 958204,
+        "input_facts_by_producer": {
+          "config": 25238,
+          "gdscript": 226404,
+          "go": 1747105,
+          "go-module": 302,
+          "godot-config": 6767,
+          "godot-resource": 13629,
+          "godot-shader": 558,
+          "godot-uid": 2520,
+          "markdown": 11459,
+          "npm-manifest": 133,
+          "postgresql": 11194,
+          "protobuf": 4916,
+          "protobufbinding": 14063,
+          "python": 12627,
+          "sqlite": 314,
+          "typescript": 302498
+        },
+        "output_facts_by_producer": {
+          "config": 25238,
+          "gdscript": 114851,
+          "go": 576322,
+          "go-module": 302,
+          "godot-config": 6767,
+          "godot-resource": 13629,
+          "godot-shader": 378,
+          "godot-uid": 2520,
+          "markdown": 11459,
+          "npm-manifest": 133,
+          "postgresql": 6667,
+          "protobuf": 4916,
+          "protobufbinding": 14063,
+          "python": 6016,
+          "sqlite": 282,
+          "typescript": 174661
+        }
+      },
+      "gates": {
+        "size_savings_percent": 57.351613866824266,
+        "cold_regression_percent": -45.71272361950984,
+        "incremental_regression_percent": -45.51310388770819,
+        "rss_regression_percent": -1.7442616168802036,
+        "size_passed": true,
+        "cold_passed": true,
+        "incremental_passed": true,
+        "rss_passed": true,
+        "claimed_capabilities_equivalent": false,
+        "semantic_failure": "catalogs_topology fingerprint differs from full"
+      }
+    },
+    "scoped_full_v1": {
+      "status": "rejected_before_measurement",
+      "full_detail_roots": ["apps/api/**"],
+      "failure": {
+        "validator": "aggregate_resolution",
+        "fact_id": "f:44f59939015b5caef651",
+        "edge_kind": "wraps_error",
+        "endpoint": "target",
+        "locator": "uzir.net/apps/pkg/gamebindinglock.ErrLockOrderViolation",
+        "full_candidate_count": 1,
+        "projected_candidate_count": 0,
+        "message": "candidate rejected; no timing or size comparison published"
+      }
+    }
+  },
+  "claimed_capability_fingerprints": {
+    "catalogs_topology": {
+      "full": "d2501b5e3a27f49781bb6c649cb2f93c476e63a28a314aaf6f439478b92243b8",
+      "structural_v1": "2ba45309e95d4eeeccbbf67311ac6c338dfd471c40f49443164e8cb95cecfba4",
+      "equivalent": false
+    },
+    "godot_composition": {
+      "full": "35bb3cddbc5cc290c4da74ad98c814f53ebf98de08a3582bf59e487578d23bce",
+      "structural_v1": "35bb3cddbc5cc290c4da74ad98c814f53ebf98de08a3582bf59e487578d23bce",
+      "equivalent": true
+    },
+    "godot_interactions": {
+      "full": "c2b10ad8483fc39c121b2975df112c4fb0063eec45eac24464ebc50965275505",
+      "structural_v1": "c2b10ad8483fc39c121b2975df112c4fb0063eec45eac24464ebc50965275505",
+      "equivalent": true
+    },
+    "semantic_reuse": {
+      "full": "92822c22d75f37c7ea1a2e4316d46ae101605f0deae64b20ba7244b467462e76",
+      "structural_v1": "92822c22d75f37c7ea1a2e4316d46ae101605f0deae64b20ba7244b467462e76",
+      "equivalent": true
+    },
+    "source_lookup": {
+      "full": "9ace85db330797ba4700057e46f928695926b10aaf45de41af7a0ecdb091503c",
+      "structural_v1": "9ace85db330797ba4700057e46f928695926b10aaf45de41af7a0ecdb091503c",
+      "equivalent": true
+    },
+    "structural_traversal": {
+      "full": "8aba0b962b1e2ae9cb6fda25c5b18091ab1f8720345628f130627c68db0225d2",
+      "structural_v1": "8aba0b962b1e2ae9cb6fda25c5b18091ab1f8720345628f130627c68db0225d2",
+      "equivalent": true
+    },
+    "test_coverage": {
+      "full": "b85efedbb34b3bf8dd261134fc4218c3e6d96d207cd060e0610a70fc872f9954",
+      "structural_v1": "b85efedbb34b3bf8dd261134fc4218c3e6d96d207cd060e0610a70fc872f9954",
+      "equivalent": true
+    },
+    "transport_flow": {
+      "full": "15677cf344dca38dda30d709dccd68606c106664b20c8a1b08fef8ba77c524af",
+      "structural_v1": "15677cf344dca38dda30d709dccd68606c106664b20c8a1b08fef8ba77c524af",
+      "equivalent": true
+    }
+  }
+}

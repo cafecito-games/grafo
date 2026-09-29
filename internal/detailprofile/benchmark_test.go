@@ -53,6 +53,32 @@ func TestBenchmarkProducesComparableRawProfileEvidence(t *testing.T) {
 	}
 }
 
+func TestBenchmarkRemovesDatabasesWhenProjectionValidationFails(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app.py"), "def handle():\n    return 1\n")
+	runGit(t, root, "init", "-b", "main")
+	runGit(t, root, "config", "user.name", "Detail Profile Test")
+	runGit(t, root, "config", "user.email", "detail@example.invalid")
+	runGit(t, root, "add", "app.py")
+	runGit(t, root, "commit", "-m", "fixture")
+	output := t.TempDir()
+
+	_, err := detailprofile.RunBenchmark(context.Background(), detailprofile.BenchmarkOptions{
+		Repository: root, Output: output, Profile: detailprofile.ProfileScopedFull,
+		FullDetailRoots: []string{"missing/**"}, Samples: 1, AllowDirtyGrafo: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "matched no indexed files") {
+		t.Fatalf("benchmark error = %v", err)
+	}
+	entries, readErr := os.ReadDir(filepath.Join(output, "raw-scoped-full-v1"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("failed benchmark retained work databases: %v", entries)
+	}
+}
+
 func TestProductionCompositionDoesNotImportDetailProfile(t *testing.T) {
 	command := exec.Command("go", "list", "-deps", "./cmd/grafo", "./internal/cli", "./internal/mcpserver", "./internal/service")
 	command.Dir = repositoryRoot(t)
