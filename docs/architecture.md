@@ -10,7 +10,7 @@ storage can evolve independently.
        ├─ internal/query   deterministic traversal use case
        ├─ internal/semantic optional candidate-ranking use case
        ├─ internal/source   bounded graph-addressed source retrieval
-       ├─ internal/embedding/ollama provider adapter
+       ├─ internal/embedding/{ollama,cache} provider and vector-cache adapters
        ├─ internal/mcpserver agent-facing stdio tools
        └─ internal/federation read-only multi-index graph
             │
@@ -113,6 +113,12 @@ or vendored semantic inputs change. Semantic-index version 31 adds
 repository-declared call-effect adapters. The
 durable graph schema does not change: configured calls project through the
 existing event and HTTP vocabularies and retain their ordinary call evidence.
+
+Graph schema version 12 migrates branch indexes away from the legacy
+node-addressed JSON embedding table. Those vectors are reproducible and are not
+copied into the user cache, so one semantic sync may be required after upgrade.
+The migration preserves every structural row; SQLite retains the freed pages
+for reuse until the operator runs the separate branch-index compaction command.
 
 For Git worktrees, the indexer narrows content hashing to files changed since
 the indexed commit, current untracked files, and paths that were dirty during
@@ -238,11 +244,14 @@ refresh cannot expose a partially updated federation or close a handle in use.
 
 ## Semantic discovery
 
-`semantic.Embedder` isolates vector generation from the candidate-selection use
-case, and `semantic.Repository` isolates vector persistence. SQLite stores one
-normalized vector per node and model. A SHA-256 hash of the stable semantic
-document means unchanged candidates are never embedded again; deleted nodes are
-pruned on the next sync.
+`semantic.Embedder` isolates vector generation, `semantic.CandidateRepository`
+selects current graph nodes, and `semantic.EmbeddingCache` isolates optional
+vector persistence. The graph SQLite database stores no embeddings. A separate
+user-level SQLite adapter stores one little-endian float32 vector per exact
+model, semantic-document version, and SHA-256 document hash. Equal documents
+from any branch or federated repository share that row, while current graph
+candidates remain the sole authority for search results. Stale cache rows are
+safe reusable or evictable data and never create candidates.
 
 Cosine similarity may rank candidates for `find_reusable_code`, but it never
 creates an edge or determines a path. Each selected node is resolved by stable

@@ -362,6 +362,39 @@ Ollama-compatible location or model with `--ollama-url`, `--model`,
 `http://localhost:11434` and `embeddinggemma`. Use `grafo embed --force` after
 replacing a model under the same model name.
 
+Normalized vectors are shared across branches and repositories through a
+content-addressed SQLite cache at `<os.UserCacheDir()>/grafo/embeddings.sqlite`.
+Set `GRAFO_EMBED_CACHE` to an explicit local file path to override it. Cache
+keys contain only the exact model name, semantic document version, and SHA-256
+content hash; vectors are stored losslessly as little-endian float32 binary
+data. The cache contains no source documents, symbol names, repository paths,
+provider credentials, or endpoint URLs. Equal semantic documents therefore use
+one cached vector while their graph nodes remain separate search candidates.
+On POSIX platforms, Grafo creates the cache directory with owner-only `0700`
+permissions and the cache file with owner-only `0600` permissions.
+
+Inspect or evict this rebuildable data without contacting the provider:
+
+```sh
+grafo embed-cache status
+grafo embed-cache status --json
+grafo embed-cache prune --older-than 720h --dry-run
+grafo embed-cache prune --model embeddinggemma --max-bytes 1073741824 --yes
+```
+
+Prune filters compose, and size-bounded eviction removes the oldest eligible
+vectors first. A real prune always requires `--yes`; `--dry-run` opens the cache
+read-only. Pruning checkpoints the cache WAL but deliberately does not run
+`VACUUM`, so reported logical vector bytes can fall before the cache file
+shrinks.
+
+Upgrading from a branch-local embedding layout drops those rebuildable vectors,
+so the first `grafo embed`, `grafo reusable`, or MCP reusable-code query may need
+one provider-backed sync. Dropped pages remain reusable inside each branch
+database. To return them to the filesystem immediately, run the separate
+`grafo indexes compact . --yes` command; embedding-cache pruning never compacts
+or mutates a structural graph index.
+
 To query several repositories as one graph, index each once and pass their
 paths to any query command or to the MCP server:
 
@@ -792,7 +825,10 @@ Configuration values are used transiently to discover references such as
 `${DATABASE_HOST}` but are not persisted, so indexing an `.env` file does not
 copy its secrets into the graph. Normal indexing is entirely local. Semantic
 sync sends only generated symbol metadata and signatures—not source files—to
-the configured embedding endpoint; the default endpoint is local Ollama.
+the configured embedding endpoint; the default endpoint is local Ollama. The
+user-level embedding cache is local to the OS user and stores only numeric
+vectors plus source-free content hashes. It is never graph evidence, and stale
+cache rows cannot make a symbol appear in results.
 
 On Git worktrees, Grafo also avoids rereading every file to rediscover changes.
 It combines the indexed commit, Git's current tracked/untracked changes, and a
