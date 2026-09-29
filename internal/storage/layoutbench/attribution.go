@@ -165,6 +165,18 @@ func fileSize(path string) (int64, error) {
 	return info.Size(), nil
 }
 
+// tableColumnExists reports whether one column of a graph table is present;
+// candidate layouts may drop evidence columns the production schema carries.
+func tableColumnExists(ctx context.Context, db *sql.DB, table, column string) bool {
+	rows, err := db.QueryContext(ctx,
+		fmt.Sprintf("SELECT 1 FROM pragma_table_info('%s') WHERE name = ?", table), column)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = rows.Close() }()
+	return rows.Next()
+}
+
 func capturePayloadStats(ctx context.Context, db *sql.DB) ([]TablePayload, error) {
 	var stats []TablePayload
 	for _, table := range payloadTables {
@@ -179,14 +191,20 @@ func capturePayloadStats(ctx context.Context, db *sql.DB) ([]TablePayload, error
 			continue
 		}
 		// The owner column is a literal 0 for edges so one statement shape and
-		// one scan path serve every table.
+		// one scan path serve every table. Layout candidates may drop the
+		// edges evidence columns entirely; a missing column reports a zero
+		// average instead of failing the whole capture.
 		ownerAverage := "0"
 		if table.hasOwnerCol {
 			ownerAverage = "COALESCE(AVG(length(owner_file)), 0)"
 		}
+		propertiesAverage := "0"
+		if tableColumnExists(ctx, db, table.name, "properties") {
+			propertiesAverage = "COALESCE(AVG(length(properties)), 0)"
+		}
 		statement := fmt.Sprintf(
-			"SELECT COUNT(*), COALESCE(AVG(length(id)), 0), COALESCE(MAX(length(id)), 0), %s, COALESCE(AVG(length(properties)), 0) FROM %s",
-			ownerAverage, table.name,
+			"SELECT COUNT(*), COALESCE(AVG(length(id)), 0), COALESCE(MAX(length(id)), 0), %s, %s FROM %s",
+			ownerAverage, propertiesAverage, table.name,
 		)
 		payload := TablePayload{Table: table.name}
 		if err := db.QueryRowContext(ctx, statement).Scan(

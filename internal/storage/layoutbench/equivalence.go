@@ -365,8 +365,15 @@ func renderHashes(hashes map[string]string) string {
 	return strings.Join(rendered, ";")
 }
 
+// renderWriteStats renders the behavioral write contract: batches and rows.
+// Byte totals are a physical-layout property candidates deliberately vary (a
+// slim edge row binds fewer values than a wide one), so comparing them here
+// would fail every layout by design; the attribution capture measures bytes.
 func renderWriteStats(stats graph.WriteStats) string {
-	return fmt.Sprintf("nodes=%+v facts=%+v edges=%+v", stats.Nodes, stats.Facts, stats.Edges)
+	return fmt.Sprintf("nodes=%d/%d facts=%d/%d edges=%d/%d",
+		stats.Nodes.Batches, stats.Nodes.Rows,
+		stats.Facts.Batches, stats.Facts.Rows,
+		stats.Edges.Batches, stats.Edges.Rows)
 }
 
 // digestLines hashes an ordered set of rendered lines.
