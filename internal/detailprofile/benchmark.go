@@ -73,7 +73,7 @@ type GitProvenance struct {
 type BenchmarkEnvironment struct {
 	CPUQuota                 string `json:"cpu_quota"`
 	EffectiveCPUs            int64  `json:"effective_cpus"`
-	MemoryMaxBytes           int64  `json:"memory_max_bytes"`
+	MemoryMaxBytes           int64  `json:"memory_max_bytes"` // -1 preserves the cgroup "max" sentinel.
 	Filesystem               string `json:"filesystem"`
 	FilesystemDevice         uint64 `json:"filesystem_device"`
 	FilesystemAvailableBytes uint64 `json:"filesystem_available_bytes"`
@@ -739,24 +739,27 @@ func parseCgroupLimits(cpu, memory string) (cgroupLimits, error) {
 	if len(fields) != 2 {
 		return cgroupLimits{}, fmt.Errorf("invalid cgroup CPU quota %q", cpu)
 	}
+	period, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil || period <= 0 {
+		return cgroupLimits{}, fmt.Errorf("invalid cgroup CPU period %q", cpu)
+	}
 	var effectiveCPUs int64
 	if fields[0] != "max" && fields[0] != "-1" {
 		quota, err := strconv.ParseInt(fields[0], 10, 64)
 		if err != nil || quota <= 0 {
 			return cgroupLimits{}, fmt.Errorf("invalid cgroup CPU quota %q", cpu)
 		}
-		period, err := strconv.ParseInt(fields[1], 10, 64)
-		if err != nil || period <= 0 {
-			return cgroupLimits{}, fmt.Errorf("invalid cgroup CPU period %q", cpu)
-		}
 		effectiveCPUs = quota / period
 		if effectiveCPUs == 0 {
 			effectiveCPUs = 1
 		}
 	}
-	memoryMaxBytes, err := strconv.ParseInt(memory, 10, 64)
-	if err != nil || memoryMaxBytes <= 0 {
-		return cgroupLimits{}, fmt.Errorf("invalid cgroup memory limit %q", memory)
+	memoryMaxBytes := int64(-1)
+	if memory != "max" {
+		memoryMaxBytes, err = strconv.ParseInt(memory, 10, 64)
+		if err != nil || memoryMaxBytes <= 0 {
+			return cgroupLimits{}, fmt.Errorf("invalid cgroup memory limit %q", memory)
+		}
 	}
 	return cgroupLimits{cpuQuota: cpu, effectiveCPUs: effectiveCPUs, memoryMaxBytes: memoryMaxBytes}, nil
 }

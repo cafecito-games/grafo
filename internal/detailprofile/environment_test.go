@@ -22,6 +22,45 @@ func TestInspectCgroupLimitsFallsBackToV1(t *testing.T) {
 	}
 }
 
+func TestInspectCgroupLimitsV2(t *testing.T) {
+	tests := []struct {
+		name          string
+		cpu           string
+		memory        string
+		effectiveCPUs int64
+		memoryBytes   int64
+	}{
+		{name: "numeric", cpu: "800000 100000", memory: "21474836480", effectiveCPUs: 8, memoryBytes: 21474836480},
+		{name: "unlimited CPU", cpu: "max 100000", memory: "21474836480", effectiveCPUs: 0, memoryBytes: 21474836480},
+		{name: "unlimited memory", cpu: "800000 100000", memory: "max", effectiveCPUs: 8, memoryBytes: -1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeEnvironmentFile(t, filepath.Join(root, "cpu.max"), test.cpu+"\n")
+			writeEnvironmentFile(t, filepath.Join(root, "memory.max"), test.memory+"\n")
+
+			limits, err := inspectCgroupLimits(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if limits.cpuQuota != test.cpu || limits.effectiveCPUs != test.effectiveCPUs || limits.memoryMaxBytes != test.memoryBytes {
+				t.Fatalf("limits = %#v", limits)
+			}
+		})
+	}
+}
+
+func TestInspectCgroupLimitsRejectsPartialV2Provenance(t *testing.T) {
+	root := t.TempDir()
+	writeEnvironmentFile(t, filepath.Join(root, "cpu.max"), "800000 100000\n")
+
+	_, err := inspectCgroupLimits(root)
+	if err == nil || !strings.Contains(err.Error(), "read cgroup v2 limits") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestInspectCgroupLimitsRejectsPartialV1Provenance(t *testing.T) {
 	root := t.TempDir()
 	writeEnvironmentFile(t, filepath.Join(root, "cpu", "cpu.cfs_quota_us"), "800000\n")
