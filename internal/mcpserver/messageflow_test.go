@@ -22,7 +22,8 @@ func TestServerExposesScalarBatchAndCoverageMessageTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	message := graph.Node{ID: "n:message", Kind: graph.KindType, Name: "Envelope", QualifiedName: "acme.v1.Envelope",
-		OwnerFile: "schema.proto", Properties: map[string]string{"declaration": "message"}}
+		OwnerFile: "schema.proto", Location: graph.Location{Path: "schema.proto", Line: 1},
+		Properties: map[string]string{"declaration": "message"}}
 	field := graph.Node{ID: "n:field", Kind: graph.KindField, Name: "text", QualifiedName: "acme.v1.Envelope.text", OwnerFile: "schema.proto"}
 	producer := graph.Node{ID: "n:producer", Kind: graph.KindFunction, Name: "Build", QualifiedName: "client.Build", OwnerFile: "client.go"}
 	binding := graph.Node{ID: "n:binding", Kind: graph.KindType, Name: "Envelope", QualifiedName: "generated.Envelope",
@@ -55,7 +56,9 @@ func TestServerExposesScalarBatchAndCoverageMessageTools(t *testing.T) {
 	if results, ok := batch["results"].([]any); !ok || len(results) != 2 {
 		t.Fatalf("batch did not preserve result/error envelopes: %#v", batch)
 	}
-	coverage := call(t, session, "list_message_coverage", map[string]any{"package": "acme.v1", "status": "missing_evidence"})
+	coverage := call(t, session, "list_message_coverage", map[string]any{
+		"package": "acme.v1", "status": "missing_evidence", "path_prefixes": []string{"schema.proto"},
+	})
 	if messages, ok := coverage["messages"].([]any); !ok || len(messages) != 1 {
 		t.Fatalf("unexpected coverage: %#v", coverage)
 	}

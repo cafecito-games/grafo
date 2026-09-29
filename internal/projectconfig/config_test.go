@@ -4,8 +4,134 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cafecito-games/grafo/internal/parser/calleffect"
 	"github.com/cafecito-games/grafo/internal/projectconfig"
 )
+
+func TestParseCallEffectAdaptersAndNormalizeLegacyHTTP(t *testing.T) {
+	config, err := projectconfig.Parse([]byte(`adapters:
+  - match:
+      language: gdscript
+      symbol: Signals.wire
+    effects:
+      - kind: event.subscribe
+        roles:
+          event: {argument: 0}
+          handler: {argument: 1}
+  - match: {language: gdscript, symbol: API.fetch}
+    effects:
+      - kind: http.request
+        roles:
+          method: {argument: 1}
+          url: {argument: 0}
+http:
+  request_apis:
+    - language: gdscript
+      symbol: Legacy.fetch
+      method_argument: 2
+      url_argument: 0
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	effects := config.Adapters.Lookup("gdscript", "Signals.wire")
+	if len(effects) != 1 || effects[0].Kind != calleffect.EventSubscribe ||
+		effects[0].Roles[calleffect.RoleEvent].Argument != 0 || effects[0].Roles[calleffect.RoleHandler].Argument != 1 ||
+		effects[0].Line != 6 || effects[0].Roles[calleffect.RoleEvent].Line != 8 {
+		t.Fatalf("event adapter = %#v", effects)
+	}
+	legacy := config.Adapters.Lookup("gdscript", "Legacy.fetch")
+	if len(legacy) != 1 || legacy[0].Kind != calleffect.HTTPRequest || legacy[0].Roles[calleffect.RoleMethod].Argument != 2 {
+		t.Fatalf("legacy HTTP adapter = %#v", legacy)
+	}
+}
+
+func TestCallEffectSemanticKeyIgnoresDeclarationOrderAndProvenance(t *testing.T) {
+	first, err := projectconfig.Parse([]byte(`adapters:
+  - match: {language: gdscript, symbol: Signals.wire}
+    effects:
+      - kind: event.subscribe
+        roles: {event: {argument: 0}, handler: {argument: 1}}
+  - match: {language: gdscript, symbol: Signals.emit}
+    effects:
+      - kind: event.publish
+        roles: {event: {argument: 0}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := projectconfig.Parse([]byte(`unknown: true
+adapters:
+  - effects:
+      - roles: {event: {argument: 0}}
+        kind: event.publish
+    match: {symbol: Signals.emit, language: gdscript}
+  - effects:
+      - roles: {handler: {argument: 1}, event: {argument: 0}}
+        kind: event.subscribe
+    match: {symbol: Signals.wire, language: gdscript}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Adapters.SemanticKey() != second.Adapters.SemanticKey() {
+		t.Fatalf("equivalent adapter order changed key: %s != %s", first.Adapters.SemanticKey(), second.Adapters.SemanticKey())
+	}
+	for _, registry := range []calleffect.Registry{first.Adapters, second.Adapters} {
+		effects := registry.Lookup("gdscript", "Signals.wire")
+		if len(effects) != 1 || effects[0].Kind != calleffect.EventSubscribe {
+			t.Fatalf("canonical lookup = %#v", effects)
+		}
+	}
+}
+
+func TestParseRejectsInvalidCallEffectAdapters(t *testing.T) {
+	tests := []struct{ name, source, want string }{
+		{"shape", "adapters: {}\n", "adapters must be a sequence"},
+		{"missing match", "adapters:\n- effects: [{kind: event.publish, roles: {event: {argument: 0}}}]\n", "adapter match is required"},
+		{"empty effects", "adapters:\n- match: {language: gdscript, symbol: Signals.wire}\n  effects: []\n", "effects must contain at least one"},
+		{"unknown adapter", "adapters:\n- match: {language: gdscript, symbol: Signals.wire}\n  effects: [{kind: event.publish, roles: {event: {argument: 0}}}]\n  extra: true\n", "unknown adapter field"},
+		{"unknown match", "adapters:\n- match: {language: gdscript, symbol: Signals.wire, receiver: Signals}\n  effects: [{kind: event.publish, roles: {event: {argument: 0}}}]\n", "unknown adapter match field"},
+		{"unsupported language", "adapters:\n- match: {language: go, symbol: Signals.wire}\n  effects: [{kind: event.publish, roles: {event: {argument: 0}}}]\n", "unsupported adapter language"},
+		{"unsafe symbol", "adapters:\n- match: {language: gdscript, symbol: 'Signals.*'}\n  effects: [{kind: event.publish, roles: {event: {argument: 0}}}]\n", "exact qualified symbol"},
+		{"unknown effect", "adapters:\n- match: {language: gdscript, symbol: Signals.wire}\n  effects: [{kind: graph.edge, roles: {event: {argument: 0}}}]\n", "unsupported adapter effect"},
+		{"missing role", "adapters:\n- match: {language: gdscript, symbol: Signals.wire}\n  effects: [{kind: event.subscribe, roles: {event: {argument: 0}}}]\n", "requires role \"handler\""},
+		{"extra role", "adapters:\n- match: {language: gdscript, symbol: Signals.emit}\n  effects: [{kind: event.publish, roles: {event: {argument: 0}, handler: {argument: 1}}}]\n", "unknown role \"handler\""},
+		{"negative", "adapters:\n- match: {language: gdscript, symbol: Signals.emit}\n  effects: [{kind: event.publish, roles: {event: {argument: -1}}}]\n", "non-negative integer"},
+		{"duplicate role", "adapters:\n- match: {language: gdscript, symbol: Signals.wire}\n  effects:\n  - kind: event.subscribe\n    roles:\n      event: {argument: 0}\n      event: {argument: 1}\n      handler: {argument: 2}\n", "duplicate adapter role"},
+		{"selector fields", "adapters:\n- match: {language: gdscript, symbol: Signals.emit}\n  effects: [{kind: event.publish, roles: {event: {argument: 0, fallback: 1}}}]\n", "exactly one argument selector"},
+		{"conflicting selector", "adapters:\n- match: {language: gdscript, symbol: Signals.wire}\n  effects: [{kind: event.subscribe, roles: {event: {argument: 0}, handler: {argument: 0}}}]\n", "distinct argument indexes"},
+		{"builtin HTTP conflict", "adapters:\n- match: {language: gdscript, symbol: HTTPRequest.request}\n  effects: [{kind: http.request, roles: {method: {argument: 3}, url: {argument: 0}}}]\n", "conflicts with built-in"},
+		{"duplicate effect", "adapters:\n- match: {language: gdscript, symbol: Signals.emit}\n  effects:\n  - {kind: event.publish, roles: {event: {argument: 0}}}\n  - {kind: event.publish, roles: {event: {argument: 1}}}\n", "duplicate effect"},
+		{"duplicate symbol", "adapters:\n- match: {language: gdscript, symbol: Signals.emit}\n  effects: [{kind: event.publish, roles: {event: {argument: 0}}}]\n- match: {language: gdscript, symbol: Signals.emit}\n  effects: [{kind: event.publish, roles: {event: {argument: 1}}}]\n", "duplicate adapter symbol"},
+		{"duplicate top level", "adapters: []\nadapters: []\n", "duplicate top-level section"},
+		{"legacy conflict", "adapters:\n- match: {language: gdscript, symbol: API.fetch}\n  effects: [{kind: http.request, roles: {method: {argument: 1}, url: {argument: 0}}}]\nhttp:\n  request_apis:\n  - {language: gdscript, symbol: API.fetch, method_argument: 1, url_argument: 0}\n", "duplicate adapter symbol"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := projectconfig.Parse([]byte(test.source))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestNullAdaptersIsAnEmptyRegistry(t *testing.T) {
+	nullConfig, err := projectconfig.Parse([]byte("adapters:\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyConfig, err := projectconfig.Parse([]byte("adapters: []\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nullConfig.Adapters.SemanticKey() != emptyConfig.Adapters.SemanticKey() ||
+		len(nullConfig.Adapters.Lookup("gdscript", "Signals.wire")) != 0 {
+		t.Fatalf("null adapters did not normalize to empty: null=%q empty=%q",
+			nullConfig.Adapters.SemanticKey(), emptyConfig.Adapters.SemanticKey())
+	}
+}
 
 func TestParseComponentsNormalizesAndRetainsLocations(t *testing.T) {
 	config, err := projectconfig.Parse([]byte(`unknown:

@@ -96,9 +96,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.deleteOrphanExternalNodesStmt, err = db.PrepareContext(ctx, deleteOrphanExternalNodes); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteOrphanExternalNodes: %w", err)
 	}
-	if q.deleteStaleEmbeddingsStmt, err = db.PrepareContext(ctx, deleteStaleEmbeddings); err != nil {
-		return nil, fmt.Errorf("error preparing query DeleteStaleEmbeddings: %w", err)
-	}
 	if q.enqueueDirtyFactsStmt, err = db.PrepareContext(ctx, enqueueDirtyFacts); err != nil {
 		return nil, fmt.Errorf("error preparing query EnqueueDirtyFacts: %w", err)
 	}
@@ -117,6 +114,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.insertEdgeStmt, err = db.PrepareContext(ctx, insertEdge); err != nil {
 		return nil, fmt.Errorf("error preparing query InsertEdge: %w", err)
 	}
+	if q.listCanonicalMessagesStmt, err = db.PrepareContext(ctx, listCanonicalMessages); err != nil {
+		return nil, fmt.Errorf("error preparing query ListCanonicalMessages: %w", err)
+	}
 	if q.listDirtyFactBatchStmt, err = db.PrepareContext(ctx, listDirtyFactBatch); err != nil {
 		return nil, fmt.Errorf("error preparing query ListDirtyFactBatch: %w", err)
 	}
@@ -125,12 +125,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.listEdgesToStmt, err = db.PrepareContext(ctx, listEdgesTo); err != nil {
 		return nil, fmt.Errorf("error preparing query ListEdgesTo: %w", err)
-	}
-	if q.listEmbeddingHashesByModelStmt, err = db.PrepareContext(ctx, listEmbeddingHashesByModel); err != nil {
-		return nil, fmt.Errorf("error preparing query ListEmbeddingHashesByModel: %w", err)
-	}
-	if q.listEmbeddingsByModelStmt, err = db.PrepareContext(ctx, listEmbeddingsByModel); err != nil {
-		return nil, fmt.Errorf("error preparing query ListEmbeddingsByModel: %w", err)
 	}
 	if q.listExternalEdgesMatchingStmt, err = db.PrepareContext(ctx, listExternalEdgesMatching); err != nil {
 		return nil, fmt.Errorf("error preparing query ListExternalEdgesMatching: %w", err)
@@ -194,9 +188,6 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.setMetaStmt, err = db.PrepareContext(ctx, setMeta); err != nil {
 		return nil, fmt.Errorf("error preparing query SetMeta: %w", err)
-	}
-	if q.upsertEmbeddingStmt, err = db.PrepareContext(ctx, upsertEmbedding); err != nil {
-		return nil, fmt.Errorf("error preparing query UpsertEmbedding: %w", err)
 	}
 	if q.upsertFactStmt, err = db.PrepareContext(ctx, upsertFact); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertFact: %w", err)
@@ -332,11 +323,6 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing deleteOrphanExternalNodesStmt: %w", cerr)
 		}
 	}
-	if q.deleteStaleEmbeddingsStmt != nil {
-		if cerr := q.deleteStaleEmbeddingsStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing deleteStaleEmbeddingsStmt: %w", cerr)
-		}
-	}
 	if q.enqueueDirtyFactsStmt != nil {
 		if cerr := q.enqueueDirtyFactsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing enqueueDirtyFactsStmt: %w", cerr)
@@ -367,6 +353,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing insertEdgeStmt: %w", cerr)
 		}
 	}
+	if q.listCanonicalMessagesStmt != nil {
+		if cerr := q.listCanonicalMessagesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listCanonicalMessagesStmt: %w", cerr)
+		}
+	}
 	if q.listDirtyFactBatchStmt != nil {
 		if cerr := q.listDirtyFactBatchStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listDirtyFactBatchStmt: %w", cerr)
@@ -380,16 +371,6 @@ func (q *Queries) Close() error {
 	if q.listEdgesToStmt != nil {
 		if cerr := q.listEdgesToStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listEdgesToStmt: %w", cerr)
-		}
-	}
-	if q.listEmbeddingHashesByModelStmt != nil {
-		if cerr := q.listEmbeddingHashesByModelStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing listEmbeddingHashesByModelStmt: %w", cerr)
-		}
-	}
-	if q.listEmbeddingsByModelStmt != nil {
-		if cerr := q.listEmbeddingsByModelStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing listEmbeddingsByModelStmt: %w", cerr)
 		}
 	}
 	if q.listExternalEdgesMatchingStmt != nil {
@@ -497,11 +478,6 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing setMetaStmt: %w", cerr)
 		}
 	}
-	if q.upsertEmbeddingStmt != nil {
-		if cerr := q.upsertEmbeddingStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing upsertEmbeddingStmt: %w", cerr)
-		}
-	}
 	if q.upsertFactStmt != nil {
 		if cerr := q.upsertFactStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertFactStmt: %w", cerr)
@@ -580,18 +556,16 @@ type Queries struct {
 	deleteFileStmt                      *sql.Stmt
 	deleteNodesByOwnerStmt              *sql.Stmt
 	deleteOrphanExternalNodesStmt       *sql.Stmt
-	deleteStaleEmbeddingsStmt           *sql.Stmt
 	enqueueDirtyFactsStmt               *sql.Stmt
 	findNodesExactStmt                  *sql.Stmt
 	findNodesExactKindStmt              *sql.Stmt
 	getMetaStmt                         *sql.Stmt
 	getNodeStmt                         *sql.Stmt
 	insertEdgeStmt                      *sql.Stmt
+	listCanonicalMessagesStmt           *sql.Stmt
 	listDirtyFactBatchStmt              *sql.Stmt
 	listEdgesFromStmt                   *sql.Stmt
 	listEdgesToStmt                     *sql.Stmt
-	listEmbeddingHashesByModelStmt      *sql.Stmt
-	listEmbeddingsByModelStmt           *sql.Stmt
 	listExternalEdgesMatchingStmt       *sql.Stmt
 	listExternalNodesMatchingStmt       *sql.Stmt
 	listFilesStmt                       *sql.Stmt
@@ -613,7 +587,6 @@ type Queries struct {
 	reconciliationPendingStmt           *sql.Stmt
 	searchNodesStmt                     *sql.Stmt
 	setMetaStmt                         *sql.Stmt
-	upsertEmbeddingStmt                 *sql.Stmt
 	upsertFactStmt                      *sql.Stmt
 	upsertFileStmt                      *sql.Stmt
 	upsertNodeStmt                      *sql.Stmt
@@ -647,18 +620,16 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		deleteFileStmt:                      q.deleteFileStmt,
 		deleteNodesByOwnerStmt:              q.deleteNodesByOwnerStmt,
 		deleteOrphanExternalNodesStmt:       q.deleteOrphanExternalNodesStmt,
-		deleteStaleEmbeddingsStmt:           q.deleteStaleEmbeddingsStmt,
 		enqueueDirtyFactsStmt:               q.enqueueDirtyFactsStmt,
 		findNodesExactStmt:                  q.findNodesExactStmt,
 		findNodesExactKindStmt:              q.findNodesExactKindStmt,
 		getMetaStmt:                         q.getMetaStmt,
 		getNodeStmt:                         q.getNodeStmt,
 		insertEdgeStmt:                      q.insertEdgeStmt,
+		listCanonicalMessagesStmt:           q.listCanonicalMessagesStmt,
 		listDirtyFactBatchStmt:              q.listDirtyFactBatchStmt,
 		listEdgesFromStmt:                   q.listEdgesFromStmt,
 		listEdgesToStmt:                     q.listEdgesToStmt,
-		listEmbeddingHashesByModelStmt:      q.listEmbeddingHashesByModelStmt,
-		listEmbeddingsByModelStmt:           q.listEmbeddingsByModelStmt,
 		listExternalEdgesMatchingStmt:       q.listExternalEdgesMatchingStmt,
 		listExternalNodesMatchingStmt:       q.listExternalNodesMatchingStmt,
 		listFilesStmt:                       q.listFilesStmt,
@@ -680,7 +651,6 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		reconciliationPendingStmt:           q.reconciliationPendingStmt,
 		searchNodesStmt:                     q.searchNodesStmt,
 		setMetaStmt:                         q.setMetaStmt,
-		upsertEmbeddingStmt:                 q.upsertEmbeddingStmt,
 		upsertFactStmt:                      q.upsertFactStmt,
 		upsertFileStmt:                      q.upsertFileStmt,
 		upsertNodeStmt:                      q.upsertNodeStmt,

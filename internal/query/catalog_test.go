@@ -421,6 +421,36 @@ func TestEveryCatalogEvidencePathAvoidsLegacyAdjacency(t *testing.T) {
 	}
 }
 
+func TestCatalogPathPrefixesSelectCanonicalNodesBeforeLimitAndKeepEvidence(t *testing.T) {
+	repository := &catalogRepository{nodes: map[string]graph.Node{}, owners: map[string]string{}, repositories: []string{"shop"}}
+	repository.add("shop", graph.Node{ID: "n:outside", Kind: graph.KindTable, Name: "outside", QualifiedName: "outside",
+		Location: graph.Location{Path: "internal/application/schema.sql"}, OwnerFile: "internal/application/schema.sql"})
+	repository.add("shop", graph.Node{ID: "n:orders", Kind: graph.KindTable, Name: "orders", QualifiedName: "orders",
+		Location: graph.Location{Path: "internal/app/schema.sql"}, OwnerFile: "internal/app/schema.sql"})
+	repository.add("shop", graph.Node{ID: "n:reader", Kind: graph.KindFunction, Name: "Read", QualifiedName: "other.Read",
+		Location: graph.Location{Path: "other/read.go"}, OwnerFile: "other/read.go"})
+	repository.edges = append(repository.edges, graph.Edge{ID: "e:read", FromID: "n:reader", ToID: "n:orders", Kind: graph.EdgeReads})
+	result, err := query.NewCatalog(repository).DataResources(context.Background(), nil,
+		query.CatalogOptions{PathPrefixes: []string{"./internal/app/"}, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Resources) != 1 || result.Resources[0].ID != "n:orders" || result.Truncated {
+		t.Fatalf("path-scoped resources = %#v", result)
+	}
+	usage, err := query.NewCatalog(repository).DataResourceUsage(context.Background(), "orders", query.CatalogOptions{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(usage.Readers) != 1 || usage.Readers[0].Node.ID != "n:reader" {
+		t.Fatalf("out-of-scope counterpart evidence was lost: %#v", usage)
+	}
+	if _, err := query.NewCatalog(repository).DataResources(context.Background(), nil,
+		query.CatalogOptions{PathPrefixes: []string{"../escape"}}); err == nil || repository.nodeCalls != 0 {
+		t.Fatalf("invalid prefix did not fail before reads: err=%v calls=%d", err, repository.nodeCalls)
+	}
+}
+
 func TestCatalogReturnsRelationPortFailuresWithoutPartialEvidence(t *testing.T) {
 	repository := newCatalogFixture()
 	repository.relationEdgeErr = errors.New("relation read failed")
@@ -582,6 +612,7 @@ type catalogRepository struct {
 	legacyEdgeCalls   int
 	relationEdgeCalls int
 	relationEdgeErr   error
+	canonicalErr      error
 }
 
 func (c *catalogRepository) add(repository string, node graph.Node) {
@@ -593,8 +624,11 @@ func (c *catalogRepository) Repositories(context.Context) ([]string, error) {
 	return append([]string(nil), c.repositories...), nil
 }
 
-func (c *catalogRepository) ListNodesByKind(_ context.Context, request graph.NodeListQuery) ([]graph.ScopedNode, error) {
-	if len(request.Kinds) == len(graph.NodeKinds()) {
+func (c *catalogRepository) ListNodesByKind(ctx context.Context, request graph.NodeListQuery) ([]graph.ScopedNode, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(request.Kinds) == 1 && request.Kinds[0] == graph.KindComponent {
 		c.componentScans++
 	}
 	var result []graph.ScopedNode
@@ -618,6 +652,15 @@ func (c *catalogRepository) ListNodesByKind(_ context.Context, request graph.Nod
 			if request.Repository != "" && c.owners[node.ID] != request.Repository {
 				continue
 			}
+			if len(request.PathPrefixes) > 0 {
+				matchedPath := false
+				for _, prefix := range request.PathPrefixes {
+					matchedPath = matchedPath || node.Location.Path == prefix || strings.HasPrefix(node.Location.Path, prefix+"/")
+				}
+				if !matchedPath {
+					continue
+				}
+			}
 			if request.Name != "" && !strings.Contains(strings.ToLower(node.Name), strings.ToLower(request.Name)) &&
 				!strings.Contains(strings.ToLower(node.QualifiedName), strings.ToLower(request.Name)) {
 				continue
@@ -636,6 +679,60 @@ func (c *catalogRepository) ListNodesByKind(_ context.Context, request graph.Nod
 		result = append(result, matched...)
 	}
 	return result, nil
+}
+
+func (c *catalogRepository) CanonicalMessages(ctx context.Context, request graph.CanonicalMessageQuery) (graph.CanonicalMessagePage, error) {
+	if c.canonicalErr != nil {
+		return graph.CanonicalMessagePage{}, c.canonicalErr
+	}
+	if err := request.Validate(); err != nil {
+		return graph.CanonicalMessagePage{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return graph.CanonicalMessagePage{}, err
+	}
+	items := []graph.ScopedNode{}
+	for _, node := range c.nodes {
+		repository := c.owners[node.ID]
+		if node.Kind != graph.KindType || node.External || node.Properties["declaration"] != "message" ||
+			request.Repository != "" && request.Repository != repository ||
+			!messageCatalogNameMatches(node, request.Package, request.Message) {
+			continue
+		}
+		if len(request.PathPrefixes) > 0 {
+			matched := false
+			for _, prefix := range request.PathPrefixes {
+				matched = matched || node.Location.Path == prefix || strings.HasPrefix(node.Location.Path, prefix+"/")
+			}
+			if !matched {
+				continue
+			}
+		}
+		items = append(items, graph.ScopedNode{Repository: repository, Node: node})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Repository != items[j].Repository {
+			return items[i].Repository < items[j].Repository
+		}
+		if items[i].Node.QualifiedName != items[j].Node.QualifiedName {
+			return items[i].Node.QualifiedName < items[j].Node.QualifiedName
+		}
+		return items[i].Node.ID < items[j].Node.ID
+	})
+	page := graph.CanonicalMessagePage{Items: items}
+	if len(page.Items) > request.Limit {
+		page.Truncated = true
+		page.Items = page.Items[:request.Limit]
+	}
+	return page, nil
+}
+
+func messageCatalogNameMatches(node graph.Node, pkg, message string) bool {
+	pkg = strings.TrimSuffix(pkg, ".")
+	if pkg != "" && !strings.HasPrefix(node.QualifiedName, pkg+".") {
+		return false
+	}
+	return message == "" || node.Name == message || node.QualifiedName == message
 }
 
 // MatchNodes implements the graph.NodeMatchGroup contract over the fake's node
@@ -781,7 +878,7 @@ func (c *catalogRepository) RelationEdges(_ context.Context, request graph.Relat
 			return graph.RelationEdgePage{}, fmt.Errorf("edge %s counterpart %s not found", edge.ID, counterpartID)
 		}
 		kept[edge.Kind]++
-		page.Items = append(page.Items, graph.HydratedRelationEdge{Edge: edge, Counterpart: counterpart})
+		page.Items = append(page.Items, graph.HydratedRelationEdge{Edge: edge, Counterpart: counterpart, Repository: c.owners[counterpartID]})
 	}
 	return page, nil
 }

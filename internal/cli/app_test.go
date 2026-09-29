@@ -57,7 +57,49 @@ func TestMCPUsesCoordinatorRootsAndNotWritableOpenRead(t *testing.T) {
 	}
 }
 
-func TestOpenReadRetainsSemanticWritesForReusableAlias(t *testing.T) {
+func TestParseArgumentsAccumulatesRepeatablePathPrefixes(t *testing.T) {
+	args, err := parseArguments([]string{"events", "--path-prefix", "internal/app", "--path-prefix=cmd,web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := args.values["path-prefix"]; got != "internal/app,cmd,web" {
+		t.Fatalf("path-prefix = %q", got)
+	}
+	prefixes, err := pathPrefixOption(args)
+	if err != nil || len(prefixes) != 3 {
+		t.Fatalf("normalized path prefixes = %#v, %v", prefixes, err)
+	}
+	for _, arguments := range [][]string{
+		{"events", "--path-prefix", ""},
+		{"events", "--path-prefix", "internal,,cmd"},
+		{"events", "--path-prefix", "internal", "--path-prefix", ""},
+	} {
+		invalid, parseErr := parseArguments(arguments)
+		if parseErr != nil {
+			t.Fatalf("parse invalid transport option %v: %v", arguments, parseErr)
+		}
+		if _, err := pathPrefixOption(invalid); err == nil {
+			t.Fatalf("blank path prefix was accepted for %v", arguments)
+		}
+	}
+}
+
+func TestRunRejectsPathPrefixForEveryUnsupportedCommandBeforeWork(t *testing.T) {
+	for _, arguments := range [][]string{
+		{"index", "--path-prefix", "internal"},
+		{"path", "From", "To", "--path-prefix", "internal"},
+		{"find-tests", "pkg.Symbol", "--path-prefix", "internal"},
+		{"message-flow", "acme.Message", "--path-prefix", "internal"},
+	} {
+		var stdout, stderr bytes.Buffer
+		code := New(&stdout, &stderr).Run(context.Background(), arguments)
+		if code == 0 || !strings.Contains(stderr.String(), "--path-prefix is not supported") {
+			t.Fatalf("grafo %v: code=%d stderr=%q", arguments, code, stderr.String())
+		}
+	}
+}
+
+func TestOpenReadUsesReadOnlyGraphForReusableAlias(t *testing.T) {
 	root := indexedRepository(t)
 	args, err := parseArguments([]string{"find-reusable-code", "payment helper", "--repo", root})
 	if err != nil {
@@ -68,11 +110,11 @@ func TestOpenReadRetainsSemanticWritesForReusableAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = closeRepository() }()
-	if _, ok := repository.(graph.IndexRepository); !ok {
-		t.Fatal("find-reusable-code alias lost index-write capability required by semantic sync")
+	if _, ok := repository.(graph.IndexRepository); ok {
+		t.Fatal("find-reusable-code alias retained graph write capability")
 	}
-	if _, ok := repository.(semantic.Repository); !ok {
-		t.Fatal("find-reusable-code alias lost semantic-write capability")
+	if _, ok := repository.(semantic.CandidateRepository); !ok {
+		t.Fatal("find-reusable-code alias lost semantic candidate capability")
 	}
 }
 

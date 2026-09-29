@@ -19,6 +19,7 @@ go install github.com/cafecito-games/grafo/cmd/grafo@latest
 grafo install
 grafo index .
 grafo status
+grafo indexes list
 grafo find "MyHandler"
 grafo neighbors "MyHandler" --depth 2
 grafo path "HandleCheckout" "Charge"
@@ -74,12 +75,14 @@ content is not code or the branch has no index.
 Claude Code and Codex also receive a separate `grafo-setup` skill. Invoke it
 when onboarding or tuning a repository for Grafo (`/grafo-setup` in Claude Code
 or “use `$grafo-setup`” in Codex). It inspects monorepo boundaries,
-SQL ownership, GDScript HTTP wrappers and custom test bases, Protobuf
-serialization, and supported transport evidence; merges only supported
-`grafo.yaml` settings; indexes the repository; and verifies topology and message
-coverage. Built-in transport and serialization support is detected from source
-and code-generation evidence, so the skill reports unsupported integrations
-instead of inventing configuration keys.
+SQL ownership, source-proven GDScript event and HTTP application wrappers,
+custom test bases, Protobuf serialization, and supported transport evidence. It
+merges only supported `grafo.yaml` settings, indexes the repository, and verifies
+topology and message coverage. Built-in transport and serialization support is
+detected from source and code-generation evidence, so the skill reports
+unsupported integrations instead of inventing configuration keys. Adapter audits
+require an exact helper body, qualified symbol, supported effect, and
+argument-role mapping, followed by a reindex and before/after graph comparison.
 
 Guidance is installed only through documented, user-scoped surfaces: isolated
 Grafo-owned skill files for Claude Code and Codex, and one delimited managed
@@ -89,6 +92,10 @@ byte-for-byte, a file with no Grafo ownership marker is never overwritten, and
 duplicated or half-present markers are reported instead of repaired.
 Repository-local instruction files are never edited, no permission is granted,
 and no edit is ever blocked.
+
+After upgrading Grafo, run `grafo install --refresh` to update existing
+Grafo-owned structural and setup skills to the current canonical versions. It
+does not create a missing guidance artifact and never adopts a foreign file.
 
 `--hooks` opts in to advisory `PreToolUse` hooks in Claude Code's documented
 personal settings. They only inject context: `grafo guidance --hook pre-search`
@@ -355,6 +362,39 @@ Ollama-compatible location or model with `--ollama-url`, `--model`,
 `http://localhost:11434` and `embeddinggemma`. Use `grafo embed --force` after
 replacing a model under the same model name.
 
+Normalized vectors are shared across branches and repositories through a
+content-addressed SQLite cache at `<os.UserCacheDir()>/grafo/embeddings.sqlite`.
+Set `GRAFO_EMBED_CACHE` to an explicit local file path to override it. Cache
+keys contain only the exact model name, semantic document version, and SHA-256
+content hash; vectors are stored losslessly as little-endian float32 binary
+data. The cache contains no source documents, symbol names, repository paths,
+provider credentials, or endpoint URLs. Equal semantic documents therefore use
+one cached vector while their graph nodes remain separate search candidates.
+On POSIX platforms, Grafo creates the cache directory with owner-only `0700`
+permissions and the cache file with owner-only `0600` permissions.
+
+Inspect or evict this rebuildable data without contacting the provider:
+
+```sh
+grafo embed-cache status
+grafo embed-cache status --json
+grafo embed-cache prune --older-than 720h --dry-run
+grafo embed-cache prune --model embeddinggemma --max-bytes 1073741824 --yes
+```
+
+Prune filters compose, and size-bounded eviction removes the oldest eligible
+vectors first. A real prune always requires `--yes`; `--dry-run` opens the cache
+read-only. Pruning checkpoints the cache WAL but deliberately does not run
+`VACUUM`, so reported logical vector bytes can fall before the cache file
+shrinks.
+
+Upgrading from a branch-local embedding layout drops those rebuildable vectors,
+so the first `grafo embed`, `grafo reusable`, or MCP reusable-code query may need
+one provider-backed sync. Dropped pages remain reusable inside each branch
+database. To return them to the filesystem immediately, run the separate
+`grafo indexes compact . --yes` command; embedding-cache pruning never compacts
+or mutates a structural graph index.
+
 To query several repositories as one graph, index each once and pass their
 paths to any query command or to the MCP server:
 
@@ -585,28 +625,69 @@ overlapping, or ambiguous component configuration before changing the durable
 index. Component edits rebuild only workspace ownership evidence, so unchanged
 language source files are not reparsed.
 
+## Repository source scope
+
+Repository owners can explicitly narrow indexed source membership in the root
+`grafo.yaml`:
+
+```yaml
+index:
+  include: ["cmd/**", "internal/**"]
+  exclude: ["internal/eval/testdata/**"]
+```
+
+Patterns are slash-based repository-relative globs with literal segments, `*`,
+`?`, and recursive `**` segments. An empty `include` means every otherwise
+eligible source, an empty `exclude` excludes nothing, and exclusion wins. The
+root `grafo.yaml` remains indexed as the control plane even when its own path
+does not match. Includes cannot re-enable built-in ignored paths or symlinks.
+Invalid, absolute, traversing, or backslash paths fail before index mutation.
+
+Changing the normalized scope forces full candidate discovery at the next
+index pass: narrowing removes stale file-owned graph evidence and broadening
+discovers files absent from the prior catalog. Repeating an unchanged scope
+retains normal incremental membership reuse. Index reports expose only the
+count of parser-supported candidates scoped out by configuration, not the
+excluded path list. Because scope is enforced before filesystem inspection,
+an excluded candidate is classified as scoped out rather than subsequently as
+a symlink, non-regular file, size skip, or read failure.
+
 ## Endpoint and service topology
 
 Godot 4 `HTTPRequest.request` calls are indexed only when the receiver is
-typed or inferred as `HTTPRequest`. Projects can declare additional exact
-GDScript wrapper signatures in `grafo.yaml` without teaching Grafo
-application-specific class names:
+typed or inferred as `HTTPRequest`. Projects can describe an exact GDScript
+callable with one or more typed effects in repository-root `grafo.yaml`:
 
 ```yaml
-http:
-  request_apis:
-    - language: gdscript
-      symbol: AuthAPI.request_json
-      method_argument: 0
-      url_argument: 1
+adapters:
+  - match: {language: gdscript, symbol: Signals.wire}
+    effects:
+      - kind: event.subscribe
+        roles:
+          event: {argument: 0}
+          handler: {argument: 1}
+  - match: {language: gdscript, symbol: AuthAPI.request_json}
+    effects:
+      - kind: http.request
+        roles:
+          method: {argument: 0}
+          url: {argument: 1}
 ```
 
-Argument positions are zero-based; `route_argument` is accepted as an
-equivalent spelling of `url_argument`. Each entry must use `gdscript`, an exact
-qualified symbol, and distinct non-negative positions. Duplicate symbols,
-unknown fields, unsupported languages, and conflicting positions fail indexing
-before any durable graph mutation. Editing or removing this section invalidates
-otherwise unchanged GDScript files so stale request facts are reconciled.
+The V1 effect vocabulary is `event.publish`, `event.subscribe`,
+`event.unsubscribe`, `event.connection_test`, and `http.request`. Argument
+positions are zero-based. Symbols are exact qualified identities: wildcards,
+simple-name fallback, shadowed or unresolved receivers, unknown roles, and
+unsupported languages fail closed. Invalid declarations fail indexing before
+durable mutation. Emitted facts carry `adapter_symbol` and
+`adapter_source=grafo.yaml:<line>` while retaining the ordinary `calls` fact.
+Editing or removing adapters reparses GDScript and reconciles stale effects.
+
+The legacy `http.request_apis` section remains a compatibility alias and is
+normalized into the same `http.request` registry; `route_argument` remains an
+alias of `url_argument`. Declaring the same language/symbol through both forms
+is rejected. New configuration should use `adapters`; removal of the legacy
+form requires a separate compatibility decision.
 
 The extractor accepts Godot's symbolic `HTTPClient.METHOD_*` constants and
 bounded, fully known string literals, constants, assignments, concatenations,
@@ -665,6 +746,19 @@ each entry retains its form, order, and source call site.
 structured result; it never replaces the node and edge evidence. Explicit
 federation refreshes all member indexes before answering, so a failed refresh
 returns no mixed-freshness topology.
+
+Inventory commands accept repeatable or comma-separated `--path-prefix`; their
+MCP inputs use `path_prefixes`. The option is available on `data-resources`,
+`config-keys`, `events`, `orphaned-events`, `endpoints`, `outbound-requests`,
+`service-topology`, and `message-coverage`. Prefixes are validated
+repository-relative segment prefixes: `internal/app` includes descendants but
+not `internal/application`. They select canonical top-level subjects before
+limits while retaining complete bounded counterpart evidence. A topology link
+is selected when either non-external boundary is in scope. Federation applies
+the same relative prefixes independently to every member. Scalar selector
+commands and commands outside this list intentionally reject this filter before
+opening a repository; they never accept and silently ignore it. Source search
+keeps its pre-existing `--path-prefix` support.
 
 ## Protobuf message flow and coverage
 
@@ -731,7 +825,10 @@ Configuration values are used transiently to discover references such as
 `${DATABASE_HOST}` but are not persisted, so indexing an `.env` file does not
 copy its secrets into the graph. Normal indexing is entirely local. Semantic
 sync sends only generated symbol metadata and signatures—not source files—to
-the configured embedding endpoint; the default endpoint is local Ollama.
+the configured embedding endpoint; the default endpoint is local Ollama. The
+user-level embedding cache is local to the OS user and stores only numeric
+vectors plus source-free content hashes. It is never graph evidence, and stale
+cache rows cannot make a symbol appear in results.
 
 On Git worktrees, Grafo also avoids rereading every file to rediscover changes.
 It combines the indexed commit, Git's current tracked/untracked changes, and a
@@ -744,6 +841,56 @@ resolved in committed batches, with WAL checkpoints between batches; an
 interrupted initial index resumes completed file hashes and pending facts.
 Ambiguous symbolic names remain explicit unresolved nodes instead of producing
 speculative edges to every declaration with the same name.
+
+### Branch index inventory and retention
+
+Every Git branch/worktree has its own SQLite database, so disk usage grows with
+both graph size and the number of branches that have been indexed. Inspect the
+complete physical footprint for one repository with:
+
+```sh
+grafo indexes list .
+grafo indexes list . --json
+```
+
+The inventory reports each primary database and its exact WAL/SHM sidecar
+bytes, stored branch/commit/repository metadata, compatibility, current-index
+status, SQLite page/freelist estimates, and deterministic totals. A compaction
+recommendation appears only when estimated reclaimable freelist space is both
+at least 20% of the primary database and at least 256 MiB. WAL/SHM bytes are
+separate and are not counted as freelist space. It examines only direct regular
+`.grafo/indexes/*.sqlite` entries and never follows symlinks.
+
+Pruning always requires at least one explicit retention selector. Preview first;
+a dry run does not lock, checkpoint, rename, or delete any index file:
+
+```sh
+grafo indexes prune . --older-than 720h --keep 3 --dry-run
+grafo indexes prune . --older-than 720h --keep 3 --yes
+```
+
+When both selectors are present, a branch must be older than the duration and
+outside the keep set to be selected. `--keep 0` keeps no historical index, but
+the current branch index is still always protected. Grafo also refuses to
+automatically prune locked, corrupt, incompatible, metadata-free,
+identity-mismatched, future-dated, or symlinked candidates. Each deleted index
+is rebuildable from source with `grafo index`, but the next switch to that
+branch pays the full rebuild cost. Advisory `.lock` anchors remain in place.
+
+Compaction addresses free pages inside the current branch database; it does not
+remove live graph data or stale branch databases. Preview the current estimate,
+then compact explicitly:
+
+```sh
+grafo indexes compact . --dry-run
+grafo indexes compact . --yes
+```
+
+Compaction takes the same exclusive index lock as indexing, checkpoints the
+WAL, and runs SQLite `VACUUM`. It can require temporary disk space comparable to
+the live database and future queries wait while it runs. An empty freelist is a
+successful zero-byte no-op. Use source include/exclude settings to reduce live
+graph scope, and `indexes prune` to remove whole non-current branch databases.
 
 ## Development
 

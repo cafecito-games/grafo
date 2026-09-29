@@ -37,7 +37,8 @@ type Repository struct {
 
 var _ graph.ReadRepository = (*Repository)(nil)
 var _ graph.CatalogRepository = (*Repository)(nil)
-var _ semantic.Repository = (*Repository)(nil)
+var _ graph.CanonicalMessageRepository = (*Repository)(nil)
+var _ semantic.CandidateRepository = (*Repository)(nil)
 var _ sourcecontext.ProjectLocator = (*Repository)(nil)
 
 // ReadRepository exposes the federated read surface without refresh, indexing,
@@ -49,7 +50,8 @@ type ReadRepository struct {
 var _ graph.ReadRepository = (*ReadRepository)(nil)
 var _ graph.CatalogRepository = (*ReadRepository)(nil)
 var _ graph.TopologyRepository = (*ReadRepository)(nil)
-var _ semantic.ReadRepository = (*ReadRepository)(nil)
+var _ graph.CanonicalMessageRepository = (*ReadRepository)(nil)
+var _ semantic.CandidateRepository = (*ReadRepository)(nil)
 var _ sourcecontext.ProjectLocator = (*ReadRepository)(nil)
 
 func Open(ctx context.Context, paths []string) (*Repository, error) {
@@ -216,7 +218,7 @@ func (r *Repository) ProjectForNode(ctx context.Context, id string) (indexer.Pro
 func (r *Repository) CandidateNodes(ctx context.Context) ([]graph.Node, error) {
 	var result []graph.Node
 	for _, item := range r.members {
-		repository, ok := item.repository.(semantic.ReadRepository)
+		repository, ok := item.repository.(semantic.CandidateRepository)
 		if !ok {
 			return nil, fmt.Errorf("repository %s does not support semantic candidates", item.project.Name)
 		}
@@ -233,71 +235,6 @@ func (r *Repository) CandidateNodes(ctx context.Context) ([]graph.Node, error) {
 		return result[i].ID < result[j].ID
 	})
 	return result, nil
-}
-
-func (r *Repository) EmbeddingHashes(ctx context.Context, model string) (map[string]string, error) {
-	result := map[string]string{}
-	for _, item := range r.members {
-		repository, ok := item.repository.(semantic.ReadRepository)
-		if !ok {
-			return nil, fmt.Errorf("repository %s does not support embeddings", item.project.Name)
-		}
-		hashes, err := repository.EmbeddingHashes(ctx, model)
-		if err != nil {
-			return nil, err
-		}
-		for id, hash := range hashes {
-			result[id] = hash
-		}
-	}
-	return result, nil
-}
-
-func (r *Repository) Embeddings(ctx context.Context, model string) ([]semantic.Embedding, error) {
-	var result []semantic.Embedding
-	for _, item := range r.members {
-		repository, ok := item.repository.(semantic.ReadRepository)
-		if !ok {
-			return nil, fmt.Errorf("repository %s does not support embeddings", item.project.Name)
-		}
-		embeddings, err := repository.Embeddings(ctx, model)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, embeddings...)
-	}
-	sort.Slice(result, func(i, j int) bool { return result[i].NodeID < result[j].NodeID })
-	return result, nil
-}
-
-func (r *Repository) UpsertEmbedding(ctx context.Context, embedding semantic.Embedding) error {
-	for _, item := range r.members {
-		if _, err := item.repository.Node(ctx, embedding.NodeID); err != nil {
-			continue
-		}
-		repository, ok := item.repository.(semantic.Repository)
-		if !ok {
-			return fmt.Errorf("repository %s does not support embeddings", item.project.Name)
-		}
-		return repository.UpsertEmbedding(ctx, embedding)
-	}
-	return fmt.Errorf("embedding node %s does not belong to this federation", embedding.NodeID)
-}
-
-func (r *Repository) DeleteStaleEmbeddings(ctx context.Context, model string) (int64, error) {
-	var removed int64
-	for _, item := range r.members {
-		repository, ok := item.repository.(semantic.Repository)
-		if !ok {
-			return removed, fmt.Errorf("repository %s does not support embeddings", item.project.Name)
-		}
-		count, err := repository.DeleteStaleEmbeddings(ctx, model)
-		if err != nil {
-			return removed, err
-		}
-		removed += count
-	}
-	return removed, nil
 }
 
 func (r *Repository) Refresh(ctx context.Context, parsers *parserapi.Registry) error {
@@ -336,12 +273,6 @@ func (r *ReadRepository) ProjectForNode(ctx context.Context, id string) (indexer
 func (r *ReadRepository) CandidateNodes(ctx context.Context) ([]graph.Node, error) {
 	return r.repository.CandidateNodes(ctx)
 }
-func (r *ReadRepository) EmbeddingHashes(ctx context.Context, model string) (map[string]string, error) {
-	return r.repository.EmbeddingHashes(ctx, model)
-}
-func (r *ReadRepository) Embeddings(ctx context.Context, model string) ([]semantic.Embedding, error) {
-	return r.repository.Embeddings(ctx, model)
-}
 func (r *ReadRepository) SearchNodes(ctx context.Context, term string, limit int) ([]graph.Node, error) {
 	return r.repository.SearchNodes(ctx, term, limit)
 }
@@ -350,6 +281,9 @@ func (r *ReadRepository) Repositories(ctx context.Context) ([]string, error) {
 }
 func (r *ReadRepository) ListNodesByKind(ctx context.Context, request graph.NodeListQuery) ([]graph.ScopedNode, error) {
 	return r.repository.ListNodesByKind(ctx, request)
+}
+func (r *ReadRepository) CanonicalMessages(ctx context.Context, request graph.CanonicalMessageQuery) (graph.CanonicalMessagePage, error) {
+	return r.repository.CanonicalMessages(ctx, request)
 }
 func (r *ReadRepository) MatchNodes(ctx context.Context, request graph.NodeMatchQuery) (graph.NodeMatchGroup, error) {
 	return r.repository.MatchNodes(ctx, request)
@@ -437,10 +371,6 @@ func (r *Repository) ListNodesByKind(ctx context.Context, request graph.NodeList
 			return nil, err
 		}
 		for _, scoped := range scopedNodes {
-			if seen[scoped.Node.ID] {
-				continue
-			}
-			seen[scoped.Node.ID] = true
 			// Several members may record the same unresolved target, so
 			// attributing one of them would invent a home for a name no
 			// repository declares.
@@ -448,6 +378,11 @@ func (r *Repository) ListNodesByKind(ctx context.Context, request graph.NodeList
 			if !scoped.Node.External {
 				scoped.Repository = item.project.Name
 			}
+			key := scoped.Repository + "\x00" + scoped.Node.ID
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
 			result = append(result, scoped)
 		}
 	}
@@ -464,6 +399,58 @@ func (r *Repository) ListNodesByKind(ctx context.Context, request graph.NodeList
 		return result[i].Node.ID < result[j].Node.ID
 	})
 	return result, nil
+}
+
+// CanonicalMessages merges already-filtered member pages, then applies one
+// repository-qualified deterministic global bound.
+func (r *Repository) CanonicalMessages(ctx context.Context, request graph.CanonicalMessageQuery) (graph.CanonicalMessagePage, error) {
+	if err := request.Validate(); err != nil {
+		return graph.CanonicalMessagePage{}, err
+	}
+	page := graph.CanonicalMessagePage{Items: []graph.ScopedNode{}}
+	seen := map[string]bool{}
+	for _, item := range r.members {
+		if err := ctx.Err(); err != nil {
+			return graph.CanonicalMessagePage{}, err
+		}
+		if request.Repository != "" && request.Repository != item.project.Name {
+			continue
+		}
+		catalog, ok := item.repository.(graph.CanonicalMessageRepository)
+		if !ok {
+			return graph.CanonicalMessagePage{}, fmt.Errorf("repository %s does not support canonical message catalogs", item.project.Name)
+		}
+		memberRequest := request
+		memberRequest.Repository = ""
+		memberPage, err := catalog.CanonicalMessages(ctx, memberRequest)
+		if err != nil {
+			return graph.CanonicalMessagePage{}, err
+		}
+		page.Truncated = page.Truncated || memberPage.Truncated
+		for _, scoped := range memberPage.Items {
+			scoped.Repository = item.project.Name
+			key := scoped.Repository + "\x00" + scoped.Node.ID
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			page.Items = append(page.Items, scoped)
+		}
+	}
+	sort.Slice(page.Items, func(i, j int) bool {
+		if page.Items[i].Repository != page.Items[j].Repository {
+			return page.Items[i].Repository < page.Items[j].Repository
+		}
+		if page.Items[i].Node.QualifiedName != page.Items[j].Node.QualifiedName {
+			return page.Items[i].Node.QualifiedName < page.Items[j].Node.QualifiedName
+		}
+		return page.Items[i].Node.ID < page.Items[j].Node.ID
+	})
+	if len(page.Items) > request.Limit {
+		page.Truncated = true
+		page.Items = page.Items[:request.Limit]
+	}
+	return page, nil
 }
 
 // MatchNodes merges the per-member match evidence for a selector. Only the
@@ -586,7 +573,7 @@ func (r *Repository) EdgesFrom(ctx context.Context, id string) ([]graph.Edge, er
 			continue
 		}
 		for _, candidate := range candidates {
-			result = append(result, federatedEdge(edge, candidate.ID))
+			result = append(result, federatedEdge(edge, candidate.Node.ID))
 		}
 	}
 	return uniqueEdges(result), nil
@@ -636,6 +623,9 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 		if err != nil {
 			return graph.RelationEdgePage{}, err
 		}
+		for index := range page.Items {
+			page.Items[index].Repository = member.project.Name
+		}
 		truncated = truncated || page.Truncated
 		items = append(items, page.Items...)
 	}
@@ -662,7 +652,7 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 			}
 			for _, candidate := range candidates {
 				projected = append(projected, graph.HydratedRelationEdge{
-					Edge: federatedEdge(item.Edge, candidate.ID), Counterpart: candidate,
+					Edge: federatedEdge(item.Edge, candidate.Node.ID), Counterpart: candidate.Node, Repository: candidate.Repository,
 				})
 			}
 		}
@@ -694,6 +684,9 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 						})
 						if err != nil {
 							return graph.RelationEdgePage{}, err
+						}
+						for index := range page.Items {
+							page.Items[index].Repository = member.project.Name
 						}
 						truncated = truncated || page.Truncated
 						for _, item := range page.Items {
@@ -757,8 +750,8 @@ func (r *Repository) Meta(ctx context.Context, key string) (string, error) {
 	return strings.Join(values, ","), nil
 }
 
-func (r *Repository) exactCandidates(ctx context.Context, target graph.Node, relation graph.EdgeKind) ([]graph.Node, error) {
-	byID := map[string]graph.Node{}
+func (r *Repository) exactCandidates(ctx context.Context, target graph.Node, relation graph.EdgeKind) ([]graph.ScopedNode, error) {
+	byID := map[string]graph.ScopedNode{}
 	for _, term := range []string{target.QualifiedName, target.Name} {
 		if term == "" {
 			continue
@@ -773,20 +766,24 @@ func (r *Repository) exactCandidates(ctx context.Context, target graph.Node, rel
 					continue
 				}
 				if node.QualifiedName == target.QualifiedName || node.Name == target.QualifiedName || node.QualifiedName == target.Name || node.Name == target.Name {
-					byID[node.ID] = node
+					key := item.project.Name + "\x00" + node.ID
+					byID[key] = graph.ScopedNode{Repository: item.project.Name, Node: node}
 				}
 			}
 		}
 	}
-	result := make([]graph.Node, 0, len(byID))
+	result := make([]graph.ScopedNode, 0, len(byID))
 	for _, node := range byID {
 		result = append(result, node)
 	}
 	sort.Slice(result, func(i, j int) bool {
-		if result[i].QualifiedName != result[j].QualifiedName {
-			return result[i].QualifiedName < result[j].QualifiedName
+		if result[i].Repository != result[j].Repository {
+			return result[i].Repository < result[j].Repository
 		}
-		return result[i].ID < result[j].ID
+		if result[i].Node.QualifiedName != result[j].Node.QualifiedName {
+			return result[i].Node.QualifiedName < result[j].Node.QualifiedName
+		}
+		return result[i].Node.ID < result[j].Node.ID
 	})
 	return result, nil
 }

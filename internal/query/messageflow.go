@@ -39,14 +39,15 @@ type MessageFlowOptions struct {
 }
 
 type MessageCoverageOptions struct {
-	Repository string         `json:"repository,omitempty"`
-	Package    string         `json:"package,omitempty"`
-	Message    string         `json:"message,omitempty"`
-	Oneof      string         `json:"oneof,omitempty"`
-	Direction  Direction      `json:"direction,omitempty"`
-	Component  string         `json:"component,omitempty"`
-	Status     CoverageStatus `json:"status,omitempty"`
-	Limit      int            `json:"limit,omitempty"`
+	Repository   string         `json:"repository,omitempty"`
+	Package      string         `json:"package,omitempty"`
+	Message      string         `json:"message,omitempty"`
+	Oneof        string         `json:"oneof,omitempty"`
+	Direction    Direction      `json:"direction,omitempty"`
+	Component    string         `json:"component,omitempty"`
+	Status       CoverageStatus `json:"status,omitempty"`
+	PathPrefixes []string       `json:"path_prefixes,omitempty"`
+	Limit        int            `json:"limit,omitempty"`
 }
 
 // FlowEvidence retains the exact fact and graph edge behind one result.
@@ -187,7 +188,7 @@ func (s *MessageFlowService) Flows(ctx context.Context, selectors []string, opti
 }
 
 func (s *MessageFlowService) flow(ctx context.Context, selector string, options MessageFlowOptions,
-	components map[string]componentIdentity, componentsTruncated bool,
+	components componentResolver, componentsTruncated bool,
 ) (MessageFlow, error) {
 	limit, err := messageFlowLimit(options.Limit)
 	if err != nil {
@@ -355,6 +356,11 @@ func (s *MessageFlowService) flow(ctx context.Context, selector string, options 
 }
 
 func (s *MessageFlowService) Coverage(ctx context.Context, options MessageCoverageOptions) (MessageCoverageList, error) {
+	var err error
+	options.PathPrefixes, err = normalizePathPrefixes(options.PathPrefixes)
+	if err != nil {
+		return MessageCoverageList{}, err
+	}
 	limit, err := messageFlowLimit(options.Limit)
 	if err != nil {
 		return MessageCoverageList{}, err
@@ -368,23 +374,21 @@ func (s *MessageFlowService) Coverage(ctx context.Context, options MessageCovera
 	if options.Status != "" && options.Status != CoverageResolved && options.Status != CoverageMissingEvidence && options.Status != CoverageUnknown {
 		return MessageCoverageList{}, fmt.Errorf("unknown message coverage status %q", options.Status)
 	}
-	nodes, err := s.repository.ListNodesByKind(ctx, graph.NodeListQuery{Kinds: []graph.NodeKind{graph.KindType},
-		Name: options.Message, Repository: options.Repository, Visibility: graph.LocalNodes, Limit: MaxCatalogLimit + 1})
+	catalog, ok := s.repository.(graph.CanonicalMessageRepository)
+	if !ok {
+		return MessageCoverageList{}, fmt.Errorf("repository does not support canonical message catalogs")
+	}
+	page, err := catalog.CanonicalMessages(ctx, graph.CanonicalMessageQuery{Repository: options.Repository,
+		Package: options.Package, Message: options.Message, PathPrefixes: options.PathPrefixes, Limit: MaxCatalogLimit})
 	if err != nil {
 		return MessageCoverageList{}, err
 	}
-	result := MessageCoverageList{Messages: []MessageCoverage{}, Truncated: len(nodes) > MaxCatalogLimit}
-	if len(nodes) > MaxCatalogLimit {
-		nodes = nodes[:MaxCatalogLimit]
-	}
+	result := MessageCoverageList{Messages: []MessageCoverage{}, Truncated: page.Truncated}
 	components, componentsTruncated, err := s.componentIndex(ctx, "")
 	if err != nil {
 		return MessageCoverageList{}, err
 	}
-	for _, scoped := range nodes {
-		if scoped.Node.Properties["declaration"] != "message" || !messageNameMatches(scoped.Node, options.Package, options.Message) {
-			continue
-		}
+	for _, scoped := range page.Items {
 		flow, err := s.flow(ctx, scoped.Node.ID, MessageFlowOptions{Repository: scoped.Repository, Component: options.Component, Direction: options.Direction, Limit: limit},
 			components, componentsTruncated)
 		if err != nil {
@@ -471,58 +475,108 @@ func (s *MessageFlowService) resolveMessage(ctx context.Context, selector, repos
 
 type componentIdentity struct{ repository, name, id string }
 
-func (s *MessageFlowService) componentIndex(ctx context.Context, repository string) (map[string]componentIdentity, bool, error) {
-	nodes, err := s.repository.ListNodesByKind(ctx, graph.NodeListQuery{Kinds: graph.NodeKinds(), Repository: repository,
+type componentResolver struct {
+	byFile       map[string]componentIdentity
+	fileIdentity map[string]string
+	weakAlias    map[string]bool
+	ambiguous    map[string]bool
+	byComponent  map[string]componentIdentity
+}
+
+func (s *MessageFlowService) componentIndex(ctx context.Context, repository string) (componentResolver, bool, error) {
+	nodes, err := s.repository.ListNodesByKind(ctx, graph.NodeListQuery{Kinds: []graph.NodeKind{graph.KindComponent}, Repository: repository,
 		Visibility: graph.LocalNodes, Limit: MaxCatalogLimit + 1})
 	if err != nil {
-		return nil, false, err
+		return componentResolver{}, false, err
 	}
-	truncated := false
-	counts := map[graph.NodeKind]int{}
-	components := []graph.ScopedNode{}
-	kept := make([]graph.ScopedNode, 0, len(nodes))
-	for _, scoped := range nodes {
-		counts[scoped.Node.Kind]++
-		if counts[scoped.Node.Kind] > MaxCatalogLimit {
-			truncated = true
-			continue
-		}
-		kept = append(kept, scoped)
-		if scoped.Node.Kind == graph.KindComponent {
-			components = append(components, scoped)
-		}
+	truncated := len(nodes) > MaxCatalogLimit
+	if truncated {
+		nodes = nodes[:MaxCatalogLimit]
 	}
-	fileOwners := map[string]componentIdentity{}
-	for _, component := range components {
+	resolver := componentResolver{byFile: map[string]componentIdentity{}, fileIdentity: map[string]string{},
+		weakAlias: map[string]bool{}, ambiguous: map[string]bool{}, byComponent: map[string]componentIdentity{}}
+	for _, component := range nodes {
+		identity := componentIdentity{repository: component.Repository, name: component.Node.Name, id: component.Node.ID}
+		resolver.byComponent[component.Repository+"\x00"+component.Node.ID] = identity
 		page, err := s.repository.RelationEdges(ctx, graph.RelationEdgeQuery{SubjectID: component.Node.ID, Direction: graph.OutgoingRelations, Relations: []graph.EdgeKind{graph.EdgeContains}, Limit: MaxCatalogLimit})
 		if err != nil {
-			return nil, false, err
+			return componentResolver{}, false, err
 		}
 		truncated = truncated || page.Truncated
 		for _, item := range page.Items {
-			identity := componentIdentity{repository: component.Repository, name: component.Node.Name, id: component.Node.ID}
-			for _, key := range []string{item.Counterpart.ID, item.Counterpart.Name, item.Counterpart.QualifiedName, item.Counterpart.Location.Path} {
-				if key != "" {
-					fileOwners[component.Repository+"\x00"+key] = identity
+			if item.Counterpart.Kind != graph.KindFile {
+				continue
+			}
+			fileIdentity := item.Counterpart.ID
+			for _, key := range []string{item.Counterpart.ID, item.Counterpart.QualifiedName,
+				item.Counterpart.Location.Path, item.Counterpart.OwnerFile} {
+				if err := resolver.addFileAlias(component.Repository, key, fileIdentity, identity, false); err != nil {
+					return componentResolver{}, false, err
 				}
 			}
-		}
-	}
-	result := map[string]componentIdentity{}
-	for _, scoped := range kept {
-		identity := componentIdentity{repository: scoped.Repository}
-		for _, key := range []string{scoped.Node.ID, scoped.Node.OwnerFile, scoped.Node.Location.Path} {
-			if owner, ok := fileOwners[scoped.Repository+"\x00"+key]; ok {
-				identity = owner
-				break
+			if err := resolver.addFileAlias(component.Repository, item.Counterpart.Name, fileIdentity, identity, true); err != nil {
+				return componentResolver{}, false, err
 			}
 		}
-		result[scoped.Node.ID] = identity
 	}
-	return result, truncated, nil
+	return resolver, truncated, nil
 }
 
-func evidenceFromPage(page graph.RelationEdgePage, repository string, components map[string]componentIdentity) []FlowEvidence {
+func (r componentResolver) addFileAlias(repository, key, fileIdentity string, owner componentIdentity, weak bool) error {
+	if key == "" {
+		return nil
+	}
+	qualified := repository + "\x00" + key
+	if r.ambiguous[qualified] {
+		return nil
+	}
+	previous, ok := r.byFile[qualified]
+	if !ok {
+		r.byFile[qualified] = owner
+		r.fileIdentity[qualified] = fileIdentity
+		r.weakAlias[qualified] = weak
+		return nil
+	}
+	if r.fileIdentity[qualified] != fileIdentity {
+		if weak || r.weakAlias[qualified] {
+			delete(r.byFile, qualified)
+			delete(r.fileIdentity, qualified)
+			delete(r.weakAlias, qualified)
+			r.ambiguous[qualified] = true
+			return nil
+		}
+	}
+	if previous.id == owner.id {
+		return nil
+	}
+	left, right := previous, owner
+	if componentLabel(right) < componentLabel(left) {
+		left, right = right, left
+	}
+	return fmt.Errorf("file %q in repository %q belongs to conflicting components %s and %s",
+		key, repository, componentLabel(left), componentLabel(right))
+}
+
+func componentLabel(identity componentIdentity) string {
+	return fmt.Sprintf("%q (%s)", identity.name, identity.id)
+}
+
+func (r componentResolver) resolve(repository string, node graph.Node) componentIdentity {
+	if identity, ok := r.byComponent[repository+"\x00"+node.ID]; ok {
+		return identity
+	}
+	for _, key := range []string{node.ID, node.OwnerFile, node.Location.Path, node.QualifiedName, node.Name} {
+		if key == "" {
+			continue
+		}
+		if identity, ok := r.byFile[repository+"\x00"+key]; ok {
+			return identity
+		}
+	}
+	return componentIdentity{repository: repository}
+}
+
+func evidenceFromPage(page graph.RelationEdgePage, repository string, components componentResolver) []FlowEvidence {
 	result := make([]FlowEvidence, 0, len(page.Items))
 	for _, item := range page.Items {
 		result = append(result, evidenceFromItem(item, repository, components))
@@ -531,11 +585,11 @@ func evidenceFromPage(page graph.RelationEdgePage, repository string, components
 	return result
 }
 
-func evidenceFromItem(item graph.HydratedRelationEdge, repository string, components map[string]componentIdentity) FlowEvidence {
-	identity := components[item.Counterpart.ID]
-	if identity.repository == "" {
-		identity.repository = repository
+func evidenceFromItem(item graph.HydratedRelationEdge, repository string, components componentResolver) FlowEvidence {
+	if item.Repository != "" {
+		repository = item.Repository
 	}
+	identity := components.resolve(repository, item.Counterpart)
 	resource := newResource(graph.ScopedNode{Repository: identity.repository, Node: item.Counterpart})
 	resource.Component, resource.ComponentID = identity.name, identity.id
 	return FlowEvidence{Repository: identity.repository, Component: identity.name, ComponentID: identity.id, Relation: item.Edge.Kind,
@@ -547,7 +601,7 @@ type transportResult struct {
 	truncated bool
 }
 
-func (s *MessageFlowService) transport(ctx context.Context, carrier graph.HydratedRelationEdge, repository string, components map[string]componentIdentity, limit int) (transportResult, error) {
+func (s *MessageFlowService) transport(ctx context.Context, carrier graph.HydratedRelationEdge, repository string, components componentResolver, limit int) (transportResult, error) {
 	op := carrier.Counterpart
 	relation := graph.EdgeSends
 	if op.Properties["direction"] == "receive" {
@@ -558,11 +612,11 @@ func (s *MessageFlowService) transport(ctx context.Context, carrier graph.Hydrat
 		return transportResult{}, err
 	}
 	evidence := evidenceFromItem(carrier, repository, components)
-	evidence.Node = newResource(graph.ScopedNode{Repository: repository, Node: op})
-	identity := components[op.ID]
-	if identity.repository == "" {
-		identity.repository = repository
+	if carrier.Repository != "" {
+		repository = carrier.Repository
 	}
+	evidence.Node = newResource(graph.ScopedNode{Repository: repository, Node: op})
+	identity := components.resolve(repository, op)
 	evidence.Repository, evidence.Node.Repository = identity.repository, identity.repository
 	evidence.Component, evidence.ComponentID = identity.name, identity.id
 	evidence.Node.Component, evidence.Node.ComponentID = identity.name, identity.id
@@ -574,7 +628,7 @@ func (s *MessageFlowService) transport(ctx context.Context, carrier graph.Hydrat
 		Reliability: op.Properties["reliability"], Status: status, Sources: evidenceFromPage(page, repository, components)}, truncated: page.Truncated}, nil
 }
 
-func (s *MessageFlowService) handlers(ctx context.Context, consumers []FlowEvidence, repository string, components map[string]componentIdentity, limit int) ([]MessageHandler, bool, error) {
+func (s *MessageFlowService) handlers(ctx context.Context, consumers []FlowEvidence, repository string, components componentResolver, limit int) ([]MessageHandler, bool, error) {
 	seen := map[string]bool{}
 	result := []MessageHandler{}
 	truncated := false
@@ -807,16 +861,6 @@ func slicesDeleteFunc[T any](items []T, remove func(T) bool) []T {
 		}
 	}
 	return result
-}
-
-func messageNameMatches(node graph.Node, pkg, message string) bool {
-	if pkg != "" && !strings.HasPrefix(node.QualifiedName, strings.TrimSuffix(pkg, ".")+".") {
-		return false
-	}
-	if message != "" && node.Name != message && node.QualifiedName != message {
-		return false
-	}
-	return true
 }
 
 func sortEvidence(items []FlowEvidence) {

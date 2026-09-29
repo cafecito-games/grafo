@@ -7,16 +7,19 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/cafecito-games/grafo/internal/agentguide"
 	"github.com/cafecito-games/grafo/internal/agentinstall"
+	embeddingcache "github.com/cafecito-games/grafo/internal/embedding/cache"
 	"github.com/cafecito-games/grafo/internal/embedding/ollama"
 	"github.com/cafecito-games/grafo/internal/federation"
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
+	branchindexes "github.com/cafecito-games/grafo/internal/indexes"
 	"github.com/cafecito-games/grafo/internal/mcpserver"
 	parserdefaults "github.com/cafecito-games/grafo/internal/parser/defaults"
 	"github.com/cafecito-games/grafo/internal/query"
@@ -82,6 +85,10 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		a.println("grafo " + Version)
 		return 0
 	}
+	if _, present := parsed.values["path-prefix"]; present && !pathPrefixCommands[parsed.command] {
+		a.fail(fmt.Errorf("--path-prefix is not supported by %s", parsed.command))
+		return 2
+	}
 	var runErr error
 	switch parsed.command {
 	case "install":
@@ -92,6 +99,8 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		runErr = a.guidance(ctx, parsed)
 	case "index":
 		runErr = a.index(ctx, parsed)
+	case "indexes":
+		runErr = a.indexes(ctx, parsed)
 	case "watch":
 		runErr = a.watch(ctx, parsed)
 	case "service":
@@ -104,6 +113,8 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		runErr = a.mcp(ctx, parsed)
 	case "embed":
 		runErr = a.embed(ctx, parsed)
+	case "embed-cache":
+		runErr = a.embedCache(ctx, parsed)
 	case "reusable", "find-reusable-code":
 		runErr = a.reusable(ctx, parsed)
 	case "find":
@@ -389,6 +400,172 @@ func (a *App) index(ctx context.Context, args parsedArguments) error {
 	return a.printIndexReport(report, args.flags["json"])
 }
 
+func (a *App) indexes(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) == 0 {
+		return fmt.Errorf("usage: grafo indexes list|prune|compact [path]")
+	}
+	subcommand := args.positionals[0]
+	root, err := optionalPath(args.positionals[1:])
+	if err != nil {
+		return fmt.Errorf("usage: grafo indexes %s [path]: %w", subcommand, err)
+	}
+	switch subcommand {
+	case "list":
+		if err := rejectUnsupportedOptions(args, "indexes "+subcommand, map[string]bool{"json": true}, nil); err != nil {
+			return err
+		}
+		inventory, err := branchindexes.List(ctx, root)
+		if err != nil {
+			return err
+		}
+		return a.printIndexInventory(inventory, args.flags["json"])
+	case "prune":
+		if err := rejectUnsupportedOptions(args, "indexes "+subcommand,
+			map[string]bool{"json": true, "dry-run": true, "yes": true},
+			map[string]bool{"older-than": true, "keep": true}); err != nil {
+			return err
+		}
+		policy, err := indexPrunePolicy(args)
+		if err != nil {
+			return err
+		}
+		report, pruneErr := branchindexes.Prune(ctx, root, policy)
+		if err := a.printIndexPruneReport(report, args.flags["json"]); err != nil {
+			return err
+		}
+		return pruneErr
+	case "compact":
+		if err := rejectUnsupportedOptions(args, "indexes "+subcommand,
+			map[string]bool{"json": true, "dry-run": true, "yes": true}, nil); err != nil {
+			return err
+		}
+		policy := branchindexes.CompactPolicy{DryRun: args.flags["dry-run"], Confirm: args.flags["yes"]}
+		if !policy.DryRun && !policy.Confirm {
+			return fmt.Errorf("compaction requires --yes (or use --dry-run)")
+		}
+		report, err := branchindexes.Compact(ctx, root, policy)
+		if err != nil {
+			return err
+		}
+		return a.printIndexCompactReport(report, args.flags["json"])
+	default:
+		return fmt.Errorf("usage: grafo indexes list|prune|compact [path]")
+	}
+}
+
+func indexPrunePolicy(args parsedArguments) (branchindexes.Policy, error) {
+	policy := branchindexes.Policy{DryRun: args.flags["dry-run"], Confirm: args.flags["yes"]}
+	if raw, present := args.values["older-than"]; present {
+		value, err := time.ParseDuration(raw)
+		if err != nil {
+			return policy, fmt.Errorf("--older-than must be a duration such as 720h")
+		}
+		if value < 0 {
+			return policy, fmt.Errorf("--older-than must not be negative")
+		}
+		policy.OlderThan = &value
+	}
+	if raw, present := args.values["keep"]; present {
+		value, err := strconv.Atoi(raw)
+		if err != nil {
+			return policy, fmt.Errorf("--keep must be a non-negative integer")
+		}
+		if value < 0 {
+			return policy, fmt.Errorf("--keep must not be negative")
+		}
+		policy.Keep = &value
+	}
+	if policy.OlderThan == nil && policy.Keep == nil {
+		return policy, fmt.Errorf("at least one of --older-than or --keep is required")
+	}
+	if !policy.DryRun && !policy.Confirm {
+		return policy, fmt.Errorf("pruning requires --yes (or use --dry-run)")
+	}
+	return policy, nil
+}
+
+func rejectUnsupportedOptions(args parsedArguments, command string, allowedFlags, allowedValues map[string]bool) error {
+	var unsupported []string
+	for name, enabled := range args.flags {
+		if enabled && !allowedFlags[name] {
+			unsupported = append(unsupported, "--"+name)
+		}
+	}
+	for name := range args.values {
+		if !allowedValues[name] {
+			unsupported = append(unsupported, "--"+name)
+		}
+	}
+	if len(unsupported) == 0 {
+		return nil
+	}
+	sort.Strings(unsupported)
+	return fmt.Errorf("%s is not supported by grafo %s", strings.Join(unsupported, ", "), command)
+}
+
+func (a *App) printIndexInventory(inventory branchindexes.Inventory, asJSON bool) error {
+	if asJSON {
+		return writeJSON(a.stdout, inventory)
+	}
+	a.println("CURRENT\tBRANCH\tCOMMIT\tINDEXED_AT\tREPOSITORY_ID\tROOT\tCOMPATIBILITY\tDATABASE\tWAL\tSHM\tTOTAL\tPAGE_SIZE\tPAGE_COUNT\tFREELIST\tLIVE_ALLOCATED\tRECLAIMABLE\tRECLAIMABLE_PERCENT\tCOMPACT_RECOMMENDED\tFILENAME\tPATH")
+	for _, candidate := range inventory.Indexes {
+		current := ""
+		if candidate.Current {
+			current = "*"
+		}
+		metrics := sqlite.StorageMetrics{}
+		if candidate.Metrics != nil {
+			metrics = *candidate.Metrics
+		}
+		a.printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.2f\t%t\t%s\t%s\n",
+			current, candidate.Branch, candidate.Commit, candidate.IndexedAt,
+			candidate.RepositoryID, candidate.Root, candidate.Compatibility,
+			candidate.Sizes.Database, candidate.Sizes.WAL, candidate.Sizes.SHM, candidate.Sizes.Total,
+			metrics.PageSize, metrics.PageCount, metrics.FreelistCount, metrics.LiveAllocatedBytes,
+			metrics.ReclaimableBytes, metrics.ReclaimablePercent, candidate.CompactRecommended,
+			candidate.Filename, candidate.Path)
+		if candidate.Diagnostic != "" {
+			a.printf("  diagnostic: %s\n", candidate.Diagnostic)
+		}
+	}
+	a.printf("totals database=%d wal=%d shm=%d total=%d\n",
+		inventory.Totals.Database, inventory.Totals.WAL, inventory.Totals.SHM, inventory.Totals.Total)
+	return nil
+}
+
+func (a *App) printIndexCompactReport(report branchindexes.CompactReport, asJSON bool) error {
+	if asJSON {
+		return writeJSON(a.stdout, report)
+	}
+	a.printf("index=%s dry_run=%t expected_upper_bound=%d\n", report.Path, report.DryRun, report.ExpectedUpperBoundBytes)
+	a.printCompactState("before", report.Before)
+	if report.After != nil {
+		a.printCompactState("after", *report.After)
+		a.printf("reclaimed database=%d wal=%d shm=%d total=%d\n",
+			report.Reclaimed.Database, report.Reclaimed.WAL, report.Reclaimed.SHM, report.Reclaimed.Total)
+	}
+	return nil
+}
+
+func (a *App) printCompactState(label string, state branchindexes.CompactState) {
+	a.printf("%s database=%d wal=%d shm=%d total=%d page_size=%d page_count=%d freelist=%d live_allocated=%d reclaimable=%d reclaimable_percent=%.2f\n",
+		label, state.Sizes.Database, state.Sizes.WAL, state.Sizes.SHM, state.Sizes.Total,
+		state.Metrics.PageSize, state.Metrics.PageCount, state.Metrics.FreelistCount,
+		state.Metrics.LiveAllocatedBytes, state.Metrics.ReclaimableBytes, state.Metrics.ReclaimablePercent)
+}
+
+func (a *App) printIndexPruneReport(report branchindexes.PruneReport, asJSON bool) error {
+	if asJSON {
+		return writeJSON(a.stdout, report)
+	}
+	for _, result := range report.Results {
+		a.printf("%s\t%s\t%s\t%s\n", result.Status, result.Index.Branch, result.Index.Filename, result.Reason)
+	}
+	a.printf("reclaimed database=%d wal=%d shm=%d total=%d\n",
+		report.Reclaimed.Database, report.Reclaimed.WAL, report.Reclaimed.SHM, report.Reclaimed.Total)
+	return nil
+}
+
 func (a *App) watch(ctx context.Context, args parsedArguments) error {
 	root, err := optionalPath(args.positionals)
 	if err != nil {
@@ -582,15 +759,16 @@ func (a *App) mcp(ctx context.Context, args parsedArguments) error {
 	service.WithSearch(searchService).WithSearchFactory(newSearchService)
 	service.WithReusableFactory(func(_ graph.ReadRepository, projects []indexer.Project) func(context.Context, string, int) (semantic.SearchResult, error) {
 		return func(searchContext context.Context, text string, limit int) (semantic.SearchResult, error) {
-			repository, closeRepository, openErr := openWritableProjects(searchContext, projects)
+			repository, closeRepository, openErr := openReadOnlyProjects(searchContext, projects)
 			if openErr != nil {
 				return semantic.SearchResult{}, openErr
 			}
 			defer func() { _ = closeRepository() }()
-			semanticService, serviceErr := newSemanticService(repository, args)
+			semanticService, closeCache, serviceErr := newSemanticService(searchContext, repository, args)
 			if serviceErr != nil {
 				return semantic.SearchResult{}, serviceErr
 			}
+			defer func() { _ = closeCache() }()
 			if _, syncErr := semanticService.Sync(searchContext); syncErr != nil {
 				return semantic.SearchResult{}, syncErr
 			}
@@ -614,15 +792,15 @@ func mcpRoots(args parsedArguments) ([]string, error) {
 	return []string{repoPath(args)}, nil
 }
 
-func openWritableProjects(ctx context.Context, projects []indexer.Project) (graph.ReadRepository, func() error, error) {
+func openReadOnlyProjects(ctx context.Context, projects []indexer.Project) (graph.ReadRepository, func() error, error) {
 	if len(projects) == 1 {
-		repository, err := sqlite.Open(ctx, projects[0].IndexPath)
+		repository, err := sqlite.OpenReadOnly(ctx, projects[0].IndexPath)
 		if err != nil {
 			return nil, nil, err
 		}
 		return repository, repository.Close, nil
 	}
-	repository, err := federation.OpenProjects(ctx, projects)
+	repository, err := federation.OpenReadOnlyProjects(ctx, projects)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -639,10 +817,11 @@ func (a *App) embed(ctx context.Context, args parsedArguments) error {
 		return err
 	}
 	defer func() { _ = repository.Close() }()
-	service, err := newSemanticService(repository, args)
+	service, closeCache, err := newSemanticService(ctx, repository, args)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = closeCache() }()
 	report, err := service.Sync(ctx)
 	if err != nil {
 		return err
@@ -669,10 +848,11 @@ func (a *App) reusable(ctx context.Context, args parsedArguments) error {
 		return err
 	}
 	defer func() { _ = closeRepository() }()
-	service, err := newSemanticService(repository, args)
+	service, closeCache, err := newSemanticService(ctx, repository, args)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = closeCache() }()
 	if _, err := service.Sync(ctx); err != nil {
 		return err
 	}
@@ -690,24 +870,128 @@ func (a *App) reusable(ctx context.Context, args parsedArguments) error {
 	return nil
 }
 
-func newSemanticService(repository graph.ReadRepository, args parsedArguments) (*semantic.Service, error) {
-	semanticRepository, ok := repository.(semantic.Repository)
+func newSemanticService(ctx context.Context, repository graph.ReadRepository, args parsedArguments) (*semantic.Service, func() error, error) {
+	candidates, ok := repository.(semantic.CandidateRepository)
 	if !ok {
-		return nil, fmt.Errorf("repository does not support semantic candidate discovery")
+		return nil, nil, fmt.Errorf("repository does not support semantic candidate discovery")
+	}
+	batchSize, err := intOption(args, "batch-size", 32)
+	if err != nil {
+		return nil, nil, err
 	}
 	model := firstValue(args.values["model"], os.Getenv("GRAFO_EMBED_MODEL"), ollama.DefaultModel)
 	baseURL := firstValue(args.values["ollama-url"], os.Getenv("GRAFO_OLLAMA_URL"), ollama.DefaultURL)
 	embedder, err := ollama.New(baseURL, model)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	batchSize, err := intOption(args, "batch-size", 32)
+	cache, err := embeddingcache.OpenDefault(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return semantic.NewService(semanticRepository, repository, embedder).
+	return semantic.NewService(candidates, repository, cache, embedder).
 		WithBatchSize(batchSize).
-		WithForce(args.command == "embed" && args.flags["force"]), nil
+		WithForce(args.command == "embed" && args.flags["force"]), cache.Close, nil
+}
+
+func (a *App) embedCache(ctx context.Context, args parsedArguments) error {
+	if len(args.positionals) != 1 || (args.positionals[0] != "status" && args.positionals[0] != "prune") {
+		return fmt.Errorf("usage: grafo embed-cache status [--json] | grafo embed-cache prune [--model name] [--older-than duration] [--max-bytes n] [--dry-run] [--yes] [--json]")
+	}
+	operation := args.positionals[0]
+	allowedFlags := map[string]bool{"json": true}
+	var allowedValues map[string]bool
+	if operation == "prune" {
+		allowedFlags["dry-run"] = true
+		allowedFlags["yes"] = true
+		allowedValues = map[string]bool{"model": true, "older-than": true, "max-bytes": true}
+	}
+	if err := rejectUnsupportedOptions(args, "embed-cache "+operation, allowedFlags, allowedValues); err != nil {
+		return err
+	}
+	path, err := embeddingcache.ResolvePath()
+	if err != nil {
+		return err
+	}
+	if operation == "status" {
+		store, err := embeddingcache.OpenReadOnly(ctx, path)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = store.Close() }()
+		status, err := store.Status(ctx)
+		if err != nil {
+			return err
+		}
+		if args.flags["json"] {
+			return writeJSON(a.stdout, status)
+		}
+		a.printf("embedding cache %s · schema %d\n", status.Path, status.SchemaVersion)
+		a.printf("%d rows · %d vector bytes · %d database bytes · %d WAL bytes · %d SHM bytes · %d reclaimable bytes\n",
+			status.Rows, status.BlobBytes, status.DatabaseBytes, status.WALBytes, status.SHMBytes, status.ReclaimableBytes)
+		for _, model := range status.Models {
+			a.printf("%s · %d rows · dimensions %v · %d vector bytes · used %s..%s\n",
+				model.Model, model.Rows, model.Dimensions, model.BlobBytes, model.OldestUsedAt, model.NewestUsedAt)
+		}
+		return nil
+	}
+	options, err := pruneOptions(args)
+	if err != nil {
+		return err
+	}
+	if !options.DryRun && !args.flags["yes"] {
+		return errors.New("embedding cache prune requires --yes (or use --dry-run)")
+	}
+	var store *embeddingcache.Cache
+	if options.DryRun {
+		store, err = embeddingcache.OpenReadOnly(ctx, path)
+	} else {
+		store, err = embeddingcache.Open(ctx, path)
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	report, err := store.Prune(ctx, options)
+	if err != nil {
+		return err
+	}
+	if args.flags["json"] {
+		return writeJSON(a.stdout, report)
+	}
+	verb := "pruned"
+	if report.DryRun {
+		verb = "would prune"
+	}
+	a.printf("%s %d rows · %d logical vector bytes\n", verb, report.DeletedRows, report.FreedBlobBytes)
+	a.printf("%d rows · %d vector bytes remain · %d database bytes · %d reclaimable bytes\n",
+		report.RemainingRows, report.RemainingBlobBytes, report.DatabaseBytes, report.ReclaimableBytes)
+	return nil
+}
+
+func pruneOptions(args parsedArguments) (embeddingcache.PruneOptions, error) {
+	result := embeddingcache.PruneOptions{DryRun: args.flags["dry-run"]}
+	if model, present := args.values["model"]; present {
+		if strings.TrimSpace(model) == "" {
+			return result, errors.New("--model cannot be empty")
+		}
+		result.Model = model
+	}
+	if value := args.values["older-than"]; value != "" {
+		duration, err := time.ParseDuration(value)
+		if err != nil || duration <= 0 {
+			return result, errors.New("--older-than must be a positive duration such as 24h")
+		}
+		result.OlderThan = duration
+	}
+	if value := args.values["max-bytes"]; value != "" {
+		maximum, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || maximum < 0 {
+			return result, errors.New("--max-bytes must be a non-negative integer")
+		}
+		result.MaxBytes = &maximum
+	}
+	return result, nil
 }
 
 func firstValue(values ...string) string {
@@ -1387,11 +1671,15 @@ func (a *App) search(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) == 0 {
 		return fmt.Errorf("usage: grafo search <pattern>... [--regex] [--case-sensitive] [--path-prefix dir] [--language go] [--context-lines 0] [--max-matches 500]")
 	}
+	prefixes, err := pathPrefixOption(args)
+	if err != nil {
+		return err
+	}
 	request := search.Request{
 		Patterns:      args.positionals,
 		Regex:         args.flags["regex"],
 		CaseSensitive: args.flags["case-sensitive"],
-		PathPrefixes:  splitList(args.values["path-prefix"]),
+		PathPrefixes:  prefixes,
 		Languages:     splitList(args.values["language"]),
 		Repositories:  splitList(args.values["repo-name"]),
 	}
@@ -1490,13 +1778,34 @@ func splitList(raw string) []string {
 	return result
 }
 
+func pathPrefixOption(args parsedArguments) ([]string, error) {
+	raw, present := args.values["path-prefix"]
+	if !present {
+		return nil, nil
+	}
+	parts := strings.Split(raw, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return nil, fmt.Errorf("--path-prefix values must be non-empty")
+		}
+		values = append(values, part)
+	}
+	return query.NormalizePathPrefixes(values)
+}
+
 func (a *App) catalogOptions(args parsedArguments) (query.CatalogOptions, error) {
 	limit, err := intOption(args, "limit", query.DefaultCatalogLimit)
 	if err != nil {
 		return query.CatalogOptions{}, err
 	}
+	prefixes, err := pathPrefixOption(args)
+	if err != nil {
+		return query.CatalogOptions{}, err
+	}
 	return query.CatalogOptions{Repository: args.values["repo-name"],
-		Name: args.values["name"], Limit: limit}, nil
+		Name: args.values["name"], PathPrefixes: prefixes, Limit: limit}, nil
 }
 
 func openCatalog(ctx context.Context, args parsedArguments) (*query.Catalog, func() error, error) {
@@ -1517,10 +1826,14 @@ func (a *App) topologyOptions(args parsedArguments) (query.TopologyOptions, erro
 	if err != nil {
 		return query.TopologyOptions{}, err
 	}
+	prefixes, err := pathPrefixOption(args)
+	if err != nil {
+		return query.TopologyOptions{}, err
+	}
 	return query.TopologyOptions{
 		Repository: args.values["repo-name"], Component: args.values["component"], Method: args.values["method"],
 		Route: args.values["route"], Event: args.values["event"],
-		Direction: query.Direction(args.values["direction"]), Limit: limit,
+		Direction: query.Direction(args.values["direction"]), PathPrefixes: prefixes, Limit: limit,
 	}, nil
 }
 
@@ -1551,6 +1864,9 @@ func openMessageFlow(ctx context.Context, args parsedArguments) (*query.MessageF
 }
 
 func (a *App) messageFlowOptions(args parsedArguments) (query.MessageFlowOptions, error) {
+	if _, present := args.values["path-prefix"]; present {
+		return query.MessageFlowOptions{}, fmt.Errorf("--path-prefix applies only to list queries, not message-flow")
+	}
 	limit, err := intOption(args, "limit", query.DefaultCatalogLimit)
 	if err != nil {
 		return query.MessageFlowOptions{}, err
@@ -1603,9 +1919,13 @@ func (a *App) messageFlow(ctx context.Context, args parsedArguments) error {
 
 func (a *App) messageCoverage(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo message-coverage [--package name] [--message name] [--oneof name] [--direction incoming|outgoing|both] [--component name] [--status resolved|missing_evidence|unknown] [--repo-name name] [--limit 100] [--json]")
+		return fmt.Errorf("usage: grafo message-coverage [--package name] [--message name] [--oneof name] [--direction incoming|outgoing|both] [--component name] [--status resolved|missing_evidence|unknown] [--repo-name name] [--path-prefix dir] [--limit 100] [--json]")
 	}
 	limit, err := intOption(args, "limit", query.DefaultCatalogLimit)
+	if err != nil {
+		return err
+	}
+	prefixes, err := pathPrefixOption(args)
 	if err != nil {
 		return err
 	}
@@ -1617,7 +1937,7 @@ func (a *App) messageCoverage(ctx context.Context, args parsedArguments) error {
 	result, err := service.Coverage(ctx, query.MessageCoverageOptions{Repository: args.values["repo-name"],
 		Package: args.values["package"], Message: args.values["message"], Oneof: args.values["oneof"],
 		Direction: query.Direction(args.values["direction"]), Component: args.values["component"],
-		Status: query.CoverageStatus(args.values["status"]), Limit: limit})
+		Status: query.CoverageStatus(args.values["status"]), PathPrefixes: prefixes, Limit: limit})
 	if err != nil {
 		return err
 	}
@@ -1638,7 +1958,7 @@ func (a *App) messageCoverage(ctx context.Context, args parsedArguments) error {
 
 func (a *App) endpoints(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo endpoints [--method GET] [--route path] [--repo-name name] [--limit 100] [--json]")
+		return fmt.Errorf("usage: grafo endpoints [--method GET] [--route path] [--repo-name name] [--path-prefix dir] [--limit 100] [--json]")
 	}
 	options, err := a.topologyOptions(args)
 	if err != nil {
@@ -1680,7 +2000,7 @@ func (a *App) endpoints(ctx context.Context, args parsedArguments) error {
 
 func (a *App) outboundRequests(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo outbound-requests [--method GET] [--route path] [--repo-name name] [--limit 100] [--json]")
+		return fmt.Errorf("usage: grafo outbound-requests [--method GET] [--route path] [--repo-name name] [--path-prefix dir] [--limit 100] [--json]")
 	}
 	options, err := a.topologyOptions(args)
 	if err != nil {
@@ -1724,6 +2044,9 @@ func (a *App) findHandler(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
+	if _, present := args.values["path-prefix"]; present {
+		return fmt.Errorf("--path-prefix applies only to list queries, not find-handler")
+	}
 	service, closeRepository, err := openTopology(ctx, args)
 	if err != nil {
 		return err
@@ -1756,7 +2079,7 @@ func (a *App) findHandler(ctx context.Context, args parsedArguments) error {
 
 func (a *App) serviceTopology(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo service-topology [--repo-name name] [--component name] [--method GET] [--route path | --event name] [--direction incoming|outgoing|both] [--limit 100] [--json | --mermaid]")
+		return fmt.Errorf("usage: grafo service-topology [--repo-name name] [--component name] [--method GET] [--route path | --event name] [--direction incoming|outgoing|both] [--path-prefix dir] [--limit 100] [--json | --mermaid]")
 	}
 	if args.flags["json"] && args.flags["mermaid"] {
 		return errors.New("--json and --mermaid are mutually exclusive")
@@ -1802,7 +2125,7 @@ func (a *App) serviceTopology(ctx context.Context, args parsedArguments) error {
 
 func (a *App) dataResources(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo data-resources [--kind table,view] [--name text] [--repo-name name] [--limit 100] [--json]")
+		return fmt.Errorf("usage: grafo data-resources [--kind table,view] [--name text] [--repo-name name] [--path-prefix dir] [--limit 100] [--json]")
 	}
 	options, err := a.catalogOptions(args)
 	if err != nil {
@@ -1842,6 +2165,9 @@ func (a *App) dataResourceUsage(ctx context.Context, args parsedArguments) error
 	if err != nil {
 		return err
 	}
+	if _, present := args.values["path-prefix"]; present {
+		return fmt.Errorf("--path-prefix applies only to list queries, not data-usage")
+	}
 	catalog, closeRepository, err := openCatalog(ctx, args)
 	if err != nil {
 		return err
@@ -1866,7 +2192,7 @@ func (a *App) dataResourceUsage(ctx context.Context, args parsedArguments) error
 
 func (a *App) configKeys(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo config-keys [--name text] [--repo-name name] [--limit 100] [--json]")
+		return fmt.Errorf("usage: grafo config-keys [--name text] [--repo-name name] [--path-prefix dir] [--limit 100] [--json]")
 	}
 	options, err := a.catalogOptions(args)
 	if err != nil {
@@ -1896,7 +2222,7 @@ func (a *App) configKeys(ctx context.Context, args parsedArguments) error {
 
 func (a *App) events(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo events [--name text] [--repo-name name] [--limit 100] [--json]")
+		return fmt.Errorf("usage: grafo events [--name text] [--repo-name name] [--path-prefix dir] [--limit 100] [--json]")
 	}
 	options, err := a.catalogOptions(args)
 	if err != nil {
@@ -1927,7 +2253,7 @@ func (a *App) events(ctx context.Context, args parsedArguments) error {
 
 func (a *App) orphanedEvents(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) != 0 {
-		return fmt.Errorf("usage: grafo orphaned-events [--name text] [--repo-name name] [--limit 100] [--json]")
+		return fmt.Errorf("usage: grafo orphaned-events [--name text] [--repo-name name] [--path-prefix dir] [--limit 100] [--json]")
 	}
 	options, err := a.catalogOptions(args)
 	if err != nil {
@@ -2130,7 +2456,7 @@ func openStatusRead(ctx context.Context, args parsedArguments, observer indexer.
 }
 
 func requiresWritableRead(command string) bool {
-	return command == "reusable" || command == "find-reusable-code"
+	return false
 }
 
 func (a *App) printIndexReport(report indexer.Report, asJSON bool) error {
@@ -2138,7 +2464,8 @@ func (a *App) printIndexReport(report indexer.Report, asJSON bool) error {
 		return writeJSON(a.stdout, report)
 	}
 	a.printf("indexed %s · branch %s\n", report.Project.Name, report.Project.Branch)
-	a.printf("%d updated · %d unchanged · %d removed · %d skipped\n", len(report.Updated), report.Unchanged, len(report.Removed), len(report.Skipped))
+	a.printf("%d updated · %d unchanged · %d removed · %d skipped · %d scoped out\n",
+		len(report.Updated), report.Unchanged, len(report.Removed), len(report.Skipped), report.ScopedOut)
 	a.printf("%d file contents checked\n", report.Checked)
 	a.printf("edge reconciliation: %dms\n", report.ReconcileMS)
 	if report.Rebuild != "" {
@@ -2187,7 +2514,7 @@ type parsedArguments struct {
 var booleanOptions = map[string]bool{
 	"json": true, "force": true, "help": true, "source": true, "regex": true, "case-sensitive": true,
 	"list": true, "all": true, "dry-run": true, "mcp-only": true, "hooks": true, "refresh": true,
-	"repair": true, "once": true, "paused": true, "mermaid": true,
+	"repair": true, "once": true, "paused": true, "mermaid": true, "yes": true,
 }
 var valueOptions = map[string]bool{
 	"repo": true, "repos": true, "depth": true, "direction": true, "relation": true,
@@ -2200,7 +2527,22 @@ var valueOptions = map[string]bool{
 	"kind": true, "name": true, "state-dir": true, "lines": true, "concurrency": true,
 	"filter": true, "method": true, "route": true, "event": true, "component": true,
 	"package": true, "message": true, "oneof": true, "status": true,
-	"progress": true,
+	"progress": true, "older-than": true, "max-bytes": true, "keep": true,
+}
+
+// pathPrefixCommands is the adapter boundary for the one globally parsed
+// option that is intentionally available to only a bounded command set. Keep
+// aliases here so unsupported commands fail before opening any repository.
+var pathPrefixCommands = map[string]bool{
+	"search":          true,
+	"data-resources":  true,
+	"config-keys":     true,
+	"events":          true,
+	"orphaned-events": true,
+	"endpoints":       true, "list-endpoints": true, "list_endpoints": true,
+	"outbound-requests": true, "list-outbound-requests": true, "list_outbound_requests": true,
+	"service-topology": true, "get-service-topology": true, "get_service_topology": true,
+	"message-coverage": true, "list-message-coverage": true, "list_message_coverage": true,
 }
 
 func parseArguments(arguments []string) (parsedArguments, error) {
@@ -2234,7 +2576,11 @@ func parseArguments(arguments []string) (parsedArguments, error) {
 			}
 			value = arguments[index]
 		}
-		result.values[name] = value
+		if previous, present := result.values[name]; name == "path-prefix" && present {
+			result.values[name] = previous + "," + value
+		} else {
+			result.values[name] = value
+		}
 	}
 	if result.values["progress"] != "" && result.command != "status" && result.command != "counts" {
 		return result, fmt.Errorf("--progress is only supported by status and counts")
@@ -2328,6 +2674,9 @@ Usage:
   grafo uninstall [client...] [--client a,b] [--all] [--dry-run] [--json]
   grafo guidance [--repo path] [--hook pre-search|pre-edit]
   grafo index [path] [--force] [--json]
+  grafo indexes list [path] [--json]
+  grafo indexes prune [path] [--older-than duration] [--keep n] [--dry-run] [--yes] [--json]
+  grafo indexes compact [path] [--dry-run] [--yes] [--json]
   grafo watch [path] [--interval 1s]
   grafo service add [path] [--interval 10s] [--paused] [--json]
   grafo service remove [path]
@@ -2341,6 +2690,8 @@ Usage:
   grafo status [path] [--repos pathA,pathB] [--json] [--progress auto|human|json|off]
   grafo mcp [--repo path | --repos pathA,pathB] [--model embeddinggemma]
   grafo embed [path] [--model embeddinggemma] [--ollama-url http://localhost:11434] [--force]
+  grafo embed-cache status [--json]
+  grafo embed-cache prune [--model name] [--older-than duration] [--max-bytes n] [--dry-run] [--yes] [--json]
   grafo reusable <description> [--repo path | --repos pathA,pathB] [--limit 5] [--json]
   grafo find <text> [--limit 20] [--repo path | --repos pathA,pathB] [--json]
   grafo show <symbol-or-id> [--kind function] [--repo path | --repos pathA,pathB] [--json]
@@ -2363,24 +2714,24 @@ Usage:
                             [--max-matches-per-pattern 200] [--max-file-size 1048576]
   grafo path <from> <to> [--kind function] [--direction outgoing] [--relation calls,...]
   grafo data-resources [--kind table,view] [--name text] [--repo-name name]
-                       [--limit 100] [--json]
+                       [--path-prefix dir,...] [--limit 100] [--json]
   grafo data-usage <table-view-or-id> [--repo-name name] [--limit 100] [--json]
-  grafo config-keys [--name text] [--repo-name name] [--limit 100] [--json]
-  grafo events [--name text] [--repo-name name] [--limit 100] [--json]
-  grafo orphaned-events [--name text] [--repo-name name] [--limit 100] [--json]
-  grafo endpoints [--method GET] [--route path] [--repo-name name] [--limit 100] [--json]
-  grafo outbound-requests [--method GET] [--route path] [--repo-name name] [--limit 100] [--json]
+  grafo config-keys [--name text] [--repo-name name] [--path-prefix dir,...] [--limit 100] [--json]
+  grafo events [--name text] [--repo-name name] [--path-prefix dir,...] [--limit 100] [--json]
+  grafo orphaned-events [--name text] [--repo-name name] [--path-prefix dir,...] [--limit 100] [--json]
+  grafo endpoints [--method GET] [--route path] [--repo-name name] [--path-prefix dir,...] [--limit 100] [--json]
+  grafo outbound-requests [--method GET] [--route path] [--repo-name name] [--path-prefix dir,...] [--limit 100] [--json]
   grafo find-handler [--method GET] [--route path | --event name] [--repo-name name]
                      [--limit 100] [--json]
   grafo service-topology [--repo-name name] [--component name] [--method GET] [--route path | --event name]
-                         [--direction incoming|outgoing|both] [--limit 100]
+                         [--direction incoming|outgoing|both] [--path-prefix dir,...] [--limit 100]
                          [--json | --mermaid]
   grafo message-flow <message-or-id> [--repo-name name] [--component name]
                      [--direction incoming|outgoing|both] [--limit 100] [--json]
   grafo message-coverage [--package name] [--message name] [--oneof name]
                          [--direction incoming|outgoing|both] [--component name]
                          [--status resolved|missing_evidence|unknown] [--repo-name name]
-                         [--limit 100] [--json]
+                         [--path-prefix dir,...] [--limit 100] [--json]
   grafo find-tests <production-symbol-or-id> [--kind function] [--depth 8] [--limit 100] [--json]
   grafo test-coverage <test-or-id> [--depth 8] [--limit 100] [--json]
   grafo version
@@ -2391,6 +2742,13 @@ accept --kind to restrict resolution to one node kind, so a selector shared by a
 function and its own parameter resolves without guessing. Active branch indexes are
 refreshed incrementally before queries and never substituted across branches.
 Test reports are bounded structural call/reference evidence, not runtime coverage.
+
+'grafo indexes list' inventories the physical database, WAL, and SHM footprint
+of every branch index for one repository. 'indexes prune' requires a retention
+selector and either '--dry-run' or '--yes'; the current index and any index whose
+identity, timestamp, compatibility, or lock cannot be verified are protected.
+'grafo indexes compact' reports or reclaims freelist pages in only the current
+branch index; mutation requires '--yes' and exclusive index maintenance access.
 
 'grafo install --list' only detects clients and never writes; '--dry-run'
 reports every file and command a real run would touch. 'grafo install' also installs
@@ -2441,6 +2799,10 @@ depends on, plus impacted files, cross-repository hops, and config, data, and
 event relationships. 'grafo failure-flow' separates typed error-return
 declarations, escaping and wrapped errors, handlers, panics and recoveries,
 and deferred cleanup while keeping conditional and unresolved evidence explicit.
+'grafo embed-cache status' inspects the user-level content-addressed vector
+cache without contacting the provider. 'grafo embed-cache prune' evicts the
+oldest rows matching every supplied filter; dry runs are read-only and actual
+deletion requires --yes. Pruning checkpoints but never vacuums the cache.
 'grafo search' reads only files that belong to a refreshed
 index and never persists source text.
 

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,7 +22,7 @@ import (
 
 // ReadRepository is the capability-safe SQLite adapter for existing indexes.
 // It forwards only read methods from the shared adapter and therefore cannot
-// satisfy graph.IndexRepository or semantic.Repository.
+// satisfy graph.IndexRepository.
 type ReadRepository struct {
 	reader     *Repository
 	statements *readStatementCache
@@ -110,10 +109,11 @@ func (c *readStatementCache) Close() error {
 var _ graph.ReadRepository = (*ReadRepository)(nil)
 var _ graph.CatalogRepository = (*ReadRepository)(nil)
 var _ graph.TopologyRepository = (*ReadRepository)(nil)
+var _ graph.CanonicalMessageRepository = (*ReadRepository)(nil)
 var _ graph.FileCatalog = (*ReadRepository)(nil)
 var _ graph.ExternalEdgeRepository = (*ReadRepository)(nil)
 var _ graph.ExternalNodeRepository = (*ReadRepository)(nil)
-var _ semantic.ReadRepository = (*ReadRepository)(nil)
+var _ semantic.CandidateRepository = (*ReadRepository)(nil)
 
 // OpenReadOnly opens an existing, fully compatible index without creating,
 // migrating, preparing writer statements, or mutating it.
@@ -170,15 +170,7 @@ func OpenReadOnly(ctx context.Context, path string) (*ReadRepository, error) {
 }
 
 func readOnlyDSN(absolute string) string {
-	uriPath := filepath.ToSlash(absolute)
-	// net/url treats a leading Windows drive letter as a URI authority unless
-	// the slash-form path is rooted. SQLite expects file:///C:/... instead.
-	if len(uriPath) >= 3 && uriPath[1] == ':' && uriPath[2] == '/' && uriPath[0] != '/' {
-		uriPath = "/" + uriPath
-	}
-	query := url.Values{}
-	query.Set("mode", "ro")
-	return (&url.URL{Scheme: "file", Path: uriPath, RawQuery: query.Encode()}).String()
+	return sqliteFileDSN(absolute, "ro")
 }
 
 func incompatibleIndex(reason string) error {
@@ -275,7 +267,7 @@ func validateStorageCompatibility(ctx context.Context, db *sql.DB) error {
 		return incompatibleIndexCause("inspect database schema", err)
 	}
 	defer func() { _ = rows.Close() }()
-	requiredNames := []string{"meta", "files", "nodes", "facts", "edges", "embeddings"}
+	requiredNames := []string{"meta", "files", "nodes", "facts", "edges"}
 	required := make(map[string]bool, len(requiredNames))
 	for _, name := range requiredNames {
 		required[name] = false
@@ -334,6 +326,9 @@ func (r *ReadRepository) Repositories(ctx context.Context) ([]string, error) {
 func (r *ReadRepository) ListNodesByKind(ctx context.Context, request graph.NodeListQuery) ([]graph.ScopedNode, error) {
 	return r.reader.ListNodesByKind(ctx, request)
 }
+func (r *ReadRepository) CanonicalMessages(ctx context.Context, request graph.CanonicalMessageQuery) (graph.CanonicalMessagePage, error) {
+	return r.reader.CanonicalMessages(ctx, request)
+}
 func (r *ReadRepository) RelationEdges(ctx context.Context, request graph.RelationEdgeQuery) (graph.RelationEdgePage, error) {
 	return r.reader.RelationEdges(ctx, request)
 }
@@ -348,10 +343,4 @@ func (r *ReadRepository) Files(ctx context.Context) (map[string]graph.FileRecord
 }
 func (r *ReadRepository) CandidateNodes(ctx context.Context) ([]graph.Node, error) {
 	return r.reader.CandidateNodes(ctx)
-}
-func (r *ReadRepository) EmbeddingHashes(ctx context.Context, model string) (map[string]string, error) {
-	return r.reader.EmbeddingHashes(ctx, model)
-}
-func (r *ReadRepository) Embeddings(ctx context.Context, model string) ([]semantic.Embedding, error) {
-	return r.reader.Embeddings(ctx, model)
 }

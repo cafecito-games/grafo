@@ -105,6 +105,9 @@ type NodeListQuery struct {
 	Kinds      []NodeKind
 	Name       string
 	Repository string
+	// PathPrefixes are normalized repository-relative segment prefixes. They
+	// filter canonical node locations before the per-kind Limit is applied.
+	PathPrefixes []string
 	// Visibility defaults to LocalNodes so a catalog never silently mixes
 	// declarations with unresolved external targets.
 	Visibility NodeVisibility
@@ -125,6 +128,38 @@ type ScopedNode struct {
 type NodeListRepository interface {
 	Repositories(context.Context) ([]string, error)
 	ListNodesByKind(context.Context, NodeListQuery) ([]ScopedNode, error)
+}
+
+// CanonicalMessageQuery selects locally declared protocol-message types before
+// applying its bound. Package and Message are exact semantic filters rather
+// than post-enumeration presentation filters.
+type CanonicalMessageQuery struct {
+	Repository   string
+	Package      string
+	Message      string
+	PathPrefixes []string
+	Limit        int
+}
+
+func (q CanonicalMessageQuery) Validate() error {
+	if q.Limit <= 0 {
+		return fmt.Errorf("canonical message limit must be positive")
+	}
+	return nil
+}
+
+// CanonicalMessagePage reports whether more matching canonical messages exist
+// beyond the requested bound.
+type CanonicalMessagePage struct {
+	Items     []ScopedNode
+	Truncated bool
+}
+
+// CanonicalMessageRepository is the narrow bounded enumeration port used by
+// message coverage. Implementations filter authoritative message declarations
+// before sorting and limiting.
+type CanonicalMessageRepository interface {
+	CanonicalMessages(context.Context, CanonicalMessageQuery) (CanonicalMessagePage, error)
 }
 
 // RelationDirection selects which side of a subject node a bounded catalog
@@ -172,6 +207,9 @@ func (q RelationEdgeQuery) Validate() error {
 type HydratedRelationEdge struct {
 	Edge        Edge
 	Counterpart Node
+	// Repository identifies the indexed repository that owns Counterpart.
+	// Single-repository callers may leave it empty and provide their known scope.
+	Repository string
 }
 
 // RelationEdgePage contains at most Limit edges per requested relation.

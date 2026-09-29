@@ -80,3 +80,8 @@ tasks:
     desc: Compare SQLite storage layouts with gated fixture and corpus samples
     cmds:
       - go run ./cmd/grafo-storage-layout-benchmark
+
+  bench:detail-profiles:
+    desc: Run the opt-in capability-safe detail-profile spike benchmark
+    cmds:
+      - go run ./cmd/grafo-detail-benchmark

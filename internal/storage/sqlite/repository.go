@@ -41,7 +41,8 @@ const (
 
 var _ graph.Repository = (*Repository)(nil)
 var _ graph.CatalogRepository = (*Repository)(nil)
-var _ semantic.Repository = (*Repository)(nil)
+var _ graph.CanonicalMessageRepository = (*Repository)(nil)
+var _ semantic.CandidateRepository = (*Repository)(nil)
 
 func Open(ctx context.Context, path string) (*Repository, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -52,11 +53,9 @@ func Open(ctx context.Context, path string) (*Repository, error) {
 		return nil, fmt.Errorf("open graph: %w", err)
 	}
 	db.SetMaxOpenConns(1)
-	for _, pragma := range []string{"PRAGMA journal_mode=WAL", "PRAGMA synchronous=NORMAL", "PRAGMA busy_timeout=5000", "PRAGMA wal_autocheckpoint=1000"} {
-		if _, err := db.ExecContext(ctx, pragma); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("configure SQLite: %w", err)
-		}
+	if err := configureWritableConnection(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
 	}
 	provider, err := goose.NewProvider(goose.DialectSQLite3, db, migrations.Files)
 	if err != nil {
@@ -92,6 +91,15 @@ func Open(ctx context.Context, path string) (*Repository, error) {
 	return repository, nil
 }
 
+func configureWritableConnection(ctx context.Context, db *sql.DB) error {
+	for _, pragma := range []string{"PRAGMA journal_mode=WAL", "PRAGMA synchronous=NORMAL", "PRAGMA busy_timeout=5000", "PRAGMA wal_autocheckpoint=1000"} {
+		if _, err := db.ExecContext(ctx, pragma); err != nil {
+			return fmt.Errorf("configure SQLite: %w", err)
+		}
+	}
+	return nil
+}
+
 func (r *Repository) Close() error { return errors.Join(r.queries.Close(), r.db.Close()) }
 func (r *Repository) Path() string { return r.path }
 
@@ -123,52 +131,6 @@ func (r *Repository) CandidateNodes(ctx context.Context) ([]graph.Node, error) {
 		result = append(result, nodeFromRow(row))
 	}
 	return result, nil
-}
-
-func (r *Repository) Embeddings(ctx context.Context, model string) ([]semantic.Embedding, error) {
-	rows, err := r.queries.ListEmbeddingsByModel(ctx, model)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]semantic.Embedding, 0, len(rows))
-	for _, row := range rows {
-		var vector []float32
-		if err := json.Unmarshal([]byte(row.VectorJson), &vector); err != nil {
-			return nil, fmt.Errorf("decode embedding for %s: %w", row.NodeID, err)
-		}
-		if int64(len(vector)) != row.Dimensions {
-			return nil, fmt.Errorf("embedding for %s declares %d dimensions but stores %d", row.NodeID, row.Dimensions, len(vector))
-		}
-		result = append(result, semantic.Embedding{NodeID: row.NodeID, Model: row.Model,
-			ContentHash: row.ContentHash, Vector: vector, UpdatedAt: row.UpdatedAt})
-	}
-	return result, nil
-}
-
-func (r *Repository) EmbeddingHashes(ctx context.Context, model string) (map[string]string, error) {
-	rows, err := r.queries.ListEmbeddingHashesByModel(ctx, model)
-	if err != nil {
-		return nil, err
-	}
-	result := make(map[string]string, len(rows))
-	for _, row := range rows {
-		result[row.NodeID] = row.ContentHash
-	}
-	return result, nil
-}
-
-func (r *Repository) UpsertEmbedding(ctx context.Context, embedding semantic.Embedding) error {
-	vector, err := json.Marshal(embedding.Vector)
-	if err != nil {
-		return err
-	}
-	return r.queries.UpsertEmbedding(ctx, sqlcgen.UpsertEmbeddingParams{NodeID: embedding.NodeID,
-		Model: embedding.Model, ContentHash: embedding.ContentHash, Dimensions: int64(len(embedding.Vector)),
-		VectorJson: string(vector), UpdatedAt: embedding.UpdatedAt})
-}
-
-func (r *Repository) DeleteStaleEmbeddings(ctx context.Context, model string) (int64, error) {
-	return r.queries.DeleteStaleEmbeddings(ctx, model)
 }
 
 func (r *Repository) Files(ctx context.Context) (map[string]graph.FileRecord, error) {
@@ -749,11 +711,19 @@ func (r *Repository) ListNodesByKind(ctx context.Context, request graph.NodeList
 	// The fragment is matched literally, so a name containing % or _ narrows
 	// the catalog instead of silently widening it.
 	fragment := foldName(request.Name)
+	prefixes := request.PathPrefixes
+	if prefixes == nil {
+		prefixes = []string{}
+	}
+	prefixesJSON, err := json.Marshal(prefixes)
+	if err != nil {
+		return nil, fmt.Errorf("encode node path prefixes: %w", err)
+	}
 	result := []graph.ScopedNode{}
 	for _, kind := range request.Kinds {
 		rows, err := r.queries.ListNodesByKind(ctx, sqlcgen.ListNodesByKindParams{
 			Kind: string(kind), MinExternal: minExternal, MaxExternal: maxExternal,
-			NameFragment: fragment, MaxResults: limit,
+			NameFragment: fragment, PathPrefixesJson: string(prefixesJSON), MaxResults: limit,
 		})
 		if err != nil {
 			return nil, err
@@ -763,6 +733,49 @@ func (r *Repository) ListNodesByKind(ctx context.Context, request graph.NodeList
 		}
 	}
 	return result, nil
+}
+
+// CanonicalMessages enumerates authoritative protocol-message declarations.
+// Filtering happens in SQLite before the deterministic order and bound, so
+// unrelated type declarations cannot hide or truncate message coverage.
+func (r *Repository) CanonicalMessages(ctx context.Context, request graph.CanonicalMessageQuery) (graph.CanonicalMessagePage, error) {
+	if err := request.Validate(); err != nil {
+		return graph.CanonicalMessagePage{}, err
+	}
+	name, err := r.repositoryName(ctx)
+	if err != nil {
+		return graph.CanonicalMessagePage{}, err
+	}
+	if request.Repository != "" && request.Repository != name {
+		return graph.CanonicalMessagePage{Items: []graph.ScopedNode{}}, nil
+	}
+	if request.Limit == int(^uint(0)>>1) {
+		return graph.CanonicalMessagePage{}, fmt.Errorf("canonical message limit is too large")
+	}
+	prefixes := request.PathPrefixes
+	if prefixes == nil {
+		prefixes = []string{}
+	}
+	prefixesJSON, err := json.Marshal(prefixes)
+	if err != nil {
+		return graph.CanonicalMessagePage{}, fmt.Errorf("encode canonical message path prefixes: %w", err)
+	}
+	rows, err := r.queries.ListCanonicalMessages(ctx, sqlcgen.ListCanonicalMessagesParams{
+		PackageName: strings.TrimSuffix(request.Package, "."), MessageName: request.Message,
+		PathPrefixesJson: string(prefixesJSON), MaxResults: int64(request.Limit) + 1,
+	})
+	if err != nil {
+		return graph.CanonicalMessagePage{}, err
+	}
+	page := graph.CanonicalMessagePage{Items: make([]graph.ScopedNode, 0, min(len(rows), request.Limit))}
+	if len(rows) > request.Limit {
+		page.Truncated = true
+		rows = rows[:request.Limit]
+	}
+	for _, row := range rows {
+		page.Items = append(page.Items, graph.ScopedNode{Repository: name, Node: nodeFromRow(row)})
+	}
+	return page, nil
 }
 
 func (r *Repository) repositoryName(ctx context.Context) (string, error) {

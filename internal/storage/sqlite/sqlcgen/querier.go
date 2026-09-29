@@ -33,18 +33,16 @@ type Querier interface {
 	DeleteFile(ctx context.Context, path string) error
 	DeleteNodesByOwner(ctx context.Context, ownerFile string) error
 	DeleteOrphanExternalNodes(ctx context.Context) error
-	DeleteStaleEmbeddings(ctx context.Context, model string) (int64, error)
 	EnqueueDirtyFacts(ctx context.Context) error
 	FindNodesExact(ctx context.Context, target string) ([]FindNodesExactRow, error)
 	FindNodesExactKind(ctx context.Context, arg FindNodesExactKindParams) ([]FindNodesExactKindRow, error)
 	GetMeta(ctx context.Context, key string) (string, error)
 	GetNode(ctx context.Context, id string) (Node, error)
 	InsertEdge(ctx context.Context, arg InsertEdgeParams) error
+	ListCanonicalMessages(ctx context.Context, arg ListCanonicalMessagesParams) ([]Node, error)
 	ListDirtyFactBatch(ctx context.Context, limit int64) ([]ListDirtyFactBatchRow, error)
 	ListEdgesFrom(ctx context.Context, fromID string) ([]Edge, error)
 	ListEdgesTo(ctx context.Context, toID string) ([]Edge, error)
-	ListEmbeddingHashesByModel(ctx context.Context, model string) ([]ListEmbeddingHashesByModelRow, error)
-	ListEmbeddingsByModel(ctx context.Context, model string) ([]Embedding, error)
 	ListExternalEdgesMatching(ctx context.Context, arg ListExternalEdgesMatchingParams) ([]Edge, error)
 	ListExternalNodesMatching(ctx context.Context, arg ListExternalNodesMatchingParams) ([]Node, error)
 	ListFiles(ctx context.Context) ([]File, error)
@@ -75,7 +73,6 @@ type Querier interface {
 	ReconciliationPending(ctx context.Context) (bool, error)
 	SearchNodes(ctx context.Context, arg SearchNodesParams) ([]Node, error)
 	SetMeta(ctx context.Context, arg SetMetaParams) error
-	UpsertEmbedding(ctx context.Context, arg UpsertEmbeddingParams) error
 	UpsertFact(ctx context.Context, arg UpsertFactParams) error
 	UpsertFile(ctx context.Context, arg UpsertFileParams) error
 	UpsertNode(ctx context.Context, arg UpsertNodeParams) error

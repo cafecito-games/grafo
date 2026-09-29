@@ -18,7 +18,7 @@ func TestCatalogCommandsReportUsageAndOrphans(t *testing.T) {
 	run(t, "index", root)
 
 	var resources query.DataResourceList
-	runJSON(t, &resources, "data-resources", "--repo", root, "--json")
+	runJSON(t, &resources, "data-resources", "--repo", root, "--path-prefix", "schema.sql", "--json")
 	byName := map[string]query.Resource{}
 	for _, resource := range resources.Resources {
 		byName[resource.QualifiedName] = resource
@@ -49,7 +49,7 @@ func TestCatalogCommandsReportUsageAndOrphans(t *testing.T) {
 	}
 
 	var keys query.ConfigKeyList
-	runJSON(t, &keys, "config-keys", "--repo", root, "--name", "DATABASE_URL", "--json")
+	runJSON(t, &keys, "config-keys", "--repo", root, "--name", "DATABASE_URL", "--path-prefix", ".env", "--json")
 	if len(keys.Keys) != 1 {
 		t.Fatalf("expected one config key, got %#v", keys.Keys)
 	}
@@ -69,7 +69,7 @@ func TestCatalogCommandsReportUsageAndOrphans(t *testing.T) {
 	}
 
 	var events query.EventList
-	runJSON(t, &events, "events", "--repo", root, "--json")
+	runJSON(t, &events, "events", "--repo", root, "--path-prefix", "cart.gd", "--json")
 	var placed *query.Event
 	for index, event := range events.Events {
 		if event.Name == "order_placed" {
@@ -84,7 +84,7 @@ func TestCatalogCommandsReportUsageAndOrphans(t *testing.T) {
 	}
 
 	var orphans query.OrphanedEventList
-	runJSON(t, &orphans, "orphaned-events", "--repo", root, "--json")
+	runJSON(t, &orphans, "orphaned-events", "--repo", root, "--path-prefix", "cart.gd", "--json")
 	categories := map[string]query.OrphanCategory{}
 	statuses := map[string]query.OrphanStatus{}
 	for _, orphan := range orphans.Events {
@@ -159,6 +159,12 @@ func TestCatalogCommandsRejectUnsupportedFilters(t *testing.T) {
 		t.Fatalf("a literal name fragment must be accepted")
 	} else if !strings.Contains(stdout, `"resources": []`) {
 		t.Fatalf("a name fragment acted as a wildcard: %s", stdout)
+	}
+	if code, _, stderr := execute(t, "events", "--repo", root, "--path-prefix", "internal,,cmd"); code == 0 {
+		t.Fatalf("a blank path prefix silently broadened the query: %s", stderr)
+	}
+	if code, _, stderr := execute(t, "data-usage", "orders", "--repo", root, "--path-prefix", "schema.sql"); code == 0 {
+		t.Fatalf("a path prefix was accepted by scalar data usage: %s", stderr)
 	}
 }
 

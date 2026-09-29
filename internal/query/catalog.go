@@ -20,9 +20,10 @@ const (
 
 // CatalogOptions bounds and filters a catalog request.
 type CatalogOptions struct {
-	Repository string
-	Name       string
-	Limit      int
+	Repository   string
+	Name         string
+	PathPrefixes []string
+	Limit        int
 }
 
 // normalized trims the name fragment so a blank filter means the same thing at
@@ -31,6 +32,13 @@ type CatalogOptions struct {
 func (o CatalogOptions) normalized() CatalogOptions {
 	o.Name = strings.TrimSpace(o.Name)
 	return o
+}
+
+func (o CatalogOptions) normalizedList() (CatalogOptions, error) {
+	o = o.normalized()
+	var err error
+	o.PathPrefixes, err = normalizePathPrefixes(o.PathPrefixes)
+	return o, err
 }
 
 // Catalog answers read-only inventory and usage questions about data
@@ -184,7 +192,11 @@ var configMetadataProperties = map[string]bool{
 // DataResources catalogs stored data resources. Passing no kinds catalogs
 // every kind the graph model classifies as a data resource.
 func (c *Catalog) DataResources(ctx context.Context, kinds []graph.NodeKind, options CatalogOptions) (DataResourceList, error) {
-	options = options.normalized()
+	var err error
+	options, err = options.normalizedList()
+	if err != nil {
+		return DataResourceList{}, err
+	}
 	if len(kinds) == 0 {
 		kinds = graph.DataResourceKinds()
 	}
@@ -230,6 +242,9 @@ func (c *Catalog) DataResources(ctx context.Context, kinds []graph.NodeKind, opt
 // ambiguous name returns candidates instead of guessing one of them.
 func (c *Catalog) DataResourceUsage(ctx context.Context, selector string, options CatalogOptions) (DataResourceUsage, error) {
 	options = options.normalized()
+	if len(options.PathPrefixes) > 0 {
+		return DataResourceUsage{}, fmt.Errorf("path prefixes do not apply to one data resource")
+	}
 	// The selector already names the resource. Accepting a name filter here and
 	// ignoring it would let a caller believe it narrowed a result it did not.
 	if options.Name != "" {
@@ -266,7 +281,11 @@ func (c *Catalog) DataResourceUsage(ctx context.Context, selector string, option
 // ConfigKeys catalogs configuration keys with their definitions and readers.
 // Stored values never appear in the response.
 func (c *Catalog) ConfigKeys(ctx context.Context, options CatalogOptions) (ConfigKeyList, error) {
-	options = options.normalized()
+	var err error
+	options, err = options.normalizedList()
+	if err != nil {
+		return ConfigKeyList{}, err
+	}
 	limit, err := c.bounds(ctx, options)
 	if err != nil {
 		return ConfigKeyList{}, err
@@ -298,7 +317,11 @@ func (c *Catalog) ConfigKeys(ctx context.Context, options CatalogOptions) (Confi
 // Events catalogs event declarations with their producers, consumers, and
 // handlers.
 func (c *Catalog) Events(ctx context.Context, options CatalogOptions) (EventList, error) {
-	options = options.normalized()
+	var err error
+	options, err = options.normalizedList()
+	if err != nil {
+		return EventList{}, err
+	}
 	limit, err := c.bounds(ctx, options)
 	if err != nil {
 		return EventList{}, err
@@ -331,7 +354,11 @@ func (c *Catalog) Events(ctx context.Context, options CatalogOptions) (EventList
 // unresolved target that may be the missing counterpart downgrades the finding
 // to unknown; it is never reported as a confirmed orphan.
 func (c *Catalog) OrphanedEvents(ctx context.Context, options CatalogOptions) (OrphanedEventList, error) {
-	options = options.normalized()
+	var err error
+	options, err = options.normalizedList()
+	if err != nil {
+		return OrphanedEventList{}, err
+	}
 	limit, err := c.bounds(ctx, options)
 	if err != nil {
 		return OrphanedEventList{}, err
@@ -491,7 +518,7 @@ func (c *Catalog) list(ctx context.Context, kinds []graph.NodeKind, visibility g
 	options CatalogOptions, limit int) ([]graph.ScopedNode, bool, error) {
 	scopedNodes, err := c.repository.ListNodesByKind(ctx, graph.NodeListQuery{
 		Kinds: kinds, Name: options.Name, Repository: options.Repository,
-		Visibility: visibility, Limit: limit + 1,
+		PathPrefixes: options.PathPrefixes, Visibility: visibility, Limit: limit + 1,
 	})
 	if err != nil {
 		return nil, false, err

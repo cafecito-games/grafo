@@ -18,6 +18,8 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
 	"github.com/cafecito-games/grafo/internal/semantic"
+	"github.com/cafecito-games/grafo/internal/storage/sqlite/migrations"
+	"github.com/pressly/goose/v3"
 )
 
 func TestOpenReadOnlyRequiresExistingCompatibleDatabaseAndEscapesPath(t *testing.T) {
@@ -71,17 +73,17 @@ func TestReadOnlyDSNEncodesWindowsDrivePathWithoutURIAuthority(t *testing.T) {
 func TestReadRepositoryCapabilitiesExcludeWrites(t *testing.T) {
 	var repository any = (*ReadRepository)(nil)
 	for name, supported := range map[string]bool{
-		"read":          implements[graph.ReadRepository](repository),
-		"catalog":       implements[graph.CatalogRepository](repository),
-		"topology":      implements[graph.TopologyRepository](repository),
-		"file catalog":  implements[graph.FileCatalog](repository),
-		"semantic read": implements[semantic.ReadRepository](repository),
+		"read":                implements[graph.ReadRepository](repository),
+		"catalog":             implements[graph.CatalogRepository](repository),
+		"topology":            implements[graph.TopologyRepository](repository),
+		"file catalog":        implements[graph.FileCatalog](repository),
+		"semantic candidates": implements[semantic.CandidateRepository](repository),
 	} {
 		if !supported {
 			t.Errorf("read repository does not implement %s capability", name)
 		}
 	}
-	if implements[graph.IndexRepository](repository) || implements[graph.Repository](repository) || implements[semantic.Repository](repository) {
+	if implements[graph.IndexRepository](repository) || implements[graph.Repository](repository) {
 		t.Fatal("read repository exposes a write capability")
 	}
 }
@@ -106,8 +108,8 @@ func TestOpenReadOnlyRejectsIncompatibleMetadataWithoutMutation(t *testing.T) {
 		{name: "malformed semantic", mutate: setMetaRaw("semantic_index_version", "next"), want: `semantic_index_version "next" is malformed`},
 		{name: "older semantic", mutate: setMetaRaw("semantic_index_version", olderSemantic), want: fmt.Sprintf("semantic_index_version is %q, want %q", olderSemantic, indexer.SemanticIndexVersion)},
 		{name: "newer semantic", mutate: setMetaRaw("semantic_index_version", newerSemantic), want: fmt.Sprintf("semantic_index_version is %q, want %q", newerSemantic, indexer.SemanticIndexVersion)},
-		{name: "older migration", mutate: setLatestMigration(6), want: "storage migration is 6"},
-		{name: "newer migration", mutate: setLatestMigration(8), want: "storage migration is 8"},
+		{name: "older migration", mutate: setLatestMigration(7), want: "storage migration is 7"},
+		{name: "newer migration", mutate: setLatestMigration(9), want: "storage migration is 9"},
 		{name: "rolled back migration", mutate: execRaw("UPDATE goose_db_version SET is_applied = 0 WHERE id = (SELECT MAX(id) FROM goose_db_version)"), want: "applied=false"},
 		{name: "missing required table", mutate: execRaw("DROP TABLE edges"), want: `required table "edges" is missing`},
 	} {
@@ -242,10 +244,6 @@ func TestReadOnlyAndWritableQueriesAreByteEquivalent(t *testing.T) {
 	if err := writable.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := writable.UpsertEmbedding(ctx, semantic.Embedding{NodeID: caller.ID, Model: "fixture", ContentHash: "content", Vector: []float32{1}, UpdatedAt: graph.NowUTC()}); err != nil {
-		t.Fatal(err)
-	}
-
 	read, err := OpenReadOnly(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -339,7 +337,7 @@ type readSurface interface {
 	graph.ReadRepository
 	graph.CatalogRepository
 	graph.FileCatalog
-	semantic.ReadRepository
+	semantic.CandidateRepository
 }
 
 func querySnapshot(t *testing.T, repository readSurface, callerID string) []byte {
@@ -382,10 +380,6 @@ func querySnapshot(t *testing.T, repository readSurface, callerID string) []byte
 	if err != nil {
 		t.Fatal(err)
 	}
-	embeddings, err := repository.Embeddings(ctx, "fixture")
-	if err != nil {
-		t.Fatal(err)
-	}
 	encoded, err := json.Marshal(struct {
 		Node       graph.Node
 		Search     []graph.Node
@@ -396,12 +390,60 @@ func querySnapshot(t *testing.T, repository readSurface, callerID string) []byte
 		Files      map[string]graph.FileRecord
 		Counts     graph.Counts
 		Candidates []graph.Node
-		Embeddings []semantic.Embedding
-	}{node, search, match, edges, relations, listed, files, counts, candidates, embeddings})
+	}{node, search, match, edges, relations, listed, files, counts, candidates})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return encoded
+}
+
+func TestWritableOpenDropsLegacyEmbeddingsWithoutChangingStructuralCounts(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "graph.sqlite")
+	database, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := goose.NewProvider(goose.DialectSQLite3, database, migrations.Files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.UpTo(ctx, 7); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `INSERT INTO nodes
+		(id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, owner_file, external,
+		 name_folded, qualified_name_folded)
+		VALUES ('node', 'function', 'Node', 'sample.Node', 'go', 'sample.go', 1, 1, 1, '{}', 'sample.go', 0, 'node', 'sample.node')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `INSERT INTO embeddings(node_id, model, content_hash, dimensions, vector_json, updated_at)
+		VALUES ('node', 'legacy', 'hash', 2, '[1,0]', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	repository, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	counts, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts.Nodes != 1 {
+		t.Fatalf("node count after migration = %d, want 1", counts.Nodes)
+	}
+	var tableCount int
+	if err := repository.db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'embeddings'").Scan(&tableCount); err != nil {
+		t.Fatal(err)
+	}
+	if tableCount != 0 {
+		t.Fatal("legacy embeddings table still exists")
+	}
 }
 
 func seedCompatibleDatabase(t *testing.T, path string) {

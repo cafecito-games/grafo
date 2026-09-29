@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const SchemaVersion = 11
+const SchemaVersion = 12
 
 // Stable extraction producers identify the authority that created a fact.
 // Producer is deliberately separate from source language: one fact can point
@@ -206,6 +206,25 @@ const (
 	EdgeInGroup         EdgeKind = "in_group"
 	EdgeUsesGroup       EdgeKind = "uses_group"
 )
+
+// edgeKinds is the closed edge vocabulary, in declaration order. Keeping the
+// enumeration beside the constants lets non-production validation tools prove
+// that every relation has an explicit classification without parsing Go
+// source or maintaining a second hidden vocabulary.
+var edgeKinds = []EdgeKind{
+	EdgeContains, EdgeDeclares, EdgeImports, EdgeExports, EdgeCalls, EdgeTests,
+	EdgeEmbeds, EdgeExtends, EdgeImplements, EdgeReadsConfig, EdgeDefines,
+	EdgeExposes, EdgeHandledBy, EdgeUsesMiddleware, EdgePublishes, EdgeSubscribes,
+	EdgeReferences, EdgeReads, EdgeWrites, EdgeEncodes, EdgeDecodes, EdgeSends,
+	EdgeReceives, EdgeCarries, EdgeHasField, EdgeAssigns, EdgeReturns, EdgePasses,
+	EdgeRequests, EdgeDependsOn, EdgeDocuments, EdgeGeneratedFrom,
+	EdgeReturnsError, EdgePropagatesError, EdgeHandlesError, EdgeWrapsError,
+	EdgePanics, EdgeRecovers, EdgeDefers, EdgeInstantiates, EdgeAttachesScript,
+	EdgeAutoloads, EdgeUsesInputAction, EdgeInGroup, EdgeUsesGroup,
+}
+
+// EdgeKinds returns the edge vocabulary. Callers must not mutate the result.
+func EdgeKinds() []EdgeKind { return append([]EdgeKind(nil), edgeKinds...) }
 
 type Location struct {
 	Path    string `json:"path,omitempty"`

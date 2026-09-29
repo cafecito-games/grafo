@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	embeddingcache "github.com/cafecito-games/grafo/internal/embedding/cache"
 	"github.com/cafecito-games/grafo/internal/federation"
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
@@ -88,9 +89,14 @@ type API struct { baseURL string }
 func (api *API) Unknown() { http.Get(api.baseURL + "/charge") }
 `)
 	write(t, filepath.Join(serverRoot, "go.mod"), "module example.com/server\n\ngo 1.26\n")
+	enableChi(t, serverRoot)
 	write(t, filepath.Join(serverRoot, "server.go"), `package server
-func Handler() {}
-func Routes() { router.Get("/charge", Handler) }
+import (
+	"net/http"
+	"github.com/go-chi/chi/v5"
+)
+func Handler(http.ResponseWriter, *http.Request) {}
+func Routes() { router := chi.NewRouter(); router.Get("/charge", Handler) }
 `)
 	index(t, ctx, clientRoot)
 	index(t, ctx, serverRoot)
@@ -161,13 +167,18 @@ func Routes() { router.Get("/charge", Handler) }
 		t.Fatalf("expected a federated dependency edge: %#v", dependency.Edges)
 	}
 
-	semanticService := semantic.NewService(repository, repository, handlerEmbedder{})
+	cache, err := embeddingcache.Open(ctx, filepath.Join(t.TempDir(), "embeddings.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cache.Close() }()
+	semanticService := semantic.NewService(repository, repository, cache, handlerEmbedder{})
 	report, err := semanticService.Sync(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Candidates < 3 || report.Updated != report.Candidates {
-		t.Fatalf("federated embeddings were not distributed to member indexes: %#v", report)
+	if report.Candidates < 3 || report.Updated == 0 || report.Updated > report.Candidates {
+		t.Fatalf("federated embeddings were not written to the shared cache: %#v", report)
 	}
 	matches, err := semanticService.Search(ctx, "find a request handler", 1)
 	if err != nil {
@@ -182,15 +193,20 @@ func TestOpenReadOnlyFederatesCompatibleIndexesWithoutWriteCapabilities(t *testi
 	ctx := context.Background()
 	clientRoot := t.TempDir()
 	serverRoot := t.TempDir()
-	write(t, filepath.Join(clientRoot, "go.mod"), "module example.com/client\n")
+	write(t, filepath.Join(clientRoot, "go.mod"), "module example.com/client\n\ngo 1.26\n")
 	write(t, filepath.Join(clientRoot, "client.go"), `package client
 import "net/http"
 func Call() { http.Get("/charge") }
 `)
-	write(t, filepath.Join(serverRoot, "go.mod"), "module example.com/server\n")
+	write(t, filepath.Join(serverRoot, "go.mod"), "module example.com/server\n\ngo 1.26\n")
+	enableChi(t, serverRoot)
 	write(t, filepath.Join(serverRoot, "server.go"), `package server
-func Handler() {}
-func Routes() { router.Get("/charge", Handler) }
+import (
+	"net/http"
+	"github.com/go-chi/chi/v5"
+)
+func Handler(http.ResponseWriter, *http.Request) {}
+func Routes() { router := chi.NewRouter(); router.Get("/charge", Handler) }
 `)
 	index(t, ctx, clientRoot)
 	index(t, ctx, serverRoot)
@@ -207,14 +223,11 @@ func Routes() { router.Get("/charge", Handler) }
 	if _, ok := capability.(graph.CatalogRepository); !ok {
 		t.Fatal("read-only federation lacks catalog reads")
 	}
-	if _, ok := capability.(semantic.ReadRepository); !ok {
+	if _, ok := capability.(semantic.CandidateRepository); !ok {
 		t.Fatal("read-only federation lacks semantic reads")
 	}
 	if _, ok := capability.(graph.IndexRepository); ok {
 		t.Fatal("read-only federation exposes index writes")
-	}
-	if _, ok := capability.(semantic.Repository); ok {
-		t.Fatal("read-only federation exposes semantic writes")
 	}
 	result, err := query.NewService(repository).Neighborhood(ctx, "example.com/client.Call", "", 1,
 		query.Outgoing, []graph.EdgeKind{graph.EdgeRequests}, 20)
@@ -223,6 +236,55 @@ func Routes() { router.Get("/charge", Handler) }
 	}
 	if len(result.Edges) != 1 || result.Edges[0].Properties["federated"] != "true" {
 		t.Fatalf("read-only federation result = %#v", result)
+	}
+}
+
+func TestSemanticCacheDeduplicatesEqualDocumentsAcrossRepositories(t *testing.T) {
+	ctx := context.Background()
+	left, right := t.TempDir(), t.TempDir()
+	for _, root := range []string{left, right} {
+		write(t, filepath.Join(root, "go.mod"), "module example.com/shared\n\ngo 1.26\n")
+		write(t, filepath.Join(root, "shared.go"), "package shared\nfunc Shared() {}\n")
+		index(t, ctx, root)
+	}
+	repository, err := federation.Open(ctx, []string{left, right})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	cache, err := embeddingcache.Open(ctx, filepath.Join(t.TempDir(), "embeddings.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cache.Close() }()
+	embedder := &countingEmbedder{}
+	service := semantic.NewService(repository, repository, cache, embedder)
+	report, err := service.Sync(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Candidates != 2 || report.Updated != 2 || embedder.inputs != 1 {
+		t.Fatalf("cross-repository sync = %#v provider inputs=%d", report, embedder.inputs)
+	}
+	status, err := cache.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Rows != 1 {
+		t.Fatalf("cache rows = %d, want 1", status.Rows)
+	}
+	result, err := service.Search(ctx, "shared function", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sharedMatches := 0
+	for _, match := range result.Matches {
+		if match.Node.QualifiedName == "example.com/shared.Shared" {
+			sharedMatches++
+		}
+	}
+	if sharedMatches != 2 {
+		t.Fatalf("equal graph candidates collapsed: %#v", result.Matches)
 	}
 }
 
@@ -282,6 +344,19 @@ func (handlerEmbedder) Embed(_ context.Context, inputs []string) ([][]float32, e
 		} else {
 			result = append(result, []float32{0, 1})
 		}
+	}
+	return result, nil
+}
+
+type countingEmbedder struct{ inputs int }
+
+func (*countingEmbedder) Model() string { return "federation-dedup-test" }
+
+func (e *countingEmbedder) Embed(_ context.Context, inputs []string) ([][]float32, error) {
+	e.inputs += len(inputs)
+	result := make([][]float32, len(inputs))
+	for index := range result {
+		result[index] = []float32{1, 0}
 	}
 	return result, nil
 }
@@ -389,4 +464,31 @@ func indexGodot(t *testing.T, ctx context.Context, root string) {
 	if err := repository.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func enableChi(t *testing.T, root string) {
+	t.Helper()
+	modulePath := filepath.Join(root, "go.mod")
+	content, err := os.ReadFile(modulePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, modulePath, string(content)+"\nrequire github.com/go-chi/chi/v5 v5.0.0\nreplace github.com/go-chi/chi/v5 => ./third_party/chi\n")
+	if err := os.MkdirAll(filepath.Join(root, "third_party", "chi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "third_party", "chi", "go.mod"), "module github.com/go-chi/chi/v5\n\ngo 1.26\n")
+	write(t, filepath.Join(root, "third_party", "chi", "chi.go"), `package chi
+import "net/http"
+type Router interface {
+	http.Handler
+	Get(string, http.HandlerFunc)
+	Post(string, http.HandlerFunc)
+}
+type Mux struct{}
+func NewRouter() *Mux { return &Mux{} }
+func (*Mux) ServeHTTP(http.ResponseWriter, *http.Request) {}
+func (*Mux) Get(string, http.HandlerFunc) {}
+func (*Mux) Post(string, http.HandlerFunc) {}
+`)
 }

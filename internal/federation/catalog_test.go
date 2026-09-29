@@ -15,6 +15,67 @@ import (
 )
 
 var _ graph.CatalogRepository = (*federation.Repository)(nil)
+var _ graph.CanonicalMessageRepository = (*federation.Repository)(nil)
+
+func TestFederatedCanonicalMessagesPreserveRepositoryQualifiedCollisions(t *testing.T) {
+	ctx := context.Background()
+	workspace := t.TempDir()
+	roots := []string{filepath.Join(workspace, "alpha"), filepath.Join(workspace, "beta")}
+	for _, root := range roots {
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		seedCatalogIndex(t, ctx, root, "schema.proto", graph.ParseResult{Nodes: []graph.Node{
+			{ID: "shared-message-id", Kind: graph.KindType, Name: "Envelope", QualifiedName: "acme.v1.Envelope",
+				OwnerFile: "schema.proto", Location: graph.Location{Path: "proto/schema.proto", Line: 1},
+				Properties: map[string]string{"declaration": "message"}},
+			{ID: "ordinary-" + filepath.Base(root), Kind: graph.KindType, Name: "Ordinary", QualifiedName: "aaa.Ordinary",
+				OwnerFile: "schema.proto", Properties: map[string]string{"declaration": "struct"}},
+			{ID: "shared-component-id", Kind: graph.KindComponent, Name: filepath.Base(root),
+				QualifiedName: "component:" + filepath.Base(root), OwnerFile: "__workspace__"},
+		}})
+	}
+	repository, err := federation.Open(ctx, roots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repository.Close() })
+
+	page, err := repository.CanonicalMessages(ctx, graph.CanonicalMessageQuery{Package: "acme.v1", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Truncated || len(page.Items) != 2 || page.Items[0].Repository != "alpha" || page.Items[1].Repository != "beta" {
+		t.Fatalf("repository-qualified messages = %#v", page)
+	}
+	pathPage, err := repository.CanonicalMessages(ctx, graph.CanonicalMessageQuery{PathPrefixes: []string{"proto"}, Limit: 10})
+	if err != nil || pathPage.Truncated || len(pathPage.Items) != 2 {
+		t.Fatalf("repository-relative path-filtered messages = %#v, %v", pathPage, err)
+	}
+	unmatched, err := repository.CanonicalMessages(ctx, graph.CanonicalMessageQuery{PathPrefixes: []string{"protocol"}, Limit: 10})
+	if err != nil || unmatched.Truncated || len(unmatched.Items) != 0 {
+		t.Fatalf("unmatched canonical path page = %#v, %v", unmatched, err)
+	}
+	bounded, err := repository.CanonicalMessages(ctx, graph.CanonicalMessageQuery{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bounded.Truncated || len(bounded.Items) != 1 || bounded.Items[0].Repository != "alpha" {
+		t.Fatalf("globally bounded messages = %#v", bounded)
+	}
+	components, err := repository.ListNodesByKind(ctx, graph.NodeListQuery{Kinds: []graph.NodeKind{graph.KindComponent}, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(components) != 2 || components[0].Repository != "alpha" || components[1].Repository != "beta" {
+		t.Fatalf("repository-qualified component IDs = %#v", components)
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := repository.CanonicalMessages(cancelled, graph.CanonicalMessageQuery{Limit: 10}); err == nil {
+		t.Fatal("cancelled canonical message enumeration succeeded")
+	}
+}
 
 func TestCatalogSharesOneContractAcrossRepositories(t *testing.T) {
 	ctx := context.Background()
@@ -93,6 +154,13 @@ type Bus interface{ Subscribe(string) }
 	}
 	if len(filtered.Resources) != 0 {
 		t.Fatalf("repository filter leaked a peer's resources: %#v", filtered.Resources)
+	}
+	pathFiltered, err := catalog.DataResources(ctx, nil, query.CatalogOptions{PathPrefixes: []string{"schema.sql"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pathFiltered.Resources) != 1 || pathFiltered.Resources[0].Repository != "producer" {
+		t.Fatalf("federated relative path filter = %#v", pathFiltered)
 	}
 
 	events, err := catalog.Events(ctx, query.CatalogOptions{})

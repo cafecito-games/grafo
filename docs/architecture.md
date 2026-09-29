@@ -10,7 +10,7 @@ storage can evolve independently.
        ├─ internal/query   deterministic traversal use case
        ├─ internal/semantic optional candidate-ranking use case
        ├─ internal/source   bounded graph-addressed source retrieval
-       ├─ internal/embedding/ollama provider adapter
+       ├─ internal/embedding/{ollama,cache} provider and vector-cache adapters
        ├─ internal/mcpserver agent-facing stdio tools
        └─ internal/federation read-only multi-index graph
             │
@@ -108,6 +108,18 @@ explicitly marked as test helpers or lifecycle hooks, is bounded by depth and
 work limits, and reports cycles or exhausted bounds as truncated. These reports
 are structural evidence and never claim runtime execution coverage.
 
+Semantic-index version 30 refreshes Go workspace evidence when nested modules
+or vendored semantic inputs change. Semantic-index version 31 adds
+repository-declared call-effect adapters. The
+durable graph schema does not change: configured calls project through the
+existing event and HTTP vocabularies and retain their ordinary call evidence.
+
+Graph schema version 12 migrates branch indexes away from the legacy
+node-addressed JSON embedding table. Those vectors are reproducible and are not
+copied into the user cache, so one semantic sync may be required after upgrade.
+The migration preserves every structural row; SQLite retains the freed pages
+for reuse until the operator runs the separate branch-index compaction command.
+
 For Git worktrees, the indexer narrows content hashing to files changed since
 the indexed commit, current untracked files, and paths that were dirty during
 the previous run. Remembering the previous dirty set closes the restore case:
@@ -116,6 +128,15 @@ once before leaving that set. Parser-level semantic dependencies propagate
 configuration changes (for example `grafo.yaml`) to otherwise unchanged source
 files. Any Git detection failure safely falls back to hashing every supported
 file; non-Git directories always use that fallback.
+
+The validated `projectconfig.IndexScope` is the sole source-membership policy.
+Discovery applies built-in safety ignores first and then the normalized scope
+before filesystem or parser work. Its semantic digest is committed as index
+metadata only after a successful run and participates in membership reuse; a
+scope change therefore rediscovers candidates and reconciles both additions and
+removals. Query list options carry separately validated path prefixes into
+storage enumeration so canonical anchors are filtered before bounds, while
+query services retain each selected subject's complete counterpart evidence.
 
 Workspace evidence is replaced independently on every run. It contains the
 repository node plus explicit component nodes and `contains` facts from the
@@ -128,12 +149,20 @@ removes stale ownership without making unchanged source files enter a parser.
 Unmatched files retain their existing repository `contains` evidence.
 
 The Go semantic loader runs with module downloads and toolchain switching
-disabled. One bounded workspace load converts `types.Info` calls, selections,
-instances, and method sets into per-file evidence, then releases the toolchain
-syntax/type graphs. Its cache key includes source and module/workspace digests
-plus GOOS, GOARCH, CGO, tags/flags, workspace selection, and toolchain version.
-Type errors remain diagnostics while proven facts augment AST output; excluded
-build-tag files record the active context without emitting declarations.
+disabled. It builds a deterministic repository plan and serially loads each
+eligible nested module, converting `types.Info` calls, selections, instances,
+and method sets into per-file evidence before releasing each toolchain graph.
+An active `go.work` is authoritative: listed, repository-contained modules are
+loaded under its semantics and unlisted nested modules remain syntax-only.
+Without a workspace, every repository-visible `go.mod` is an independent load
+unit; ignored, vendored, and symlink-escaped roots are excluded. One failed
+unit produces module-scoped diagnostics without discarding healthy siblings.
+The cache key includes source and module/workspace discovery digests plus GOOS,
+GOARCH, CGO, tags/flags, workspace selection, vendor manifests, and toolchain
+version. Type errors remain diagnostics while locally proven facts augment AST
+output; excluded build-tag files record the active context without emitting
+declarations. HTTP verb spelling alone never establishes a server endpoint:
+Chi composition and outbound HTTP flows require their positive typed evidence.
 `implements` comparisons are bounded to interfaces declared in loaded workspace
 packages; dependency and standard-library interfaces remain external facts.
 
@@ -215,11 +244,14 @@ refresh cannot expose a partially updated federation or close a handle in use.
 
 ## Semantic discovery
 
-`semantic.Embedder` isolates vector generation from the candidate-selection use
-case, and `semantic.Repository` isolates vector persistence. SQLite stores one
-normalized vector per node and model. A SHA-256 hash of the stable semantic
-document means unchanged candidates are never embedded again; deleted nodes are
-pruned on the next sync.
+`semantic.Embedder` isolates vector generation, `semantic.CandidateRepository`
+selects current graph nodes, and `semantic.EmbeddingCache` isolates optional
+vector persistence. The graph SQLite database stores no embeddings. A separate
+user-level SQLite adapter stores one little-endian float32 vector per exact
+model, semantic-document version, and SHA-256 document hash. Equal documents
+from any branch or federated repository share that row, while current graph
+candidates remain the sole authority for search results. Stale cache rows are
+safe reusable or evictable data and never create candidates.
 
 Cosine similarity may rank candidates for `find_reusable_code`, but it never
 creates an edge or determines a path. Each selected node is resolved by stable
@@ -664,11 +696,22 @@ changing a path mapping or default reparses unchanged SQL sources that may now
 select another dialect, while a component-only edit does not. Parser-contract
 changes also bump the semantic-index version.
 
-The same loader owns `http.request_apis`. GDScript includes only that validated
-HTTP subtree in its semantic key and declares repository-root `grafo.yaml` as a
-semantic dependency. A configured adapter names one exact qualified callable
-and its method/URL argument positions; parser scope and receiver evidence still
-decide whether a source call resolves to that identity. Built-in Godot
-`HTTPRequest.request` uses its fixed Godot 4 signature. Both paths feed the
-shared HTTP route model, so canonical request identity and topology matching do
-not acquire a GDScript-specific variant.
+The same loader owns the language-neutral `adapters` registry. Its closed V1
+vocabulary contains GDScript `event.publish`, `event.subscribe`,
+`event.unsubscribe`, `event.connection_test`, and `http.request` effects with
+validated argument roles. `internal/parser/calleffect` is the sole vocabulary
+and role-schema authority; project configuration owns structural parsing,
+provenance, exact `(language, symbol)` registration, and the deterministic
+semantic digest. A future frontend extends that shared vocabulary and supplies
+its own exact callee/expression resolver rather than adding a language-specific
+configuration section.
+
+GDScript includes the normalized adapter registry in its semantic key and
+declares repository-root `grafo.yaml` as a semantic dependency. Parser scope
+and receiver evidence still decide whether a source call resolves to the exact
+configured identity. Configured event effects converge with native signal
+emission before fact creation, so event identity, forms, and handler proof stay
+single-sourced. Configured HTTP effects and built-in Godot
+`HTTPRequest.request` both feed the shared HTTP route model. The legacy
+`http.request_apis` section is parsed as a compatibility alias into this same
+registry; a cross-form duplicate is rejected instead of ordered.

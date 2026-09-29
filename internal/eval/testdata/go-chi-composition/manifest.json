@@ -52,54 +52,6 @@
       {
         "repo": "chi-app",
         "kind": "external",
-        "qualified_name": "github.com/go-chi/chi/v5.Mux.Group",
-        "external": true
-      },
-      {
-        "repo": "chi-app",
-        "kind": "external",
-        "qualified_name": "github.com/go-chi/chi/v5.Mux.Mount",
-        "external": true
-      },
-      {
-        "repo": "chi-app",
-        "kind": "external",
-        "qualified_name": "github.com/go-chi/chi/v5.Mux.Route",
-        "external": true
-      },
-      {
-        "repo": "chi-app",
-        "kind": "external",
-        "qualified_name": "github.com/go-chi/chi/v5.Mux.Use",
-        "external": true
-      },
-      {
-        "repo": "chi-app",
-        "kind": "external",
-        "qualified_name": "github.com/go-chi/chi/v5.NewRouter",
-        "external": true
-      },
-      {
-        "repo": "chi-app",
-        "kind": "external",
-        "qualified_name": "github.com/go-chi/chi/v5.Router.Mount",
-        "external": true
-      },
-      {
-        "repo": "chi-app",
-        "kind": "external",
-        "qualified_name": "github.com/go-chi/chi/v5.Router.Use",
-        "external": true
-      },
-      {
-        "repo": "chi-app",
-        "kind": "external",
-        "qualified_name": "github.com/go-chi/chi/v5.Router.With",
-        "external": true
-      },
-      {
-        "repo": "chi-app",
-        "kind": "external",
         "qualified_name": "http.Handler",
         "external": true
       },
@@ -181,12 +133,12 @@
       {
         "repo": "chi-app",
         "kind": "function",
-        "qualified_name": "example.com/chiapp/third_party/chi.NewRouter"
+        "qualified_name": "github.com/go-chi/chi/v5.NewRouter"
       },
       {
         "repo": "chi-app",
         "kind": "interface",
-        "qualified_name": "example.com/chiapp/third_party/chi.Router"
+        "qualified_name": "github.com/go-chi/chi/v5.Router"
       },
       {
         "repo": "chi-app",
@@ -196,97 +148,102 @@
       {
         "repo": "chi-app",
         "kind": "method",
-        "qualified_name": "example.com/chiapp/third_party/chi.Mux.Get"
+        "qualified_name": "github.com/go-chi/chi/v5.Mux.Get"
       },
       {
         "repo": "chi-app",
         "kind": "method",
-        "qualified_name": "example.com/chiapp/third_party/chi.Mux.Group"
+        "qualified_name": "github.com/go-chi/chi/v5.Mux.Group"
       },
       {
         "repo": "chi-app",
         "kind": "method",
-        "qualified_name": "example.com/chiapp/third_party/chi.Mux.HandleFunc"
+        "qualified_name": "github.com/go-chi/chi/v5.Mux.HandleFunc"
       },
       {
         "repo": "chi-app",
         "kind": "method",
-        "qualified_name": "example.com/chiapp/third_party/chi.Mux.MethodFunc"
+        "qualified_name": "github.com/go-chi/chi/v5.Mux.MethodFunc"
       },
       {
         "repo": "chi-app",
         "kind": "method",
-        "qualified_name": "example.com/chiapp/third_party/chi.Mux.Mount"
+        "qualified_name": "github.com/go-chi/chi/v5.Mux.Mount"
       },
       {
         "repo": "chi-app",
         "kind": "method",
-        "qualified_name": "example.com/chiapp/third_party/chi.Mux.Post"
+        "qualified_name": "github.com/go-chi/chi/v5.Mux.Post"
       },
       {
         "repo": "chi-app",
         "kind": "method",
-        "qualified_name": "example.com/chiapp/third_party/chi.Mux.Route"
+        "qualified_name": "github.com/go-chi/chi/v5.Mux.Route"
       },
       {
         "repo": "chi-app",
         "kind": "method",
-        "qualified_name": "example.com/chiapp/third_party/chi.Mux.ServeHTTP"
+        "qualified_name": "github.com/go-chi/chi/v5.Mux.ServeHTTP"
       },
       {
         "repo": "chi-app",
         "kind": "method",
-        "qualified_name": "example.com/chiapp/third_party/chi.Mux.Use"
+        "qualified_name": "github.com/go-chi/chi/v5.Mux.Use"
       },
       {
         "repo": "chi-app",
         "kind": "method",
-        "qualified_name": "example.com/chiapp/third_party/chi.Mux.With"
+        "qualified_name": "github.com/go-chi/chi/v5.Mux.With"
       },
       {
         "repo": "chi-app",
         "kind": "method",
-        "qualified_name": "example.com/chiapp/third_party/chi.Router.Get"
+        "qualified_name": "github.com/go-chi/chi/v5.Router.Get"
       },
       {
         "repo": "chi-app",
         "kind": "method",
-        "qualified_name": "example.com/chiapp/third_party/chi.Router.Group"
+        "qualified_name": "github.com/go-chi/chi/v5.Router.Group"
       },
       {
         "repo": "chi-app",
         "kind": "method",
-        "qualified_name": "example.com/chiapp/third_party/chi.Router.HandleFunc"
+        "qualified_name": "github.com/go-chi/chi/v5.Router.HandleFunc"
       },
       {
         "repo": "chi-app",
         "kind": "method",
-        "qualified_name": "example.com/chiapp/third_party/chi.Router.MethodFunc"
+        "qualified_name": "github.com/go-chi/chi/v5.Router.MethodFunc"
       },
       {
         "repo": "chi-app",
         "kind": "method",
-        "qualified_name": "example.com/chiapp/third_party/chi.Router.Mount"
+        "qualified_name": "github.com/go-chi/chi/v5.Router.Mount"
       },
       {
         "repo": "chi-app",
         "kind": "method",
-        "qualified_name": "example.com/chiapp/third_party/chi.Router.Post"
+        "qualified_name": "github.com/go-chi/chi/v5.Router.Post"
       },
       {
         "repo": "chi-app",
         "kind": "method",
-        "qualified_name": "example.com/chiapp/third_party/chi.Router.Route"
+        "qualified_name": "github.com/go-chi/chi/v5.Router.Route"
       },
       {
         "repo": "chi-app",
         "kind": "method",
-        "qualified_name": "example.com/chiapp/third_party/chi.Router.Use"
+        "qualified_name": "github.com/go-chi/chi/v5.Router.ServeHTTP"
       },
       {
         "repo": "chi-app",
         "kind": "method",
-        "qualified_name": "example.com/chiapp/third_party/chi.Router.With"
+        "qualified_name": "github.com/go-chi/chi/v5.Router.Use"
+      },
+      {
+        "repo": "chi-app",
+        "kind": "method",
+        "qualified_name": "github.com/go-chi/chi/v5.Router.With"
       },
       {
         "repo": "chi-app",
@@ -352,7 +309,7 @@
       {
         "repo": "chi-app",
         "kind": "type",
-        "qualified_name": "example.com/chiapp/third_party/chi.Mux"
+        "qualified_name": "github.com/go-chi/chi/v5.Mux"
       },
       {
         "repo": "chi-app",
@@ -1219,7 +1176,7 @@
         "to": {
           "repo": "chi-app",
           "kind": "function",
-          "qualified_name": "example.com/chiapp/third_party/chi.NewRouter"
+          "qualified_name": "github.com/go-chi/chi/v5.NewRouter"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -1237,7 +1194,7 @@
         "to": {
           "repo": "chi-app",
           "kind": "interface",
-          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+          "qualified_name": "github.com/go-chi/chi/v5.Router"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -1255,7 +1212,7 @@
         "to": {
           "repo": "chi-app",
           "kind": "method",
-          "qualified_name": "example.com/chiapp/third_party/chi.Mux.Get"
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Get"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -1273,7 +1230,7 @@
         "to": {
           "repo": "chi-app",
           "kind": "method",
-          "qualified_name": "example.com/chiapp/third_party/chi.Mux.Group"
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Group"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -1291,7 +1248,7 @@
         "to": {
           "repo": "chi-app",
           "kind": "method",
-          "qualified_name": "example.com/chiapp/third_party/chi.Mux.HandleFunc"
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.HandleFunc"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -1309,7 +1266,7 @@
         "to": {
           "repo": "chi-app",
           "kind": "method",
-          "qualified_name": "example.com/chiapp/third_party/chi.Mux.MethodFunc"
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.MethodFunc"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -1327,7 +1284,7 @@
         "to": {
           "repo": "chi-app",
           "kind": "method",
-          "qualified_name": "example.com/chiapp/third_party/chi.Mux.Mount"
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Mount"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -1345,7 +1302,7 @@
         "to": {
           "repo": "chi-app",
           "kind": "method",
-          "qualified_name": "example.com/chiapp/third_party/chi.Mux.Post"
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Post"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -1363,7 +1320,7 @@
         "to": {
           "repo": "chi-app",
           "kind": "method",
-          "qualified_name": "example.com/chiapp/third_party/chi.Mux.Route"
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Route"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -1381,7 +1338,7 @@
         "to": {
           "repo": "chi-app",
           "kind": "method",
-          "qualified_name": "example.com/chiapp/third_party/chi.Mux.ServeHTTP"
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.ServeHTTP"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -1399,7 +1356,7 @@
         "to": {
           "repo": "chi-app",
           "kind": "method",
-          "qualified_name": "example.com/chiapp/third_party/chi.Mux.Use"
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Use"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -1417,7 +1374,7 @@
         "to": {
           "repo": "chi-app",
           "kind": "method",
-          "qualified_name": "example.com/chiapp/third_party/chi.Mux.With"
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.With"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -1435,7 +1392,7 @@
         "to": {
           "repo": "chi-app",
           "kind": "type",
-          "qualified_name": "example.com/chiapp/third_party/chi.Mux"
+          "qualified_name": "github.com/go-chi/chi/v5.Mux"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -1513,182 +1470,6 @@
         "relation": "calls",
         "to": {
           "repo": "chi-app",
-          "kind": "external",
-          "qualified_name": "github.com/go-chi/chi/v5.Mux.Group",
-          "external": true
-        },
-        "source": {
-          "path": "routes.go",
-          "line": 34,
-          "column": 2
-        },
-        "properties": {
-          "resolution": "go/types"
-        }
-      },
-      {
-        "from": {
-          "repo": "chi-app",
-          "kind": "function",
-          "qualified_name": "example.com/chiapp.Routes"
-        },
-        "relation": "calls",
-        "to": {
-          "repo": "chi-app",
-          "kind": "external",
-          "qualified_name": "github.com/go-chi/chi/v5.Mux.Mount",
-          "external": true
-        },
-        "source": {
-          "path": "routes.go",
-          "line": 37,
-          "column": 2
-        },
-        "properties": {
-          "resolution": "go/types"
-        }
-      },
-      {
-        "from": {
-          "repo": "chi-app",
-          "kind": "function",
-          "qualified_name": "example.com/chiapp.Routes"
-        },
-        "relation": "calls",
-        "to": {
-          "repo": "chi-app",
-          "kind": "external",
-          "qualified_name": "github.com/go-chi/chi/v5.Mux.Route",
-          "external": true
-        },
-        "source": {
-          "path": "routes.go",
-          "line": 32,
-          "column": 2
-        },
-        "properties": {
-          "resolution": "go/types"
-        }
-      },
-      {
-        "from": {
-          "repo": "chi-app",
-          "kind": "function",
-          "qualified_name": "example.com/chiapp.Routes"
-        },
-        "relation": "calls",
-        "to": {
-          "repo": "chi-app",
-          "kind": "external",
-          "qualified_name": "github.com/go-chi/chi/v5.Mux.Route",
-          "external": true
-        },
-        "source": {
-          "path": "routes.go",
-          "line": 33,
-          "column": 2
-        },
-        "properties": {
-          "resolution": "go/types"
-        }
-      },
-      {
-        "from": {
-          "repo": "chi-app",
-          "kind": "function",
-          "qualified_name": "example.com/chiapp.Routes"
-        },
-        "relation": "calls",
-        "to": {
-          "repo": "chi-app",
-          "kind": "external",
-          "qualified_name": "github.com/go-chi/chi/v5.Mux.Route",
-          "external": true
-        },
-        "source": {
-          "path": "routes.go",
-          "line": 40,
-          "column": 2
-        },
-        "properties": {
-          "resolution": "go/types"
-        }
-      },
-      {
-        "from": {
-          "repo": "chi-app",
-          "kind": "function",
-          "qualified_name": "example.com/chiapp.Routes"
-        },
-        "relation": "calls",
-        "to": {
-          "repo": "chi-app",
-          "kind": "external",
-          "qualified_name": "github.com/go-chi/chi/v5.Mux.Use",
-          "external": true
-        },
-        "source": {
-          "path": "routes.go",
-          "line": 31,
-          "column": 2
-        },
-        "properties": {
-          "resolution": "go/types"
-        }
-      },
-      {
-        "from": {
-          "repo": "chi-app",
-          "kind": "function",
-          "qualified_name": "example.com/chiapp.Routes"
-        },
-        "relation": "calls",
-        "to": {
-          "repo": "chi-app",
-          "kind": "external",
-          "qualified_name": "github.com/go-chi/chi/v5.NewRouter",
-          "external": true
-        },
-        "source": {
-          "path": "routes.go",
-          "line": 30,
-          "column": 12
-        },
-        "properties": {
-          "resolution": "go/types"
-        }
-      },
-      {
-        "from": {
-          "repo": "chi-app",
-          "kind": "function",
-          "qualified_name": "example.com/chiapp.Routes"
-        },
-        "relation": "calls",
-        "to": {
-          "repo": "chi-app",
-          "kind": "external",
-          "qualified_name": "github.com/go-chi/chi/v5.Router.Mount",
-          "external": true
-        },
-        "source": {
-          "path": "routes.go",
-          "line": 35,
-          "column": 3
-        },
-        "properties": {
-          "resolution": "go/types"
-        }
-      },
-      {
-        "from": {
-          "repo": "chi-app",
-          "kind": "function",
-          "qualified_name": "example.com/chiapp.Routes"
-        },
-        "relation": "calls",
-        "to": {
-          "repo": "chi-app",
           "kind": "function",
           "qualified_name": "example.com/chiapp.childRoutes"
         },
@@ -1738,6 +1519,174 @@
           "path": "routes.go",
           "line": 41,
           "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "github.com/go-chi/chi/v5.NewRouter"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 30,
+          "column": 12
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Group"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 34,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Mount"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 37,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Route"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 32,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Route"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 33,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Route"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 40,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Use"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 31,
+          "column": 2
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "function",
+          "qualified_name": "example.com/chiapp.Routes"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Router.Mount"
+        },
+        "source": {
+          "path": "routes.go",
+          "line": 35,
+          "column": 3
         },
         "properties": {
           "resolution": "go/types"
@@ -1852,9 +1801,8 @@
         "relation": "calls",
         "to": {
           "repo": "chi-app",
-          "kind": "external",
-          "qualified_name": "github.com/go-chi/chi/v5.Router.Use",
-          "external": true
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Router.Use"
         },
         "source": {
           "path": "routes.go",
@@ -1874,9 +1822,8 @@
         "relation": "calls",
         "to": {
           "repo": "chi-app",
-          "kind": "external",
-          "qualified_name": "github.com/go-chi/chi/v5.Router.With",
-          "external": true
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Router.With"
         },
         "source": {
           "path": "routes.go",
@@ -2024,9 +1971,8 @@
         "relation": "calls",
         "to": {
           "repo": "chi-app",
-          "kind": "external",
-          "qualified_name": "github.com/go-chi/chi/v5.NewRouter",
-          "external": true
+          "kind": "function",
+          "qualified_name": "github.com/go-chi/chi/v5.NewRouter"
         },
         "source": {
           "path": "routes.go",
@@ -2201,7 +2147,7 @@
         "from": {
           "repo": "chi-app",
           "kind": "interface",
-          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+          "qualified_name": "github.com/go-chi/chi/v5.Router"
         },
         "relation": "extends",
         "to": {
@@ -2220,13 +2166,13 @@
         "from": {
           "repo": "chi-app",
           "kind": "interface",
-          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+          "qualified_name": "github.com/go-chi/chi/v5.Router"
         },
         "relation": "has_field",
         "to": {
           "repo": "chi-app",
           "kind": "method",
-          "qualified_name": "example.com/chiapp/third_party/chi.Router.Get"
+          "qualified_name": "github.com/go-chi/chi/v5.Router.Get"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -2238,13 +2184,13 @@
         "from": {
           "repo": "chi-app",
           "kind": "interface",
-          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+          "qualified_name": "github.com/go-chi/chi/v5.Router"
         },
         "relation": "has_field",
         "to": {
           "repo": "chi-app",
           "kind": "method",
-          "qualified_name": "example.com/chiapp/third_party/chi.Router.Group"
+          "qualified_name": "github.com/go-chi/chi/v5.Router.Group"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -2256,13 +2202,13 @@
         "from": {
           "repo": "chi-app",
           "kind": "interface",
-          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+          "qualified_name": "github.com/go-chi/chi/v5.Router"
         },
         "relation": "has_field",
         "to": {
           "repo": "chi-app",
           "kind": "method",
-          "qualified_name": "example.com/chiapp/third_party/chi.Router.HandleFunc"
+          "qualified_name": "github.com/go-chi/chi/v5.Router.HandleFunc"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -2274,13 +2220,13 @@
         "from": {
           "repo": "chi-app",
           "kind": "interface",
-          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+          "qualified_name": "github.com/go-chi/chi/v5.Router"
         },
         "relation": "has_field",
         "to": {
           "repo": "chi-app",
           "kind": "method",
-          "qualified_name": "example.com/chiapp/third_party/chi.Router.MethodFunc"
+          "qualified_name": "github.com/go-chi/chi/v5.Router.MethodFunc"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -2292,13 +2238,13 @@
         "from": {
           "repo": "chi-app",
           "kind": "interface",
-          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+          "qualified_name": "github.com/go-chi/chi/v5.Router"
         },
         "relation": "has_field",
         "to": {
           "repo": "chi-app",
           "kind": "method",
-          "qualified_name": "example.com/chiapp/third_party/chi.Router.Mount"
+          "qualified_name": "github.com/go-chi/chi/v5.Router.Mount"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -2310,13 +2256,13 @@
         "from": {
           "repo": "chi-app",
           "kind": "interface",
-          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+          "qualified_name": "github.com/go-chi/chi/v5.Router"
         },
         "relation": "has_field",
         "to": {
           "repo": "chi-app",
           "kind": "method",
-          "qualified_name": "example.com/chiapp/third_party/chi.Router.Post"
+          "qualified_name": "github.com/go-chi/chi/v5.Router.Post"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -2328,13 +2274,13 @@
         "from": {
           "repo": "chi-app",
           "kind": "interface",
-          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+          "qualified_name": "github.com/go-chi/chi/v5.Router"
         },
         "relation": "has_field",
         "to": {
           "repo": "chi-app",
           "kind": "method",
-          "qualified_name": "example.com/chiapp/third_party/chi.Router.Route"
+          "qualified_name": "github.com/go-chi/chi/v5.Router.Route"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -2346,13 +2292,34 @@
         "from": {
           "repo": "chi-app",
           "kind": "interface",
-          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+          "qualified_name": "github.com/go-chi/chi/v5.Router"
         },
         "relation": "has_field",
         "to": {
           "repo": "chi-app",
           "kind": "method",
-          "qualified_name": "example.com/chiapp/third_party/chi.Router.Use"
+          "qualified_name": "github.com/go-chi/chi/v5.Router.ServeHTTP"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 5,
+          "column": 23
+        },
+        "properties": {
+          "promoted": "true"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
+          "kind": "interface",
+          "qualified_name": "github.com/go-chi/chi/v5.Router"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "chi-app",
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Router.Use"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -2364,13 +2331,13 @@
         "from": {
           "repo": "chi-app",
           "kind": "interface",
-          "qualified_name": "example.com/chiapp/third_party/chi.Router"
+          "qualified_name": "github.com/go-chi/chi/v5.Router"
         },
         "relation": "has_field",
         "to": {
           "repo": "chi-app",
           "kind": "method",
-          "qualified_name": "example.com/chiapp/third_party/chi.Router.With"
+          "qualified_name": "github.com/go-chi/chi/v5.Router.With"
         },
         "source": {
           "path": "third_party/chi/chi.go",
@@ -2411,9 +2378,8 @@
         "relation": "passes",
         "to": {
           "repo": "chi-app",
-          "kind": "external",
-          "qualified_name": "github.com/go-chi/chi/v5.Mux.Route",
-          "external": true
+          "kind": "method",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux.Route"
         },
         "source": {
           "path": "routes.go",
@@ -2595,6 +2561,27 @@
       {
         "from": {
           "repo": "chi-app",
+          "kind": "type",
+          "qualified_name": "github.com/go-chi/chi/v5.Mux"
+        },
+        "relation": "implements",
+        "to": {
+          "repo": "chi-app",
+          "kind": "interface",
+          "qualified_name": "github.com/go-chi/chi/v5.Router"
+        },
+        "source": {
+          "path": "third_party/chi/chi.go",
+          "line": 18,
+          "column": 6
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "chi-app",
           "kind": "variable",
           "qualified_name": "example.com/chiapp.Routes.router@30"
         },
@@ -2664,12 +2651,6 @@
         "line": 45,
         "level": "warning",
         "message_contains": "recursive Chi router composition exceeded the bounded package summary"
-      },
-      {
-        "repo": "chi-app",
-        "path": "third_party/chi/chi.go",
-        "level": "warning",
-        "message_contains": "Go semantic package omitted source; using syntax evidence"
       }
     ]
   }

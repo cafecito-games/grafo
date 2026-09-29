@@ -13,6 +13,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/httpmodel"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	"github.com/cafecito-games/grafo/internal/parser/calleffect"
 	"github.com/cafecito-games/grafo/internal/parser/godot/godotid"
 	"github.com/cafecito-games/grafo/internal/parser/protobufbinding"
 	"github.com/cafecito-games/grafo/internal/projectconfig"
@@ -44,12 +45,12 @@ func (p *Parser) SemanticKey(ctx context.Context, input parserapi.Input) (string
 	if err != nil {
 		return "", err
 	}
-	key := "gdscript-semantic-v3:" + project.SemanticKey()
+	key := "gdscript-semantic-v4:" + project.SemanticKey()
 	configuration, err := projectconfig.Load(input.Root)
 	if err != nil {
 		return "", err
 	}
-	key += ":" + configuration.HTTP.SemanticKey()
+	key += ":" + configuration.Adapters.SemanticKey()
 	key += ":" + configuration.Tests.SemanticKey()
 	if p.bindings != nil {
 		bindingKey, bindingErr := p.bindings.SemanticKey(ctx, input)
@@ -173,8 +174,8 @@ type extractor struct {
 	protobufEnabled    bool
 	protobufWarned     map[string]bool
 	transportSummaries map[string][]gdTransportTemplate
-	requestAPIs        map[string]projectconfig.HTTPRequestAPI
-	httpWarned         map[string]bool
+	callEffects        calleffect.Registry
+	adapterWarned      map[string]bool
 	testBases          map[string]bool
 }
 
@@ -221,16 +222,11 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 		projectKnown: true, bases: map[string]string{}, protobufAPIs: protobufAPIs,
 		protobufAmbiguous: protobufAmbiguous, protobufTypes: protobufTypes,
 		protobufEnabled: protobufEnabled, protobufWarned: map[string]bool{},
-		transportSummaries: map[string][]gdTransportTemplate{}, requestAPIs: map[string]projectconfig.HTTPRequestAPI{},
-		httpWarned: map[string]bool{}, testBases: map[string]bool{"GutTest": true}}
+		transportSummaries: map[string][]gdTransportTemplate{}, callEffects: configuration.Adapters,
+		adapterWarned: map[string]bool{}, testBases: map[string]bool{"GutTest": true}}
 	if configuration.Tests.Invalid == "" {
 		for _, base := range configuration.Tests.GDScriptBases {
 			e.testBases[base] = true
-		}
-	}
-	for _, api := range configuration.HTTP.RequestAPIs {
-		if api.Language == "gdscript" {
-			e.requestAPIs[api.Symbol] = api
 		}
 	}
 	project, projectErr := godotid.LoadProject(input.Root, input.Path)
@@ -1015,9 +1011,11 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 		fromID = e.b.FileID()
 	}
 	loc := e.location(node)
+	effects, configuredCall := e.configuredCallEffects(node.Callee, callee, current, loc)
 	e.addProtobufUse(node, callee, fromID, current, loc)
 	e.addTransportUse(node, callee, fromID, current, loc)
-	e.addHTTPRequest(node, callee, fromID, current, loc)
+	e.addHTTPRequest(node, callee, effects, fromID, current, loc)
+	e.addConfiguredEventEffects(node, callee, effects, fromID, current, loc)
 	if member, ok := node.Callee.(*gdast.MemberExpression); ok {
 		if object, ok := member.Object.(*gdast.Identifier); ok {
 			e.addAutoloadUse(object, object.Name, "autoload_call", member.Property, current)
@@ -1038,11 +1036,13 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 				}
 			}
 		}
+		e.addConfiguredOrdinaryCall(configuredCall, fromID, callee, loc)
 		return
 	}
 	if callee == "OS.get_environment" && len(node.Arguments) > 0 {
 		if key, ok := literalString(node.Arguments[0]); ok && key != "" {
 			e.b.AddFact(fromID, graph.EdgeReadsConfig, "", key, graph.KindConfigKey, loc, nil)
+			e.addConfiguredOrdinaryCall(configuredCall, fromID, callee, loc)
 			return
 		}
 	}
@@ -1050,6 +1050,7 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 		if key, ok := literalString(node.Arguments[0]); ok && key != "" {
 			e.b.AddFact(fromID, graph.EdgeReadsConfig, "", key, graph.KindConfigKey, loc,
 				map[string]string{"source": "project.godot"})
+			e.addConfiguredOrdinaryCall(configuredCall, fromID, callee, loc)
 			return
 		}
 	}
@@ -1080,12 +1081,14 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 		if name, ok := literalString(node.Arguments[0]); ok {
 			e.addSignalFact(fromID, graph.EdgePublishes, "emit", name,
 				qualify(current.receiver, name), current, loc, nil)
+			e.addConfiguredOrdinaryCall(configuredCall, fromID, callee, loc)
 			return
 		}
 	}
 	if _, ok := signalOperations[method]; ok {
 		if member, ok := node.Callee.(*gdast.MemberExpression); ok {
 			if e.addSignalOperation(node, member, fromID, method, current, loc) {
+				e.addConfiguredOrdinaryCall(configuredCall, fromID, callee, loc)
 				return
 			}
 		}
@@ -1098,10 +1101,36 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 	e.b.AddFact(fromID, graph.EdgeCalls, "", callee, "", loc, nil)
 }
 
-func (e *extractor) addHTTPRequest(node *gdast.CallExpression, callee, fromID string, current scope, loc graph.Location) {
+func (e *extractor) configuredCallEffects(expression gdast.Expression, callee string, current scope, loc graph.Location) ([]calleffect.Effect, bool) {
+	effects := e.callEffects.Lookup(graph.ProducerGDScript, callee)
+	if len(effects) == 0 {
+		return nil, false
+	}
+	if !e.untypedLocalReceiver(expression, current) && !e.unresolvedMemberReceiver(expression, current) {
+		return effects, true
+	}
+	if !e.adapterWarned[callee] {
+		e.adapterWarned[callee] = true
+		message := "configured call adapter could not be resolved uniquely: " + callee
+		if len(effects) == 1 && effects[0].Kind == calleffect.HTTPRequest {
+			message = "configured HTTP request API could not be resolved uniquely: " + callee
+		}
+		e.b.Diagnostic(loc.Line, "warning", message)
+	}
+	return nil, true
+}
+
+func (e *extractor) addConfiguredOrdinaryCall(configured bool, fromID, callee string, loc graph.Location) {
+	if configured {
+		e.b.AddFact(fromID, graph.EdgeCalls, "", callee, "", loc, nil)
+	}
+}
+
+func (e *extractor) addHTTPRequest(node *gdast.CallExpression, callee string, effects []calleffect.Effect, fromID string, current scope, loc graph.Location) {
 	methodIndex, routeIndex := -1, -1
 	configured, builtin := false, false
 	apiSymbol := callee
+	configurationLine := 0
 	if member, ok := node.Callee.(*gdast.MemberExpression); ok && member.Property == "request" && !e.localCall(node.Callee, current) {
 		if receiverType, known := e.httpReceiverType(member.Object, current); known && e.isHTTPRequestReceiverType(receiverType) {
 			builtin, methodIndex, routeIndex, apiSymbol = true, 2, 0, "HTTPRequest.request"
@@ -1110,30 +1139,32 @@ func (e *extractor) addHTTPRequest(node *gdast.CallExpression, callee, fromID st
 		!e.localCall(node.Callee, current) && e.isHTTPRequestReceiverType(current.receiver) {
 		builtin, methodIndex, routeIndex, apiSymbol = true, 2, 0, "HTTPRequest.request"
 	}
-	configuredAPI, hasConfigured := e.requestAPIs[callee]
-	if hasConfigured {
-		if e.untypedLocalReceiver(node.Callee, current) || e.unresolvedMemberReceiver(node.Callee, current) {
-			if !e.httpWarned[callee] {
-				e.httpWarned[callee] = true
-				e.b.Diagnostic(loc.Line, "warning", "configured HTTP request API could not be resolved uniquely: "+callee)
-			}
-		} else {
-			configured = true
-			if !builtin {
-				methodIndex, routeIndex, apiSymbol = configuredAPI.MethodArgument, configuredAPI.URLArgument, configuredAPI.Symbol
-			} else if configuredAPI.MethodArgument != methodIndex || configuredAPI.URLArgument != routeIndex {
-				// One call cannot safely satisfy two conflicting signatures. The shared
-				// loader prevents duplicate configured symbols; a configured override of
-				// the built-in adapter is equally ambiguous at the source callsite.
-				e.b.Diagnostic(loc.Line, "warning", "configured HTTP request signature conflicts with built-in HTTPRequest.request")
-				return
-			}
+	for index := range effects {
+		effect := effects[index]
+		if effect.Kind != calleffect.HTTPRequest {
+			continue
+		}
+		configured = true
+		configurationLine = effect.Line
+		configuredMethod := effect.Roles[calleffect.RoleMethod].Argument
+		configuredRoute := effect.Roles[calleffect.RoleURL].Argument
+		if !builtin {
+			methodIndex, routeIndex = configuredMethod, configuredRoute
+		} else if configuredMethod != methodIndex || configuredRoute != routeIndex {
+			// One call cannot safely satisfy two conflicting signatures. The shared
+			// loader prevents duplicate configured symbols; a configured override of
+			// the built-in adapter is equally ambiguous at the source callsite.
+			e.b.Diagnostic(loc.Line, "warning", "configured HTTP request signature conflicts with built-in HTTPRequest.request")
+			return
 		}
 	}
 	if !builtin && !configured {
 		return
 	}
 	if routeIndex < 0 || routeIndex >= len(node.Arguments) {
+		if configured {
+			e.b.Diagnostic(loc.Line, "warning", fmt.Sprintf("configured call adapter %s requires URL argument %d", callee, routeIndex))
+		}
 		return
 	}
 	routeExpression := node.Arguments[routeIndex]
@@ -1150,6 +1181,9 @@ func (e *extractor) addHTTPRequest(node *gdast.CallExpression, callee, fromID st
 		method = "GET"
 	} else {
 		if methodIndex < 0 || methodIndex >= len(node.Arguments) {
+			if configured {
+				e.b.Diagnostic(loc.Line, "warning", fmt.Sprintf("configured call adapter %s requires method argument %d", callee, methodIndex))
+			}
 			return
 		}
 		methodExpression = e.sourceExpression(node.Arguments[methodIndex])
@@ -1193,7 +1227,9 @@ func (e *extractor) addHTTPRequest(node *gdast.CallExpression, callee, fromID st
 	}
 	if configured {
 		signatures = append(signatures, "configured")
-		properties["http_config"] = fmt.Sprintf("%s:%d", projectconfig.FileName, configuredAPI.Line)
+		properties["http_config"] = fmt.Sprintf("%s:%d", projectconfig.FileName, configurationLine)
+		properties[calleffect.PropertySource] = fmt.Sprintf("%s:%d", projectconfig.FileName, configurationLine)
+		properties[calleffect.PropertySymbol] = callee
 	}
 	properties["http_signature"] = strings.Join(signatures, ",")
 	e.b.AddFact(fromID, graph.EdgeRequests, "", normalizedMethod+" "+identityRoute, graph.KindEndpoint, loc, properties)
@@ -1515,14 +1551,62 @@ func (e *extractor) addSignalOperation(node *gdast.CallExpression, member *gdast
 		name = e.resolveExpression(member.Object, current)
 		handlerSource = e.signalSource(member.Object, current)
 	}
+	return e.emitSignalOperation(name, handlerSource, node.Arguments, handler, operation, fromID, current, loc, nil)
+}
+
+func (e *extractor) addConfiguredEventEffects(node *gdast.CallExpression, callee string, effects []calleffect.Effect, fromID string, current scope, loc graph.Location) {
+	for _, effect := range effects {
+		var operation signalOperation
+		switch effect.Kind {
+		case calleffect.EventPublish:
+			operation = signalOperation{kind: graph.EdgePublishes, form: "emit", handler: -1}
+		case calleffect.EventSubscribe:
+			operation = signalOperation{kind: graph.EdgeSubscribes, form: "connect", handler: effect.Roles[calleffect.RoleHandler].Argument, callable: true}
+		case calleffect.EventUnsubscribe:
+			operation = signalOperation{kind: graph.EdgeReferences, form: "signal_disconnect", handler: -1, callable: true}
+		case calleffect.EventConnectionTest:
+			operation = signalOperation{kind: graph.EdgeReferences, form: "signal_connection_test", handler: -1, callable: true}
+		default:
+			continue
+		}
+		if member, ok := node.Callee.(*gdast.MemberExpression); ok {
+			if _, native := signalOperations[strings.ToLower(member.Property)]; native && !e.localCall(node.Callee, current) {
+				e.b.Diagnostic(loc.Line, "warning", "configured event adapter conflicts with built-in signal operation: "+callee)
+				continue
+			}
+		}
+		eventIndex := effect.Roles[calleffect.RoleEvent].Argument
+		if eventIndex < 0 || eventIndex >= len(node.Arguments) {
+			e.b.Diagnostic(loc.Line, "warning", fmt.Sprintf("configured call adapter %s requires event argument %d", callee, eventIndex))
+			continue
+		}
+		if selector, ok := effect.Roles[calleffect.RoleHandler]; ok && (selector.Argument < 0 || selector.Argument >= len(node.Arguments)) {
+			e.b.Diagnostic(loc.Line, "warning", fmt.Sprintf("configured call adapter %s requires handler argument %d", callee, selector.Argument))
+			continue
+		}
+		event := node.Arguments[eventIndex]
+		name := e.resolveExpression(event, current)
+		handlerSource := e.signalSource(event, current)
+		extra := map[string]string{
+			calleffect.PropertySource: fmt.Sprintf("%s:%d", projectconfig.FileName, effect.Line),
+			calleffect.PropertySymbol: callee,
+		}
+		e.emitSignalOperation(name, handlerSource, node.Arguments, operation.handler, operation, fromID, current, loc, extra)
+	}
+}
+
+func (e *extractor) emitSignalOperation(name, handlerSource string, arguments []gdast.Expression, handler int, operation signalOperation, fromID string, current scope, loc graph.Location, provenance map[string]string) bool {
 	// The handler is recorded on the routing fact itself as well as on the
 	// handled_by fact. Most connects name a signal another file declares, so the
 	// parser preserves the source name and lets storage decide whether exactly
 	// one declaration proves the relation.
 	extra := map[string]string{}
+	for key, value := range provenance {
+		extra[key] = value
+	}
 	subscriber := fromID
 	if operation.form == "connect" && handler >= 0 {
-		if method := e.handlerMethod(node.Arguments, handler, current); method != "" {
+		if method := e.handlerMethod(arguments, handler, current); method != "" {
 			extra["handler"] = method
 			// The thing that receives the signal is the handler, not the
 			// statement that wired it, and the handler is a node this parser
@@ -1545,7 +1629,7 @@ func (e *extractor) addSignalOperation(node *gdast.CallExpression, member *gdast
 		return false
 	}
 	if operation.form == "connect" && handler >= 0 {
-		e.addSignalHandler(ref, node.Arguments, handler, current, loc)
+		e.addSignalHandler(ref, arguments, handler, current, loc, provenance)
 	}
 	return true
 }
@@ -1638,7 +1722,7 @@ func (e *extractor) handlerMethod(arguments []gdast.Expression, index int, curre
 // about which method the engine will run, so nothing is recorded. A foreign
 // signal keeps its canonical name so storage can resolve the source without the
 // parser inventing an ID or choosing among ambiguous declarations.
-func (e *extractor) addSignalHandler(ref signalRef, arguments []gdast.Expression, index int, current scope, loc graph.Location) {
+func (e *extractor) addSignalHandler(ref signalRef, arguments []gdast.Expression, index int, current scope, loc graph.Location, provenance map[string]string) {
 	if ref.qualified == "" {
 		return
 	}
@@ -1647,6 +1731,9 @@ func (e *extractor) addSignalHandler(ref signalRef, arguments []gdast.Expression
 		return
 	}
 	properties := map[string]string{"form": "connect", "signal": ref.qualified, "receiver": current.receiver}
+	for key, value := range provenance {
+		properties[key] = value
+	}
 	if ref.id != "" {
 		e.b.AddFact(ref.id, graph.EdgeHandledBy, "", method, graph.KindMethod, loc, properties)
 		return
