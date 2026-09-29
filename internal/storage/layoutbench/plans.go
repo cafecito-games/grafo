@@ -143,9 +143,9 @@ func ValidatePlan(capture PlanCapture) PlanCapture {
 // "SCAN table USING INDEX ..." or "SCAN table USING COVERING INDEX ...";
 // everything else after "SCAN" walks the table b-tree itself. Subquery
 // materializations ("SCAN subquery N", "SCAN (subquery N)") are not table
-// scans: the planner explains their inner steps as separate rows. Neither are
-// virtual-table scans ("SCAN alias VIRTUAL TABLE INDEX ..."): a json_each
-// prefix filter walks a bounded in-memory ephemeris, never a graph table.
+// scans: the planner explains their inner steps as separate rows. The json_each
+// prefix ephemeris is the one exempt virtual-table scan; every other — a graph
+// table behind a virtual-table module — counts as uncovered.
 func isUncoveredScan(detail string) bool {
 	rest, found := strings.CutPrefix(detail, "SCAN ")
 	if !found {
@@ -155,10 +155,21 @@ func isUncoveredScan(detail string) bool {
 	if strings.HasPrefix(target, "subquery") || strings.HasPrefix(target, "(") {
 		return false
 	}
-	if strings.Contains(detail, "VIRTUAL TABLE") {
+	if isJSONEachPrefixScan(detail) {
 		return false
 	}
 	return !strings.Contains(detail, "USING INDEX") && !strings.Contains(detail, "USING COVERING INDEX")
+}
+
+// isJSONEachPrefixScan reports whether a step detail is the json_each
+// ephemeris the path-prefix filter walks. EXPLAIN QUERY PLAN names that
+// ephemeris by its query alias, so the match is pinned to the exact detail
+// SQLite emits for json_each(@path_prefixes_json) AS prefix:
+// "SCAN prefix VIRTUAL TABLE INDEX 1:". The row count is bounded by the
+// caller-bound prefixes JSON, never by a graph table.
+func isJSONEachPrefixScan(detail string) bool {
+	rest, found := strings.CutPrefix(detail, "SCAN prefix ")
+	return found && strings.HasPrefix(rest, "VIRTUAL TABLE INDEX")
 }
 
 var indexedByPattern = regexp.MustCompile(`(?i)\bINDEXED\s+BY\s+([A-Za-z_][A-Za-z0-9_]*)`)

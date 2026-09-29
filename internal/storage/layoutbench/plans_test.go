@@ -430,6 +430,21 @@ func TestPlanValidationRules(t *testing.T) {
 			wantReason: "edges_from",
 		},
 		{
+			description: "json_each prefix virtual-table scan is exempt",
+			capture: PlanCapture{Query: highCardinality, Valid: true, Steps: []PlanStep{
+				{SelectID: 1, Order: 0, From: 0, Detail: "SCAN prefix VIRTUAL TABLE INDEX 1:"},
+			}},
+			wantValid: true,
+		},
+		{
+			description: "non-json_each virtual-table scan on high-cardinality path is invalid",
+			capture: PlanCapture{Query: highCardinality, Valid: true, Steps: []PlanStep{
+				{SelectID: 1, Order: 0, From: 0, Detail: "SCAN nodes VIRTUAL TABLE INDEX 1:"},
+			}},
+			wantValid:  false,
+			wantReason: "SCAN nodes VIRTUAL TABLE INDEX 1:",
+		},
+		{
 			description: "subquery materialization scan on high-cardinality path is valid",
 			capture: PlanCapture{Query: highCardinality, Valid: true, Steps: []PlanStep{
 				{SelectID: 1, Order: 0, From: 0, Detail: "SCAN subquery 1"},
