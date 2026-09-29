@@ -105,6 +105,11 @@ func TestFixtureDeterminismByJSONDigest(t *testing.T) {
 	if first != second {
 		t.Fatalf("same seed produced different digests: %s vs %s", first, second)
 	}
+	oddFirst := fixtureDigest(t, GenerateFixture(9, 250))
+	oddSecond := fixtureDigest(t, GenerateFixture(9, 250))
+	if oddFirst != oddSecond {
+		t.Fatalf("same odd seed produced different digests: %s vs %s", oddFirst, oddSecond)
+	}
 	otherSeed := fixtureDigest(t, GenerateFixture(8, 250))
 	if first == otherSeed {
 		t.Fatalf("seed 7 and seed 8 produced identical digests: %s", first)
@@ -138,6 +143,60 @@ func TestFixtureOddSeedReversesInsertionOrder(t *testing.T) {
 	firstOdd := odd.Files[len(odd.Files)-1].Parsed.Nodes
 	if len(firstEven) != len(firstOdd) || firstEven[0].ID != firstOdd[len(firstOdd)-1].ID {
 		t.Fatalf("odd seed must reverse nodes within each file: %s vs %s", firstEven[0].ID, firstOdd[len(firstOdd)-1].ID)
+	}
+	evenFacts := even.Files[0].Parsed.Facts
+	oddFacts := odd.Files[len(odd.Files)-1].Parsed.Facts
+	if len(evenFacts) != len(oddFacts) {
+		t.Fatalf("fact counts differ between insertion orders: %d vs %d", len(evenFacts), len(oddFacts))
+	}
+	for index, fact := range evenFacts {
+		reversed := oddFacts[len(oddFacts)-1-index]
+		if fact.ID != reversed.ID {
+			t.Fatalf("odd seed must reverse facts within each file: %s vs %s", fact.ID, reversed.ID)
+		}
+	}
+}
+
+// TestFixtureInsertionOrderVariantsShareIdentifiers pins that the odd-seed
+// variant reorders rows but never changes identity: every node ID and fact ID
+// appears in both variants, so later equivalence gates may diff adapters row
+// by row across insertion orders.
+func TestFixtureInsertionOrderVariantsShareIdentifiers(t *testing.T) {
+	even := GenerateFixture(4, 60)
+	odd := GenerateFixture(5, 60)
+	nodeIDs := map[string]int{}
+	factIDs := map[string]int{}
+	for _, file := range even.Files {
+		for _, node := range file.Parsed.Nodes {
+			nodeIDs[node.ID]++
+		}
+		for _, fact := range file.Parsed.Facts {
+			factIDs[fact.ID]++
+		}
+	}
+	for _, file := range odd.Files {
+		for _, node := range file.Parsed.Nodes {
+			nodeIDs[node.ID]--
+			if nodeIDs[node.ID] < 0 {
+				t.Fatalf("odd seed has node ID absent from even seed: %s", node.ID)
+			}
+		}
+		for _, fact := range file.Parsed.Facts {
+			factIDs[fact.ID]--
+			if factIDs[fact.ID] < 0 {
+				t.Fatalf("odd seed has fact ID absent from even seed: %s", fact.ID)
+			}
+		}
+	}
+	for id, remainder := range nodeIDs {
+		if remainder != 0 {
+			t.Fatalf("node ID %s appears %d extra times in the even seed", id, remainder)
+		}
+	}
+	for id, remainder := range factIDs {
+		if remainder != 0 {
+			t.Fatalf("fact ID %s appears %d extra times in the even seed", id, remainder)
+		}
 	}
 }
 
@@ -273,6 +332,11 @@ func TestFixtureScaleBoundsRows(t *testing.T) {
 	clamped := GenerateFixture(2, 0)
 	if clampedScale := measureFixture(clamped); clampedScale.nodes == 0 {
 		t.Error("scale 0 must clamp to a non-empty fixture")
+	}
+	for _, file := range clamped.Files {
+		if len(file.Parsed.Nodes) == 0 || file.Record.Size <= 0 {
+			t.Errorf("clamped fixture emitted an empty file record: %+v", file.Record)
+		}
 	}
 }
 

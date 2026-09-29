@@ -39,9 +39,10 @@ type FixtureFile struct {
 	Parsed graph.ParseResult `json:"parsed"`
 }
 
-// splitmix64 is a small deterministic generator. The fixture derives only
-// incidental payload variation (line numbers, property digits) from it, never
-// graph structure, so the structural invariants hold by construction.
+// splitmix64 is a small deterministic generator. It drives only property
+// payload variation; every identifier and location is derived from structural
+// indices, so two seeds describe the same logical graph row for row and the
+// seed influences bytes, never identity.
 type splitmix64 struct {
 	state uint64
 }
@@ -65,7 +66,7 @@ func (generator *splitmix64) next() uint64 {
 // facts. Scale values below 1 clamp to 1. Seed plays the sample-number role
 // from the storage comparison runner: an odd seed emits files, nodes, and
 // facts in reverse construction order, so adapters are measured against both
-// insertion orders of one logical graph.
+// insertion orders of one logical graph whose identifiers are identical.
 func GenerateFixture(seed, scale int) Fixture {
 	if scale < 1 {
 		scale = 1
@@ -78,15 +79,20 @@ func GenerateFixture(seed, scale int) Fixture {
 
 	fixture := Fixture{Seed: seed, Scale: scale, Files: make([]FixtureFile, 0, populationFileCount+5)}
 	for fileOrdinal := range populationFileCount {
-		owner := populationOwnerPath(fileOrdinal)
 		first := fileOrdinal * populationCount / populationFileCount
 		last := (fileOrdinal + 1) * populationCount / populationFileCount
+		if first == last {
+			// At scales below 4 the population cannot fill every file; a file
+			// that would own no nodes is not emitted, so no record is empty.
+			continue
+		}
+		owner := populationOwnerPath(fileOrdinal)
 		nodes := make([]graph.Node, 0, last-first)
 		var facts []graph.Fact
 		for index := first; index < last; index++ {
 			node := fixtureNode(longNodeID("population", index), graph.KindFunction,
 				fmt.Sprintf("PopulationFunction%08d", index), fmt.Sprintf("pkg.PopulationFunction%08d", index),
-				owner, generator)
+				owner, index, generator)
 			nodes = append(nodes, node)
 			// The chain target is the next node of the same file, wrapping so
 			// every population node emits exactly one resolvable calls fact.
@@ -95,17 +101,18 @@ func GenerateFixture(seed, scale int) Fixture {
 				nextIndex = first
 			}
 			facts = append(facts, fixtureFact(owner, node.ID, graph.EdgeCalls,
-				longNodeID("population", nextIndex), "", 0, generator))
+				longNodeID("population", nextIndex), "", index, generator))
 			if index%4 == 0 {
 				// The external name is structural, not generator-derived: the
 				// insertion-order variants must materialize the same external
-				// node set, and the seed may only vary payload bytes.
+				// node set, and the seed may only vary payload bytes. Every
+				// fourth node references one pool entry, so index/4 walks the
+				// whole pool instead of a fixed residue of it.
 				facts = append(facts, fixtureFact(owner, node.ID, graph.EdgeReferences, "",
-					externalSymbolName(index%externalPoolSize), 1, generator))
+					externalSymbolName(index/4%externalPoolSize), index, generator))
 			}
 		}
-		fixture.Files = append(fixture.Files,
-			fixtureFile(owner, fileOrdinal, nodes, facts, seed, scale))
+		fixture.Files = append(fixture.Files, fixtureFile(owner, fileOrdinal, nodes, facts, seed, scale))
 	}
 
 	// The five structural files follow the population files in both append
@@ -130,9 +137,10 @@ func GenerateFixture(seed, scale int) Fixture {
 
 // longNodeID renders a textual stable ID far past the compact-hash length of
 // graph.NodeID, because one axis of the layout spike is how a schema carries
-// long path-shaped identifiers.
-func longNodeID(population string, ordinal int) string {
-	return "n:pkg/very/deep/path/" + population + strings.Repeat("/very/deep/component", 9) +
+// long path-shaped identifiers. label names the population segment the ID
+// belongs to; ordinal keeps IDs unique within one label.
+func longNodeID(label string, ordinal int) string {
+	return "n:pkg/very/deep/path/" + label + strings.Repeat("/very/deep/component", 9) +
 		fmt.Sprintf("/leaf%08d:symbol%08d", ordinal, ordinal)
 }
 
@@ -174,11 +182,12 @@ func externalSymbolName(index int) string {
 		index%8, index%externalPoolSize, index)
 }
 
-func fixtureNode(id string, kind graph.NodeKind, name, qualifiedName, owner string, generator *splitmix64) graph.Node {
-	line := int(generator.next()%997) + 1
+// fixtureFact and fixtureNode derive locations from structural ordinals so
+// identifiers stay stable across seeds; only the variation property differs.
+func fixtureNode(id string, kind graph.NodeKind, name, qualifiedName, owner string, locationOrdinal int, generator *splitmix64) graph.Node {
 	return graph.Node{ID: id, Kind: kind, Name: name, QualifiedName: qualifiedName, Language: "go",
-		Location: graph.Location{Path: owner, Line: line, Column: int(generator.next()%79) + 1,
-			EndLine: line + int(generator.next()%9)},
+		Location: graph.Location{Path: owner, Line: locationOrdinal%997 + 1,
+			Column: locationOrdinal%79 + 1, EndLine: locationOrdinal%997 + 1 + locationOrdinal%9},
 		Properties: map[string]string{"fixture": "layoutbench",
 			"variation": fmt.Sprintf("%016x", generator.next())},
 		OwnerFile: owner}
@@ -186,13 +195,15 @@ func fixtureNode(id string, kind graph.NodeKind, name, qualifiedName, owner stri
 
 // fixtureFact builds one fact with an exact source locator; targetID and
 // target are mutually exclusive so exact and textual resolution are both
-// exercised. ordinal disambiguates facts that share one source and line.
+// exercised. ordinal drives both the location and the FactID disambiguator,
+// and the fact kind and target keep FactIDs unique when two facts of one
+// source share an ordinal.
 func fixtureFact(owner, fromID string, kind graph.EdgeKind, targetID, target string, ordinal int, generator *splitmix64) graph.Fact {
-	line := int(generator.next()%997) + 1
+	line := ordinal%997 + 1
 	return graph.Fact{ID: graph.FactID(owner, fromID, kind, targetID+target, line, ordinal),
 		FromID: fromID, Kind: kind, Producer: "layoutbench", TargetID: targetID, Target: target,
-		Location: graph.Location{Path: owner, Line: line, Column: int(generator.next()%79) + 1,
-			EndLine: line + int(generator.next()%9)},
+		Location: graph.Location{Path: owner, Line: line, Column: ordinal%79 + 1,
+			EndLine: line + ordinal%9},
 		Properties: map[string]string{"fixture": "layoutbench",
 			"variation": fmt.Sprintf("%016x", generator.next())},
 		OwnerFile: owner}
@@ -210,7 +221,7 @@ func fixtureFile(owner string, fileOrdinal int, nodes []graph.Node, facts []grap
 // fanFile renders one side of the hub adjacency: either every node calls the
 // hub (incoming) or the hub calls every node (outgoing). The exact target IDs
 // resolve without name lookup, giving the hub exactly hubFan edges per side.
-func fanFile(moduleOrdinal, hubFan int, namePrefix, population, hubID string, incoming bool, seed, scale int, generator *splitmix64) FixtureFile {
+func fanFile(moduleOrdinal, hubFan int, namePrefix, label, hubID string, incoming bool, seed, scale int, generator *splitmix64) FixtureFile {
 	owner := callersOwnerPath(moduleOrdinal)
 	if !incoming {
 		owner = calleesOwnerPath(moduleOrdinal)
@@ -218,15 +229,15 @@ func fanFile(moduleOrdinal, hubFan int, namePrefix, population, hubID string, in
 	nodes := make([]graph.Node, 0, hubFan)
 	facts := make([]graph.Fact, 0, hubFan)
 	for index := range hubFan {
-		node := fixtureNode(longNodeID(population, index), graph.KindFunction,
+		node := fixtureNode(longNodeID(label, index), graph.KindFunction,
 			fmt.Sprintf("%s%08d", namePrefix, index), fmt.Sprintf("pkg.%s%08d", namePrefix, index),
-			owner, generator)
+			owner, index, generator)
 		nodes = append(nodes, node)
 		fromID, targetID := hubID, node.ID
 		if incoming {
 			fromID, targetID = node.ID, hubID
 		}
-		facts = append(facts, fixtureFact(owner, fromID, graph.EdgeCalls, targetID, "", 0, generator))
+		facts = append(facts, fixtureFact(owner, fromID, graph.EdgeCalls, targetID, "", index, generator))
 	}
 	return fixtureFile(owner, moduleOrdinal, nodes, facts, seed, scale)
 }
@@ -238,11 +249,11 @@ func fanFile(moduleOrdinal, hubFan int, namePrefix, population, hubID string, in
 func sharedFile(moduleOrdinal, seed, scale int, generator *splitmix64) FixtureFile {
 	owner := sharedOwnerPath(moduleOrdinal)
 	ambiguous := fixtureNode(longNodeID("ambiguity", 1), graph.KindFunction, ambiguousPlainName,
-		"pkgShared."+ambiguousPlainName, owner, generator)
+		"pkgShared."+ambiguousPlainName, owner, 0, generator)
 	probe := fixtureNode(longNodeID("ambiguity", 2), graph.KindFunction, "AmbiguityProbe",
-		"pkgShared.AmbiguityProbe", owner, generator)
+		"pkgShared.AmbiguityProbe", owner, 1, generator)
 	productionTarget := fixtureNode(longNodeID("production", 0), graph.KindFunction, "ProductionTarget",
-		"pkgShared.ProductionTarget", owner, generator)
+		"pkgShared.ProductionTarget", owner, 2, generator)
 	nodes := []graph.Node{ambiguous, probe, productionTarget}
 	facts := []graph.Fact{
 		fixtureFact(owner, probe.ID, graph.EdgeCalls, "", ambiguousPlainName, 0, generator),
@@ -256,9 +267,9 @@ func sharedFile(moduleOrdinal, seed, scale int, generator *splitmix64) FixtureFi
 // the name is genuinely ambiguous rather than merely duplicated evidence.
 func hubFile(moduleOrdinal int, hubID string, seed, scale int, generator *splitmix64) FixtureFile {
 	owner := hubOwnerPath(moduleOrdinal)
-	hub := fixtureNode(hubID, graph.KindFunction, "HubDispatch", "pkg.HubDispatch", owner, generator)
+	hub := fixtureNode(hubID, graph.KindFunction, "HubDispatch", "pkg.HubDispatch", owner, 0, generator)
 	ambiguous := fixtureNode(longNodeID("ambiguity", 0), graph.KindFunction, ambiguousPlainName,
-		"pkgHub."+ambiguousPlainName, owner, generator)
+		"pkgHub."+ambiguousPlainName, owner, 1, generator)
 	return fixtureFile(owner, moduleOrdinal, []graph.Node{hub, ambiguous}, nil, seed, scale)
 }
 
@@ -268,7 +279,7 @@ func hubFile(moduleOrdinal int, hubID string, seed, scale int, generator *splitm
 func testFile(moduleOrdinal, seed, scale int, generator *splitmix64) FixtureFile {
 	owner := testOwnerPath(moduleOrdinal)
 	source := fixtureNode(longNodeID("test", 0), graph.KindTest, "TestHubDispatch",
-		"pkg.TestHubDispatch", owner, generator)
+		"pkg.TestHubDispatch", owner, 0, generator)
 	nodes := []graph.Node{source}
 	facts := []graph.Fact{fixtureFact(owner, source.ID, graph.EdgeCalls,
 		longNodeID("production", 0), "", 0, generator)}
