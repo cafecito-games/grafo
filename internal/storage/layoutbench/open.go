@@ -225,7 +225,15 @@ func OpenVariant(ctx context.Context, spec LayoutSpec, path string) (*VariantRep
 // against the pre-seeded DDL. A pure-DDL candidate therefore runs through
 // the production adapter itself — the same adapter code on both sides of an
 // equivalence run, with no VariantRepository in between.
-func OpenPreSeeded(ctx context.Context, migrationFS fs.FS, path string) (*sqlite.Repository, error) {
+//
+// clusteredKeyTables names the tables the migration set stores WITHOUT ROWID.
+// Because Goose cannot distinguish two migration sets that share version
+// numbers, the pre-seed would silently no-op on a path already migrated by
+// a different set (say production) and hand the production adapter a hybrid
+// schema, so after seeding the opener fails closed: any of those tables
+// still carrying an implicit sqlite_autoindex means the schema on disk is
+// not the one this migration set builds.
+func OpenPreSeeded(ctx context.Context, migrationFS fs.FS, path string, clusteredKeyTables []string) (*sqlite.Repository, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create index directory: %w", err)
 	}
@@ -243,10 +251,35 @@ func OpenPreSeeded(ctx context.Context, migrationFS fs.FS, path string) (*sqlite
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate pre-seeded graph database: %w", err)
 	}
+	if err := assertClusteredKeyTables(ctx, db, clusteredKeyTables); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("validate pre-seeded graph database: %w", err)
+	}
 	if err := db.Close(); err != nil {
 		return nil, fmt.Errorf("close pre-seeded graph database: %w", err)
 	}
 	return sqlite.Open(ctx, path)
+}
+
+// assertClusteredKeyTables verifies that no table of the given names carries
+// an implicit sqlite_autoindex: a WITHOUT ROWID table's primary key is the
+// clustered b-tree, so a leftover autoindex means the database holds a
+// different schema than the pre-seeding migration set builds.
+func assertClusteredKeyTables(ctx context.Context, db *sql.DB, tables []string) error {
+	for _, table := range tables {
+		var autoindexes int
+		if err := db.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM sqlite_schema WHERE type = 'index' AND tbl_name = ? AND name LIKE 'sqlite_autoindex%'",
+			table,
+		).Scan(&autoindexes); err != nil {
+			return fmt.Errorf("inspect %s autoindexes: %w", table, err)
+		}
+		if autoindexes != 0 {
+			return fmt.Errorf("table %s carries %d implicit autoindexes; the database at this path does not hold the expected WITHOUT ROWID schema",
+				table, autoindexes)
+		}
+	}
+	return nil
 }
 
 func activeVariableLimit(ctx context.Context, db *sql.DB) (int, error) {

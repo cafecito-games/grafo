@@ -70,7 +70,15 @@ type IndexReformReport struct {
 	BaselineCounts  string                   `json:"baseline_counts"`
 	BaselineNote    string                   `json:"baseline_note"`
 	BaselineObjects []IndexReformObjectBytes `json:"baseline_objects"`
-	Decisions       []IndexReformDecision    `json:"decisions"`
+	// BaselineQueueConfigBytes totals the queue/config cluster of
+	// BaselineObjects: the six WITHOUT ROWID tables, their implicit
+	// autoindexes, and dirty_facts_order. BaselineAutoindexBytesDropped is
+	// the autoindex share the reform eliminates. Both are pinned literals;
+	// TestIndexReformDecisionsAreComplete re-derives them from the object
+	// entries so a transcription slip fails loudly.
+	BaselineQueueConfigBytes      int64                 `json:"baseline_queue_config_bytes"`
+	BaselineAutoindexBytesDropped int64                 `json:"baseline_autoindex_bytes_dropped"`
+	Decisions                     []IndexReformDecision `json:"decisions"`
 }
 
 // IndexReformReportEvidence returns the recorded measurement record of the
@@ -86,9 +94,11 @@ func IndexReformReportEvidence() IndexReformReport {
 		BaselineScale:  500,
 		BaselineCounts: "files=55 nodes=5071 facts=6003 edges=6004 external=65",
 		BaselineNote: "dbstat objects of the control fixture database, ranked by bytes; " +
-			"the queue/config cluster (files, meta, dirty_*) plus its implicit autoindexes " +
-			"totals 77808 bytes there, of which the WITHOUT ROWID reform drops the " +
-			"36864 bytes of autoindex b-trees at this scale",
+			"the queue/config cluster (meta, files, the four dirty_* tables, their implicit " +
+			"autoindexes, and dirty_facts_order) totals 81920 bytes there, of which the " +
+			"WITHOUT ROWID reform drops the 36864 bytes of autoindex b-trees at this scale",
+		BaselineQueueConfigBytes:      81920,
+		BaselineAutoindexBytesDropped: 36864,
 		BaselineObjects: []IndexReformObjectBytes{
 			{Name: "facts", Bytes: 6164480, Pages: 1505},
 			{Name: "edges", Bytes: 4866048, Pages: 1188},

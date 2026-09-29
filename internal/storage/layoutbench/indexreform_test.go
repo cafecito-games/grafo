@@ -4,11 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"io/fs"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/storage/sqlite/migrations"
 	"github.com/pressly/goose/v3"
 )
 
@@ -25,7 +29,7 @@ func TestIndexReformEquivalenceMatchesProduction(t *testing.T) {
 			return sqlite.Open(ctx, path)
 		},
 		Variant: func(ctx context.Context, path string) (EquivalenceRepository, error) {
-			return OpenPreSeeded(ctx, indexReformMigrations, path)
+			return OpenPreSeeded(ctx, indexReformMigrations, path, indexReformWithoutRowidTables)
 		},
 		Fixture:                  GenerateFixture(6, 60),
 		BatchInterruptionFixture: GenerateFixture(6, 900),
@@ -284,11 +288,57 @@ func TestIndexReformCollationConsolidationReverts(t *testing.T) {
 	}
 }
 
+// indexReformQueueConfigObjects maps every dbstat object of the queue/config
+// cluster the WITHOUT ROWID reform touches: the six reformed tables, their
+// implicit primary-key autoindexes (which the reformed storage drops), and
+// the pinned dirty_facts_order secondary index.
+func indexReformQueueConfigObjects() map[string]bool {
+	cluster := map[string]bool{"dirty_facts_order": true}
+	for _, table := range indexReformWithoutRowidTables {
+		cluster[table] = true
+		cluster["sqlite_autoindex_"+table+"_1"] = true
+	}
+	return cluster
+}
+
+// populateIndexReformQueues fills every dirty queue with the fixture's graph
+// content so the queue b-trees span real pages at dbstat time. A reconciled
+// database holds empty queues (one page each), which alone cannot show the
+// autoindex cost the reform removes; the statements are schema-only and run
+// identically against both layouts.
+func populateIndexReformQueues(t *testing.T, path string) {
+	t.Helper()
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	defer func() { _ = db.Close() }()
+	for _, statement := range []string{
+		"INSERT INTO dirty_facts(fact_id, owner_file) SELECT id, owner_file FROM facts",
+		"INSERT OR IGNORE INTO dirty_owners(owner_file) SELECT DISTINCT owner_file FROM facts",
+		"INSERT OR IGNORE INTO dirty_nodes(node_id) SELECT id FROM nodes",
+		"INSERT OR IGNORE INTO dirty_targets(target, target_kind) SELECT DISTINCT target, target_kind FROM facts WHERE target != ''",
+	} {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("populate queue (%s): %v", statement, err)
+		}
+	}
+	var dirtyFacts, dirtyNodes int
+	if err := db.QueryRowContext(ctx,
+		"SELECT (SELECT COUNT(*) FROM dirty_facts), (SELECT COUNT(*) FROM dirty_nodes)",
+	).Scan(&dirtyFacts, &dirtyNodes); err != nil {
+		t.Fatalf("count populated queues: %v", err)
+	}
+	if dirtyFacts < 100 || dirtyNodes < 100 {
+		t.Fatalf("queue population too small to measure: %d dirty facts, %d dirty nodes", dirtyFacts, dirtyNodes)
+	}
+}
+
 // measureIndexReformObjects checkpoints the database at path and returns the
-// dbstat bytes of the queue and config objects the WITHOUT ROWID reform
-// touches (each table plus its implicit primary-key autoindex, which the
-// reformed storage no longer needs) and of the graph objects the candidate
-// leaves alone.
+// dbstat bytes of the queue and config cluster the WITHOUT ROWID reform
+// touches and of the graph objects the candidate leaves alone.
 func measureIndexReformObjects(t *testing.T, path string) (queueConfigBytes int64, graphBytes int64) {
 	t.Helper()
 	ctx := context.Background()
@@ -308,11 +358,7 @@ func measureIndexReformObjects(t *testing.T, path string) (queueConfigBytes int6
 	if !attribution.DBStatSupported {
 		t.Fatalf("dbstat unsupported: %s", attribution.DBStatReason)
 	}
-	reformed := map[string]bool{}
-	for _, table := range indexReformWithoutRowidTables {
-		reformed[table] = true
-		reformed["sqlite_autoindex_"+table+"_1"] = true
-	}
+	cluster := indexReformQueueConfigObjects()
 	graph := map[string]bool{
 		"nodes": true, "facts": true, "edges": true,
 		"sqlite_autoindex_nodes_1": true, "sqlite_autoindex_facts_1": true, "sqlite_autoindex_edges_1": true,
@@ -325,7 +371,7 @@ func measureIndexReformObjects(t *testing.T, path string) (queueConfigBytes int6
 	seen := map[string]bool{}
 	for _, object := range attribution.Objects {
 		switch {
-		case reformed[object.Name]:
+		case cluster[object.Name]:
 			seen[object.Name] = true
 			queueConfigBytes += object.Bytes
 		case graph[object.Name]:
@@ -333,7 +379,7 @@ func measureIndexReformObjects(t *testing.T, path string) (queueConfigBytes int6
 			graphBytes += object.Bytes
 		}
 	}
-	for name := range reformed {
+	for name := range cluster {
 		// The reformed database legitimately drops the autoindex half of each
 		// pair; only the table itself is required in both.
 		if !seen[name] && !strings.HasPrefix(name, "sqlite_autoindex_") {
@@ -353,10 +399,12 @@ func measureIndexReformObjects(t *testing.T, path string) (queueConfigBytes int6
 // occupy fewer dbstat bytes than the production rowid-plus-autoindex
 // equivalents, while every graph object the candidate leaves alone must stay
 // byte-identical — the reform's entire storage trade is the dropped
-// autoindexes.
+// autoindexes. It measures both a drained database (the post-reconcile
+// steady state) and populated dirty queues: a one-page empty queue cannot
+// show the autoindex cost the reform removes at real queue depth.
 func TestIndexReformAttributionDelta(t *testing.T) {
 	ctx := context.Background()
-	fixture := GenerateFixture(2, 40)
+	fixture := GenerateFixture(2, 80)
 
 	productionPath := filepath.Join(t.TempDir(), "graph.db")
 	production, err := sqlite.Open(ctx, productionPath)
@@ -366,7 +414,7 @@ func TestIndexReformAttributionDelta(t *testing.T) {
 	productionCounts := indexFixtureForAttribution(t, production, fixture)
 
 	reformPath := filepath.Join(t.TempDir(), "graph.db")
-	reformed, err := OpenPreSeeded(ctx, indexReformMigrations, reformPath)
+	reformed, err := OpenPreSeeded(ctx, indexReformMigrations, reformPath, indexReformWithoutRowidTables)
 	if err != nil {
 		t.Fatalf("open index-reform adapter: %v", err)
 	}
@@ -389,6 +437,24 @@ func TestIndexReformAttributionDelta(t *testing.T) {
 	if reformGraphBytes != productionGraphBytes {
 		t.Fatalf("graph objects changed: production %d bytes, index-reform %d bytes",
 			productionGraphBytes, reformGraphBytes)
+	}
+
+	// Populate every dirty queue from the same graph content and re-measure:
+	// the production cluster now carries each queue twice (table plus
+	// autoindex) while the reformed one carries it once.
+	productionDrainedBytes := productionQueueBytes
+	reformDrainedBytes := reformQueueBytes
+	populateIndexReformQueues(t, productionPath)
+	populateIndexReformQueues(t, reformPath)
+	productionQueueBytes, _ = measureIndexReformObjects(t, productionPath)
+	reformQueueBytes, _ = measureIndexReformObjects(t, reformPath)
+	if productionQueueBytes <= productionDrainedBytes || reformQueueBytes <= reformDrainedBytes {
+		t.Fatalf("queue population did not grow the clusters: production %d -> %d, index-reform %d -> %d",
+			productionDrainedBytes, productionQueueBytes, reformDrainedBytes, reformQueueBytes)
+	}
+	if reformQueueBytes >= productionQueueBytes {
+		t.Fatalf("populated reformed queue/config objects (%d bytes) did not shrink below production (%d bytes)",
+			reformQueueBytes, productionQueueBytes)
 	}
 }
 
@@ -479,6 +545,140 @@ func TestIndexReformDecisionsAreComplete(t *testing.T) {
 	for _, object := range report.BaselineObjects {
 		if object.Bytes <= 0 || object.Pages <= 0 {
 			t.Fatalf("baseline object %s carries non-positive measurements", object.Name)
+		}
+	}
+
+	// The stated baseline totals must reconcile with the recorded objects:
+	// sum the queue/config cluster (and its autoindex share) straight from
+	// BaselineObjects so a transcription slip in either side fails loudly.
+	cluster := indexReformQueueConfigObjects()
+	var clusterBytes, autoindexBytes int64
+	clusterSeen := 0
+	for _, object := range report.BaselineObjects {
+		if !cluster[object.Name] {
+			continue
+		}
+		clusterSeen++
+		clusterBytes += object.Bytes
+		if strings.HasPrefix(object.Name, "sqlite_autoindex_") {
+			autoindexBytes += object.Bytes
+		}
+	}
+	if clusterSeen != len(cluster) {
+		t.Fatalf("baseline objects cover only %d of the %d queue/config cluster entries", clusterSeen, len(cluster))
+	}
+	if clusterBytes != report.BaselineQueueConfigBytes {
+		t.Fatalf("stated queue/config baseline total %d does not match the summed objects %d",
+			report.BaselineQueueConfigBytes, clusterBytes)
+	}
+	if autoindexBytes != report.BaselineAutoindexBytesDropped {
+		t.Fatalf("stated dropped-autoindex total %d does not match the summed autoindex objects %d",
+			report.BaselineAutoindexBytesDropped, autoindexBytes)
+	}
+}
+
+// TestIndexReformPreSeedFailsClosed pins the two misuse paths of the
+// pre-seeded opener: a migration set that cannot apply must surface Goose's
+// error instead of a half-built database, and a path already migrated by a
+// different (production) set must be rejected before the production adapter
+// opens a hybrid schema — Goose records version ids only, so the version
+// check alone cannot tell the two apart.
+func TestIndexReformPreSeedFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	broken := fstest.MapFS{
+		"00001_broken.sql": &fstest.MapFile{Data: []byte("-- +goose Up\nTHIS IS NOT SQL;")},
+	}
+	if repository, err := OpenPreSeeded(ctx, broken, filepath.Join(t.TempDir(), "graph.db"),
+		indexReformWithoutRowidTables); err == nil {
+		_ = repository.Close()
+		t.Fatal("OpenPreSeeded accepted a migration set whose SQL cannot apply")
+	}
+
+	productionPath := filepath.Join(t.TempDir(), "graph.db")
+	production, err := sqlite.Open(ctx, productionPath)
+	if err != nil {
+		t.Fatalf("open production adapter: %v", err)
+	}
+	if err := production.Close(); err != nil {
+		t.Fatalf("close production adapter: %v", err)
+	}
+	_, err = OpenPreSeeded(ctx, indexReformMigrations, productionPath, indexReformWithoutRowidTables)
+	if err == nil {
+		t.Fatal("OpenPreSeeded accepted a production-migrated path; the pre-seed silently no-ops there")
+	}
+	if !strings.Contains(err.Error(), "autoindex") {
+		t.Fatalf("rejection does not name the autoindex evidence: %v", err)
+	}
+}
+
+// normalizeIndexReformMigration strips the candidate's only sanctioned DDL
+// deltas — comment lines and the WITHOUT ROWID table option — and collapses
+// whitespace, so the variant migration text can be compared byte-for-byte
+// against its production counterpart.
+func normalizeIndexReformMigration(content string) string {
+	var lines []string
+	for line := range strings.SplitSeq(content, "\n") {
+		if comment, _, found := strings.Cut(line, "--"); found {
+			line = comment
+		}
+		lines = append(lines, line)
+	}
+	withoutRowid := withoutRowidToken.ReplaceAllString(strings.Join(lines, "\n"), "")
+	return strings.Join(strings.Fields(withoutRowid), " ")
+}
+
+var withoutRowidToken = regexp.MustCompile(`(?i)\s*\bWITHOUT\s+ROWID\b`)
+
+// TestIndexReformMigrationsTrackProduction is the drift guard on the
+// hand-maintained migration copy: the variant set must carry exactly the
+// production file names, and each file must differ from production only by
+// comments and the WITHOUT ROWID option. A future production migration or an
+// in-place DDL edit otherwise leaves the candidate silently stale with every
+// test green.
+func TestIndexReformMigrationsTrackProduction(t *testing.T) {
+	variantNames, err := fs.ReadDir(indexReformMigrations, ".")
+	if err != nil {
+		t.Fatalf("list variant migrations: %v", err)
+	}
+	productionNames, err := fs.ReadDir(migrations.Files, ".")
+	if err != nil {
+		t.Fatalf("list production migrations: %v", err)
+	}
+	nameSet := func(entries []fs.DirEntry) map[string]bool {
+		names := make(map[string]bool, len(entries))
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
+				names[entry.Name()] = true
+			}
+		}
+		return names
+	}
+	variantSet, productionSet := nameSet(variantNames), nameSet(productionNames)
+	for name := range productionSet {
+		if !variantSet[name] {
+			t.Errorf("production migration %s has no index-reform counterpart; the candidate is stale", name)
+		}
+	}
+	for name := range variantSet {
+		if !productionSet[name] {
+			t.Errorf("index-reform migration %s has no production counterpart", name)
+		}
+	}
+	for name := range variantSet {
+		if !productionSet[name] {
+			continue
+		}
+		variantContent, err := fs.ReadFile(indexReformMigrations, name)
+		if err != nil {
+			t.Fatalf("read variant migration %s: %v", name, err)
+		}
+		productionContent, err := fs.ReadFile(migrations.Files, name)
+		if err != nil {
+			t.Fatalf("read production migration %s: %v", name, err)
+		}
+		if normalized := normalizeIndexReformMigration(string(variantContent)); normalized != normalizeIndexReformMigration(string(productionContent)) {
+			t.Errorf("index-reform migration %s drifted beyond comments and WITHOUT ROWID:\n variant:   %s\n production: %s",
+				name, normalized, normalizeIndexReformMigration(string(productionContent)))
 		}
 	}
 }
