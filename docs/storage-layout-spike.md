@@ -312,8 +312,8 @@ performance gates with a migration and rebuild story for existing indexes.
   directed local substitution". Every ratio compares same-machine runs only.
 - The corpus is one pinned Uzir revision (`2decef609`, issue #47's commit),
   not current HEAD; see the corpus pin caveat above. The residual
-  reconciliation behavior at HEAD is pre-existing and will be filed
-  separately.
+  reconciliation behavior at HEAD is pre-existing and is filed separately as
+  issue #130.
 - Three samples per layout provide medians, not a statistical model. Timing
   and RSS come from one Apple M3 Pro; the large relative regressions, exact
   counts, plan captures, and byte attributions are the decision inputs.
