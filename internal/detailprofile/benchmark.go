@@ -763,7 +763,7 @@ func inspectHostLimits() (cgroupLimits, error) {
 	if err := syscall.Sysinfo(&info); err != nil {
 		return cgroupLimits{}, fmt.Errorf("inspect host memory: %w", err)
 	}
-	totalRAM := uint64(info.Totalram)
+	totalRAM := info.Totalram
 	memoryUnit := uint64(info.Unit)
 	const maxInt64 = uint64(1<<63 - 1)
 	if totalRAM == 0 || memoryUnit == 0 || totalRAM > maxInt64/memoryUnit {
