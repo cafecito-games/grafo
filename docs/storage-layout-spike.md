@@ -14,7 +14,8 @@ these predeclared gates:
 
 1. exact control-equivalent graph counts, a deterministic query digest that
    matches the control's, and per-scenario equivalence against the same-sample
-   control;
+   control (the control layout's corresponding sample; the layouts run with
+   identical seeds and scenario order);
 2. at least a 25% median reduction in Uzir post-compact primary database
    bytes; and
 3. no performance ratio above 1.20x, covering fixture cold
@@ -67,9 +68,9 @@ probes for control and every variant), and every Uzir scenario matched the
 same-sample control's counts. A plan gate additionally captured EXPLAIN QUERY
 PLAN for every production statement against each variant schema; all
 statements kept covered or seeking plans. For index-reform the meta/files
-plan-evidence strings are hand-written (documented in the spike's task 7
-record) and its migrations are drift-guarded against the production text by
-`TestIndexReformMigrationsTrackProduction`, so a production migration edit
+plan-evidence strings are hand-written and its migrations are drift-guarded
+against the production text by `TestIndexReformMigrationsTrackProduction`, so
+a production migration edit
 that the reform set does not mirror fails a test rather than a benchmark.
 
 ## Reproducible measurements
@@ -88,7 +89,8 @@ The command runs each layout sequentially in one process (control first),
 three samples per layout, pins the corpus commit at the start of each isolated
 run, exercises a generated fixture (seed 2, scale 5000: 505 files, 50,071
 nodes, 60,003 facts, 60,004 edges — 110,009 fixture rows) and the Uzir corpus
-scenarios, captures dbstat object bytes and payload statistics before and
+scenarios, captures dbstat (SQLite's virtual table reporting per-btree page
+usage) object bytes and payload statistics before and
 after compaction for attribution, records a 13-pattern query suite (7
 repetitions per pattern, median reported), and writes one atomic
 `storage-layout.json` (schema 2). Timing ratios are candidate median divided
@@ -121,7 +123,6 @@ why: the physical layout of `edges` is not where the bytes are.
 | Every statement keeps a covered/seeking plan | Pass | Pass | Pass |
 | At least 25% median reduction in Uzir post-compact primary bytes | **Fail**: 8.15% | **Fail**: 5.46% | **Fail**: 0.03% |
 | No performance ratio above 1.20x | **Fail**: external-edges-probe 1.90x, edges-to-hub 1.40x, edges-from-hub 1.31x | **Fail**: relation-edges-incoming 52.75x, relation-edges-outgoing 50.19x, scenario totals 1.37x–1.59x | Pass: worst gated ratio 1.04x |
-| Retain the production schema | — | — | — |
 
 ### Median measurements
 
@@ -130,22 +131,24 @@ Generated fixture (scale 5000):
 | Fixture workload | Production | slim-edges | integer-keys | index-reform |
 | --- | ---: | ---: | ---: | ---: |
 | Cold total | 8.737 s (1.00x) | 9.035 s (1.03x) | 9.695 s (1.11x) | 8.540 s (0.98x) |
-| Cold persistence | **4.336 s** | 4.756 s (1.10x) | 5.861 s (1.35x) | 3.927 s (0.91x) |
-| Reconciliation | 4.540 s | 4.273 s (0.94x) | **3.834 s** (0.84x) | 4.613 s (1.02x) |
+| Cold persistence | **4.336 s** (1.00x) | 4.756 s (1.10x) | 5.861 s (1.35x) | 3.927 s (0.91x) |
+| Reconciliation | 4.540 s (1.00x) | 4.273 s (0.94x) | **3.834 s** (0.84x) | 4.613 s (1.02x) |
 | Post-compact primary bytes | 309,903,360 | 294,469,632 (−5.0%) | 256,389,120 (−17.3%) | 309,788,672 (−0.04%) |
 
-Uzir corpus scenario totals:
+Uzir corpus scenario totals, plus the persistence-ratio range across the
+incremental scenarios:
 
-| Scenario total | Production | slim-edges | integer-keys | index-reform |
+| Scenario | Production | slim-edges | integer-keys | index-reform |
 | --- | ---: | ---: | ---: | ---: |
-| Cold | 714.086 s (11m 54s) | 710.550 s (1.00x) | 660.255 s (0.92x) | 728.800 s (1.02x) |
-| Restart/resume cold | 708.620 s | 702.407 s (0.99x) | 654.418 s (0.92x) | 725.788 s (1.02x) |
-| Unchanged | 2.288 s | 2.370 s (1.04x) | 3.648 s (1.59x) | 2.338 s (1.02x) |
-| Edit | 2.655 s | 2.716 s (1.02x) | 4.226 s (1.59x) | 2.670 s (1.01x) |
-| Delete | 2.336 s | 2.306 s (0.99x) | 3.515 s (1.50x) | 2.314 s (0.99x) |
-| Restore | 2.449 s | 2.627 s (1.07x) | 3.557 s (1.45x) | 2.502 s (1.02x) |
-| Branch switch | 2.658 s | 2.603 s (0.98x) | 3.641 s (1.37x) | 2.597 s (0.98x) |
-| Resume unchanged | 2.287 s | 2.384 s (1.04x) | 3.493 s (1.53x) | 2.333 s (1.02x) |
+| Cold total | 714.086 s (11m 54s, 1.00x) | 710.550 s (1.00x) | 660.255 s (0.92x) | 728.800 s (1.02x) |
+| Restart/resume cold total | 708.620 s (1.00x) | 702.407 s (0.99x) | 654.418 s (0.92x) | 725.788 s (1.02x) |
+| Unchanged total | 2.288 s (1.00x) | 2.370 s (1.04x) | 3.648 s (1.59x) | 2.338 s (1.02x) |
+| Edit total | 2.655 s (1.00x) | 2.716 s (1.02x) | 4.226 s (1.59x) | 2.670 s (1.01x) |
+| Delete total | 2.336 s (1.00x) | 2.306 s (0.99x) | 3.515 s (1.50x) | 2.314 s (0.99x) |
+| Restore total | 2.449 s (1.00x) | 2.627 s (1.07x) | 3.557 s (1.45x) | 2.502 s (1.02x) |
+| Branch switch total | 2.658 s (1.00x) | 2.603 s (0.98x) | 3.641 s (1.37x) | 2.597 s (0.98x) |
+| Resume unchanged total | 2.287 s (1.00x) | 2.384 s (1.04x) | 3.493 s (1.53x) | 2.333 s (1.02x) |
+| Incremental persistence (range) | 1.00x | 0.96x–1.14x | 1.41x–2.09x (cold 0.95x) | 0.97x–1.02x |
 
 Query suite (13 patterns, 7 repetitions each, median ratio to control):
 
@@ -191,8 +194,9 @@ integer-keys attacks the indexes instead: `edges_from` and `edges_to` shrink
 62% each (143,302,656 to 54,194,176 and 143,065,088 to 54,214,656 bytes,
 −177,958,912 combined). But the surrogate columns it must store grow
 everything they touch — `edges` payload +19,132,416, `facts` payload
-+14,782,464, `facts_from_id` +9,175,040, `facts_target_id` +5,099,520 — and
-the net is −129,036,288 bytes, or 5.46%. At fixture scale the same trade
++14,782,464, `facts_from_id` +9,175,040, `facts_target_id` +5,099,520,
+`nodes` payload +729,088 (the `node_key` column itself), and `files` +4,096 —
+and the net is −129,036,288 bytes, or 5.46%. At fixture scale the same trade
 looks far better (−17.3%: `edges_from`/`edges_to` collapse from ~28.2 MB each
 to 1,277,952 bytes) because the fixture's fan concentrates adjacency in those
 two indexes; at corpus scale the wide tables and the `facts` indexes dilute it.
@@ -266,7 +270,7 @@ suite repetition. This note rounds values only for readability.
 
 The control's cold median here is 714.086 s (restart/resume 708.620 s)
 against #47's 507.304 s (restart/resume 512.271 s) on the same machine and
-the same corpus commit. This is Grafo feature growth between
+the same corpus commit. This is consistent with Grafo feature growth between
 `d178f72f670170b929e08f07ebeeda642cff4927` (semantic index v16, graph schema
 v4) and this branch (v29/v11), not a regression introduced by the spike: at
 identical corpus content the graph carries 621,802 nodes versus #47's
@@ -280,7 +284,7 @@ absolute timings.
 ### What would move the needle
 
 The attribution says the mass sits in the `nodes`/`facts`/`edges` payload
-(52.9%) and the high-cardinality string-key indexes on those tables (47.0%),
+(52.9%) and the high-cardinality string-key indexes on those tables (46.9%),
 with node ids averaging 22 characters and repeated across `facts.from_id`,
 `facts.target_id`, `edges.from_id`, `edges.to_id`, and every adjacency index
 entry. Only payload-level changes — shorter ids or normalized/deduplicated
