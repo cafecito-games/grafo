@@ -75,3 +75,8 @@ tasks:
     desc: Compare SQLite, bbolt, and Pebble with repeated generated and corpus samples
     cmds:
       - go run ./cmd/grafo-storage-benchmark
+
+  bench:storage:layout:
+    desc: Compare SQLite storage layouts with gated fixture and corpus samples
+    cmds:
+      - go run ./cmd/grafo-storage-layout-benchmark

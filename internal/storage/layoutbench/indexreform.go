@@ -41,6 +41,13 @@ var indexReformWithoutRowidTables = []string{
 	"dirty_facts",
 }
 
+// IndexReformClusteredKeyTables returns the tables the reform migration set
+// stores WITHOUT ROWID, for callers driving OpenPreSeeded with
+// IndexReformSpec's migrations.
+func IndexReformClusteredKeyTables() []string {
+	return append([]string(nil), indexReformWithoutRowidTables...)
+}
+
 // IndexReformDecision records one measured outcome of the index-reform
 // candidate: Decision is "keep" (index unchanged in the reformed schema),
 // "reformed" (WITHOUT ROWID re-creation), or "reverted" (an attempted

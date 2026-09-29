@@ -340,7 +340,7 @@ func semanticProbe(ctx context.Context, repository graph.Repository) (string, er
 }
 
 func summarizeEngine(generated []generatedSample, corpus []benchmark.Report) EngineResult {
-	result := EngineResult{Storage: corpus[0].Storage, Corpus: CorpusResult{Scenarios: map[string]ScenarioSamples{}}}
+	result := EngineResult{Storage: corpus[0].Storage, Corpus: summarizeCorpus(corpus)}
 	for _, sample := range generated {
 		result.Generated.Counts = sample.counts
 		result.Generated.QueryDigest = sample.digest
@@ -351,9 +351,15 @@ func summarizeEngine(generated []generatedSample, corpus []benchmark.Report) Eng
 		result.Generated.Writes = append(result.Generated.Writes, sample.writes)
 	}
 	finalizeGenerated(&result.Generated)
+	return result
+}
+
+// summarizeCorpus reduces per-sample corpus reports to per-scenario medians.
+func summarizeCorpus(corpus []benchmark.Report) CorpusResult {
+	result := CorpusResult{Scenarios: map[string]ScenarioSamples{}}
 	for _, report := range corpus {
 		for _, scenario := range report.Scenarios {
-			summary := result.Corpus.Scenarios[scenario.Name]
+			summary := result.Scenarios[scenario.Name]
 			summary.Counts = scenario.Index.Counts
 			summary.TotalNS.Raw = append(summary.TotalNS.Raw, scenario.Index.Phases.TotalNS)
 			summary.PersistenceNS.Raw = append(summary.PersistenceNS.Raw, scenario.Index.Phases.PersistenceNS)
@@ -362,12 +368,12 @@ func summarizeEngine(generated []generatedSample, corpus []benchmark.Report) Eng
 			summary.AuxiliaryLogBytes.Raw = appendOptional(summary.AuxiliaryLogBytes.Raw, scenario.Resources.FinalWALBytes)
 			summary.PeakRSSBytes.Raw = appendOptional(summary.PeakRSSBytes.Raw, scenario.Resources.PeakRSSBytes)
 			summary.Writes = append(summary.Writes, scenario.Index.Writes)
-			result.Corpus.Scenarios[scenario.Name] = summary
+			result.Scenarios[scenario.Name] = summary
 		}
 	}
-	for name, scenario := range result.Corpus.Scenarios {
+	for name, scenario := range result.Scenarios {
 		finalizeScenario(&scenario)
-		result.Corpus.Scenarios[name] = scenario
+		result.Scenarios[name] = scenario
 	}
 	return result
 }
@@ -549,12 +555,16 @@ func inspectMachine() Machine {
 	return Machine{Hostname: hostname, OS: runtime.GOOS, Arch: runtime.GOARCH, Go: runtime.Version(), CPU: cpu}
 }
 func writeReport(path string, report Report) error {
-	content, err := json.MarshalIndent(report, "", "  ")
+	return writeJSONArtifact(path, ".storage-comparison-*.tmp", report)
+}
+
+func writeJSONArtifact(path, temporaryPattern string, payload any) error {
+	content, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return err
 	}
 	content = append(content, '\n')
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".storage-comparison-*.tmp")
+	temporary, err := os.CreateTemp(filepath.Dir(path), temporaryPattern)
 	if err != nil {
 		return err
 	}

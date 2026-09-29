@@ -168,7 +168,10 @@ func resolveStorage(requested string) (string, Storage, error) {
 		return engine, Storage{Engine: engine, Library: "github.com/cockroachdb/pebble/v2", LibraryVersion: dependencyVersion("github.com/cockroachdb/pebble/v2", "v2.1.7"),
 			Durability: "atomic indexed batches committed with WAL sync"}, nil
 	default:
-		return "", Storage{}, fmt.Errorf("unsupported benchmark engine %q (want sqlite, bbolt, or pebble)", requested)
+		if registration, found := lookupEngine(engine); found {
+			return engine, registration.Storage, nil
+		}
+		return "", Storage{}, fmt.Errorf("unsupported benchmark engine %q (want sqlite, bbolt, pebble, or a registered engine)", requested)
 	}
 }
 
@@ -197,6 +200,46 @@ func storageSuffix(engine string) string {
 	return ".pebble"
 }
 
+// EngineOpener opens one registered engine's repository at path. It exists so
+// benchmark-only comparisons (the SQLite layout spike) can route their
+// adapters through the scenario machinery without this package importing them:
+// the production binaries must stay free of benchmark-only dependencies.
+type EngineOpener func(ctx context.Context, path string) (graph.Repository, error)
+
+// EngineRegistration pairs the report metadata and the opener of one engine
+// added through RegisterEngine.
+type EngineRegistration struct {
+	Storage Storage
+	Opener  EngineOpener
+}
+
+var registeredEngines sync.Map
+
+// RegisterEngine makes one additional engine available to Run. Registering
+// again with the same name replaces the earlier registration. It returns an
+// error for an unusable registration rather than letting Run fail later with
+// a confusing engine error.
+func RegisterEngine(engine string, registration EngineRegistration) error {
+	normalized := strings.ToLower(strings.TrimSpace(engine))
+	if normalized == "" {
+		return fmt.Errorf("registered engine name must not be empty")
+	}
+	if registration.Opener == nil {
+		return fmt.Errorf("engine %q registered without an opener", normalized)
+	}
+	registeredEngines.Store(normalized, registration)
+	return nil
+}
+
+func lookupEngine(engine string) (EngineRegistration, bool) {
+	stored, found := registeredEngines.Load(engine)
+	if !found {
+		return EngineRegistration{}, false
+	}
+	registration, typed := stored.(EngineRegistration)
+	return registration, typed
+}
+
 func openRepository(ctx context.Context, engine, path string) (graph.Repository, error) {
 	switch engine {
 	case "sqlite":
@@ -204,6 +247,9 @@ func openRepository(ctx context.Context, engine, path string) (graph.Repository,
 	case string(kvbench.EngineBolt), string(kvbench.EnginePebble):
 		return kvbench.Open(ctx, kvbench.Engine(engine), path, kvbench.Options{})
 	default:
+		if registration, found := lookupEngine(engine); found {
+			return registration.Opener(ctx, path)
+		}
 		return nil, fmt.Errorf("unsupported benchmark engine %q", engine)
 	}
 }
