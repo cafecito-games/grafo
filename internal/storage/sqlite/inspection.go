@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -40,10 +41,11 @@ type IndexMetadata struct {
 // IndexInspection reports metadata and compatibility without granting graph
 // query or write capabilities.
 type IndexInspection struct {
-	Metadata      IndexMetadata      `json:"metadata"`
-	Metrics       *StorageMetrics    `json:"metrics,omitempty"`
-	Compatibility IndexCompatibility `json:"compatibility"`
-	Diagnostic    string             `json:"diagnostic,omitempty"`
+	Metadata             IndexMetadata      `json:"metadata"`
+	Metrics              *StorageMetrics    `json:"metrics,omitempty"`
+	Compatibility        IndexCompatibility `json:"compatibility"`
+	Diagnostic           string             `json:"diagnostic,omitempty"`
+	CompactionDiagnostic string             `json:"compaction_diagnostic,omitempty"`
 }
 
 // InspectIndex opens an existing regular database in SQLite read-only mode and
@@ -92,7 +94,42 @@ func inspectIndex(ctx context.Context, path string, metricsReader func(context.C
 			Diagnostic:    boundedInspectionDiagnostic(fmt.Sprintf("read SQLite storage metrics: %v", err)),
 		}, nil
 	}
-	return IndexInspection{Metadata: metadata, Metrics: &metrics, Compatibility: CompatibilityCompatible}, nil
+	walMode, err := hasWALJournalHeader(path)
+	if err != nil {
+		if ctx.Err() != nil {
+			return IndexInspection{}, ctx.Err()
+		}
+		return IndexInspection{
+			Metadata:      metadata,
+			Compatibility: CompatibilityUnverified,
+			Diagnostic:    boundedInspectionDiagnostic(fmt.Sprintf("read compaction eligibility: %v", err)),
+		}, nil
+	}
+	inspection := IndexInspection{Metadata: metadata, Metrics: &metrics, Compatibility: CompatibilityCompatible}
+	if !walMode {
+		inspection.CompactionDiagnostic = "current index does not use WAL journal mode; run 'grafo index' before compaction"
+	}
+	return inspection, nil
+}
+
+// hasWALJournalHeader reads SQLite's persistent write/read-version bytes.
+// Using the file header keeps dry-run inspection strictly read-only: querying
+// journal_mode through an immutable connection reports DELETE even for a WAL
+// database, while a regular read-only connection may create WAL sidecars.
+func hasWALJournalHeader(path string) (bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return false, fmt.Errorf("open SQLite header: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	var versions [2]byte
+	if _, err := file.ReadAt(versions[:], 18); err != nil {
+		if errors.Is(err, io.EOF) {
+			return false, fmt.Errorf("read SQLite journal header: database header is truncated")
+		}
+		return false, fmt.Errorf("read SQLite journal header: %w", err)
+	}
+	return versions[0] == 2 && versions[1] == 2, nil
 }
 
 // CheckpointIndex verifies that an existing compatible database still carries

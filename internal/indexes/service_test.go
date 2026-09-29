@@ -3,6 +3,7 @@ package indexes
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -142,6 +143,55 @@ func TestCompactDryRunIsReadOnlyAndRealRunReportsCurrentIndex(t *testing.T) {
 	}
 	if _, err := os.Stat(project.IndexPath + ".lock"); err != nil {
 		t.Fatalf("compaction removed lock anchor: %v", err)
+	}
+}
+
+func TestCompactDryRunAndRealRunBothRefuseNonWALWithoutMutation(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	project := discoverTestProject(t, root)
+	repository := seedIndex(t, project.IndexPath, project, project.Branch, time.Now().UTC())
+	closeRepositories(t, repository)
+
+	database, err := sql.Open("sqlite", project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mode string
+	if err := database.QueryRowContext(ctx, "PRAGMA journal_mode=DELETE").Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.EqualFold(mode, "delete") {
+		t.Fatalf("fixture journal mode = %q, want DELETE", mode)
+	}
+	before := snapshotFiles(t, filepath.Dir(project.IndexPath))
+
+	manager := newManager()
+	manager.lock = func(string, time.Duration) (service.Unlock, error) {
+		t.Fatal("ineligible compaction acquired a writer lock")
+		return nil, nil
+	}
+	_, dryErr := manager.compact(ctx, root, CompactPolicy{DryRun: true})
+	_, realErr := manager.compact(ctx, root, CompactPolicy{Confirm: true})
+	if dryErr == nil || realErr == nil || dryErr.Error() != realErr.Error() || !strings.Contains(strings.ToLower(dryErr.Error()), "journal mode") {
+		t.Fatalf("non-WAL errors: dry=%v real=%v", dryErr, realErr)
+	}
+	if after := snapshotFiles(t, filepath.Dir(project.IndexPath)); !reflect.DeepEqual(before, after) {
+		t.Fatalf("non-WAL preflight changed files: before=%#v after=%#v", before, after)
+	}
+	database, err = sql.Open("sqlite", project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	if err := database.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.EqualFold(mode, "delete") {
+		t.Fatalf("preflight changed journal mode to %q", mode)
 	}
 }
 

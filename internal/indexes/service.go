@@ -307,6 +307,9 @@ func (m *manager) compact(ctx context.Context, root string, policy CompactPolicy
 	if inspection.Compatibility != sqlite.CompatibilityCompatible || inspection.Metrics == nil {
 		return report, fmt.Errorf("current index cannot be compacted: %s", diagnosticOr(inspection.Diagnostic, string(inspection.Compatibility)))
 	}
+	if inspection.CompactionDiagnostic != "" {
+		return report, fmt.Errorf("current index cannot be compacted: %s", inspection.CompactionDiagnostic)
+	}
 	report.Before.Metrics = *inspection.Metrics
 	report.ExpectedUpperBoundBytes = inspection.Metrics.LiveAllocatedBytes
 	if policy.DryRun {

@@ -63,9 +63,9 @@ func OpenMaintenance(ctx context.Context, path string) (MaintenanceRepository, e
 		_ = db.Close()
 		return nil, err
 	}
-	if !strings.EqualFold(settings.JournalMode, "wal") {
+	if err := validateMaintenanceJournalMode(settings.JournalMode); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("current index journal mode is %q, want WAL; run 'grafo index' before compaction", settings.JournalMode)
+		return nil, err
 	}
 	if err := configureWritableConnection(ctx, db); err != nil {
 		_ = db.Close()
@@ -228,6 +228,13 @@ func calculateStorageMetrics(pageSize, pageCount, freelistCount int64) (StorageM
 type maintenanceSettings struct {
 	JournalMode string
 	Synchronous int
+}
+
+func validateMaintenanceJournalMode(mode string) error {
+	if !strings.EqualFold(mode, "wal") {
+		return fmt.Errorf("current index journal mode is %q, want WAL; run 'grafo index' before compaction", mode)
+	}
+	return nil
 }
 
 func readMaintenanceSettings(ctx context.Context, db *sql.DB) (maintenanceSettings, error) {
