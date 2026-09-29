@@ -79,6 +79,71 @@ func TestLayoutSpecStatementFallback(t *testing.T) {
 	}
 }
 
+// TestEquivalenceDetectsBrokenStatementOverride is the red case for the
+// equivalence gate: a layout that overrides a statement candidate layouts own
+// (here ListExternalEdgesMatching) with broken SQL must fail the run with the
+// diverging probe named, proving the gate can actually fail.
+func TestEquivalenceDetectsBrokenStatementOverride(t *testing.T) {
+	brokenText := ""
+	for _, query := range ProductionPlanQueries() {
+		if query.Name == "ListExternalEdgesMatching" {
+			brokenText = strings.Replace(query.SQL, "nodes.external = 1", "nodes.external = 1 AND 0", 1)
+			if brokenText == query.SQL {
+				t.Fatalf("could not break ListExternalEdgesMatching text: %s", query.SQL)
+			}
+			break
+		}
+	}
+	if brokenText == "" {
+		t.Fatal("production inventory has no ListExternalEdgesMatching statement")
+	}
+	spec := ProductionSpec("broken-external-edges")
+	spec.SQL = map[string]string{"ListExternalEdgesMatching": brokenText}
+	ctx := context.Background()
+	result, err := RunEquivalence(ctx, EquivalenceInput{
+		Control: func(ctx context.Context, path string) (EquivalenceRepository, error) {
+			return sqlite.Open(ctx, path)
+		},
+		Variant: func(ctx context.Context, path string) (EquivalenceRepository, error) {
+			return OpenVariant(ctx, spec, path)
+		},
+		Fixture:                  GenerateFixture(6, 4),
+		BatchInterruptionFixture: GenerateFixture(6, 4),
+		ControlDirectory:         t.TempDir(),
+		VariantDirectory:         t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("RunEquivalence: %v", err)
+	}
+	if result.Equivalent {
+		t.Fatal("equivalence gate passed a broken ListExternalEdgesMatching override")
+	}
+	if !strings.Contains(result.FirstDifference, "external-edges") {
+		t.Fatalf("first difference does not name the external-edges probe: %s", result.FirstDifference)
+	}
+}
+
+// TestParseBatchSpecRejectsPlaceholdersOutsideTuple locks the batch parser's
+// fail-closed rule: a placeholder before or after the values tuple cannot be
+// re-bound per emitted row, so it must be rejected at parse time.
+func TestParseBatchSpecRejectsPlaceholdersOutsideTuple(t *testing.T) {
+	cases := map[string]string{
+		"prefix": "INSERT INTO t (a, b) SELECT a, ? FROM seed VALUES (?, ?) ON CONFLICT DO NOTHING",
+		"suffix": "INSERT INTO t (a, b) VALUES (?, ?) WHERE rowid <> @excluded",
+		"named":  "INSERT INTO t (a, b) VALUES (?, ?) RETURNING rowid = @rowid",
+	}
+	for name, statement := range cases {
+		if _, err := parseBatchSpec("probe-"+name, statement); err == nil ||
+			!strings.Contains(err.Error(), "placeholder") {
+			t.Errorf("%s placeholder accepted: %v", name, err)
+		}
+	}
+	if _, err := parseBatchSpec("clean",
+		"INSERT INTO t (a, b) VALUES (?, ?) ON CONFLICT (a) DO UPDATE SET b = excluded.b"); err != nil {
+		t.Errorf("clean statement rejected: %v", err)
+	}
+}
+
 func TestLayoutSpecRejectsIncompleteSpecs(t *testing.T) {
 	withoutMigrations := ProductionSpec("no-migrations")
 	withoutMigrations.Migrations = nil

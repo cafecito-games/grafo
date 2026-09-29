@@ -82,12 +82,12 @@ func (set *statementSet) query(ctx context.Context, name string, values ...any) 
 	return statement.QueryContext(ctx, values...)
 }
 
-func (set *statementSet) queryRow(ctx context.Context, name string, values ...any) *sql.Row {
+func (set *statementSet) queryRow(ctx context.Context, name string, values ...any) (*sql.Row, error) {
 	statement, err := set.statement(name)
 	if err != nil {
-		return set.handle.QueryRowContext(ctx, "-- unknown statement "+name)
+		return nil, err
 	}
-	return statement.QueryRowContext(ctx, values...)
+	return statement.QueryRowContext(ctx, values...), nil
 }
 
 func (set *statementSet) statement(name string) (*sql.Stmt, error) {
@@ -100,10 +100,17 @@ func (set *statementSet) statement(name string) (*sql.Stmt, error) {
 
 // transactionStatements runs the shared statements inside one transaction the
 // way the production adapter does: each database-level prepared statement is
-// borrowed by the transaction on use.
+// borrowed by the transaction once and reused for the transaction's lifetime,
+// so per-lookup work matches the sqlc WithTx reference.
 type transactionStatements struct {
 	transaction *sql.Tx
 	shared      *statementSet
+	borrowed    map[string]*sql.Stmt
+}
+
+func newTransactionStatements(transaction *sql.Tx, shared *statementSet) *transactionStatements {
+	return &transactionStatements{transaction: transaction, shared: shared,
+		borrowed: make(map[string]*sql.Stmt)}
 }
 
 func (bound *transactionStatements) exec(ctx context.Context, name string, values ...any) (sql.Result, error) {
@@ -122,12 +129,12 @@ func (bound *transactionStatements) query(ctx context.Context, name string, valu
 	return statement.QueryContext(ctx, values...)
 }
 
-func (bound *transactionStatements) queryRow(ctx context.Context, name string, values ...any) *sql.Row {
+func (bound *transactionStatements) queryRow(ctx context.Context, name string, values ...any) (*sql.Row, error) {
 	statement, err := bound.borrow(ctx, name)
 	if err != nil {
-		return bound.transaction.QueryRowContext(ctx, "-- unknown statement "+name)
+		return nil, err
 	}
-	return statement.QueryRowContext(ctx, values...)
+	return statement.QueryRowContext(ctx, values...), nil
 }
 
 // ExecStatement runs one named statement on the transaction; it is the
@@ -142,11 +149,16 @@ func (bound *transactionStatements) ExecStatement(ctx context.Context, statement
 }
 
 func (bound *transactionStatements) borrow(ctx context.Context, name string) (*sql.Stmt, error) {
+	if statement, found := bound.borrowed[name]; found {
+		return statement, nil
+	}
 	shared, err := bound.shared.statement(name)
 	if err != nil {
 		return nil, err
 	}
-	return bound.transaction.StmtContext(ctx, shared), nil
+	statement := bound.transaction.StmtContext(ctx, shared)
+	bound.borrowed[name] = statement
+	return statement, nil
 }
 
 // OpenVariant opens (creating if needed) the SQLite database at path with the

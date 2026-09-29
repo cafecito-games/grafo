@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -70,7 +71,11 @@ func (r *VariantRepository) SetMeta(ctx context.Context, key, value string) erro
 
 func (r *VariantRepository) Meta(ctx context.Context, key string) (string, error) {
 	var value string
-	err := r.statements.queryRow(ctx, "GetMeta", key).Scan(&value)
+	row, err := r.statements.queryRow(ctx, "GetMeta", key)
+	if err != nil {
+		return "", err
+	}
+	err = row.Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -274,7 +279,11 @@ func (r *VariantRepository) Reconcile(ctx context.Context) error {
 // work, mirroring the production adapter's proof for the indexer.
 func (r *VariantRepository) ReconciliationPending(ctx context.Context) (bool, error) {
 	var pending bool
-	err := r.statements.queryRow(ctx, "ReconciliationPending").Scan(&pending)
+	row, err := r.statements.queryRow(ctx, "ReconciliationPending")
+	if err != nil {
+		return false, err
+	}
+	err = row.Scan(&pending)
 	return pending, err
 }
 
@@ -368,7 +377,10 @@ func (r *VariantRepository) reconcileBatch(ctx context.Context, resolved *resolu
 			if node, ok := nodeCache[id]; ok {
 				return node, nil
 			}
-			row := q.queryRow(ctx, "GetNode", id)
+			row, rowErr := q.queryRow(ctx, "GetNode", id)
+			if rowErr != nil {
+				return graph.Node{}, rowErr
+			}
 			node, err := scanNode(row)
 			if err != nil {
 				return graph.Node{}, err
@@ -485,7 +497,11 @@ func (r *VariantRepository) adjacencySubject(ctx context.Context, id string) (an
 		return id, nil
 	}
 	var surrogate int64
-	err := r.statements.queryRow(ctx, ResolveNodeKeyStatementName, id).Scan(&surrogate)
+	row, err := r.statements.queryRow(ctx, ResolveNodeKeyStatementName, id)
+	if err != nil {
+		return 0, err
+	}
+	err = row.Scan(&surrogate)
 	if errors.Is(err, sql.ErrNoRows) {
 		return int64(-1), nil
 	}
@@ -723,9 +739,7 @@ func (r *VariantRepository) Counts(ctx context.Context) (graph.Counts, error) {
 	if err != nil {
 		return result, err
 	}
-	for kind, count := range kindCounts {
-		result.ByKind[kind] = count
-	}
+	maps.Copy(result.ByKind, kindCounts)
 	edgeKindRows, err := r.statements.query(ctx, "CountEdgesByKind")
 	if err != nil {
 		return result, err
@@ -734,21 +748,27 @@ func (r *VariantRepository) Counts(ctx context.Context) (graph.Counts, error) {
 	if err != nil {
 		return result, err
 	}
-	for kind, count := range edgeCounts {
-		result.ByEdge[kind] = count
-	}
+	maps.Copy(result.ByEdge, edgeCounts)
 	return result, nil
 }
 
 func (r *VariantRepository) queryCount(ctx context.Context, statementName string) (int64, error) {
 	var count int64
-	err := r.statements.queryRow(ctx, statementName).Scan(&count)
+	row, err := r.statements.queryRow(ctx, statementName)
+	if err != nil {
+		return 0, err
+	}
+	err = row.Scan(&count)
 	return count, err
 }
 
 func (r *VariantRepository) queryExists(ctx context.Context, statementName string) (bool, error) {
 	var exists bool
-	err := r.statements.queryRow(ctx, statementName).Scan(&exists)
+	row, err := r.statements.queryRow(ctx, statementName)
+	if err != nil {
+		return false, err
+	}
+	err = row.Scan(&exists)
 	return exists, err
 }
 
@@ -908,7 +928,11 @@ func (r *VariantRepository) matchNodesInScope(ctx context.Context, scope matchSc
 		return graph.NodeMatchGroup{}, fmt.Errorf("unknown node match level %q", scope.level)
 	}
 	var total, strict int64
-	if err := r.statements.queryRow(ctx, countStatement, selector, external, kind).Scan(&total, &strict); err != nil {
+	countRow, err := r.statements.queryRow(ctx, countStatement, selector, external, kind)
+	if err != nil {
+		return graph.NodeMatchGroup{}, err
+	}
+	if err := countRow.Scan(&total, &strict); err != nil {
 		return graph.NodeMatchGroup{}, err
 	}
 	group.Total, group.Strict = int(total), int(strict)
@@ -927,7 +951,11 @@ func (r *VariantRepository) matchNodesInScope(ctx context.Context, scope matchSc
 }
 
 func (r *VariantRepository) Node(ctx context.Context, id string) (graph.Node, error) {
-	return scanNode(r.statements.queryRow(ctx, "GetNode", id))
+	row, err := r.statements.queryRow(ctx, "GetNode", id)
+	if err != nil {
+		return graph.Node{}, err
+	}
+	return scanNode(row)
 }
 
 func (r *VariantRepository) ExternalNodesMatching(ctx context.Context, node graph.Node) ([]graph.Node, error) {
@@ -1046,7 +1074,7 @@ func (r *VariantRepository) inTransaction(ctx context.Context, fn func(*transact
 	}
 	defer func() { _ = writer.close() }()
 	writer.afterBatch = r.afterBatch
-	bound := &transactionStatements{transaction: tx, shared: r.statements}
+	bound := newTransactionStatements(tx, r.statements)
 	if err := fn(bound, writer); err != nil {
 		return err
 	}

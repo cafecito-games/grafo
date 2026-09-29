@@ -48,6 +48,7 @@ type sqlPreparer interface {
 // conflict actions.
 type batchSpec struct {
 	name         string
+	label        string
 	prefix       string
 	rowTemplate  string
 	suffix       string
@@ -76,8 +77,80 @@ func parseBatchSpec(name, statement string) (batchSpec, error) {
 	if binds == 0 {
 		return batchSpec{}, fmt.Errorf("statement %s values tuple binds no values", name)
 	}
+	// A placeholder outside the values tuple cannot be re-bound per emitted
+	// row, so a layout carrying one would silently mis-bind at flush time.
+	if placeholder, position := findFirstPlaceholder(statement[:groupStart]); placeholder != "" {
+		return batchSpec{}, fmt.Errorf("statement %s has placeholder %s before the values tuple at offset %d",
+			name, placeholder, position)
+	}
+	if placeholder, position := findFirstPlaceholder(statement[groupEnd:]); placeholder != "" {
+		return batchSpec{}, fmt.Errorf("statement %s has placeholder %s after the values tuple at offset %d",
+			name, placeholder, position)
+	}
 	return batchSpec{name: name, prefix: statement[:groupStart], rowTemplate: template,
-		suffix: statement[groupEnd:], bindsPerRow: binds, statsSection: statsSectionFor(name)}, nil
+		suffix: statement[groupEnd:], bindsPerRow: binds,
+		label: labelFor(name), statsSection: statsSectionFor(name)}, nil
+}
+
+// findFirstPlaceholder reports the first ? or @name bind point in text,
+// skipping string literals and comments, so conflict actions that embed a
+// placeholder are rejected instead of silently dropped from the batch binds.
+// It returns the placeholder text ("" when none) and its byte offset.
+func findFirstPlaceholder(text string) (string, int) {
+	index := 0
+	for index < len(text) {
+		switch {
+		case text[index] == '\'':
+			index = skipStringLiteral(text, index)
+		case strings.HasPrefix(text[index:], "--"):
+			for index < len(text) && text[index] != '\n' {
+				index++
+			}
+		case strings.HasPrefix(text[index:], "/*"):
+			index += 2
+			for index < len(text) && !strings.HasPrefix(text[index:], "*/") {
+				index++
+			}
+			index = min(index+2, len(text))
+		case text[index] == '?':
+			end := index + 1
+			for end < len(text) && text[end] >= '0' && text[end] <= '9' {
+				end++
+			}
+			return text[index:end], index
+		case text[index] == '@':
+			end := index + 1
+			for end < len(text) && isIdentifierByte(text[end]) {
+				end++
+			}
+			if end > index+1 {
+				return text[index:end], index
+			}
+			index++
+		default:
+			index++
+		}
+	}
+	return "", -1
+}
+
+// labelFor maps a statement name to the label the production batch writer
+// reports through its afterBatch hook.
+func labelFor(statementName string) string {
+	switch statementName {
+	case nodeStatement:
+		return "nodes"
+	case dirtyNodeStatement:
+		return "dirty nodes"
+	case dirtyTargetStatement:
+		return "dirty targets"
+	case factStatement:
+		return "facts"
+	case edgeStatement:
+		return "edges"
+	default:
+		return statementName
+	}
 }
 
 func statsSectionFor(statementName string) string {
@@ -381,7 +454,7 @@ func (writer *batchWriter) flushBuffer(ctx context.Context, buffer *batchBuffer)
 		addBatchStats(&writer.writes.Edges, written)
 	}
 	if writer.afterBatch != nil {
-		writer.afterBatch(buffer.spec.name, written)
+		writer.afterBatch(buffer.spec.label, written)
 	}
 	buffer.rows = buffer.rows[:0]
 	buffer.bytes = 0

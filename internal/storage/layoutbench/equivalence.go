@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -123,8 +124,61 @@ func RunEquivalence(ctx context.Context, input EquivalenceInput) (EquivalenceRes
 		ControlDigest: controlLog.digest(),
 		VariantDigest: variantLog.digest(),
 	}
+	if err := assertSelfChecks(controlLog); err != nil {
+		return EquivalenceResult{}, fmt.Errorf("control self-checks: %w", err)
+	}
+	if err := assertSelfChecks(variantLog); err != nil {
+		return EquivalenceResult{}, fmt.Errorf("variant self-checks: %w", err)
+	}
 	result.Equivalent, result.FirstDifference = compareLogs(controlLog, variantLog)
 	return result, nil
+}
+
+// selfCheckProbes are the boolean invariants each adapter run must satisfy on
+// its own, independent of the control/variant comparison: scenario convergence,
+// cancellation atomicity, and resume equivalence. A missing or false entry
+// means the run itself is broken, not merely different from the other adapter.
+var selfCheckProbes = map[string]bool{
+	"interrupted":               true,
+	"atomic":                    true,
+	"converged":                 true,
+	"resume-converged":          true,
+	"matches-main-baseline":     true,
+	"restored-converged":        true,
+	"branch-restored-converged": true,
+	"replace-owner-unchanged":   true,
+}
+
+// assertSelfChecks fails when any self-check probe is missing or did not hold.
+func assertSelfChecks(log *sessionLog) error {
+	seen := make(map[string]int)
+	for _, line := range log.lines {
+		name, value, found := strings.Cut(line, ": ")
+		if !found {
+			continue
+		}
+		scenario, probe, found := strings.Cut(name, "/")
+		if !found || !selfCheckProbes[probe] {
+			continue
+		}
+		seen[scenario+"/"+probe]++
+		if value != "true" {
+			return fmt.Errorf("self-check %s is %s", name, value)
+		}
+	}
+	for probe := range selfCheckProbes {
+		found := false
+		for name := range seen {
+			if _, nameProbe, cut := strings.Cut(name, "/"); cut && nameProbe == probe {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("self-check probe %s was never recorded", probe)
+		}
+	}
+	return nil
 }
 
 // sessionLog collects one adapter's rendered probe outputs, in scenario order.
@@ -145,7 +199,7 @@ func (log *sessionLog) digest() string {
 
 func compareLogs(control, variant *sessionLog) (bool, string) {
 	bound := min(len(control.lines), len(variant.lines))
-	for index := 0; index < bound; index++ {
+	for index := range bound {
 		if control.lines[index] != variant.lines[index] {
 			return false, fmt.Sprintf("%s: control %q, variant %q",
 				control.lines[index], control.lines[index], variant.lines[index])
@@ -559,7 +613,7 @@ func (session *equivalenceSession) probeSuite(ctx context.Context, sweep bool) (
 	if edges, err := repository.ExternalEdgesTo(ctx, externalNode); err != nil {
 		return "", err
 	} else {
-		session.record("external-edges-count", strconv.Itoa(len(edges)))
+		session.record("external-edges", renderEdges(edges))
 	}
 	if names, err := repository.Repositories(ctx); err != nil {
 		return "", err
@@ -706,6 +760,10 @@ func runMainScenario(ctx context.Context, opener RepositoryOpener, directory str
 		return "", err
 	}
 	session.record("baseline-state", baselineDigest)
+	baselineState, err := session.stateDigest(ctx, false)
+	if err != nil {
+		return "", err
+	}
 
 	// Embeddings for two candidate nodes; the second one's owner file is not
 	// touched again, the first one is updated in place.
@@ -737,6 +795,31 @@ func runMainScenario(ctx context.Context, opener RepositoryOpener, directory str
 		return "", err
 	} else {
 		session.record("embedding-hashes", renderHashes(hashes))
+	}
+
+	// A third embedding whose node is not a semantic candidate must be removed
+	// by DeleteStaleEmbeddings while the candidate ones survive.
+	staleID := "n:equivalence/noncandidate"
+	staleEmbedding := semantic.Embedding{NodeID: staleID, Model: equivalenceEmbeddingModel,
+		ContentHash: graph.StableID("embedding", staleID, "1"),
+		Vector:      []float32{0.5}, UpdatedAt: "2026-01-02T03:04:07Z"}
+	if err := repository.UpsertEmbedding(ctx, staleEmbedding); err != nil {
+		return "", err
+	}
+	removed, err := repository.DeleteStaleEmbeddings(ctx, equivalenceEmbeddingModel)
+	if err != nil {
+		return "", err
+	}
+	session.record("stale-embeddings-removed", strconv.FormatInt(removed, 10))
+	if stored, err := repository.Embeddings(ctx, equivalenceEmbeddingModel); err != nil {
+		return "", err
+	} else {
+		session.record("embeddings-after-stale-removal", renderEmbeddings(stored))
+	}
+	if hashes, err := repository.EmbeddingHashes(ctx, equivalenceEmbeddingModel); err != nil {
+		return "", err
+	} else {
+		session.record("embedding-hashes-after-stale-removal", renderHashes(hashes))
 	}
 
 	if err := repository.SetMeta(ctx, "run_id", "equivalence-run-001"); err != nil {
@@ -801,15 +884,16 @@ func runMainScenario(ctx context.Context, opener RepositoryOpener, directory str
 		return "", err
 	}
 	session.record("final-state", finalDigest)
-	return baselineDigest, nil
+	return baselineState, nil
 }
 
 // copyProperties deep-copies a property map so scenario variants never mutate
-// the shared fixture both adapters index from.
+// the shared fixture both adapters index from; callers add keys to the copy, so
+// it is never nil.
 func copyProperties(properties map[string]string) map[string]string {
-	copied := make(map[string]string, len(properties))
-	for key, value := range properties {
-		copied[key] = value
+	copied := maps.Clone(properties)
+	if copied == nil {
+		copied = make(map[string]string)
 	}
 	return copied
 }
@@ -817,7 +901,7 @@ func copyProperties(properties map[string]string) map[string]string {
 // editedPopulationFile shifts locations and properties of the first population
 // file without changing its identity, so an incremental re-index must converge
 // back to the original rows once the original content returns.
-func editedPopulationFile(file FixtureFile, ordinal int) FixtureFile {
+func editedPopulationFile(file FixtureFile) FixtureFile {
 	parsed := graph.ParseResult{Nodes: make([]graph.Node, len(file.Parsed.Nodes)),
 		Facts: make([]graph.Fact, len(file.Parsed.Facts))}
 	for index, node := range file.Parsed.Nodes {
@@ -913,11 +997,17 @@ func runIncrementalScenario(ctx context.Context, opener RepositoryOpener, direct
 	}
 	session.record("replace-owner-unchanged", strconv.FormatBool(digestAfterOwner == digestBeforeUnswept))
 
-	populationFile := fileByPath(fixture, populationOwnerPath(0))
-	callersFile := fileByPath(fixture, callersOwnerPath(populationFileCount(fixture.Scale)))
+	populationFile, err := fileByPath(fixture, populationOwnerPath(0))
+	if err != nil {
+		return err
+	}
+	callersFile, err := fileByPath(fixture, callersOwnerPath(fixturePopulationFileCount(fixture)))
+	if err != nil {
+		return err
+	}
 
-	if err := repository.ReplaceFile(ctx, editedPopulationFile(populationFile, 1).Record,
-		editedPopulationFile(populationFile, 1).Parsed); err != nil {
+	edited := editedPopulationFile(populationFile)
+	if err := repository.ReplaceFile(ctx, edited.Record, edited.Parsed); err != nil {
 		return err
 	}
 	if err := repository.Reconcile(ctx); err != nil {
@@ -964,9 +1054,19 @@ func runIncrementalScenario(ctx context.Context, opener RepositoryOpener, direct
 	session.record("restored-state", digestRestored)
 	session.record("restored-converged", strconv.FormatBool(digestRestored == digestBefore))
 
-	hubFile := fileByPath(fixture, hubOwnerPath(populationFileCount(fixture.Scale)+3))
-	sharedFile := fileByPath(fixture, sharedOwnerPath(populationFileCount(fixture.Scale)+2))
-	testFile := fileByPath(fixture, testOwnerPath(populationFileCount(fixture.Scale)+4))
+	moduleCount := fixturePopulationFileCount(fixture)
+	hubFile, err := fileByPath(fixture, hubOwnerPath(moduleCount+3))
+	if err != nil {
+		return err
+	}
+	sharedFile, err := fileByPath(fixture, sharedOwnerPath(moduleCount+2))
+	if err != nil {
+		return err
+	}
+	testFile, err := fileByPath(fixture, testOwnerPath(moduleCount+4))
+	if err != nil {
+		return err
+	}
 
 	if err := repository.ReplaceFile(ctx, branchHubFile(hubFile).Record, branchHubFile(hubFile).Parsed); err != nil {
 		return err
@@ -1013,19 +1113,29 @@ func runIncrementalScenario(ctx context.Context, opener RepositoryOpener, direct
 	return nil
 }
 
-// populationFileCount mirrors the fixture's population fan-out so scenario
-// helpers can locate structural files by path regardless of insertion order.
-func populationFileCount(scale int) int {
-	return max(minimumFileCount, scale/10)
-}
-
-func fileByPath(fixture Fixture, path string) FixtureFile {
+// fixturePopulationFileCount derives the fixture's population fan-out from
+// the fixture itself (population files are the /generated.go module files),
+// so scenario helpers locate structural files by path without restating the
+// generator's formula.
+func fixturePopulationFileCount(fixture Fixture) int {
+	count := 0
 	for _, file := range fixture.Files {
-		if file.Record.Path == path {
-			return file
+		if strings.HasSuffix(file.Record.Path, "/generated.go") {
+			count++
 		}
 	}
-	return FixtureFile{}
+	return count
+}
+
+// fileByPath locates one fixture file by owner path regardless of the seed's
+// insertion order; a miss is a scenario bug, so it fails loudly.
+func fileByPath(fixture Fixture, path string) (FixtureFile, error) {
+	for _, file := range fixture.Files {
+		if file.Record.Path == path {
+			return file, nil
+		}
+	}
+	return FixtureFile{}, fmt.Errorf("fixture has no file at path %s", path)
 }
 
 // runCancellationScenario cancels ReplaceFile mid-flight with shrinking
@@ -1126,7 +1236,6 @@ type scriptStep struct {
 func canonicalScript(corpus []FixtureFile, removeFile FixtureFile) []scriptStep {
 	steps := make([]scriptStep, 0, len(corpus)+6)
 	for _, file := range corpus {
-		file := file
 		steps = append(steps, scriptStep{boundary: indexer.BoundaryFilePersisted,
 			run: func(ctx context.Context, repository EquivalenceRepository) error {
 				return repository.ReplaceFile(ctx, file.Record, file.Parsed)
@@ -1200,20 +1309,28 @@ func runBoundaryScenarios(ctx context.Context, opener RepositoryOpener, director
 	}
 	for _, kind := range kinds {
 		name := "boundary-" + string(kind)
+		removeFile, err := callersRemovalFile(fixture)
+		if err != nil {
+			return err
+		}
 		if err := runBoundaryScenario(ctx, opener, directory, name, kind,
-			equivalenceCorpus(fixture), callersRemovalFile(fixture), true, baselineDigest, log); err != nil {
+			equivalenceCorpus(fixture), removeFile, true, baselineDigest, log); err != nil {
 			return fmt.Errorf("boundary %s: %w", kind, err)
 		}
 	}
+	batchRemoveFile, err := callersRemovalFile(batchFixture)
+	if err != nil {
+		return err
+	}
 	return runBoundaryScenario(ctx, opener, directory, "boundary-reconciliation_batch",
 		indexer.BoundaryReconciliationBatch, batchFixture.Files,
-		callersRemovalFile(batchFixture), false, "", log)
+		batchRemoveFile, false, "", log)
 }
 
 // callersRemovalFile picks the hub fan-in file the canonical script removes
 // and restores, located by path so it does not depend on insertion order.
-func callersRemovalFile(fixture Fixture) FixtureFile {
-	return fileByPath(fixture, callersOwnerPath(populationFileCount(fixture.Scale)))
+func callersRemovalFile(fixture Fixture) (FixtureFile, error) {
+	return fileByPath(fixture, callersOwnerPath(fixturePopulationFileCount(fixture)))
 }
 
 func runBoundaryScenario(ctx context.Context, opener RepositoryOpener, directory, name string,

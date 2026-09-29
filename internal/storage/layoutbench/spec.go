@@ -32,11 +32,15 @@ type LayoutSpec struct {
 	// production statement declares a candidate-only statement; every entry is
 	// prepared when the adapter opens.
 	//
-	// Statements may use @name placeholders. The adapter numbers them by first
-	// appearance and binds call-site values positionally, so an override that
-	// needs one logical value twice (say a node id and the subselect that
-	// resolves its integer key) names the parameter instead of duplicating the
-	// value at the call site.
+	// Statements may use @name placeholders. For prepared (non-batched)
+	// statements the adapter numbers them by first appearance, so repeated
+	// names bind one call-site value; an override that needs one logical value
+	// twice (say a node id and the subselect that resolves its integer key)
+	// names the parameter instead of duplicating the value at the call site.
+	// Batched writes (nodes, facts, edges, and the dirty markers) are
+	// different: each occurrence of a placeholder inside the values tuple
+	// binds one value per emitted row, and placeholders outside the tuple are
+	// rejected at parse time.
 	SQL map[string]string
 	// EdgeInsert replaces the default batched edge write during file
 	// replacement and reconciliation. derived marks a DirectTestEdge
