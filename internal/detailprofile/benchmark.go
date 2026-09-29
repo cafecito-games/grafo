@@ -683,24 +683,10 @@ func gitOutput(ctx context.Context, directory string, args ...string) (string, e
 }
 
 func inspectEnvironment(output string) (BenchmarkEnvironment, error) {
-	cpuRaw, err := os.ReadFile("/sys/fs/cgroup/cpu.max")
+	limits, err := inspectCgroupLimits("/sys/fs/cgroup")
 	if err != nil {
 		return BenchmarkEnvironment{}, err
 	}
-	fields := strings.Fields(string(cpuRaw))
-	var cpus int64
-	if len(fields) == 2 && fields[0] != "max" {
-		quota, _ := strconv.ParseInt(fields[0], 10, 64)
-		period, _ := strconv.ParseInt(fields[1], 10, 64)
-		if period > 0 {
-			cpus = quota / period
-		}
-	}
-	memoryRaw, err := os.ReadFile("/sys/fs/cgroup/memory.max")
-	if err != nil {
-		return BenchmarkEnvironment{}, err
-	}
-	memory, _ := strconv.ParseInt(strings.TrimSpace(string(memoryRaw)), 10, 64)
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs(output, &stat); err != nil {
 		return BenchmarkEnvironment{}, err
@@ -713,10 +699,66 @@ func inspectEnvironment(output string) (BenchmarkEnvironment, error) {
 	if !ok {
 		return BenchmarkEnvironment{}, fmt.Errorf("output filesystem device identity is unavailable")
 	}
-	return BenchmarkEnvironment{CPUQuota: strings.TrimSpace(string(cpuRaw)), EffectiveCPUs: cpus, MemoryMaxBytes: memory,
+	return BenchmarkEnvironment{CPUQuota: limits.cpuQuota, EffectiveCPUs: limits.effectiveCPUs, MemoryMaxBytes: limits.memoryMaxBytes,
 		Filesystem: fmt.Sprintf("type=0x%x block_size=%d", stat.Type, stat.Bsize), FilesystemDevice: statInfo.Dev,
 		FilesystemAvailableBytes: stat.Bavail * uint64(stat.Bsize), OutputPath: output,
 		RSSMethod: "50ms samples of /proc/self/status VmRSS; absolute process peak includes Go runtime state retained from earlier samples"}, nil
+}
+
+type cgroupLimits struct {
+	cpuQuota       string
+	effectiveCPUs  int64
+	memoryMaxBytes int64
+}
+
+func inspectCgroupLimits(root string) (cgroupLimits, error) {
+	cpuV2, cpuV2Err := os.ReadFile(filepath.Join(root, "cpu.max"))
+	memoryV2, memoryV2Err := os.ReadFile(filepath.Join(root, "memory.max"))
+	if cpuV2Err == nil && memoryV2Err == nil {
+		return parseCgroupLimits(strings.TrimSpace(string(cpuV2)), strings.TrimSpace(string(memoryV2)))
+	}
+	if !errors.Is(cpuV2Err, os.ErrNotExist) || !errors.Is(memoryV2Err, os.ErrNotExist) {
+		return cgroupLimits{}, fmt.Errorf("read cgroup v2 limits: cpu: %v; memory: %v", cpuV2Err, memoryV2Err)
+	}
+
+	cpuRoot := filepath.Join(root, "cpu")
+	if _, err := os.Stat(cpuRoot); errors.Is(err, os.ErrNotExist) {
+		cpuRoot = filepath.Join(root, "cpu,cpuacct")
+	}
+	quota, quotaErr := os.ReadFile(filepath.Join(cpuRoot, "cpu.cfs_quota_us"))
+	period, periodErr := os.ReadFile(filepath.Join(cpuRoot, "cpu.cfs_period_us"))
+	memory, memoryErr := os.ReadFile(filepath.Join(root, "memory", "memory.limit_in_bytes"))
+	if quotaErr != nil || periodErr != nil || memoryErr != nil {
+		return cgroupLimits{}, fmt.Errorf("read cgroup v1 limits: quota: %v; period: %v; memory: %v", quotaErr, periodErr, memoryErr)
+	}
+	return parseCgroupLimits("v1:"+strings.TrimSpace(string(quota))+" "+strings.TrimSpace(string(period)), strings.TrimSpace(string(memory)))
+}
+
+func parseCgroupLimits(cpu, memory string) (cgroupLimits, error) {
+	fields := strings.Fields(strings.TrimPrefix(cpu, "v1:"))
+	if len(fields) != 2 {
+		return cgroupLimits{}, fmt.Errorf("invalid cgroup CPU quota %q", cpu)
+	}
+	var effectiveCPUs int64
+	if fields[0] != "max" && fields[0] != "-1" {
+		quota, err := strconv.ParseInt(fields[0], 10, 64)
+		if err != nil || quota <= 0 {
+			return cgroupLimits{}, fmt.Errorf("invalid cgroup CPU quota %q", cpu)
+		}
+		period, err := strconv.ParseInt(fields[1], 10, 64)
+		if err != nil || period <= 0 {
+			return cgroupLimits{}, fmt.Errorf("invalid cgroup CPU period %q", cpu)
+		}
+		effectiveCPUs = quota / period
+		if effectiveCPUs == 0 {
+			effectiveCPUs = 1
+		}
+	}
+	memoryMaxBytes, err := strconv.ParseInt(memory, 10, 64)
+	if err != nil || memoryMaxBytes <= 0 {
+		return cgroupLimits{}, fmt.Errorf("invalid cgroup memory limit %q", memory)
+	}
+	return cgroupLimits{cpuQuota: cpu, effectiveCPUs: effectiveCPUs, memoryMaxBytes: memoryMaxBytes}, nil
 }
 
 func insidePath(root, candidate string) bool {
