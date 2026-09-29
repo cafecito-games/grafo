@@ -148,7 +148,7 @@ incremental scenarios:
 | Restore total | 2.449 s (1.00x) | 2.627 s (1.07x) | 3.557 s (1.45x) | 2.502 s (1.02x) |
 | Branch switch total | 2.658 s (1.00x) | 2.603 s (0.98x) | 3.641 s (1.37x) | 2.597 s (0.98x) |
 | Resume unchanged total | 2.287 s (1.00x) | 2.384 s (1.04x) | 3.493 s (1.53x) | 2.333 s (1.02x) |
-| Incremental persistence (range, all 11 non-cold scenarios) | 1.00x | 0.96x–1.14x | 1.41x–2.09x (cold 0.95x) | 0.97x–1.02x |
+| Incremental persistence (range, the 11 incremental scenarios; cold and restart/resume cold excluded) | 1.00x | 0.96x–1.14x | 1.41x–2.09x (cold 0.95x) | 0.97x–1.02x |
 
 Query suite (13 patterns, 7 repetitions each, median ratio to control):
 
@@ -167,7 +167,10 @@ Uzir database size:
 | --- | ---: | ---: | ---: | ---: |
 | Cold-run primary bytes | 2,515,279,872 | 2,322,710,528 (−7.66%) | 2,378,723,328 (−5.43%) | 2,514,178,048 (−0.04%) |
 | Post-compact primary bytes (gate input) | 2,363,404,288 | 2,170,785,792 (−8.15%) | 2,234,368,000 (−5.46%) | 2,362,585,088 (−0.03%) |
-| Peak RSS (observation only) | 0.978 GiB | 1.052 GiB | 1.044 GiB | 1.101 GiB |
+| Peak RSS (observation only, cold-run medians) | 0.978 GiB | 1.052 GiB | 1.044 GiB | 1.101 GiB |
+
+Peak RSS medians come from the cold scenario; integer-keys settles at
+1.112 GiB across the incremental scenarios, above its 1.044 GiB cold median.
 
 ### Where the bytes are
 
