@@ -435,7 +435,7 @@ func (a *App) indexes(ctx context.Context, args parsedArguments) error {
 		}
 		return pruneErr
 	case "compact":
-		if err := rejectUnsupportedIndexOptions(args,
+		if err := rejectUnsupportedOptions(args, "indexes "+subcommand,
 			map[string]bool{"json": true, "dry-run": true, "yes": true}, nil); err != nil {
 			return err
 		}
