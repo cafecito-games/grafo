@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/httpmodel"
 	"github.com/cafecito-games/grafo/internal/query"
 )
 
@@ -238,6 +239,47 @@ func TestOutboundRequestBoundsAmbiguousCandidates(t *testing.T) {
 	}
 }
 
+func TestOutboundRequestsRejectCorruptDestinationEvidence(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*catalogRepository)
+	}{
+		{name: "legacy local target lacks proof", mutate: func(repository *catalogRepository) {
+			for index := range repository.edges {
+				if repository.edges[index].ID == "e:request-orders" {
+					repository.edges[index].Properties = map[string]string{"federated": "true"}
+				}
+			}
+		}},
+		{name: "explicit authority conflicts with unknown", mutate: func(repository *catalogRepository) {
+			for index := range repository.edges {
+				if repository.edges[index].ID == "e:request-missing" {
+					repository.edges[index].Properties[httpmodel.PropertyAuthority] = "api.example.test"
+					repository.edges[index].Properties[httpmodel.PropertyAuthorityUnknown] = "true"
+				}
+			}
+		}},
+		{name: "resolved marker targets external node", mutate: func(repository *catalogRepository) {
+			for index := range repository.edges {
+				if repository.edges[index].ID == "e:request-missing" {
+					repository.edges[index].Properties = httpmodel.WithDestinationEvidence(nil,
+						httpmodel.DestinationResolved, httpmodel.EvidenceRoute)
+				}
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repository := newTopologyFixture()
+			test.mutate(repository)
+			result, err := query.NewTopology(repository).OutboundRequests(context.Background(), query.TopologyOptions{Limit: 20})
+			if err == nil || len(result.Requests) != 0 {
+				t.Fatalf("corrupt request evidence returned partial results: %#v, %v", result, err)
+			}
+		})
+	}
+}
+
 func TestOutboundRequestsRankCanonicalRouteCompatibility(t *testing.T) {
 	repository := newHTTPCompatibilityFixture()
 	service := query.NewTopology(repository)
@@ -372,6 +414,29 @@ func newHTTPCompatibilityFixture() *catalogRepository {
 		if request.name == "UnknownAuthority" {
 			properties["http_authority_unknown"] = "true"
 		}
+		resolution, evidence := httpmodel.DestinationUnresolved, httpmodel.EvidenceRoute
+		resolvedTarget := ""
+		switch request.name {
+		case "Exact":
+			resolvedTarget = "n:literal"
+		case "Template":
+			resolvedTarget = "n:parameter"
+		case "Regex":
+			resolvedTarget = "n:regex"
+		case "Catchall":
+			resolvedTarget = "n:catchall"
+		case "Ambiguous":
+			resolution = httpmodel.DestinationAmbiguous
+		case "ExternalAuthority", "HTTPAuthority", "LegacyAuthority":
+			resolution, evidence = httpmodel.DestinationExternal, httpmodel.EvidenceExplicitAuthority
+		case "UnknownAuthority":
+			evidence = httpmodel.EvidenceUnknownAuthority
+		}
+		if resolvedTarget != "" {
+			targetID = resolvedTarget
+			resolution = httpmodel.DestinationResolved
+		}
+		properties = httpmodel.WithDestinationEvidence(properties, resolution, evidence)
 		repository.edges = append(repository.edges, graph.Edge{ID: edgeID, FactID: edgeID, FromID: sourceID,
 			ToID: targetID, Kind: graph.EdgeRequests, Location: graph.Location{Path: "client.go", Line: index + 1}, Properties: properties})
 	}
@@ -618,8 +683,10 @@ func newComponentTopologyFixture() *catalogRepository {
 	repository.add("monorepo", graph.Node{ID: "n:event-client", Kind: graph.KindEvent, Name: "client.refreshed",
 		QualifiedName: "client.refreshed", OwnerFile: "client/client.go"})
 	repository.edges = append(repository.edges,
-		graph.Edge{ID: "e:request-orders", FactID: "f:request-orders", FromID: "n:client-call", ToID: "n:server-endpoint", Kind: graph.EdgeRequests},
-		graph.Edge{ID: "e:request-health", FactID: "f:request-health", FromID: "n:client-call", ToID: "n:health-endpoint", Kind: graph.EdgeRequests},
+		graph.Edge{ID: "e:request-orders", FactID: "f:request-orders", FromID: "n:client-call", ToID: "n:server-endpoint", Kind: graph.EdgeRequests,
+			Properties: httpmodel.WithDestinationEvidence(nil, httpmodel.DestinationResolved, httpmodel.EvidenceRoute)},
+		graph.Edge{ID: "e:request-health", FactID: "f:request-health", FromID: "n:client-call", ToID: "n:health-endpoint", Kind: graph.EdgeRequests,
+			Properties: httpmodel.WithDestinationEvidence(nil, httpmodel.DestinationResolved, httpmodel.EvidenceRoute)},
 		graph.Edge{ID: "e:publish-order", FactID: "f:publish-order", FromID: "n:publisher", ToID: "n:event-order", Kind: graph.EdgePublishes},
 		graph.Edge{ID: "e:subscribe-order", FactID: "f:subscribe-order", FromID: "n:subscriber", ToID: "n:event-order", Kind: graph.EdgeSubscribes},
 		graph.Edge{ID: "e:publish-client", FactID: "f:publish-client", FromID: "n:publisher", ToID: "n:event-client", Kind: graph.EdgePublishes},
@@ -747,17 +814,22 @@ func newTopologyFixture() *catalogRepository {
 			Properties: map[string]string{"form": "use", "order": "2", "resolution": "go/types", "unresolved": "true"}},
 		{ID: "e:request-orders", FactID: "f:request-orders", FromID: "n:client-call", ToID: "n:endpoint-orders",
 			Kind: graph.EdgeRequests, Location: graph.Location{Path: "client.go", Line: 10},
-			Properties: map[string]string{"federated": "true"}},
+			Properties: httpmodel.WithDestinationEvidence(map[string]string{"federated": "true"},
+				httpmodel.DestinationResolved, httpmodel.EvidenceFederated)},
 		{ID: "e:request-charge", FactID: "f:request-charge", FromID: "n:client-charge", ToID: "n:external-charge",
-			Kind: graph.EdgeRequests, Location: graph.Location{Path: "client.go", Line: 20}},
+			Kind: graph.EdgeRequests, Location: graph.Location{Path: "client.go", Line: 20},
+			Properties: httpmodel.WithDestinationEvidence(nil, httpmodel.DestinationUnresolved, httpmodel.EvidenceRoute)},
 		{ID: "e:request-charge-a", FactID: "f:request-charge", FromID: "n:client-charge", ToID: "n:charge-a",
 			Kind: graph.EdgeRequests, Location: graph.Location{Path: "client.go", Line: 20},
-			Properties: map[string]string{"federated": "true"}},
+			Properties: httpmodel.WithDestinationEvidence(map[string]string{"federated": "true"},
+				httpmodel.DestinationResolved, httpmodel.EvidenceFederated)},
 		{ID: "e:request-charge-b", FactID: "f:request-charge", FromID: "n:client-charge", ToID: "n:charge-b",
 			Kind: graph.EdgeRequests, Location: graph.Location{Path: "client.go", Line: 20},
-			Properties: map[string]string{"federated": "true"}},
+			Properties: httpmodel.WithDestinationEvidence(map[string]string{"federated": "true"},
+				httpmodel.DestinationResolved, httpmodel.EvidenceFederated)},
 		{ID: "e:request-missing", FactID: "f:request-missing", FromID: "n:client-missing", ToID: "n:external-missing",
-			Kind: graph.EdgeRequests, Location: graph.Location{Path: "client.go", Line: 30}},
+			Kind: graph.EdgeRequests, Location: graph.Location{Path: "client.go", Line: 30},
+			Properties: httpmodel.WithDestinationEvidence(nil, httpmodel.DestinationUnresolved, httpmodel.EvidenceRoute)},
 		{ID: "e:handle-ambiguous-a", FactID: "f:handle-ambiguous-a", FromID: "n:endpoint-ambiguous", ToID: "n:handler-a", Kind: graph.EdgeHandledBy},
 		{ID: "e:handle-ambiguous-b", FactID: "f:handle-ambiguous-b", FromID: "n:endpoint-ambiguous", ToID: "n:handler-b", Kind: graph.EdgeHandledBy},
 		{ID: "e:handle-unresolved", FactID: "f:handle-unresolved", FromID: "n:endpoint-unresolved", ToID: "n:external-handler", Kind: graph.EdgeHandledBy},

@@ -1,6 +1,9 @@
 package httpmodel
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestParseRouteCanonicalizesIdentityAndPreservesEvidence(t *testing.T) {
 	tests := []struct {
@@ -87,6 +90,93 @@ func TestNormalizeMethodRejectsMalformedTokens(t *testing.T) {
 	for _, input := range []string{"", "G ET", "GET\n", "G@T"} {
 		if _, err := NormalizeMethod(input); err == nil {
 			t.Fatalf("NormalizeMethod(%q) succeeded", input)
+		}
+	}
+}
+
+func TestDestinationContractFailsClosedOnConflictingEvidence(t *testing.T) {
+	local := mustRoute(t, "/users")
+	external := mustRoute(t, "https://api.example.test/users")
+	tests := []struct {
+		name       string
+		properties map[string]string
+		route      Route
+	}{
+		{name: "unknown is not a boolean", properties: map[string]string{PropertyAuthorityUnknown: "maybe"}, route: local},
+		{name: "explicit and unknown", properties: map[string]string{PropertyAuthority: "api.example.test", PropertyAuthorityUnknown: "true"}, route: local},
+		{name: "route and property authority disagree", properties: map[string]string{PropertyAuthority: "other.test"}, route: external},
+		{name: "resolution lacks evidence", properties: map[string]string{PropertyDestinationResolution: string(DestinationResolved)}, route: local},
+		{name: "unknown route resolution", properties: map[string]string{PropertyDestinationResolution: "guessed", PropertyDestinationEvidence: string(EvidenceRoute)}, route: local},
+		{name: "unknown authority resolved by route", properties: map[string]string{PropertyAuthorityUnknown: "true", PropertyDestinationResolution: string(DestinationResolved), PropertyDestinationEvidence: string(EvidenceRoute)}, route: local},
+		{name: "explicit authority marked local", properties: map[string]string{PropertyAuthority: "api.example.test", PropertyDestinationResolution: string(DestinationResolved), PropertyDestinationEvidence: string(EvidenceExactTarget)}, route: local},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := ParseDestinationContract(test.properties, test.route); err == nil {
+				t.Fatalf("corrupt contract succeeded: %#v", test.properties)
+			}
+		})
+	}
+}
+
+func TestDestinationContractRequiresProofForLocalTargets(t *testing.T) {
+	route := mustRoute(t, "/users")
+	legacy, err := ParseDestinationContract(nil, route)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.ValidateTarget(false); err == nil {
+		t.Fatal("legacy local target without proof was trusted")
+	}
+	if err := legacy.ValidateTarget(true); err != nil {
+		t.Fatalf("legacy external boundary did not remain unresolved: %v", err)
+	}
+	proven, err := ParseDestinationContract(map[string]string{
+		PropertyAuthorityUnknown:      "true",
+		PropertyDestinationResolution: string(DestinationResolved),
+		PropertyDestinationEvidence:   string(EvidenceExactTarget),
+	}, route)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proven.ValidateTarget(false); err != nil {
+		t.Fatalf("exact local proof was rejected: %v", err)
+	}
+}
+
+func TestBestCandidateIndexesKeepsOnlyTheStrongestCompatibleRank(t *testing.T) {
+	request := mustRoute(t, "/users/42")
+	candidates := []EndpointCandidate{
+		{Method: "POST", Route: mustRoute(t, "/users/42")},
+		{Method: "GET", Route: mustRoute(t, "/users/{id}")},
+		{Method: "GET", Route: mustRoute(t, "/users/42")},
+		{Method: "GET", Route: mustRoute(t, "/users/{name}")},
+	}
+	indexes := BestCandidateIndexes("GET", request, candidates)
+	if len(indexes) != 1 || indexes[0] != 2 {
+		t.Fatalf("best candidate indexes = %v, want [2]", indexes)
+	}
+}
+
+func TestCandidateCatalogReusesMethodIndexWithoutNarrowingRoutes(t *testing.T) {
+	candidates := []EndpointCandidate{}
+	for index := 0; index < 1_000; index++ {
+		candidates = append(candidates, EndpointCandidate{Method: "POST", Route: mustRoute(t, fmt.Sprintf("/noise/%d", index))})
+	}
+	candidates = append(candidates,
+		EndpointCandidate{Method: "GET", Route: mustRoute(t, "/users/{id}")},
+		EndpointCandidate{Method: "GET", Route: mustRoute(t, `/codes/{id:[0-9]+}`)},
+		EndpointCandidate{Method: "GET", Route: mustRoute(t, "/assets/{path...}")},
+	)
+	catalog := NewCandidateCatalog(candidates)
+	for route, want := range map[string]int{
+		"/users/42":           1_000,
+		"/codes/42":           1_001,
+		"/assets/css/app.css": 1_002,
+	} {
+		indexes := catalog.BestCandidateIndexes("GET", mustRoute(t, route))
+		if len(indexes) != 1 || indexes[0] != want {
+			t.Fatalf("catalog match for %s = %v, want [%d]", route, indexes, want)
 		}
 	}
 }

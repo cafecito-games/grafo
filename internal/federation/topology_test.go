@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/federation"
+	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/httpmodel"
 	"github.com/cafecito-games/grafo/internal/query"
 )
 
@@ -90,10 +92,61 @@ func Watch(bus Bus) { bus.Subscribe("order.placed") }
 			t.Fatalf("method-incompatible endpoint became a candidate: %#v", charge.Candidates)
 		}
 	}
+	chargeCall, err := query.NewService(repository).Neighborhood(ctx, "example.com/client.Call", "", 1,
+		query.Outgoing, []graph.EdgeKind{graph.EdgeRequests}, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chargeEdges := 0
+	for _, edge := range chargeCall.Edges {
+		if edge.Properties["http_method"] != http.MethodPost {
+			continue
+		}
+		chargeEdges++
+		if edge.Properties[httpmodel.PropertyDestinationResolution] != string(httpmodel.DestinationAmbiguous) ||
+			edge.Properties[httpmodel.PropertyDestinationEvidence] != string(httpmodel.EvidenceFederated) {
+			t.Fatalf("generic adjacency did not preserve federated ambiguity: %#v", edge)
+		}
+		for _, node := range chargeCall.Nodes {
+			if node.Node.ID == edge.ToID && !node.Node.External {
+				t.Fatalf("ambiguous request fanned out to local endpoint: edge=%#v node=%#v", edge, node)
+			}
+		}
+	}
+	if chargeEdges != 1 {
+		t.Fatalf("ambiguous generic adjacency edges = %d, want one unresolved edge: %#v", chargeEdges, chargeCall)
+	}
 	orders := byName["GET /orders/42"]
 	if orders.Status != query.BoundaryResolved || orders.Destination.Repository != "payments-a" ||
 		!orders.Evidence.Federated {
 		t.Fatalf("unique federated endpoint did not resolve: %#v", orders)
+	}
+	incoming, err := repository.EdgesTo(ctx, orders.Destination.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var incomingRequest graph.Edge
+	for _, edge := range incoming {
+		if edge.Kind == graph.EdgeRequests && edge.Properties["http_route"] == "/orders/42" {
+			incomingRequest = edge
+		}
+	}
+	if incomingRequest.ID == "" || incomingRequest.Properties["federated"] != "true" {
+		t.Fatalf("incoming adjacency did not apply template route projection: %#v", incoming)
+	}
+	incomingRelations, err := repository.RelationEdges(ctx, graph.RelationEdgeQuery{SubjectID: orders.Destination.ID,
+		Direction: graph.IncomingRelations, Relations: []graph.EdgeKind{graph.EdgeRequests}, Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundIncomingRelation := false
+	for _, item := range incomingRelations.Items {
+		if item.Edge.Properties["http_route"] == "/orders/42" && item.Edge.Properties["federated"] == "true" {
+			foundIncomingRelation = true
+		}
+	}
+	if !foundIncomingRelation {
+		t.Fatalf("incoming relation page did not apply template route projection: %#v", incomingRelations)
 	}
 
 	topology, err := service.ServiceTopology(ctx, query.TopologyOptions{Limit: 20})

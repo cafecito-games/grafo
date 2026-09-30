@@ -132,6 +132,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.listExternalNodesMatchingStmt, err = db.PrepareContext(ctx, listExternalNodesMatching); err != nil {
 		return nil, fmt.Errorf("error preparing query ListExternalNodesMatching: %w", err)
 	}
+	if q.listExternalRequestEdgesStmt, err = db.PrepareContext(ctx, listExternalRequestEdges); err != nil {
+		return nil, fmt.Errorf("error preparing query ListExternalRequestEdges: %w", err)
+	}
 	if q.listFilesStmt, err = db.PrepareContext(ctx, listFiles); err != nil {
 		return nil, fmt.Errorf("error preparing query ListFiles: %w", err)
 	}
@@ -383,6 +386,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing listExternalNodesMatchingStmt: %w", cerr)
 		}
 	}
+	if q.listExternalRequestEdgesStmt != nil {
+		if cerr := q.listExternalRequestEdgesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listExternalRequestEdgesStmt: %w", cerr)
+		}
+	}
 	if q.listFilesStmt != nil {
 		if cerr := q.listFilesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listFilesStmt: %w", cerr)
@@ -568,6 +576,7 @@ type Queries struct {
 	listEdgesToStmt                     *sql.Stmt
 	listExternalEdgesMatchingStmt       *sql.Stmt
 	listExternalNodesMatchingStmt       *sql.Stmt
+	listExternalRequestEdgesStmt        *sql.Stmt
 	listFilesStmt                       *sql.Stmt
 	listIncomingRelationEdgesStmt       *sql.Stmt
 	listNodesByKindStmt                 *sql.Stmt
@@ -632,6 +641,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		listEdgesToStmt:                     q.listEdgesToStmt,
 		listExternalEdgesMatchingStmt:       q.listExternalEdgesMatchingStmt,
 		listExternalNodesMatchingStmt:       q.listExternalNodesMatchingStmt,
+		listExternalRequestEdgesStmt:        q.listExternalRequestEdgesStmt,
 		listFilesStmt:                       q.listFilesStmt,
 		listIncomingRelationEdgesStmt:       q.listIncomingRelationEdgesStmt,
 		listNodesByKindStmt:                 q.listNodesByKindStmt,
