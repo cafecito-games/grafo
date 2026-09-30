@@ -41,7 +41,7 @@ func (*Parser) Supports(path string) bool {
 // SemanticKey makes the owning Godot project, configured HTTP adapters, and
 // generated binding vocabulary part of the incremental cache key.
 func (p *Parser) SemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
-	project, err := godotid.LoadProject(input.Root, input.Path)
+	project, err := godotid.LoadProject(input.Root, input.Path, input.SourcePaths)
 	if err != nil {
 		return "", err
 	}
@@ -229,7 +229,7 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 			e.testBases[base] = true
 		}
 	}
-	project, projectErr := godotid.LoadProject(input.Root, input.Path)
+	project, projectErr := godotid.LoadProject(input.Root, input.Path, input.SourcePaths)
 	if projectErr != nil {
 		// The owning project is unknown rather than absent, so res:// references
 		// cannot be canonicalized without guessing which project they belong to.

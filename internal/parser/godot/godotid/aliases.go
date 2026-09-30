@@ -310,9 +310,8 @@ func scanAliases(root string, membership []string) (*Aliases, error) {
 }
 
 func scanAliasCandidate(root, relative string, aliases *Aliases, declarations map[string]map[string]bool) {
-	absolute := filepath.Join(root, filepath.FromSlash(relative))
-	info, err := os.Lstat(absolute)
-	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+	absolute, _, err := repositorypath.ResolveRegularFile(root, relative)
+	if err != nil {
 		if canDeclareUID(relative) {
 			aliases.Unknown = append(aliases.Unknown, relative)
 		}

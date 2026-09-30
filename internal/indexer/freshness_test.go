@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -44,6 +45,64 @@ func (p freshnessParser) WorkspaceSemanticKey(context.Context, parserapi.Input) 
 		return "", nil
 	}
 	return *p.semantic, nil
+}
+
+type projectFreshnessParser struct{}
+
+func (projectFreshnessParser) Language() string          { return "project-freshness" }
+func (projectFreshnessParser) Supports(path string) bool { return filepath.Ext(path) == ".snap" }
+func (projectFreshnessParser) Parse(context.Context, parserapi.Input) (graph.ParseResult, error) {
+	return graph.ParseResult{}, nil
+}
+func (projectFreshnessParser) SemanticDependencies() []string { return []string{"project.godot"} }
+
+func TestFreshnessIgnoresProjectsOutsideGitMembership(t *testing.T) {
+	root := t.TempDir()
+	runGit(t, root, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("ignored/\n.godot/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sample.snap"), []byte("fixture"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+	for _, path := range []string{"ignored/project.godot", ".godot/project.godot"} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, path)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, path), []byte("small"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	registry := parserapi.NewRegistry(projectFreshnessParser{})
+	first, err := indexer.ProbeFreshness(context.Background(), root, registry, indexer.FreshnessOptions{MaxFileSize: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Supported {
+		t.Fatalf("initial probe unsupported: %#v", first)
+	}
+	if err := os.WriteFile(filepath.Join(root, "ignored", "project.godot"), []byte("changed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second, err := indexer.ReprobeFreshness(context.Background(), first, registry, indexer.FreshnessOptions{MaxFileSize: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Token.Equal(second.Token) {
+		t.Fatal("Git-ignored project.godot changed freshness")
+	}
+	if err := os.WriteFile(filepath.Join(root, ".godot", "project.godot"), []byte(strings.Repeat("x", 128)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	third, err := indexer.ReprobeFreshness(context.Background(), second, registry, indexer.FreshnessOptions{MaxFileSize: 64})
+	if err != nil {
+		t.Fatalf("oversized excluded project.godot failed freshness: %v", err)
+	}
+	if !second.Token.Equal(third.Token) {
+		t.Fatal("hard-excluded project.godot changed freshness")
+	}
 }
 
 func TestFreshnessProbeDetectsSamePathSameSizeAndSemanticChanges(t *testing.T) {

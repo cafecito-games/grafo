@@ -293,6 +293,31 @@ func TestLoadProjectHonorsExplicitRepositoryMembership(t *testing.T) {
 	}
 }
 
+func TestMembershipRejectsSymlinkedAncestorTraversal(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	write(t, outside, "project.godot", "[autoload]\nOutside=\"*res://outside.gd\"\n")
+	write(t, outside, "scene.tscn", "[gd_scene format=3 uid=\"uid://outside\"]\n")
+	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
+		t.Fatal(err)
+	}
+
+	membership := []string{"linked/project.godot", "linked/scene.tscn"}
+	aliases, err := godotid.LoadAliases(root, membership)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if declared, ok := aliases.Declared("uid://outside"); ok {
+		t.Fatalf("outside declaration crossed symlinked ancestor: %#v", declared)
+	}
+	if !containsAll(aliases.Unknown, "linked/scene.tscn") {
+		t.Fatalf("unsafe eligible evidence did not fail closed: %#v", aliases.Unknown)
+	}
+	if _, err := godotid.LoadProject(root, "linked/scene.tscn", membership); err == nil {
+		t.Fatal("project lookup followed a symlinked ancestor outside the root")
+	}
+}
+
 func containsAll(values []string, wanted ...string) bool {
 	for _, want := range wanted {
 		found := false

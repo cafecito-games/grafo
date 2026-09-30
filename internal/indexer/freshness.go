@@ -18,6 +18,7 @@ import (
 
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	"github.com/cafecito-games/grafo/internal/projectconfig"
+	"github.com/cafecito-games/grafo/internal/repositorypath"
 )
 
 const (
@@ -309,12 +310,16 @@ func freshnessHiddenSemanticDigest(ctx context.Context, project Project, registr
 		}
 		relative = filepath.ToSlash(relative)
 		if entry.IsDir() {
-			if relative != "." {
-				switch entry.Name() {
-				case ".git", ".grafo", ".worktrees":
-					return filepath.SkipDir
-				}
+			if relative != "." && repositorypath.DirectoryIgnored(entry.Name()) && entry.Name() != "vendor" {
+				return filepath.SkipDir
 			}
+			return nil
+		}
+		if relative == projectconfig.FileName ||
+			strings.EqualFold(filepath.Base(relative), "project.godot") && !visible[relative] {
+			return nil
+		}
+		if repositorypath.Ignored(relative) && !vendoredSemanticPath(relative) {
 			return nil
 		}
 		if visible[relative] || !registry.IsSemanticDependency(relative) {
@@ -334,6 +339,15 @@ func freshnessHiddenSemanticDigest(ctx context.Context, project Project, registr
 		return [sha256.Size]byte{}, 1, err
 	}
 	return encoder.sum(), 1, nil
+}
+
+func vendoredSemanticPath(path string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+		if part == "vendor" {
+			return true
+		}
+	}
+	return false
 }
 
 func cloneFreshnessMap(values map[string]string) map[string]string {
@@ -437,13 +451,9 @@ func (e *freshnessEncoder) sum() [sha256.Size]byte {
 }
 
 func safeFreshnessPath(root, relative string) (string, error) {
-	if filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, "../") {
-		return "", fmt.Errorf("freshness path escapes project root: %q", relative)
-	}
-	absolute := filepath.Clean(filepath.Join(root, filepath.FromSlash(relative)))
-	rootWithSeparator := filepath.Clean(root) + string(filepath.Separator)
-	if absolute != filepath.Clean(root) && !strings.HasPrefix(absolute, rootWithSeparator) {
-		return "", fmt.Errorf("freshness path escapes project root: %q", relative)
+	absolute, err := repositorypath.ResolvePath(root, relative)
+	if err != nil {
+		return "", fmt.Errorf("resolve freshness path %q: %w", relative, err)
 	}
 	return absolute, nil
 }

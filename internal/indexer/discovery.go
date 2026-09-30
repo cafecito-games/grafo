@@ -3,8 +3,8 @@ package indexer
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"sort"
 
@@ -78,8 +78,7 @@ func discoverFilesWithCatalog(ctx context.Context, project Project, registry *pa
 	// The root project configuration is a control-plane input even when Git
 	// excludes it from the ordinary candidate set. Keep the same regular-file
 	// and symlink safety boundary used for all other source membership.
-	if info, err := os.Lstat(filepath.Join(project.Root, projectconfig.FileName)); err == nil &&
-		info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+	if _, _, err := repositorypath.ResolveRegularFile(project.Root, projectconfig.FileName); err == nil {
 		candidates = append(candidates, projectconfig.FileName)
 	}
 	result := discoveredFiles{paths: make([]string, 0, len(candidates)), diagnostics: diagnostics, gitCommands: gitCommands}
@@ -114,15 +113,11 @@ func discoverFilesWithCatalog(ctx context.Context, project Project, registry *pa
 			result.scopedOut++
 			continue
 		}
-		info, err := os.Lstat(filepath.Join(project.Root, filepath.FromSlash(path)))
+		_, _, err := repositorypath.ResolveRegularFile(project.Root, path)
 		if err != nil {
-			continue
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			result.skipped = append(result.skipped, path)
-			continue
-		}
-		if !info.Mode().IsRegular() {
+			if errors.Is(err, repositorypath.ErrUnsafe) {
+				result.skipped = append(result.skipped, path)
+			}
 			continue
 		}
 		result.paths = append(result.paths, path)

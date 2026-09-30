@@ -33,6 +33,7 @@ import (
 	"github.com/cafecito-games/gdparser/configfile"
 	configast "github.com/cafecito-games/gdparser/configfile/ast"
 	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/repositorypath"
 )
 
 // ProjectFileName is the tracked Godot project configuration file. Its
@@ -537,13 +538,9 @@ func loadProjectFromMembership(root, sourcePath string, membership []string) (Pr
 	for {
 		relative := pathpkg.Join(directory, ProjectFileName)
 		if projects[relative] {
-			absolute := filepath.Join(root, filepath.FromSlash(relative))
-			info, err := os.Lstat(absolute)
+			absolute, info, err := repositorypath.ResolveRegularFile(root, relative)
 			if err != nil {
 				return Project{}, err
-			}
-			if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-				return Project{}, fmt.Errorf("Godot project %s is not a safe regular file", relative)
 			}
 			return loadFile(absolute, relative, info)
 		}

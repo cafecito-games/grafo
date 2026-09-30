@@ -348,3 +348,26 @@ func TestDiscoverFilesDiagnosesGitMembershipFallback(t *testing.T) {
 		t.Fatalf("fallback diagnostics = %#v", discovered.diagnostics)
 	}
 }
+
+func TestDiscoverFilesRejectsSymlinkedAncestorTraversal(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "outside.snap"), []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	runner := &scriptedGitRunner{outputs: [][]byte{[]byte("linked/outside.snap\x00")}}
+	project := Project{Root: root, GitManaged: true, gitSnapshot: &GitSnapshot{runner: runner}}
+	discovered, err := discoverFiles(context.Background(), project, parserapi.NewRegistry(snapshotTestParser{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(discovered.paths) != 0 {
+		t.Fatalf("discovery followed symlinked ancestor: %q", discovered.paths)
+	}
+	if !reflect.DeepEqual(discovered.skipped, []string{"linked/outside.snap"}) {
+		t.Fatalf("unsafe path was not reported as skipped: %q", discovered.skipped)
+	}
+}
