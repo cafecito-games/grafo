@@ -571,7 +571,8 @@ func (c *resolutionCache) loadEndpointCatalog(ctx context.Context, q *sqlcgen.Qu
 			continue
 		}
 		nodes = append(nodes, node)
-		candidates = append(candidates, httpmodel.EndpointCandidate{Method: candidateMethod, Route: candidateRoute})
+		candidates = append(candidates, httpmodel.EndpointCandidate{Method: candidateMethod,
+			Authority: candidateRoute.Authority, Route: candidateRoute})
 	}
 	c.endpointNodes = nodes
 	c.endpointCatalog = httpmodel.NewCandidateCatalog(candidates)
@@ -697,8 +698,8 @@ func resolveRequestTarget(ctx context.Context, q *sqlcgen.Queries, writer *batch
 			}
 			target := nodeFromRow(row)
 			candidateMethod, candidateRoute, candidateValid := endpointNodeMethodRoute(target)
-			compatible := validRoute && candidateValid && candidateMethod == method &&
-				httpmodel.Compatibility(candidateRoute, route) != httpmodel.RankNone
+			compatible := validRoute && candidateValid && httpmodel.CandidateCompatible(method, route,
+				httpmodel.EndpointCandidate{Method: candidateMethod, Authority: candidateRoute.Authority, Route: candidateRoute})
 			if target.Kind != graph.KindEndpoint || contract.Authority == httpmodel.AuthorityExternal || !compatible {
 				return materializeRequestBoundary(ctx, writer, fact, contract, route, requestBoundaryName(fact, method, route))
 			}
@@ -807,7 +808,7 @@ func requestFactMethodRoute(fact graph.Fact) (string, httpmodel.Route, bool) {
 			routeText = targetRoute
 		}
 	}
-	normalized, methodErr := httpmodel.NormalizeMethod(method)
+	normalized, methodErr := httpmodel.PreserveMethod(method)
 	route, routeErr := httpmodel.ParseRoute(routeText)
 	return normalized, route, methodErr == nil && routeErr == nil && fact.Properties["http_invalid"] != "true"
 }
@@ -823,8 +824,9 @@ func endpointNodeMethodRoute(node graph.Node) (string, httpmodel.Route, bool) {
 			routeText = targetRoute
 		}
 	}
-	normalized, methodErr := httpmodel.NormalizeMethod(method)
+	normalized, methodErr := httpmodel.PreserveMethod(method)
 	route, routeErr := httpmodel.ParseRoute(routeText)
+	route.Authority = strings.TrimSpace(node.Properties["authority"])
 	return normalized, route, methodErr == nil && routeErr == nil && node.Properties["http_invalid"] != "true"
 }
 

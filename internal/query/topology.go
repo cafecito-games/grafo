@@ -46,6 +46,7 @@ type Endpoint struct {
 	Resource
 	Method        string         `json:"method"`
 	Route         string         `json:"route"`
+	Authority     string         `json:"authority,omitempty"`
 	Exposers      []UsageSite    `json:"exposers"`
 	Handlers      []UsageSite    `json:"handlers"`
 	HandlerStatus BoundaryStatus `json:"handler_status"`
@@ -186,7 +187,7 @@ func (t *Topology) normalize(ctx context.Context, options TopologyOptions) (Topo
 	options.Component = strings.TrimSpace(options.Component)
 	options.Method = strings.Trim(options.Method, " ")
 	if options.Method != "" {
-		method, err := httpmodel.NormalizeMethod(options.Method)
+		method, err := httpmodel.PreserveMethod(options.Method)
 		if err != nil {
 			return options, 0, err
 		}
@@ -330,7 +331,7 @@ func (t *Topology) ownership(ctx context.Context) (*topologyOwnership, error) {
 }
 
 func rawEndpointMethodRoute(node graph.Node) (string, string) {
-	method := strings.ToUpper(strings.TrimSpace(node.Properties["method"]))
+	method := strings.TrimSpace(node.Properties["method"])
 	route := strings.TrimSpace(node.Properties["route"])
 	if method == "" || route == "" {
 		label := strings.TrimSpace(node.Name)
@@ -342,7 +343,7 @@ func rawEndpointMethodRoute(node graph.Node) (string, string) {
 		}
 		if parsedMethod, parsedRoute, ok := strings.Cut(label, " "); ok {
 			if method == "" {
-				method = strings.ToUpper(strings.TrimSpace(parsedMethod))
+				method = strings.TrimSpace(parsedMethod)
 			}
 			if route == "" {
 				route = strings.TrimSpace(parsedRoute)
@@ -354,7 +355,7 @@ func rawEndpointMethodRoute(node graph.Node) (string, string) {
 
 func endpointMethodRoute(node graph.Node) (string, string) {
 	method, route := rawEndpointMethodRoute(node)
-	if normalized, err := httpmodel.NormalizeMethod(method); err == nil {
+	if normalized, err := httpmodel.PreserveMethod(method); err == nil {
 		method = normalized
 	}
 	if parsed, err := httpmodel.ParseRoute(route); err == nil {
@@ -439,7 +440,8 @@ func (t *Topology) endpoint(ctx context.Context, scoped graph.ScopedNode, limit 
 	resource := newResource(scoped)
 	owners.annotate(&resource)
 	return Endpoint{Resource: resource, Method: method, Route: route,
-		Exposers: exposers, Handlers: handlers, HandlerStatus: status,
+		Authority: strings.TrimSpace(scoped.Node.Properties["authority"]),
+		Exposers:  exposers, Handlers: handlers, HandlerStatus: status,
 		Middleware: resolvedMiddleware, UnresolvedMiddleware: unresolvedMiddleware,
 		MiddlewareTruncated: middlewareTruncated}, exposedTruncated || handlersTruncated || middlewareTruncated, nil
 }
@@ -683,11 +685,12 @@ type routeCandidate struct {
 
 func endpointRouteCandidate(scoped graph.ScopedNode) (routeCandidate, bool) {
 	method, route := endpointMethodRoute(scoped.Node)
-	normalizedMethod, methodErr := httpmodel.NormalizeMethod(method)
+	normalizedMethod, methodErr := httpmodel.PreserveMethod(method)
 	parsedRoute, routeErr := httpmodel.ParseRoute(route)
 	if methodErr != nil || routeErr != nil || scoped.Node.Properties["http_invalid"] == "true" {
 		return routeCandidate{}, false
 	}
+	parsedRoute.Authority = strings.TrimSpace(scoped.Node.Properties["authority"])
 	return routeCandidate{scoped: scoped, method: normalizedMethod, route: parsedRoute}, true
 }
 
@@ -703,7 +706,7 @@ func requestMethodRoute(edge graph.Edge, target graph.Node) (string, httpmodel.R
 			route = fallbackRoute
 		}
 	}
-	normalizedMethod, methodErr := httpmodel.NormalizeMethod(method)
+	normalizedMethod, methodErr := httpmodel.PreserveMethod(method)
 	parsedRoute, routeErr := httpmodel.ParseRoute(route)
 	if targetRoute, err := httpmodel.ParseRoute(fallbackRoute); err == nil && parsedRoute.Authority == "" {
 		parsedRoute.Scheme = targetRoute.Scheme
@@ -867,7 +870,8 @@ func (t *Topology) collectOutboundRequests(ctx context.Context, options Topology
 		if len(candidates) == 0 && hasEligibleBoundary && validRoute {
 			compatible := make([]httpmodel.EndpointCandidate, 0, len(declarations))
 			for _, declaration := range declarations {
-				compatible = append(compatible, httpmodel.EndpointCandidate{Method: declaration.method, Route: declaration.route})
+				compatible = append(compatible, httpmodel.EndpointCandidate{Method: declaration.method,
+					Authority: declaration.route.Authority, Route: declaration.route})
 			}
 			for _, index := range httpmodel.BestCandidateIndexes(method, routeModel, compatible) {
 				candidates = append(candidates, declarations[index].scoped)

@@ -543,6 +543,7 @@ func (getter) Get(string) string { return "" }
 func (http getter) Call() {
 	_ = http.Get("Authorization")
 }
+
 `)
 	result, err := golangparser.NewWithSemanticLoader(nil).Parse(context.Background(), parserapi.Input{
 		Path: "client.go", Content: content, Repository: "client", RepoID: "repo", GoModule: "example.com/client",
@@ -594,6 +595,11 @@ func Call(ctx context.Context, id string) {
 
 func Direct(id string) {
 	request, _ := http.NewRequest(http.MethodGet, orders+url.PathEscape(id)+"?expand=true", nil)
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func Lower() {
+	request, _ := http.NewRequest("get", "/lower", nil)
 	_, _ = http.DefaultClient.Do(request)
 }
 
@@ -974,6 +980,7 @@ func NotHTTP() {
 	want := map[string]string{
 		"POST /charge/{_}":                       "example.com/client.Call",
 		"GET /orders/{_}":                        "example.com/client.Direct",
+		"get /lower":                             "example.com/client.Lower",
 		"GET /ready":                             "example.com/client.Convenience",
 		"GET /client-get":                        "example.com/client.ClientConvenience",
 		"HEAD /client-head":                      "example.com/client.ClientConvenience",
@@ -1048,6 +1055,9 @@ func NotHTTP() {
 			fact.Properties["http_source"] == "" {
 			t.Fatalf("request %q lacks semantic provenance: %#v", target, fact)
 		}
+	}
+	if found["get /lower"].Properties["http_method"] != "get" {
+		t.Fatalf("lower-case request method was not preserved: %#v", found["get /lower"])
 	}
 	for _, target := range []string{"GET /alternative", "DELETE /alternative", "GET /branch-left", "POST /branch-right"} {
 		if found[target].Properties["conditional"] != "true" {
@@ -2532,6 +2542,170 @@ func Right() error { return &r.Problem{} }
 		"example.com/identity.Left", "example.com/identity/left.Problem", "return")
 	assertHasFailureFact(t, result.Nodes, result.Facts, graph.EdgePropagatesError,
 		"example.com/identity.Right", "example.com/identity/right.Problem", "return")
+}
+
+func TestPackageSemanticLoaderExtractsTypedServeMuxPatterns(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/mux\n\ngo 1.26\n")
+	content := []byte(`package mux
+
+import "net/http"
+
+const cortexAgents = "GET /api/agents"
+
+func handler(http.ResponseWriter, *http.Request) {}
+func other(http.ResponseWriter, *http.Request) {}
+
+type server struct { mux *http.ServeMux }
+func (*server) methodHandler(http.ResponseWriter, *http.Request) {}
+
+type userMux struct{}
+func (*userMux) HandleFunc(string, http.HandlerFunc) {}
+
+func routes(dynamic string, unresolved http.Handler) {
+	mux := http.NewServeMux()
+	mux.HandleFunc(cortexAgents, handler)
+	mux.HandleFunc("POST /v1/observe", handler)
+	mux.HandleFunc("PATCH /v1/map", handler)
+	mux.HandleFunc("DELETE /v1/actions/{id}", handler)
+	mux.HandleFunc("HEAD /v1/status", handler)
+	mux.HandleFunc("/v1/events", handler)
+	mux.Handle("PUT /v1/assets/{path...}", http.HandlerFunc(handler))
+	mux.Handle("OPTIONS /v1/unresolved", unresolved)
+	http.HandleFunc("GET /v1/shutdown", handler)
+	http.Handle("/default", http.HandlerFunc(other))
+	http.DefaultServeMux.HandleFunc("POST /default-explicit", handler)
+	var s server
+	s.mux = mux
+	s.mux.HandleFunc("CONNECT /field", s.methodHandler)
+	http.NewServeMux().HandleFunc("TRACE /constructor", handler)
+	(&http.ServeMux{}).HandleFunc("GET example.test/hosted/{name}", handler)
+	mux.HandleFunc("GET /conflict", handler)
+	mux.HandleFunc("GET /conflict", other)
+	mux.HandleFunc("get /lower", handler)
+	mux.HandleFunc("GET /literal?query#fragment", handler)
+	mux.HandleFunc("GET /trail ", handler)
+	mux.HandleFunc("GET /bad/%zz", handler)
+	mux.HandleFunc("/a/../b", handler)
+	mux.HandleFunc("CONNECT /connect/../raw", handler)
+
+	mux.HandleFunc(dynamic, handler)
+	mux.HandleFunc("GET relative", handler)
+	mux.HandleFunc("GET /duplicate/{id}/{id}", handler)
+	mux.HandleFunc("GET /bad/{path...}/tail", handler)
+	new(userMux).HandleFunc("GET /invented", handler)
+}
+`)
+	writeFile(t, filepath.Join(root, "routes.go"), string(content))
+
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "routes.go", Content: content, Repository: "mux",
+		RepoID: "repo", GoModule: "example.com/mux",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string]string{
+		"GET /api/agents":                 "example.com/mux.handler",
+		"POST /v1/observe":                "example.com/mux.handler",
+		"PATCH /v1/map":                   "example.com/mux.handler",
+		"DELETE /v1/actions/{_}":          "example.com/mux.handler",
+		"HEAD /v1/status":                 "example.com/mux.handler",
+		"ANY /v1/events":                  "example.com/mux.handler",
+		"PUT /v1/assets/{_...}":           "example.com/mux.handler",
+		"OPTIONS /v1/unresolved":          "unresolved",
+		"GET /v1/shutdown":                "example.com/mux.handler",
+		"ANY /default":                    "example.com/mux.other",
+		"POST /default-explicit":          "example.com/mux.handler",
+		"CONNECT /field":                  "example.com/mux.server.methodHandler",
+		"TRACE /constructor":              "example.com/mux.handler",
+		"GET //example.test/hosted/{_}":   "example.com/mux.handler",
+		"get /lower":                      "example.com/mux.handler",
+		"GET /literal%3Fquery%23fragment": "example.com/mux.handler",
+		"GET /trail%20":                   "example.com/mux.handler",
+		"GET /bad/%25zz":                  "example.com/mux.handler",
+		"ANY /a/%252E%252E/b":             "example.com/mux.handler",
+		"CONNECT /connect/%252E%252E/raw": "example.com/mux.handler",
+	}
+	endpoints := map[string]graph.Node{}
+	endpointCount := 0
+	conflicts := 0
+	for _, node := range result.Nodes {
+		if node.Kind == graph.KindEndpoint {
+			endpointCount++
+			endpoints[node.Name] = node
+			if node.Name == "GET /conflict" {
+				conflicts++
+			}
+		}
+	}
+	if endpointCount != len(want)+2 || conflicts != 2 {
+		t.Fatalf("endpoints = %#v, count=%d conflicts=%d, want %d typed registrations and two conflicts", endpoints, endpointCount, conflicts, len(want))
+	}
+	conflictHandlers := map[string]bool{}
+	for _, node := range result.Nodes {
+		if node.Kind != graph.KindEndpoint || node.Name != "GET /conflict" {
+			continue
+		}
+		for _, fact := range result.Facts {
+			if fact.Kind == graph.EdgeHandledBy && fact.FromID == node.ID {
+				conflictHandlers[fact.Target] = true
+			}
+		}
+	}
+	if !conflictHandlers["example.com/mux.handler"] || !conflictHandlers["example.com/mux.other"] {
+		t.Fatalf("conflicting registrations lost distinct handlers: %#v", conflictHandlers)
+	}
+	for name, handler := range want {
+		endpoint, ok := endpoints[name]
+		if !ok {
+			t.Errorf("missing endpoint %q: %#v", name, endpoints)
+			continue
+		}
+		found := false
+		for _, fact := range result.Facts {
+			if fact.Kind == graph.EdgeHandledBy && fact.FromID == endpoint.ID && fact.Target == handler {
+				found = true
+				if handler == "unresolved" && fact.Properties["unresolved"] != "true" {
+					t.Errorf("dynamic handler did not remain unresolved: %#v", fact)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("endpoint %q missing handled_by %q: %#v", name, handler, result.Facts)
+		}
+	}
+	hosted := endpoints["GET //example.test/hosted/{_}"]
+	if hosted.Properties["authority"] != "example.test" ||
+		hosted.Properties["raw_pattern"] != "GET example.test/hosted/{name}" ||
+		hosted.Properties["route"] != "/hosted/{_}" {
+		t.Fatalf("host-qualified evidence = %#v", hosted)
+	}
+
+	for _, invalid := range []string{"GET /invented", "GET relative", "GET /duplicate/{_}/{_}", "GET /bad/{_...}/tail"} {
+		if _, ok := endpoints[invalid]; ok {
+			t.Errorf("invalid or user-defined registration emitted %q", invalid)
+		}
+	}
+	ordinary := 0
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeCalls && (fact.Target == "net/http.ServeMux.HandleFunc" || fact.Target == "example.com/mux.userMux.HandleFunc") {
+			ordinary++
+		}
+	}
+	if ordinary != 5 {
+		t.Fatalf("dynamic/invalid/user calls = %d, want 5: %#v", ordinary, result.Facts)
+	}
+	invalidDiagnostics := 0
+	for _, diagnostic := range result.Diagnostics {
+		if strings.Contains(diagnostic.Message, "ServeMux pattern") {
+			invalidDiagnostics++
+		}
+	}
+	if invalidDiagnostics != 4 {
+		t.Fatalf("ServeMux diagnostics = %d, want 4: %#v", invalidDiagnostics, result.Diagnostics)
+	}
 }
 
 func TestPackageSemanticLoaderComposesChiRoutesAndMiddleware(t *testing.T) {

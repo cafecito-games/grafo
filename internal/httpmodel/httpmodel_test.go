@@ -19,6 +19,7 @@ func TestParseRouteCanonicalizesIdentityAndPreservesEvidence(t *testing.T) {
 		{name: "regex repetition", input: `/users/{characterID:[0-9]{2}}`, canonical: `/users/{_:[0-9]{2}}`},
 		{name: "escaped regex", input: `/users/{characterID:\d+}`, canonical: `/users/{_:\d+}`},
 		{name: "catchall", input: "/assets/{path...}", canonical: "/assets/{_...}"},
+		{name: "ServeMux end marker", input: "/posts/{$}", canonical: "/posts/{$}"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -69,6 +70,9 @@ func TestCompatibilityRanksOnlyProvenMatches(t *testing.T) {
 		{name: "unknown does not satisfy regex", declaration: `/users/{id:[0-9]+}`, request: "/users/{value}", want: RankNone},
 		{name: "same regex is compatible", declaration: `/users/{id:[0-9]+}`, request: `/users/{value:[0-9]+}`, want: RankTemplate},
 		{name: "catchall is lowest confidence", declaration: "/assets/{path...}", request: "/assets/css/app.css", want: RankCatchAll},
+		{name: "catchall accepts trailing slash", declaration: "/assets/{path...}", request: "/assets/", want: RankCatchAll},
+		{name: "ServeMux end marker requires trailing slash", declaration: "/posts/{$}", request: "/posts/", want: RankTemplate},
+		{name: "ServeMux end marker rejects no slash", declaration: "/posts/{$}", request: "/posts", want: RankNone},
 		{name: "dynamic catchall needs catchall declaration", declaration: "/assets/{file}", request: "/assets/{path...}", want: RankNone},
 		{name: "segment count differs", declaration: "/users/{id}", request: "/users/42/profile", want: RankNone},
 	}
@@ -155,6 +159,46 @@ func TestBestCandidateIndexesKeepsOnlyTheStrongestCompatibleRank(t *testing.T) {
 	indexes := BestCandidateIndexes("GET", request, candidates)
 	if len(indexes) != 1 || indexes[0] != 2 {
 		t.Fatalf("best candidate indexes = %v, want [2]", indexes)
+	}
+}
+
+func TestBestCandidateIndexesUsesMethodTierAndAuthority(t *testing.T) {
+	request := mustRoute(t, "/users/42")
+	candidates := []EndpointCandidate{
+		{Method: "ANY", Route: mustRoute(t, "/users/42")},
+		{Method: "GET", Route: mustRoute(t, "/users/{id}")},
+		{Method: "GET", Authority: "api.example.test", Route: mustRoute(t, "/users/42")},
+	}
+	if indexes := BestCandidateIndexes("GET", request, candidates); len(indexes) != 1 || indexes[0] != 1 {
+		t.Fatalf("GET candidate indexes = %v, want exact-method tier [1]", indexes)
+	}
+	if indexes := BestCandidateIndexes("POST", request, candidates); len(indexes) != 1 || indexes[0] != 0 {
+		t.Fatalf("POST candidate indexes = %v, want ANY fallback [0]", indexes)
+	}
+	request.Authority = "external.example.test"
+	if indexes := BestCandidateIndexes("POST", request, candidates); len(indexes) != 0 {
+		t.Fatalf("external request candidate indexes = %v, want none", indexes)
+	}
+	if indexes := BestCandidateIndexes("GET", mustRoute(t, "/lower"), []EndpointCandidate{
+		{Method: "get", Route: mustRoute(t, "/lower")},
+	}); len(indexes) != 0 {
+		t.Fatalf("case-distinct method candidate indexes = %v, want none", indexes)
+	}
+}
+
+func TestParseRoutePreservesSegmentIdentityAndInvalidEscapes(t *testing.T) {
+	for _, value := range []string{"/files/a%2fb", "/literal%3Fquery%23fragment", "/bad/%25zz", "/a/%252E%252E/b"} {
+		if _, err := ParseRoute(value); err != nil {
+			t.Fatalf("ParseRoute(%q): %v", value, err)
+		}
+	}
+	left := mustRoute(t, "/files/a%2fb")
+	right := mustRoute(t, "/files/a%2Fb")
+	if Compatibility(left, right) != RankExact {
+		t.Fatalf("escaped segment identity differs: left=%#v right=%#v", left, right)
+	}
+	if route := mustRoute(t, "/literal%3Fquery%23fragment"); route.Query != "" || route.Fragment != "" {
+		t.Fatalf("escaped literals became URL structure: %#v", route)
 	}
 }
 

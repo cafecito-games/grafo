@@ -66,6 +66,21 @@ type SemanticChiEndpoint struct {
 	Unresolved   bool
 }
 
+// SemanticServeMuxEndpoint is compact go/types-backed evidence for one
+// standard-library net/http ServeMux registration.
+type SemanticServeMuxEndpoint struct {
+	Function     string
+	FunctionKind graph.NodeKind
+	Method       string
+	Route        string
+	Host         string
+	Pattern      string
+	Handler      string
+	HandlerKind  graph.NodeKind
+	Location     graph.Location
+	Unresolved   bool
+}
+
 // SemanticHTTPRequest is compact, go/types-backed evidence for one proven
 // outbound request at its highest package-local application callsite.
 type SemanticHTTPRequest struct {
@@ -149,24 +164,26 @@ type SemanticFailure struct {
 // SemanticView contains only the evidence needed while parsing one file. It
 // deliberately does not retain go/ast or go/types graphs after loading.
 type SemanticView struct {
-	Available         bool
-	Included          bool
-	PackagePath       string
-	ModulePath        string
-	BuildContext      string
-	Calls             map[int]SemanticCall
-	ProtocolUses      []SemanticProtocolUse
-	TransportUses     []SemanticTransportUse
-	Implementations   []SemanticImplementation
-	Functions         map[string]SemanticFunction
-	ErrorDeclarations []SemanticErrorDeclaration
-	Failures          []SemanticFailure
-	ChiEndpoints      []SemanticChiEndpoint
-	ChiEndpointCalls  map[int]bool
-	NonChiHTTPCalls   map[int]bool
-	HTTPRequests      []SemanticHTTPRequest
-	HTTPRequestCalls  map[int]bool
-	Diagnostics       []graph.Diagnostic
+	Available             bool
+	Included              bool
+	PackagePath           string
+	ModulePath            string
+	BuildContext          string
+	Calls                 map[int]SemanticCall
+	ProtocolUses          []SemanticProtocolUse
+	TransportUses         []SemanticTransportUse
+	Implementations       []SemanticImplementation
+	Functions             map[string]SemanticFunction
+	ErrorDeclarations     []SemanticErrorDeclaration
+	Failures              []SemanticFailure
+	ChiEndpoints          []SemanticChiEndpoint
+	ChiEndpointCalls      map[int]bool
+	ServeMuxEndpoints     []SemanticServeMuxEndpoint
+	ServeMuxEndpointCalls map[int]bool
+	NonChiHTTPCalls       map[int]bool
+	HTTPRequests          []SemanticHTTPRequest
+	HTTPRequestCalls      map[int]bool
+	Diagnostics           []graph.Diagnostic
 }
 
 type SemanticLoadMetrics struct {
@@ -352,6 +369,8 @@ func cloneSemanticView(view SemanticView) SemanticView {
 		copyView.ChiEndpoints[index].Middleware = append([]SemanticChiMiddleware(nil), endpoint.Middleware...)
 	}
 	copyView.ChiEndpointCalls = cloneBoolMap(view.ChiEndpointCalls)
+	copyView.ServeMuxEndpoints = append([]SemanticServeMuxEndpoint(nil), view.ServeMuxEndpoints...)
+	copyView.ServeMuxEndpointCalls = cloneBoolMap(view.ServeMuxEndpointCalls)
 	copyView.NonChiHTTPCalls = cloneBoolMap(view.NonChiHTTPCalls)
 	copyView.HTTPRequests = make([]SemanticHTTPRequest, len(view.HTTPRequests))
 	for index, request := range view.HTTPRequests {
@@ -600,6 +619,7 @@ func collectPackageViews(root, buildContext, modulePath string, pkg *packages.Pa
 	// useful local type identities when an unrelated declaration failed to
 	// check. Missing identities remain unknown and therefore emit no facts.
 	collectChiPackageViews(root, pkg, views)
+	collectServeMuxPackageViews(root, pkg, views)
 	collectHTTPPackageViews(root, pkg, views)
 	if len(pkg.Errors) == 0 {
 		collectTransportPackageViews(root, pkg, views)

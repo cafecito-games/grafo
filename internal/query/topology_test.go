@@ -19,7 +19,7 @@ func TestEndpointCatalogAndHandlerResolutionUseGraphEvidence(t *testing.T) {
 	service := query.NewTopology(repository)
 
 	endpoints, err := service.Endpoints(context.Background(), query.TopologyOptions{
-		Repository: "orders", Method: "get", Route: "/orders", Limit: 10,
+		Repository: "orders", Method: "GET", Route: "/orders", Limit: 10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -70,6 +70,30 @@ func TestEndpointCatalogAndHandlerResolutionUseGraphEvidence(t *testing.T) {
 		len(eventHandlers.Matches[0].Handlers) != 1 ||
 		eventHandlers.Matches[0].Handlers[0].Node.QualifiedName != "billing.OnOrderPlaced" {
 		t.Fatalf("find handler returned the wrong event match: %#v", eventHandlers)
+	}
+}
+
+func TestOutboundRequestsPreserveCaseSensitiveMethods(t *testing.T) {
+	repository := newTopologyFixture()
+	repository.add("orders", graph.Node{ID: "n:endpoint-lower", Kind: graph.KindEndpoint, Name: "get /case",
+		QualifiedName: "endpoint:get /case@routes.go:40", Properties: map[string]string{"method": "get", "route": "/case"}})
+	repository.add("orders", graph.Node{ID: "n:endpoint-upper", Kind: graph.KindEndpoint, Name: "GET /case",
+		QualifiedName: "endpoint:GET /case@routes.go:41", Properties: map[string]string{"method": "GET", "route": "/case"}})
+	repository.add("client", graph.Node{ID: "n:client-lower", Kind: graph.KindFunction, Name: "Lower", QualifiedName: "client.Lower"})
+	repository.add("client", graph.Node{ID: "n:external-lower", Kind: graph.KindEndpoint, Name: "get /case",
+		QualifiedName: "get /case", External: true})
+	repository.edges = append(repository.edges, graph.Edge{ID: "e:request-lower", FactID: "f:request-lower",
+		FromID: "n:client-lower", ToID: "n:external-lower", Kind: graph.EdgeRequests,
+		Properties: httpmodel.WithDestinationEvidence(map[string]string{"http_method": "get", "http_route": "/case"},
+			httpmodel.DestinationUnresolved, httpmodel.EvidenceRoute)})
+
+	result, err := query.NewTopology(repository).OutboundRequests(context.Background(), query.TopologyOptions{Method: "get", Limit: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Requests) != 1 || result.Requests[0].Method != strings.ToLower(http.MethodGet) ||
+		result.Requests[0].Destination.ID != "n:endpoint-lower" {
+		t.Fatalf("lower-case topology request = %#v", result)
 	}
 }
 
@@ -346,7 +370,7 @@ func TestOutboundRequestsRankCanonicalRouteCompatibility(t *testing.T) {
 func TestRouteFiltersUseCanonicalCompatibility(t *testing.T) {
 	service := query.NewTopology(newHTTPCompatibilityFixture())
 	result, err := service.Endpoints(context.Background(), query.TopologyOptions{
-		Method: "get", Route: "/people/{id}/", Limit: 20,
+		Method: "GET", Route: "/people/{id}/", Limit: 20,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -769,6 +793,11 @@ func newTopologyFixture() *catalogRepository {
 	}
 	add("payments-a", graph.Node{ID: "n:get-charge", Kind: graph.KindEndpoint, Name: "GET /charge",
 		QualifiedName: "endpoint:GET /charge@a.go:8", Properties: map[string]string{"method": "GET", "route": "/charge"}})
+	add("payments-a", graph.Node{ID: "n:any-charge", Kind: graph.KindEndpoint, Name: "ANY /charge",
+		QualifiedName: "endpoint:ANY /charge@a.go:9", Properties: map[string]string{"method": "ANY", "route": "/charge"}})
+	add("payments-a", graph.Node{ID: "n:host-charge", Kind: graph.KindEndpoint, Name: "POST //api.example.test/charge",
+		QualifiedName: "endpoint:POST //api.example.test/charge@a.go:10",
+		Properties:    map[string]string{"method": "POST", "route": "/charge", "authority": "api.example.test"}})
 	add("client", graph.Node{ID: "n:external-charge", Kind: graph.KindEndpoint, Name: "POST /charge",
 		QualifiedName: "POST /charge", External: true,
 		Properties: map[string]string{"unresolved": "true"}})
