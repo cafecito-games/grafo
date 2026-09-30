@@ -1184,6 +1184,58 @@ func (r *Repository) EdgesTo(ctx context.Context, id string) ([]graph.Edge, erro
 	return edgesFromRows(rows), nil
 }
 
+// ExternalRequestEdges returns unresolved HTTP request boundaries in stable,
+// bounded pages. Both endpoint and source nodes are hydrated by the same query
+// so federation can build its reverse projection without N+1 adjacency loads.
+func (r *Repository) ExternalRequestEdges(ctx context.Context, after string, limit int) (graph.ExternalRequestEdgePage, error) {
+	if limit <= 0 {
+		return graph.ExternalRequestEdgePage{}, fmt.Errorf("external request edge limit must be positive")
+	}
+	if limit == int(^uint(0)>>1) {
+		return graph.ExternalRequestEdgePage{}, fmt.Errorf("external request edge limit is too large")
+	}
+	rows, err := r.queries.ListExternalRequestEdges(ctx, sqlcgen.ListExternalRequestEdgesParams{
+		AfterID: after, MaxResults: int64(limit) + 1,
+	})
+	if err != nil {
+		return graph.ExternalRequestEdgePage{}, err
+	}
+	page := graph.ExternalRequestEdgePage{Items: make([]graph.ExternalRequestEdge, 0, min(len(rows), limit))}
+	if len(rows) > limit {
+		rows = rows[:limit]
+		page.Next = rows[len(rows)-1].EdgeID
+	}
+	for _, row := range rows {
+		edgeProperties, err := decodeRelationProperties("edge "+row.EdgeID, row.EdgeProperties)
+		if err != nil {
+			return graph.ExternalRequestEdgePage{}, err
+		}
+		sourceProperties, err := decodeRelationProperties("source node "+row.SourceID, row.SourceProperties)
+		if err != nil {
+			return graph.ExternalRequestEdgePage{}, err
+		}
+		targetProperties, err := decodeRelationProperties("target node "+row.TargetID, row.TargetProperties)
+		if err != nil {
+			return graph.ExternalRequestEdgePage{}, err
+		}
+		page.Items = append(page.Items, graph.ExternalRequestEdge{
+			Edge: graph.Edge{ID: row.EdgeID, FactID: row.EdgeFactID, FromID: row.EdgeFromID, ToID: row.EdgeToID,
+				Kind: graph.EdgeKind(row.EdgeKind), Producer: row.EdgeProducer,
+				Location:   graph.Location{Path: row.EdgePath, Line: int(row.EdgeLine), Column: int(row.EdgeColumnNo), EndLine: int(row.EdgeEndLine)},
+				Properties: edgeProperties},
+			Source: graph.Node{ID: row.SourceID, Kind: graph.NodeKind(row.SourceKind), Name: row.SourceName,
+				QualifiedName: row.SourceQualifiedName, Language: row.SourceLanguage,
+				Location:   graph.Location{Path: row.SourcePath, Line: int(row.SourceLine), Column: int(row.SourceColumnNo), EndLine: int(row.SourceEndLine)},
+				Properties: sourceProperties, OwnerFile: row.SourceOwnerFile, External: row.SourceExternal != 0},
+			Target: graph.Node{ID: row.TargetID, Kind: graph.NodeKind(row.TargetKind), Name: row.TargetName,
+				QualifiedName: row.TargetQualifiedName, Language: row.TargetLanguage,
+				Location:   graph.Location{Path: row.TargetPath, Line: int(row.TargetLine), Column: int(row.TargetColumnNo), EndLine: int(row.TargetEndLine)},
+				Properties: targetProperties, OwnerFile: row.TargetOwnerFile, External: row.TargetExternal != 0},
+		})
+	}
+	return page, nil
+}
+
 // RelationEdges loads at most Limit+1 rows for each exact relation and joins
 // the node opposite the subject in the same query. Catalog callers therefore
 // pay only for requested evidence and never perform per-edge node lookups.

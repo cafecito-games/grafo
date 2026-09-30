@@ -167,6 +167,48 @@ func TestRequestResolutionRejectsInvalidExactTargets(t *testing.T) {
 	}
 }
 
+func TestExternalRequestEdgesPagesHydratedBoundaries(t *testing.T) {
+	ctx := context.Background()
+	repository, err := Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+
+	sources := []graph.Node{
+		{ID: "source-a", Kind: graph.KindFunction, Name: "A", QualifiedName: "client.A", OwnerFile: "client.go"},
+		{ID: "source-b", Kind: graph.KindFunction, Name: "B", QualifiedName: "client.B", OwnerFile: "client.go"},
+	}
+	facts := []graph.Fact{
+		{ID: "request-a", FromID: sources[0].ID, Kind: graph.EdgeRequests, Target: "GET /a", TargetKind: graph.KindEndpoint,
+			OwnerFile: "client.go", Properties: requestProperties("/a", nil)},
+		{ID: "request-b", FromID: sources[1].ID, Kind: graph.EdgeRequests, Target: "GET /b", TargetKind: graph.KindEndpoint,
+			OwnerFile: "client.go", Properties: requestProperties("/b", nil)},
+	}
+	if err := repository.ReplaceOwner(ctx, "client.go", graph.ParseResult{Nodes: sources, Facts: facts}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := repository.ExternalRequestEdges(ctx, "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Items) != 1 || first.Next == "" || first.Items[0].Source.ID == "" || !first.Items[0].Target.External {
+		t.Fatalf("first external request page = %#v", first)
+	}
+	second, err := repository.ExternalRequestEdges(ctx, first.Next, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Items) != 1 || second.Next != "" || second.Items[0].Edge.ID == first.Items[0].Edge.ID ||
+		second.Items[0].Source.ID == "" || !second.Items[0].Target.External {
+		t.Fatalf("second external request page = %#v", second)
+	}
+}
+
 func requestProperties(route string, extra map[string]string) map[string]string {
 	properties := map[string]string{"http_method": "GET", "http_route": route, "http_raw_route": route}
 	for key, value := range extra {

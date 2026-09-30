@@ -99,6 +99,52 @@ WHERE nodes.external = 1
   )
 ORDER BY edges.kind, edges.from_id, edges.id;
 
+-- name: ListExternalRequestEdges :many
+SELECT
+    edges.id AS edge_id,
+    edges.fact_id AS edge_fact_id,
+    edges.from_id AS edge_from_id,
+    edges.to_id AS edge_to_id,
+    edges.kind AS edge_kind,
+    edges.producer AS edge_producer,
+    edges.path AS edge_path,
+    edges.line AS edge_line,
+    edges.column_no AS edge_column_no,
+    edges.end_line AS edge_end_line,
+    edges.properties AS edge_properties,
+    source.id AS source_id,
+    source.kind AS source_kind,
+    source.name AS source_name,
+    source.qualified_name AS source_qualified_name,
+    source.language AS source_language,
+    source.path AS source_path,
+    source.line AS source_line,
+    source.column_no AS source_column_no,
+    source.end_line AS source_end_line,
+    source.properties AS source_properties,
+    source.owner_file AS source_owner_file,
+    source.external AS source_external,
+    target.id AS target_id,
+    target.kind AS target_kind,
+    target.name AS target_name,
+    target.qualified_name AS target_qualified_name,
+    target.language AS target_language,
+    target.path AS target_path,
+    target.line AS target_line,
+    target.column_no AS target_column_no,
+    target.end_line AS target_end_line,
+    target.properties AS target_properties,
+    target.owner_file AS target_owner_file,
+    target.external AS target_external
+FROM edges
+JOIN nodes AS source ON source.id = edges.from_id
+JOIN nodes AS target ON target.id = edges.to_id
+WHERE edges.kind = 'requests'
+  AND target.external = 1
+  AND edges.id > @after_id
+ORDER BY edges.id
+LIMIT @max_results;
+
 -- name: CountEdges :one
 SELECT COUNT(*) FROM edges;
 

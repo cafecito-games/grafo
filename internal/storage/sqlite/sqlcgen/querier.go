@@ -45,6 +45,7 @@ type Querier interface {
 	ListEdgesTo(ctx context.Context, toID string) ([]Edge, error)
 	ListExternalEdgesMatching(ctx context.Context, arg ListExternalEdgesMatchingParams) ([]Edge, error)
 	ListExternalNodesMatching(ctx context.Context, arg ListExternalNodesMatchingParams) ([]Node, error)
+	ListExternalRequestEdges(ctx context.Context, arg ListExternalRequestEdgesParams) ([]ListExternalRequestEdgesRow, error)
 	ListFiles(ctx context.Context) ([]File, error)
 	ListIncomingRelationEdges(ctx context.Context, arg ListIncomingRelationEdgesParams) ([]ListIncomingRelationEdgesRow, error)
 	ListNodesByKind(ctx context.Context, arg ListNodesByKindParams) ([]Node, error)
