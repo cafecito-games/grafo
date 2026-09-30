@@ -89,6 +89,24 @@ type ExternalNodeRepository interface {
 	ExternalNodesMatching(context.Context, Node) ([]Node, error)
 }
 
+// ExternalRequestEdge is one persisted request boundary plus both endpoint and
+// source nodes. Federation consumes these in bounded pages to build a symmetric
+// route projection without per-endpoint adjacency queries.
+type ExternalRequestEdge struct {
+	Edge   Edge
+	Source Node
+	Target Node
+}
+
+type ExternalRequestEdgePage struct {
+	Items []ExternalRequestEdge
+	Next  string
+}
+
+type ExternalRequestEdgeRepository interface {
+	ExternalRequestEdges(context.Context, string, int) (ExternalRequestEdgePage, error)
+}
+
 // NodeVisibility selects whether an enumeration returns locally declared
 // nodes, unresolved external nodes, or both.
 type NodeVisibility string

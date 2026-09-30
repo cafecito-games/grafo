@@ -1447,6 +1447,41 @@ func ready() -> void:
 	}
 }
 
+func TestParserKeepsProjectOwnershipInsideSourceMembership(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "project.godot", "[autoload]\nRoot=\"*res://scripts/root.gd\"\n")
+	writeFile(t, root, "nested/project.godot", "[autoload]\nNested=\"*res://scripts/nested.gd\"\n")
+	input := parserapi.Input{
+		Root: root, Path: "nested/scripts/hud.gd", SourcePaths: []string{"project.godot", "nested/scripts/hud.gd"},
+		Content:    []byte("extends Node\nfunc ready():\n\tRoot.start()\n\tNested.start()\n"),
+		Repository: "sample", RepoID: "repo:sample",
+	}
+	parser := gdscriptparser.New()
+	before, err := parser.SemanticKey(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := parser.Parse(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	findFactWithTarget(t, result.Facts, graph.EdgeReferences, "godot:autoload:project.godot:Root")
+	for _, fact := range result.Facts {
+		if fact.Target == "godot:autoload:nested/project.godot:Nested" {
+			t.Fatalf("excluded nested project owned eligible GDScript: %#v", fact)
+		}
+	}
+
+	writeFile(t, root, "nested/project.godot", "[autoload]\nChanged=\"*res://scripts/changed.gd\"\n")
+	after, err := parser.SemanticKey(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before != after {
+		t.Fatalf("excluded project changed GDScript semantic key: before=%q after=%q", before, after)
+	}
+}
+
 func writeFile(t *testing.T, root, name, content string) {
 	t.Helper()
 	path := filepath.Join(root, filepath.FromSlash(name))

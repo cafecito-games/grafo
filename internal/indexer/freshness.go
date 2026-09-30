@@ -18,6 +18,7 @@ import (
 
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	"github.com/cafecito-games/grafo/internal/projectconfig"
+	"github.com/cafecito-games/grafo/internal/repositorypath"
 )
 
 const (
@@ -129,8 +130,8 @@ func ReprobeFreshness(ctx context.Context, previous FreshnessProbe, registry *pa
 	project := projectFromSnapshot(root, filepath.Base(root), goModule, *snapshot, true)
 	reuseWorkspaceKeys := previous.Project.gitSnapshot != nil &&
 		previous.Project.gitSnapshot.Head == snapshot.Head && previous.Project.gitSnapshot.Identity == snapshot.Identity &&
-		len(freshnessRelevantPaths(previous.Project.gitSnapshot.Changed, registry)) == 0 &&
-		len(freshnessRelevantPaths(snapshot.Changed, registry)) == 0
+		len(freshnessRelevantPaths(previous.Project.gitSnapshot.Changed, registry, projectconfig.IndexScope{})) == 0 &&
+		len(freshnessRelevantPaths(snapshot.Changed, registry, projectconfig.IndexScope{})) == 0
 	return probeProjectFreshness(ctx, project, registry, options, &previous, reuseWorkspaceKeys)
 }
 
@@ -152,11 +153,12 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 	if maximum <= 0 {
 		maximum = defaultFreshnessMax
 	}
-	hiddenSemanticDigest, hiddenGitCommands, err := freshnessHiddenSemanticDigest(ctx, project, registry, maximum)
+	configuration, err := projectconfig.Load(project.Root)
 	if err != nil {
 		return FreshnessProbe{}, err
 	}
-	if _, err := projectconfig.Load(project.Root); err != nil {
+	hiddenSemanticDigest, hiddenGitCommands, err := freshnessHiddenSemanticDigest(ctx, project, registry, maximum, configuration.Index)
+	if err != nil {
 		return FreshnessProbe{}, err
 	}
 	if err := ctx.Err(); err != nil {
@@ -170,10 +172,21 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 		return FreshnessProbe{}, err
 	}
 	var keys map[string]string
+	membershipGitCommands := 0
+	membershipFallback := ""
 	if reuseWorkspaceKeys && cacheable && previous != nil && hiddenSemanticDigest == previous.hiddenSemanticDigest &&
 		equalFreshnessMap(evidence, previous.workspaceSemanticEvidence) {
 		keys = cloneFreshnessMap(previous.workspaceSemanticKeys)
 	} else {
+		discovered, discoverErr := discoverFilesWithCatalog(ctx, project, registry, nil, false, configuration.Index)
+		if discoverErr != nil {
+			return FreshnessProbe{}, fmt.Errorf("discover workspace semantic membership: %w", discoverErr)
+		}
+		semanticInput.SourcePaths = discovered.paths
+		membershipGitCommands = discovered.gitCommands
+		if len(discovered.diagnostics) > 0 {
+			membershipFallback = discovered.diagnostics[0].Message
+		}
 		keys, err = registry.WorkspaceSemanticKeys(ctx, semanticInput)
 		if err != nil {
 			return FreshnessProbe{}, err
@@ -182,6 +195,13 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 	if !project.GitManaged || project.gitSnapshot == nil {
 		return FreshnessProbe{
 			Project: project, Fallback: "non-Git project requires a conservative full refresh",
+			workspaceSemanticKeys: cloneFreshnessMap(keys), workspaceSemanticEvidence: cloneFreshnessMap(evidence),
+			hiddenSemanticDigest: hiddenSemanticDigest,
+		}, nil
+	}
+	if membershipFallback != "" {
+		return FreshnessProbe{
+			Project: project, Fallback: membershipFallback, GitCommands: project.gitSnapshot.Commands + hiddenGitCommands + membershipGitCommands,
 			workspaceSemanticKeys: cloneFreshnessMap(keys), workspaceSemanticEvidence: cloneFreshnessMap(evidence),
 			hiddenSemanticDigest: hiddenSemanticDigest,
 		}, nil
@@ -199,11 +219,11 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 	encoder.addString("head", snapshot.Head)
 	encoder.addString("index-path", project.IndexPath)
 	encoder.addBytes("hidden-semantic-digest", hiddenSemanticDigest[:])
-	encoder.addStrings("changed", freshnessRelevantPaths(snapshot.Changed, registry))
-	encoder.addStrings("dirty", freshnessRelevantPaths(snapshot.Dirty, registry))
-	encoder.addStrings("untracked", freshnessRelevantPaths(snapshot.Untracked, registry))
+	encoder.addStrings("changed", freshnessRelevantPaths(snapshot.Changed, registry, configuration.Index))
+	encoder.addStrings("dirty", freshnessRelevantPaths(snapshot.Dirty, registry, configuration.Index))
+	encoder.addStrings("untracked", freshnessRelevantPaths(snapshot.Untracked, registry, configuration.Index))
 	for _, record := range snapshot.statusRecords {
-		if freshnessRecordRelevant(record, registry) {
+		if freshnessRecordRelevant(record, registry, configuration.Index) {
 			encoder.addString("status-record", record.encoded)
 		}
 	}
@@ -232,7 +252,7 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 		}
 		last = path
 		semanticInput := registry.IsSemanticDependency(path)
-		if (PathIgnored(path) && !semanticInput) || path == projectconfig.FileName {
+		if !configuration.Index.Allows(path) || (PathIgnored(path) && !semanticInput) || path == projectconfig.FileName {
 			continue
 		}
 		if _, ok := registry.For(path); !ok && !semanticInput {
@@ -252,13 +272,15 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 	}
 	return FreshnessProbe{
 		Project: project, Token: FreshnessToken{version: FreshnessTokenVersion, digest: encoder.sum()},
-		Supported: true, GitCommands: snapshot.Commands + hiddenGitCommands,
+		Supported: true, GitCommands: snapshot.Commands + hiddenGitCommands + membershipGitCommands,
 		workspaceSemanticKeys: cloneFreshnessMap(keys), workspaceSemanticEvidence: cloneFreshnessMap(evidence),
 		hiddenSemanticDigest: hiddenSemanticDigest,
 	}, nil
 }
 
-func freshnessHiddenSemanticDigest(ctx context.Context, project Project, registry *parserapi.Registry, maximum int64) ([sha256.Size]byte, int, error) {
+func freshnessHiddenSemanticDigest(ctx context.Context, project Project, registry *parserapi.Registry, maximum int64,
+	scope projectconfig.IndexScope,
+) ([sha256.Size]byte, int, error) {
 	encoder := newFreshnessEncoder()
 	encoder.addString("hidden-semantic-version", "hidden-semantic-v1")
 	if !project.GitManaged || project.gitSnapshot == nil {
@@ -291,12 +313,19 @@ func freshnessHiddenSemanticDigest(ctx context.Context, project Project, registr
 		}
 		relative = filepath.ToSlash(relative)
 		if entry.IsDir() {
-			if relative != "." {
-				switch entry.Name() {
-				case ".git", ".grafo", ".worktrees":
-					return filepath.SkipDir
-				}
+			if relative != "." && repositorypath.DirectoryIgnored(entry.Name()) && entry.Name() != "vendor" {
+				return filepath.SkipDir
 			}
+			return nil
+		}
+		if relative == projectconfig.FileName ||
+			strings.EqualFold(filepath.Base(relative), "project.godot") && !visible[relative] {
+			return nil
+		}
+		if !scope.Allows(relative) {
+			return nil
+		}
+		if repositorypath.Ignored(relative) && !vendoredSemanticPath(relative) {
 			return nil
 		}
 		if visible[relative] || !registry.IsSemanticDependency(relative) {
@@ -316,6 +345,15 @@ func freshnessHiddenSemanticDigest(ctx context.Context, project Project, registr
 		return [sha256.Size]byte{}, 1, err
 	}
 	return encoder.sum(), 1, nil
+}
+
+func vendoredSemanticPath(path string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+		if part == "vendor" {
+			return true
+		}
+	}
+	return false
 }
 
 func cloneFreshnessMap(values map[string]string) map[string]string {
@@ -356,10 +394,13 @@ func addFreshnessConfig(ctx context.Context, encoder *freshnessEncoder, path str
 	return nil
 }
 
-func freshnessRelevantPaths(paths []string, registry *parserapi.Registry) []string {
+func freshnessRelevantPaths(paths []string, registry *parserapi.Registry, scope projectconfig.IndexScope) []string {
 	result := make([]string, 0, len(paths))
 	for _, path := range paths {
 		path = filepath.ToSlash(path)
+		if !scope.Allows(path) {
+			continue
+		}
 		semanticInput := registry.IsSemanticDependency(path)
 		if PathIgnored(path) && !semanticInput {
 			continue
@@ -379,9 +420,9 @@ func freshnessRelevantPaths(paths []string, registry *parserapi.Registry) []stri
 	return result
 }
 
-func freshnessRecordRelevant(record gitStatusRecord, registry *parserapi.Registry) bool {
+func freshnessRecordRelevant(record gitStatusRecord, registry *parserapi.Registry, scope projectconfig.IndexScope) bool {
 	for _, path := range record.paths {
-		if len(freshnessRelevantPaths([]string{path}, registry)) != 0 {
+		if len(freshnessRelevantPaths([]string{path}, registry, scope)) != 0 {
 			return true
 		}
 	}
@@ -419,13 +460,9 @@ func (e *freshnessEncoder) sum() [sha256.Size]byte {
 }
 
 func safeFreshnessPath(root, relative string) (string, error) {
-	if filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, "../") {
-		return "", fmt.Errorf("freshness path escapes project root: %q", relative)
-	}
-	absolute := filepath.Clean(filepath.Join(root, filepath.FromSlash(relative)))
-	rootWithSeparator := filepath.Clean(root) + string(filepath.Separator)
-	if absolute != filepath.Clean(root) && !strings.HasPrefix(absolute, rootWithSeparator) {
-		return "", fmt.Errorf("freshness path escapes project root: %q", relative)
+	absolute, err := repositorypath.ResolvePath(root, relative)
+	if err != nil {
+		return "", fmt.Errorf("resolve freshness path %q: %w", relative, err)
 	}
 	return absolute, nil
 }

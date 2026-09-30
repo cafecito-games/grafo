@@ -31,18 +31,16 @@ func (*Parser) Language() string { return graph.ProducerGodot }
 // agree. It is computed once per indexing run, and the scan it performs is the
 // same one the extractors then read from cache.
 func (*Parser) WorkspaceSemanticKey(_ context.Context, input parserapi.Input) (string, error) {
-	aliases, err := godotid.LoadAliases(input.Root)
+	aliases, err := godotid.LoadAliases(input.Root, input.SourcePaths)
 	if err != nil {
 		return "", err
 	}
-	return "godot-workspace-v1:" + aliases.Digest, nil
+	return "godot-workspace-v2:" + aliases.Digest, nil
 }
 
 func (*Parser) WorkspaceSemanticEvidenceKey(context.Context, parserapi.Input) (string, error) {
-	return "godot-worktree-v1", nil
+	return "godot-worktree-v2", nil
 }
-
-func (p *Parser) IsSemanticInput(path string) bool { return p.Supports(path) }
 
 func (*Parser) Supports(path string) bool {
 	if isConfigFile(path) {
@@ -156,14 +154,14 @@ func (s scope) escapes(reference string) bool {
 
 func newScope(input parserapi.Input) (scope, error) {
 	result := scope{known: true}
-	project, projectErr := godotid.LoadProject(input.Root, input.Path)
+	project, projectErr := godotid.LoadProject(input.Root, input.Path, input.SourcePaths)
 	if strings.EqualFold(filepath.Base(input.Path), godotid.ProjectFileName) {
 		// This file is the project declaration, so its own path is authoritative
 		// and holds even when no filesystem is available.
 		project.Path = filepath.ToSlash(input.Path)
 	}
 	result.project = project
-	aliases, aliasErr := godotid.AliasesFor(input.Root)
+	aliases, aliasErr := godotid.AliasesFor(input.Root, input.SourcePaths)
 	if aliasErr != nil {
 		// An unreadable table knows nothing, so absence of a declaration proves
 		// nothing either: mark it incomplete so every UID check fails closed.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -12,12 +13,14 @@ import (
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/httpmodel"
 	"github.com/cafecito-games/grafo/internal/indexer"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	configparser "github.com/cafecito-games/grafo/internal/parser/config"
 	gdscriptparser "github.com/cafecito-games/grafo/internal/parser/gdscript"
 	godotparser "github.com/cafecito-games/grafo/internal/parser/godot"
 	golangparser "github.com/cafecito-games/grafo/internal/parser/golang"
+	manifestparser "github.com/cafecito-games/grafo/internal/parser/manifest"
 	markdownparser "github.com/cafecito-games/grafo/internal/parser/markdown"
 	protobufparser "github.com/cafecito-games/grafo/internal/parser/protobuf"
 	"github.com/cafecito-games/grafo/internal/parser/protobufbinding"
@@ -76,6 +79,129 @@ func (legacyVerbEndpointParser) Parse(_ context.Context, input parserapi.Input) 
 	return builder.Finish(), nil
 }
 
+func TestServiceHTTPAuthorityResolutionConvergesIncrementalAndClean(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	write(t, filepath.Join(root, "go.mod"), "module example.com/service\n\ngo 1.26\n")
+	enableIndexerChi(t, root)
+	writeHTTPFixture := func(call string) {
+		write(t, filepath.Join(root, "service.go"), `package service
+import (
+	"net/http"
+	"github.com/go-chi/chi/v5"
+)
+func Handler(http.ResponseWriter, *http.Request) {}
+func Routes() { router := chi.NewRouter(); router.Get("/users/{id}", Handler) }
+type API struct { baseURL string }
+func (api *API) Call() { _, _ = http.Get(`+call+`) }
+`)
+	}
+	writeHTTPFixture(`api.baseURL + "/users/42"`)
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(golangparser.New(), manifestparser.New()))
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	assertIndexedRequestResolution(t, ctx, repository, true, httpmodel.DestinationUnresolved)
+
+	writeHTTPFixture(`"/users/42"`)
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	incremental := indexedRequestEdges(t, ctx, repository)
+	assertIndexedRequestResolution(t, ctx, repository, false, httpmodel.DestinationResolved)
+	if _, err := service.Run(ctx, project, indexer.Options{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	clean := indexedRequestEdges(t, ctx, repository)
+	if !reflect.DeepEqual(incremental, clean) {
+		t.Fatalf("incremental request resolution differs from clean rebuild:\n%#v\n%#v", incremental, clean)
+	}
+
+	writeHTTPFixture(`api.baseURL + "/users/42"`)
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	incremental = indexedRequestEdges(t, ctx, repository)
+	assertIndexedRequestResolution(t, ctx, repository, true, httpmodel.DestinationUnresolved)
+	if _, err := service.Run(ctx, project, indexer.Options{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	clean = indexedRequestEdges(t, ctx, repository)
+	if !reflect.DeepEqual(incremental, clean) {
+		t.Fatalf("incremental unknown-authority resolution differs from clean rebuild:\n%#v\n%#v", incremental, clean)
+	}
+}
+
+func enableIndexerChi(t *testing.T, root string) {
+	t.Helper()
+	modulePath := filepath.Join(root, "go.mod")
+	content, err := os.ReadFile(modulePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, modulePath, string(content)+"\nrequire github.com/go-chi/chi/v5 v5.0.0\nreplace github.com/go-chi/chi/v5 => ./third_party/chi\n")
+	if err := os.MkdirAll(filepath.Join(root, "third_party", "chi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "third_party", "chi", "go.mod"), "module github.com/go-chi/chi/v5\n\ngo 1.26\n")
+	write(t, filepath.Join(root, "third_party", "chi", "chi.go"), `package chi
+import "net/http"
+type Router interface {
+	http.Handler
+	Get(string, http.HandlerFunc)
+}
+type Mux struct{}
+func NewRouter() *Mux { return &Mux{} }
+func (*Mux) ServeHTTP(http.ResponseWriter, *http.Request) {}
+func (*Mux) Get(string, http.HandlerFunc) {}
+`)
+}
+
+func indexedRequestEdges(t *testing.T, ctx context.Context, repository *sqlite.Repository) []graph.Edge {
+	t.Helper()
+	call, err := query.NewService(repository).Resolve(ctx, "example.com/service.API.Call")
+	if err != nil {
+		t.Fatal(err)
+	}
+	edges, err := repository.EdgesFrom(ctx, call.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := []graph.Edge{}
+	for _, edge := range edges {
+		if edge.Kind == graph.EdgeRequests {
+			result = append(result, edge)
+		}
+	}
+	return result
+}
+
+func assertIndexedRequestResolution(t *testing.T, ctx context.Context, repository *sqlite.Repository,
+	external bool, resolution httpmodel.DestinationResolution,
+) {
+	t.Helper()
+	edges := indexedRequestEdges(t, ctx, repository)
+	if len(edges) != 1 {
+		t.Fatalf("request edges = %#v", edges)
+	}
+	target, err := repository.Node(ctx, edges[0].ToID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.External != external || edges[0].Properties[httpmodel.PropertyDestinationResolution] != string(resolution) {
+		t.Fatalf("request target=%#v edge=%#v", target, edges[0])
+	}
+}
+
 func TestServiceIncrementallyRemovesLegacyVerbOnlyEndpoint(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -118,6 +244,77 @@ func TestServiceIncrementallyRemovesLegacyVerbOnlyEndpoint(t *testing.T) {
 	}
 	if !reflect.DeepEqual(report.Counts, clean.Counts) {
 		t.Fatalf("incremental endpoint removal differs from clean rebuild:\n%#v\n%#v", report.Counts, clean.Counts)
+	}
+}
+
+func TestServiceSemanticRebuildRemovesLegacyHeaderRequest(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	write(t, filepath.Join(root, "go.mod"), "module example.com/client\n\ngo 1.26\n")
+	source := []byte(`package client
+import "net/http"
+func Run(request *http.Request) {
+	_ = request.Header.Get("Authorization")
+	_, _ = http.Get("/health")
+}
+`)
+	write(t, filepath.Join(root, "client.go"), string(source))
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(golangparser.New()))
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	assertHTTPRequestSet(t, ctx, repository, []string{"GET /health"})
+
+	input := parserapi.Input{Root: root, Path: "client.go", Content: source, Repository: project.Name,
+		RepoID: project.ID, GoModule: project.GoModule}
+	legacy := parserapi.NewBuilder(input, "go")
+	legacy.AddFact(legacy.FileID(), graph.EdgeRequests, "", "GET Authorization", graph.KindEndpoint,
+		graph.Location{Path: "client.go", Line: 4, Column: 6}, map[string]string{
+			"http_method": "GET", "http_raw_method": "get", "http_raw_route": "Authorization",
+		})
+	if err := repository.ReplaceFile(ctx, graph.FileRecord{Path: "client.go", Hash: "legacy-header-request",
+		Language: "go", Size: int64(len(source)), IndexedAt: graph.NowUTC()}, legacy.Finish()); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.SetMeta(ctx, "semantic_index_version", "31"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertHTTPRequestSet(t, ctx, repository, []string{"GET Authorization"})
+
+	rebuilt, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebuilt.Rebuild != "semantic schema changed" || !reflect.DeepEqual(rebuilt.Updated, []string{"client.go"}) {
+		t.Fatalf("legacy request did not trigger a semantic rebuild: %#v", rebuilt)
+	}
+	assertHTTPRequestSet(t, ctx, repository, []string{"GET /health"})
+
+	unchanged, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unchanged.Updated) != 0 || unchanged.Unchanged != 1 {
+		t.Fatalf("unchanged reindex did not converge: %#v", unchanged)
+	}
+	clean, err := service.Run(ctx, project, indexer.Options{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(rebuilt.Counts, clean.Counts) {
+		t.Fatalf("semantic rebuild differs from clean rebuild:\n%#v\n%#v", rebuilt.Counts, clean.Counts)
 	}
 }
 
@@ -2037,6 +2234,100 @@ func TestServiceKeepsContradictedGodotUIDsUnresolved(t *testing.T) {
 	}
 	if len(stale.OutboundInstances) != 0 {
 		t.Fatalf("moved UID left a stale composition edge: %#v", stale.OutboundInstances)
+	}
+}
+
+func TestServiceBoundsGodotAliasesToGitMembership(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	runGit(t, root, "init", "-b", "main")
+	write(t, filepath.Join(root, ".gitignore"), ".worktrees/\nignored/\n")
+	write(t, mkdirFor(t, root, "project.godot"), "config_version=5\n")
+	write(t, mkdirFor(t, root, "scenes/target.tscn"),
+		"[gd_scene format=3 uid=\"uid://shared\"]\n\n[node name=\"Target\" type=\"Node\"]\n")
+	write(t, mkdirFor(t, root, "scenes/caller.tscn"),
+		"[gd_scene load_steps=2 format=3]\n\n"+
+			"[ext_resource type=\"PackedScene\" uid=\"uid://shared\" path=\"res://scenes/target.tscn\" id=\"1_target\"]\n\n"+
+			"[node name=\"Root\" type=\"Node\"]\n\n"+
+			"[node name=\"Child\" parent=\".\" instance=ExtResource(\"1_target\")]\n")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "fixture")
+
+	child := filepath.Join(root, ".worktrees", "child")
+	runGit(t, root, "worktree", "add", "-b", "child-boundary", child)
+	t.Cleanup(func() {
+		command := exec.Command("git", "-C", root, "worktree", "remove", "--force", child)
+		_ = command.Run()
+	})
+	write(t, mkdirFor(t, root, "ignored/copy.tscn"),
+		"[gd_scene format=3 uid=\"uid://shared\"]\n\n[node name=\"Ignored\" type=\"Node\"]\n")
+	write(t, mkdirFor(t, root, "scenes/untracked.tscn"),
+		"[gd_scene format=3 uid=\"uid://untracked\"]\n\n[node name=\"Untracked\" type=\"Node\"]\n")
+
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(godotparser.New()))
+	first, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(first.Updated, "scenes/untracked.tscn") {
+		t.Fatalf("eligible untracked resource was not indexed: %#v", first.Updated)
+	}
+	for _, diagnostic := range first.Diagnostics {
+		if strings.Contains(diagnostic.Message, "uid://shared") {
+			t.Fatalf("excluded duplicate UID affected parent checkout: %#v", first.Diagnostics)
+		}
+	}
+	composition, err := query.NewService(repository).GodotComposition(ctx, "scenes/caller", query.GodotCompositionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertComposition(t, composition.OutboundInstances, "scenes/target", graph.KindGodotScene)
+
+	// The linked child remains a valid repository root in its own right.
+	childProject, err := indexer.DiscoverProject(ctx, child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if childProject.Root != child {
+		t.Fatalf("child worktree root = %q, want %q", childProject.Root, child)
+	}
+	childRepository, err := sqlite.Open(ctx, childProject.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childService := indexer.NewService(childRepository, parserapi.NewRegistry(godotparser.New()))
+	childReport, err := childService.Run(ctx, childProject, indexer.Options{})
+	if closeErr := childRepository.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, diagnostic := range childReport.Diagnostics {
+		if strings.Contains(diagnostic.Message, "uid://shared") {
+			t.Fatalf("child worktree could not index its own resources: %#v", childReport.Diagnostics)
+		}
+	}
+
+	write(t, filepath.Join(child, "scenes", "target.tscn"),
+		"[gd_scene format=3 uid=\"uid://changed-in-child\"]\n\n[node name=\"Target\" type=\"Node\"]\n")
+	write(t, filepath.Join(root, "ignored", "copy.tscn"),
+		"[gd_scene format=3 uid=\"uid://changed-while-ignored\"]\n\n[node name=\"Ignored\" type=\"Node\"]\n")
+	repeated, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repeated.Updated) != 0 || len(repeated.Removed) != 0 {
+		t.Fatalf("excluded edits dirtied parent Godot semantics: %#v", repeated)
 	}
 }
 
