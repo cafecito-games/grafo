@@ -489,10 +489,13 @@ type resolutionCacheEntry struct {
 }
 
 type resolutionCache struct {
-	capacity int
-	entries  map[resolutionKey]*list.Element
-	recent   *list.List
-	requests map[resolutionKey]requestCacheState
+	capacity              int
+	entries               map[resolutionKey]*list.Element
+	recent                *list.List
+	requests              map[resolutionKey]requestCacheState
+	endpointNodes         []graph.Node
+	endpointCatalog       httpmodel.CandidateCatalog
+	endpointCatalogLoaded bool
 }
 
 type requestCacheState struct {
@@ -546,6 +549,34 @@ func (c *resolutionCache) setRequest(key resolutionKey, targets []string,
 ) {
 	c.set(key, targets)
 	c.requests[key] = requestCacheState{resolution: resolution, evidence: evidence}
+}
+
+func (c *resolutionCache) loadEndpointCatalog(ctx context.Context, q *sqlcgen.Queries) error {
+	if c.endpointCatalogLoaded {
+		return nil
+	}
+	rows, err := q.ListNodesByKind(ctx, sqlcgen.ListNodesByKindParams{
+		Kind: string(graph.KindEndpoint), MinExternal: 0, MaxExternal: 0,
+		NameFragment: "", PathPrefixesJson: "[]", MaxResults: -1,
+	})
+	if err != nil {
+		return err
+	}
+	nodes := make([]graph.Node, 0, len(rows))
+	candidates := make([]httpmodel.EndpointCandidate, 0, len(rows))
+	for _, row := range rows {
+		node := nodeFromRow(row)
+		candidateMethod, candidateRoute, ok := endpointNodeMethodRoute(node)
+		if !ok {
+			continue
+		}
+		nodes = append(nodes, node)
+		candidates = append(candidates, httpmodel.EndpointCandidate{Method: candidateMethod, Route: candidateRoute})
+	}
+	c.endpointNodes = nodes
+	c.endpointCatalog = httpmodel.NewCandidateCatalog(candidates)
+	c.endpointCatalogLoaded = true
+	return nil
 }
 
 type resolutionCandidate struct {
@@ -653,7 +684,7 @@ func resolveRequestTarget(ctx context.Context, q *sqlcgen.Queries, writer *batch
 				return endpointResult{}, nodeErr
 			}
 			if row.External != 0 {
-				resolution, evidence := requestResolutionForTargets(contract, []string{fact.TargetID}, fact.TargetID)
+				resolution, evidence := requestBoundaryResolution(contract)
 				properties := httpmodel.WithDestinationEvidence(fact.Properties, resolution, evidence)
 				marked, markErr := httpmodel.ParseDestinationContract(properties, route)
 				if markErr != nil {
@@ -663,6 +694,13 @@ func resolveRequestTarget(ctx context.Context, q *sqlcgen.Queries, writer *batch
 					return endpointResult{}, fmt.Errorf("request fact %s: %w", fact.ID, err)
 				}
 				return endpointResult{targets: []string{fact.TargetID}, properties: properties}, nil
+			}
+			target := nodeFromRow(row)
+			candidateMethod, candidateRoute, candidateValid := endpointNodeMethodRoute(target)
+			compatible := validRoute && candidateValid && candidateMethod == method &&
+				httpmodel.Compatibility(candidateRoute, route) != httpmodel.RankNone
+			if target.Kind != graph.KindEndpoint || contract.Authority == httpmodel.AuthorityExternal || !compatible {
+				return materializeRequestBoundary(ctx, writer, fact, contract, route, requestBoundaryName(fact, method, route))
 			}
 			properties := httpmodel.WithDestinationEvidence(fact.Properties,
 				httpmodel.DestinationResolved, httpmodel.EvidenceExactTarget)
@@ -675,7 +713,7 @@ func resolveRequestTarget(ctx context.Context, q *sqlcgen.Queries, writer *batch
 			}
 			return endpointResult{targets: []string{fact.TargetID}, properties: properties}, nil
 		}
-		return materializeRequestBoundary(ctx, writer, fact, contract, route, fact.TargetID)
+		return materializeRequestBoundary(ctx, writer, fact, contract, route, requestBoundaryName(fact, method, route))
 	}
 
 	key := resolutionKey{direction: targetEndpoint, target: fact.Target, targetKind: fact.TargetKind,
@@ -685,7 +723,7 @@ func resolveRequestTarget(ctx context.Context, q *sqlcgen.Queries, writer *batch
 			properties: httpmodel.WithDestinationEvidence(fact.Properties, state.resolution, state.evidence)}, nil
 	}
 	if contract.Authority != httpmodel.AuthorityLocal || !validRoute {
-		result, boundaryErr := materializeRequestBoundary(ctx, writer, fact, contract, route, fact.Target)
+		result, boundaryErr := materializeRequestBoundary(ctx, writer, fact, contract, route, requestBoundaryName(fact, method, route))
 		if boundaryErr == nil {
 			marked, _ := httpmodel.ParseDestinationContract(result.properties, route)
 			cache.setRequest(key, result.targets, marked.Resolution, marked.Evidence)
@@ -693,27 +731,12 @@ func resolveRequestTarget(ctx context.Context, q *sqlcgen.Queries, writer *batch
 		return result, boundaryErr
 	}
 
-	rows, err := q.ListNodesByKind(ctx, sqlcgen.ListNodesByKindParams{
-		Kind: string(graph.KindEndpoint), MinExternal: 0, MaxExternal: 0,
-		NameFragment: "", PathPrefixesJson: "[]", MaxResults: -1,
-	})
-	if err != nil {
+	if err := cache.loadEndpointCatalog(ctx, q); err != nil {
 		return endpointResult{}, err
 	}
-	nodes := make([]graph.Node, 0, len(rows))
-	candidates := make([]httpmodel.EndpointCandidate, 0, len(rows))
-	for _, row := range rows {
-		node := nodeFromRow(row)
-		candidateMethod, candidateRoute, ok := endpointNodeMethodRoute(node)
-		if !ok {
-			continue
-		}
-		nodes = append(nodes, node)
-		candidates = append(candidates, httpmodel.EndpointCandidate{Method: candidateMethod, Route: candidateRoute})
-	}
-	indexes := httpmodel.BestCandidateIndexes(method, route, candidates)
+	indexes := cache.endpointCatalog.BestCandidateIndexes(method, route)
 	if len(indexes) == 1 {
-		result := endpointResult{targets: []string{nodes[indexes[0]].ID}, properties: httpmodel.WithDestinationEvidence(
+		result := endpointResult{targets: []string{cache.endpointNodes[indexes[0]].ID}, properties: httpmodel.WithDestinationEvidence(
 			fact.Properties, httpmodel.DestinationResolved, httpmodel.EvidenceRoute)}
 		cache.setRequest(key, result.targets, httpmodel.DestinationResolved, httpmodel.EvidenceRoute)
 		return result, nil
@@ -732,12 +755,9 @@ func resolveRequestTarget(ctx context.Context, q *sqlcgen.Queries, writer *batch
 	return result, nil
 }
 
-func requestResolutionForTargets(contract httpmodel.DestinationContract, targets []string, symbolic string) (
+func requestBoundaryResolution(contract httpmodel.DestinationContract) (
 	httpmodel.DestinationResolution, httpmodel.DestinationEvidence,
 ) {
-	if len(targets) == 1 && targets[0] != externalNode(symbolic, graph.KindEndpoint).ID {
-		return httpmodel.DestinationResolved, httpmodel.EvidenceRoute
-	}
 	if contract.Authority == httpmodel.AuthorityExternal {
 		return httpmodel.DestinationExternal, httpmodel.EvidenceExplicitAuthority
 	}
@@ -747,6 +767,16 @@ func requestResolutionForTargets(contract httpmodel.DestinationContract, targets
 	return httpmodel.DestinationUnresolved, httpmodel.EvidenceRoute
 }
 
+func requestBoundaryName(fact graph.Fact, method string, route httpmodel.Route) string {
+	if name := strings.TrimSpace(fact.Target); name != "" {
+		return name
+	}
+	if method != "" && route.Canonical != "" {
+		return method + " " + route.Canonical
+	}
+	return fact.TargetID
+}
+
 func materializeRequestBoundary(ctx context.Context, writer *batchWriter, fact graph.Fact,
 	contract httpmodel.DestinationContract, route httpmodel.Route, name string,
 ) (endpointResult, error) {
@@ -754,7 +784,7 @@ func materializeRequestBoundary(ctx context.Context, writer *batchWriter, fact g
 	if err := writer.addNode(ctx, nodeParams(external, 1)); err != nil {
 		return endpointResult{}, err
 	}
-	resolution, evidence := requestResolutionForTargets(contract, []string{external.ID}, name)
+	resolution, evidence := requestBoundaryResolution(contract)
 	properties := httpmodel.WithDestinationEvidence(fact.Properties, resolution, evidence)
 	marked, err := httpmodel.ParseDestinationContract(properties, route)
 	if err != nil {

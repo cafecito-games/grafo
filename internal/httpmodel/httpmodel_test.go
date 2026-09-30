@@ -1,6 +1,9 @@
 package httpmodel
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestParseRouteCanonicalizesIdentityAndPreservesEvidence(t *testing.T) {
 	tests := []struct {
@@ -152,6 +155,29 @@ func TestBestCandidateIndexesKeepsOnlyTheStrongestCompatibleRank(t *testing.T) {
 	indexes := BestCandidateIndexes("GET", request, candidates)
 	if len(indexes) != 1 || indexes[0] != 2 {
 		t.Fatalf("best candidate indexes = %v, want [2]", indexes)
+	}
+}
+
+func TestCandidateCatalogReusesMethodIndexWithoutNarrowingRoutes(t *testing.T) {
+	candidates := []EndpointCandidate{}
+	for index := 0; index < 1_000; index++ {
+		candidates = append(candidates, EndpointCandidate{Method: "POST", Route: mustRoute(t, fmt.Sprintf("/noise/%d", index))})
+	}
+	candidates = append(candidates,
+		EndpointCandidate{Method: "GET", Route: mustRoute(t, "/users/{id}")},
+		EndpointCandidate{Method: "GET", Route: mustRoute(t, `/codes/{id:[0-9]+}`)},
+		EndpointCandidate{Method: "GET", Route: mustRoute(t, "/assets/{path...}")},
+	)
+	catalog := NewCandidateCatalog(candidates)
+	for route, want := range map[string]int{
+		"/users/42":           1_000,
+		"/codes/42":           1_001,
+		"/assets/css/app.css": 1_002,
+	} {
+		indexes := catalog.BestCandidateIndexes("GET", mustRoute(t, route))
+		if len(indexes) != 1 || indexes[0] != want {
+			t.Fatalf("catalog match for %s = %v, want [%d]", route, indexes, want)
+		}
 	}
 }
 

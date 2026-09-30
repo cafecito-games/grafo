@@ -230,16 +230,31 @@ type EndpointCandidate struct {
 	Route  Route
 }
 
-// BestCandidateIndexes applies method compatibility and the strongest shared
-// route rank, preserving input order for deterministic caller presentation.
-func BestCandidateIndexes(method string, request Route, candidates []EndpointCandidate) []int {
+// CandidateCatalog indexes a stable endpoint snapshot by method so repeated
+// requests do not rescan declarations which cannot possibly match. Returned
+// indexes always refer to the original candidate slice.
+type CandidateCatalog struct {
+	candidates []EndpointCandidate
+	byMethod   map[string][]int
+}
+
+// NewCandidateCatalog builds a reusable method index without changing input
+// order, which keeps ambiguity presentation deterministic for callers.
+func NewCandidateCatalog(candidates []EndpointCandidate) CandidateCatalog {
+	catalog := CandidateCatalog{candidates: append([]EndpointCandidate(nil), candidates...), byMethod: map[string][]int{}}
+	for index, candidate := range catalog.candidates {
+		catalog.byMethod[candidate.Method] = append(catalog.byMethod[candidate.Method], index)
+	}
+	return catalog
+}
+
+// BestCandidateIndexes applies route compatibility only to declarations with
+// the requested method and returns indexes into the original candidate slice.
+func (catalog CandidateCatalog) BestCandidateIndexes(method string, request Route) []int {
 	best := RankNone
 	indexes := []int{}
-	for index, candidate := range candidates {
-		if candidate.Method != method {
-			continue
-		}
-		rank := Compatibility(candidate.Route, request)
+	for _, index := range catalog.byMethod[method] {
+		rank := Compatibility(catalog.candidates[index].Route, request)
 		if rank == RankNone || best != RankNone && rank > best {
 			continue
 		}
@@ -250,6 +265,12 @@ func BestCandidateIndexes(method string, request Route, candidates []EndpointCan
 		indexes = append(indexes, index)
 	}
 	return indexes
+}
+
+// BestCandidateIndexes applies method compatibility and the strongest shared
+// route rank, preserving input order for deterministic caller presentation.
+func BestCandidateIndexes(method string, request Route, candidates []EndpointCandidate) []int {
+	return NewCandidateCatalog(candidates).BestCandidateIndexes(method, request)
 }
 
 // NormalizeMethod trims, validates, and canonicalizes an HTTP method token.

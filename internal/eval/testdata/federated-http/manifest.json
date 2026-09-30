@@ -946,40 +946,10 @@
         },
         "relation": "requests",
         "to": {
-          "repo": "server",
-          "kind": "endpoint",
-          "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:18:2"
-        },
-        "source": {
-          "path": "client.go",
-          "line": 37,
-          "column": 9
-        },
-        "properties": {
-          "evidence": "go/types",
-          "federated": "true",
-          "http_destination_evidence": "federated",
-          "http_destination_resolution": "resolved",
-          "http_method": "GET",
-          "http_raw_method": "GET",
-          "http_raw_route": "/ambiguous/{_}",
-          "http_route": "/ambiguous/{_}",
-          "http_sink": "net/http.Client.Do",
-          "http_source": "constructor",
-          "resolution": "go/types"
-        }
-      },
-      {
-        "from": {
           "repo": "client",
-          "kind": "function",
-          "qualified_name": "example.com/client.Ambiguous"
-        },
-        "relation": "requests",
-        "to": {
-          "repo": "server",
           "kind": "endpoint",
-          "qualified_name": "endpoint:GET /ambiguous/{_}@server.go:19:2"
+          "qualified_name": "GET /ambiguous/{_}",
+          "external": true
         },
         "source": {
           "path": "client.go",
@@ -990,7 +960,7 @@
           "evidence": "go/types",
           "federated": "true",
           "http_destination_evidence": "federated",
-          "http_destination_resolution": "resolved",
+          "http_destination_resolution": "ambiguous",
           "http_method": "GET",
           "http_raw_method": "GET",
           "http_raw_route": "/ambiguous/{_}",

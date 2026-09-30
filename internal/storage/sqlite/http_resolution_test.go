@@ -125,6 +125,48 @@ func TestRequestResolutionReconcilesLegacyUnsafeLocalEdge(t *testing.T) {
 	assertRequestResolution(t, ctx, repository, source.ID, true, httpmodel.DestinationUnresolved, httpmodel.EvidenceUnknownAuthority)
 }
 
+func TestRequestResolutionRejectsInvalidExactTargets(t *testing.T) {
+	ctx := context.Background()
+	repository, err := Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+
+	sources := []graph.Node{
+		{ID: "source-function", Kind: graph.KindFunction, Name: "WrongFunction", QualifiedName: "client.WrongFunction", OwnerFile: "client.go"},
+		{ID: "source-type", Kind: graph.KindFunction, Name: "WrongType", QualifiedName: "client.WrongType", OwnerFile: "client.go"},
+		{ID: "source-route", Kind: graph.KindFunction, Name: "WrongRoute", QualifiedName: "client.WrongRoute", OwnerFile: "client.go"},
+	}
+	wrongFunction := graph.Node{ID: "not-endpoint-function", Kind: graph.KindFunction, Name: "Handler", QualifiedName: "server.Handler", OwnerFile: "server.go"}
+	wrongType := graph.Node{ID: "not-endpoint-type", Kind: graph.KindType, Name: "Response", QualifiedName: "server.Response", OwnerFile: "server.go"}
+	wrongRoute := graph.Node{ID: "wrong-route", Kind: graph.KindEndpoint, Name: "POST /other", QualifiedName: "endpoint:POST /other@server.go:1",
+		OwnerFile: "server.go", Properties: map[string]string{"method": "POST", "route": "/other"}}
+	facts := []graph.Fact{
+		{ID: "request-function", FromID: sources[0].ID, Kind: graph.EdgeRequests, TargetID: wrongFunction.ID, Target: "GET /users/42",
+			TargetKind: graph.KindEndpoint, OwnerFile: "client.go", Properties: requestProperties("/users/42", map[string]string{"http_authority_unknown": "true"})},
+		{ID: "request-type", FromID: sources[1].ID, Kind: graph.EdgeRequests, TargetID: wrongType.ID, Target: "GET /users/42",
+			TargetKind: graph.KindEndpoint, OwnerFile: "client.go", Properties: requestProperties("/users/42", nil)},
+		{ID: "request-route", FromID: sources[2].ID, Kind: graph.EdgeRequests, TargetID: wrongRoute.ID, Target: "GET /users/42",
+			TargetKind: graph.KindEndpoint, OwnerFile: "client.go", Properties: requestProperties("/users/42", nil)},
+	}
+	if err := repository.ReplaceOwner(ctx, "client.go", graph.ParseResult{Nodes: sources, Facts: facts}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.ReplaceOwner(ctx, "server.go", graph.ParseResult{Nodes: []graph.Node{wrongFunction, wrongType, wrongRoute}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertRequestResolution(t, ctx, repository, sources[0].ID, true,
+		httpmodel.DestinationUnresolved, httpmodel.EvidenceUnknownAuthority)
+	for _, source := range sources[1:] {
+		assertRequestResolution(t, ctx, repository, source.ID, true,
+			httpmodel.DestinationUnresolved, httpmodel.EvidenceRoute)
+	}
+}
+
 func requestProperties(route string, extra map[string]string) map[string]string {
 	properties := map[string]string{"http_method": "GET", "http_route": route, "http_raw_route": route}
 	for key, value := range extra {

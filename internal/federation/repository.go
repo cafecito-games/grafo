@@ -555,6 +555,7 @@ func (r *Repository) EdgesFrom(ctx context.Context, id string) ([]graph.Edge, er
 		raw = append(raw, edges...)
 	}
 	var result []graph.Edge
+	var httpProjection *federatedHTTPProjection
 	for _, edge := range raw {
 		if !federationAllowed(edge, graph.Node{}) {
 			result = append(result, edge)
@@ -565,12 +566,22 @@ func (r *Repository) EdgesFrom(ctx context.Context, id string) ([]graph.Edge, er
 			result = append(result, edge)
 			continue
 		}
-		candidates, err := r.resolutionCandidates(ctx, target, edge)
+		if edge.Kind == graph.EdgeRequests && httpProjection == nil {
+			httpProjection, err = r.newFederatedHTTPProjection(ctx)
+			if err != nil {
+				return nil, err
+			}
+		}
+		candidates, err := r.resolutionCandidates(ctx, target, edge, httpProjection)
 		if err != nil {
 			return nil, err
 		}
 		if len(candidates) == 0 {
 			result = append(result, edge)
+			continue
+		}
+		if edge.Kind == graph.EdgeRequests && len(candidates) > 1 {
+			result = append(result, federatedAmbiguousEdge(edge))
 			continue
 		}
 		for _, candidate := range candidates {
@@ -601,11 +612,20 @@ func (r *Repository) EdgesTo(ctx context.Context, id string) ([]graph.Edge, erro
 				return nil, err
 			}
 			for _, edge := range edges {
-				if federationAllowed(edge, graph.Node{}) && candidateAllowed(edge.Kind, target) {
+				if edge.Kind != graph.EdgeRequests && federationAllowed(edge, graph.Node{}) && candidateAllowed(edge.Kind, target) {
 					result = append(result, federatedEdge(edge, target.ID))
 				}
 			}
 		}
+		projection, projectionErr := r.newFederatedHTTPProjection(ctx)
+		if projectionErr != nil {
+			return nil, projectionErr
+		}
+		incoming, incomingErr := r.incomingFederatedHTTPEdges(ctx, target, projection)
+		if incomingErr != nil {
+			return nil, incomingErr
+		}
+		result = append(result, incoming...)
 	}
 	return uniqueEdges(result), nil
 }
@@ -634,6 +654,7 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 	switch request.Direction {
 	case graph.OutgoingRelations:
 		projected := make([]graph.HydratedRelationEdge, 0, len(items))
+		var httpProjection *federatedHTTPProjection
 		for _, item := range items {
 			if !federationAllowed(item.Edge, item.Counterpart) {
 				projected = append(projected, item)
@@ -643,11 +664,23 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 				projected = append(projected, item)
 				continue
 			}
-			candidates, err := r.resolutionCandidates(ctx, item.Counterpart, item.Edge)
+			if item.Edge.Kind == graph.EdgeRequests && httpProjection == nil {
+				var projectionErr error
+				httpProjection, projectionErr = r.newFederatedHTTPProjection(ctx)
+				if projectionErr != nil {
+					return graph.RelationEdgePage{}, projectionErr
+				}
+			}
+			candidates, err := r.resolutionCandidates(ctx, item.Counterpart, item.Edge, httpProjection)
 			if err != nil {
 				return graph.RelationEdgePage{}, err
 			}
 			if len(candidates) == 0 {
+				projected = append(projected, item)
+				continue
+			}
+			if item.Edge.Kind == graph.EdgeRequests && len(candidates) > 1 {
+				item.Edge = federatedAmbiguousEdge(item.Edge)
 				projected = append(projected, item)
 				continue
 			}
@@ -666,7 +699,12 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 		if found && !target.External {
 			relations := make([]graph.EdgeKind, 0, len(request.Relations))
 			seen := map[graph.EdgeKind]bool{}
+			includeRequests := false
 			for _, relation := range request.Relations {
+				if relation == graph.EdgeRequests {
+					includeRequests = true
+					continue
+				}
 				if !seen[relation] && candidateAllowed(relation, target) {
 					seen[relation] = true
 					relations = append(relations, relation)
@@ -699,6 +737,18 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 						}
 					}
 				}
+			}
+			if includeRequests && candidateAllowed(graph.EdgeRequests, target) {
+				projection, projectionErr := r.newFederatedHTTPProjection(ctx)
+				if projectionErr != nil {
+					return graph.RelationEdgePage{}, projectionErr
+				}
+				projected, projectedTruncated, projectionErr := r.incomingFederatedHTTPRelations(ctx, target, projection, request.Limit)
+				if projectionErr != nil {
+					return graph.RelationEdgePage{}, projectionErr
+				}
+				items = append(items, projected...)
+				truncated = truncated || projectedTruncated
 			}
 		}
 	}
@@ -815,19 +865,19 @@ func matchingExternalNodes(ctx context.Context, repository memberRepository, tar
 	return matcher.ExternalNodesMatching(ctx, target)
 }
 
-func (r *Repository) resolutionCandidates(ctx context.Context, target graph.Node, edge graph.Edge) ([]graph.ScopedNode, error) {
-	if edge.Kind != graph.EdgeRequests {
-		return r.exactCandidates(ctx, target, edge.Kind)
-	}
-	method, requestRoute, ok := requestEdgeMethodRoute(edge, target)
-	if !ok {
-		return nil, nil
-	}
-	type candidate struct {
-		scoped graph.ScopedNode
-		match  httpmodel.EndpointCandidate
-	}
-	var candidates []candidate
+type federatedHTTPCandidate struct {
+	scoped graph.ScopedNode
+	match  httpmodel.EndpointCandidate
+}
+
+type federatedHTTPProjection struct {
+	candidates []federatedHTTPCandidate
+	catalog    httpmodel.CandidateCatalog
+}
+
+func (r *Repository) newFederatedHTTPProjection(ctx context.Context) (*federatedHTTPProjection, error) {
+	projection := &federatedHTTPProjection{}
+	matches := []httpmodel.EndpointCandidate{}
 	for _, item := range r.members {
 		nodes, err := item.repository.ListNodesByKind(ctx, graph.NodeListQuery{
 			Kinds: []graph.NodeKind{graph.KindEndpoint}, Visibility: graph.LocalNodes,
@@ -841,20 +891,106 @@ func (r *Repository) resolutionCandidates(ctx context.Context, target graph.Node
 				continue
 			}
 			scoped.Repository = item.project.Name
-			candidates = append(candidates, candidate{scoped: scoped,
-				match: httpmodel.EndpointCandidate{Method: candidateMethod, Route: candidateRoute}})
+			match := httpmodel.EndpointCandidate{Method: candidateMethod, Route: candidateRoute}
+			projection.candidates = append(projection.candidates, federatedHTTPCandidate{scoped: scoped, match: match})
+			matches = append(matches, match)
 		}
 	}
-	matches := make([]httpmodel.EndpointCandidate, 0, len(candidates))
-	for _, candidate := range candidates {
-		matches = append(matches, candidate.match)
+	projection.catalog = httpmodel.NewCandidateCatalog(matches)
+	return projection, nil
+}
+
+func (projection *federatedHTTPProjection) resolve(edge graph.Edge, target graph.Node) []graph.ScopedNode {
+	if projection == nil {
+		return nil
 	}
-	indexes := httpmodel.BestCandidateIndexes(method, requestRoute, matches)
+	method, requestRoute, ok := requestEdgeMethodRoute(edge, target)
+	if !ok {
+		return nil
+	}
+	indexes := projection.catalog.BestCandidateIndexes(method, requestRoute)
 	result := make([]graph.ScopedNode, 0, len(indexes))
 	for _, index := range indexes {
-		result = append(result, candidates[index].scoped)
+		result = append(result, projection.candidates[index].scoped)
+	}
+	return result
+}
+
+func (r *Repository) resolutionCandidates(ctx context.Context, target graph.Node, edge graph.Edge,
+	projection *federatedHTTPProjection,
+) ([]graph.ScopedNode, error) {
+	if edge.Kind != graph.EdgeRequests {
+		return r.exactCandidates(ctx, target, edge.Kind)
+	}
+	return projection.resolve(edge, target), nil
+}
+
+func (r *Repository) incomingFederatedHTTPEdges(ctx context.Context, target graph.Node,
+	projection *federatedHTTPProjection,
+) ([]graph.Edge, error) {
+	result := []graph.Edge{}
+	for _, item := range r.members {
+		nodes, err := item.repository.ListNodesByKind(ctx, graph.NodeListQuery{
+			Kinds: []graph.NodeKind{graph.KindEndpoint}, Visibility: graph.ExternalNodes,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, unresolved := range nodes {
+			edges, err := item.repository.EdgesTo(ctx, unresolved.Node.ID)
+			if err != nil {
+				return nil, err
+			}
+			for _, edge := range edges {
+				if edge.Kind != graph.EdgeRequests || !federationAllowed(edge, unresolved.Node) {
+					continue
+				}
+				candidates := projection.resolve(edge, unresolved.Node)
+				if len(candidates) == 1 && candidates[0].Node.ID == target.ID {
+					result = append(result, federatedEdge(edge, target.ID))
+				}
+			}
+		}
 	}
 	return result, nil
+}
+
+func (r *Repository) incomingFederatedHTTPRelations(ctx context.Context, target graph.Node,
+	projection *federatedHTTPProjection, limit int,
+) ([]graph.HydratedRelationEdge, bool, error) {
+	items := []graph.HydratedRelationEdge{}
+	truncated := false
+	for _, member := range r.members {
+		nodes, err := member.repository.ListNodesByKind(ctx, graph.NodeListQuery{
+			Kinds: []graph.NodeKind{graph.KindEndpoint}, Visibility: graph.ExternalNodes,
+		})
+		if err != nil {
+			return nil, false, err
+		}
+		for _, unresolved := range nodes {
+			page, err := memberRelationEdges(ctx, member.repository, graph.RelationEdgeQuery{
+				SubjectID: unresolved.Node.ID, Direction: graph.IncomingRelations,
+				Relations: []graph.EdgeKind{graph.EdgeRequests}, Limit: limit,
+			})
+			if err != nil {
+				return nil, false, err
+			}
+			truncated = truncated || page.Truncated
+			for _, item := range page.Items {
+				if !federationAllowed(item.Edge, unresolved.Node) {
+					continue
+				}
+				candidates := projection.resolve(item.Edge, unresolved.Node)
+				if len(candidates) != 1 || candidates[0].Node.ID != target.ID {
+					continue
+				}
+				item.Repository = member.project.Name
+				item.Edge = federatedEdge(item.Edge, target.ID)
+				items = append(items, item)
+			}
+		}
+	}
+	return items, truncated, nil
 }
 
 func requestEdgeMethodRoute(edge graph.Edge, target graph.Node) (string, httpmodel.Route, bool) {
@@ -971,6 +1107,14 @@ func federatedEdge(edge graph.Edge, targetID string) graph.Edge {
 		properties = httpmodel.WithDestinationEvidence(properties,
 			httpmodel.DestinationResolved, httpmodel.EvidenceFederated)
 	}
+	properties["federated"] = "true"
+	edge.Properties = properties
+	return edge
+}
+
+func federatedAmbiguousEdge(edge graph.Edge) graph.Edge {
+	properties := httpmodel.WithDestinationEvidence(edge.Properties,
+		httpmodel.DestinationAmbiguous, httpmodel.EvidenceFederated)
 	properties["federated"] = "true"
 	edge.Properties = properties
 	return edge
