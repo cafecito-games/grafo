@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/httpmodel"
 	"github.com/cafecito-games/grafo/internal/semantic"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/migrations"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/sqlcgen"
@@ -358,15 +359,20 @@ func (r *Repository) reconcileBatch(ctx context.Context, resolved *resolutionCac
 			if err != nil {
 				return err
 			}
-			targets, err := resolveTargets(ctx, q, writer, fact, row.TargetExists != 0, resolved)
+			targetResult, err := resolveTargets(ctx, q, writer, fact, row.TargetExists != 0, resolved)
 			if err != nil {
 				return err
+			}
+			targets := targetResult.targets
+			edgeProperties := fact.Properties
+			if targetResult.properties != nil {
+				edgeProperties = targetResult.properties
 			}
 			for _, source := range sources {
 				for _, target := range targets {
 					edge := graph.Edge{ID: graph.EdgeID(fact.ID, target), FactID: fact.ID,
 						FromID: source, ToID: target, Kind: fact.Kind, Producer: fact.Producer, Location: fact.Location,
-						Properties: fact.Properties}
+						Properties: edgeProperties}
 					if err := writer.addEdge(ctx, edgeParams(edge)); err != nil {
 						return err
 					}
@@ -472,6 +478,9 @@ type resolutionKey struct {
 	target     string
 	targetKind graph.NodeKind
 	edgeKind   graph.EdgeKind
+	authority  httpmodel.AuthorityState
+	method     string
+	route      string
 }
 
 type resolutionCacheEntry struct {
@@ -480,13 +489,23 @@ type resolutionCacheEntry struct {
 }
 
 type resolutionCache struct {
-	capacity int
-	entries  map[resolutionKey]*list.Element
-	recent   *list.List
+	capacity              int
+	entries               map[resolutionKey]*list.Element
+	recent                *list.List
+	requests              map[resolutionKey]requestCacheState
+	endpointNodes         []graph.Node
+	endpointCatalog       httpmodel.CandidateCatalog
+	endpointCatalogLoaded bool
+}
+
+type requestCacheState struct {
+	resolution httpmodel.DestinationResolution
+	evidence   httpmodel.DestinationEvidence
 }
 
 func newResolutionCache(capacity int) *resolutionCache {
-	return &resolutionCache{capacity: capacity, entries: make(map[resolutionKey]*list.Element, capacity), recent: list.New()}
+	return &resolutionCache{capacity: capacity, entries: make(map[resolutionKey]*list.Element, capacity),
+		recent: list.New(), requests: make(map[resolutionKey]requestCacheState, capacity)}
 }
 
 func (c *resolutionCache) get(key resolutionKey) ([]string, bool) {
@@ -510,8 +529,54 @@ func (c *resolutionCache) set(key resolutionKey, targets []string) {
 		return
 	}
 	oldest := c.recent.Back()
-	delete(c.entries, oldest.Value.(resolutionCacheEntry).key)
+	oldestKey := oldest.Value.(resolutionCacheEntry).key
+	delete(c.entries, oldestKey)
+	delete(c.requests, oldestKey)
 	c.recent.Remove(oldest)
+}
+
+func (c *resolutionCache) getRequest(key resolutionKey) ([]string, requestCacheState, bool) {
+	targets, ok := c.get(key)
+	if !ok {
+		return nil, requestCacheState{}, false
+	}
+	state, ok := c.requests[key]
+	return targets, state, ok
+}
+
+func (c *resolutionCache) setRequest(key resolutionKey, targets []string,
+	resolution httpmodel.DestinationResolution, evidence httpmodel.DestinationEvidence,
+) {
+	c.set(key, targets)
+	c.requests[key] = requestCacheState{resolution: resolution, evidence: evidence}
+}
+
+func (c *resolutionCache) loadEndpointCatalog(ctx context.Context, q *sqlcgen.Queries) error {
+	if c.endpointCatalogLoaded {
+		return nil
+	}
+	rows, err := q.ListNodesByKind(ctx, sqlcgen.ListNodesByKindParams{
+		Kind: string(graph.KindEndpoint), MinExternal: 0, MaxExternal: 0,
+		NameFragment: "", PathPrefixesJson: "[]", MaxResults: -1,
+	})
+	if err != nil {
+		return err
+	}
+	nodes := make([]graph.Node, 0, len(rows))
+	candidates := make([]httpmodel.EndpointCandidate, 0, len(rows))
+	for _, row := range rows {
+		node := nodeFromRow(row)
+		candidateMethod, candidateRoute, ok := endpointNodeMethodRoute(node)
+		if !ok {
+			continue
+		}
+		nodes = append(nodes, node)
+		candidates = append(candidates, httpmodel.EndpointCandidate{Method: candidateMethod, Route: candidateRoute})
+	}
+	c.endpointNodes = nodes
+	c.endpointCatalog = httpmodel.NewCandidateCatalog(candidates)
+	c.endpointCatalogLoaded = true
+	return nil
 }
 
 type resolutionCandidate struct {
@@ -520,32 +585,41 @@ type resolutionCandidate struct {
 	qualifiedName string
 }
 
-func resolveSources(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter, fact graph.Fact, sourceExists bool, cache *resolutionCache) ([]string, error) {
-	return resolveEndpoint(ctx, q, writer, fact, sourceEndpoint, sourceExists, cache)
+type endpointResult struct {
+	targets    []string
+	properties map[string]string
 }
 
-func resolveTargets(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter, fact graph.Fact, targetExists bool, cache *resolutionCache) ([]string, error) {
+func resolveSources(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter, fact graph.Fact, sourceExists bool, cache *resolutionCache) ([]string, error) {
+	result, err := resolveEndpoint(ctx, q, writer, fact, sourceEndpoint, sourceExists, cache)
+	return result.targets, err
+}
+
+func resolveTargets(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter, fact graph.Fact, targetExists bool, cache *resolutionCache) (endpointResult, error) {
 	return resolveEndpoint(ctx, q, writer, fact, targetEndpoint, targetExists, cache)
 }
 
-func resolveEndpoint(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter, fact graph.Fact, direction endpointDirection, exactExists bool, cache *resolutionCache) ([]string, error) {
+func resolveEndpoint(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter, fact graph.Fact, direction endpointDirection, exactExists bool, cache *resolutionCache) (endpointResult, error) {
+	if direction == targetEndpoint && fact.Kind == graph.EdgeRequests {
+		return resolveRequestTarget(ctx, q, writer, fact, exactExists, cache)
+	}
 	exactID, name, kind := fact.TargetID, fact.Target, fact.TargetKind
 	if direction == sourceEndpoint {
 		exactID, name, kind = fact.FromID, fact.Source, fact.SourceKind
 	}
 	if exactID != "" {
 		if exactExists {
-			return []string{exactID}, nil
+			return endpointResult{targets: []string{exactID}}, nil
 		}
 		external := externalNode(exactID, "")
 		if err := writer.addNode(ctx, nodeParams(external, 1)); err != nil {
-			return nil, err
+			return endpointResult{}, err
 		}
-		return []string{external.ID}, nil
+		return endpointResult{targets: []string{external.ID}}, nil
 	}
 	key := resolutionKey{direction: direction, target: name, targetKind: kind, edgeKind: fact.Kind}
 	if targets, ok := cache.get(key); ok {
-		return targets, nil
+		return endpointResult{targets: targets}, nil
 	}
 	var targets []string
 	var rows []resolutionCandidate
@@ -553,7 +627,7 @@ func resolveEndpoint(ctx context.Context, q *sqlcgen.Queries, writer *batchWrite
 		if kind == "" {
 			found, err := q.FindNodesExact(ctx, name)
 			if err != nil {
-				return nil, err
+				return endpointResult{}, err
 			}
 			rows = make([]resolutionCandidate, 0, len(found))
 			for _, row := range found {
@@ -563,7 +637,7 @@ func resolveEndpoint(ctx context.Context, q *sqlcgen.Queries, writer *batchWrite
 			found, err := q.FindNodesExactKind(ctx, sqlcgen.FindNodesExactKindParams{
 				Target: name, Kind: string(kind)})
 			if err != nil {
-				return nil, err
+				return endpointResult{}, err
 			}
 			rows = make([]resolutionCandidate, 0, len(found))
 			for _, row := range found {
@@ -587,12 +661,171 @@ func resolveEndpoint(ctx context.Context, q *sqlcgen.Queries, writer *batchWrite
 	if len(targets) == 0 {
 		external := externalNode(name, kind)
 		if err := writer.addNode(ctx, nodeParams(external, 1)); err != nil {
-			return nil, err
+			return endpointResult{}, err
 		}
 		targets = []string{external.ID}
 	}
 	cache.set(key, targets)
-	return targets, nil
+	return endpointResult{targets: targets}, nil
+}
+
+func resolveRequestTarget(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter, fact graph.Fact,
+	exactExists bool, cache *resolutionCache,
+) (endpointResult, error) {
+	method, route, validRoute := requestFactMethodRoute(fact)
+	contract, err := httpmodel.ParseDestinationContract(fact.Properties, route)
+	if err != nil {
+		return endpointResult{}, fmt.Errorf("request fact %s: %w", fact.ID, err)
+	}
+	if fact.TargetID != "" {
+		if exactExists {
+			row, nodeErr := q.GetNode(ctx, fact.TargetID)
+			if nodeErr != nil {
+				return endpointResult{}, nodeErr
+			}
+			if row.External != 0 {
+				resolution, evidence := requestBoundaryResolution(contract)
+				properties := httpmodel.WithDestinationEvidence(fact.Properties, resolution, evidence)
+				marked, markErr := httpmodel.ParseDestinationContract(properties, route)
+				if markErr != nil {
+					return endpointResult{}, fmt.Errorf("request fact %s: %w", fact.ID, markErr)
+				}
+				if err := marked.ValidateTarget(true); err != nil {
+					return endpointResult{}, fmt.Errorf("request fact %s: %w", fact.ID, err)
+				}
+				return endpointResult{targets: []string{fact.TargetID}, properties: properties}, nil
+			}
+			target := nodeFromRow(row)
+			candidateMethod, candidateRoute, candidateValid := endpointNodeMethodRoute(target)
+			compatible := validRoute && candidateValid && candidateMethod == method &&
+				httpmodel.Compatibility(candidateRoute, route) != httpmodel.RankNone
+			if target.Kind != graph.KindEndpoint || contract.Authority == httpmodel.AuthorityExternal || !compatible {
+				return materializeRequestBoundary(ctx, writer, fact, contract, route, requestBoundaryName(fact, method, route))
+			}
+			properties := httpmodel.WithDestinationEvidence(fact.Properties,
+				httpmodel.DestinationResolved, httpmodel.EvidenceExactTarget)
+			marked, markErr := httpmodel.ParseDestinationContract(properties, route)
+			if markErr != nil {
+				return endpointResult{}, fmt.Errorf("request fact %s: %w", fact.ID, markErr)
+			}
+			if err := marked.ValidateTarget(false); err != nil {
+				return endpointResult{}, fmt.Errorf("request fact %s: %w", fact.ID, err)
+			}
+			return endpointResult{targets: []string{fact.TargetID}, properties: properties}, nil
+		}
+		return materializeRequestBoundary(ctx, writer, fact, contract, route, requestBoundaryName(fact, method, route))
+	}
+
+	key := resolutionKey{direction: targetEndpoint, target: fact.Target, targetKind: fact.TargetKind,
+		edgeKind: fact.Kind, authority: contract.Authority, method: method, route: route.Canonical}
+	if targets, state, ok := cache.getRequest(key); ok {
+		return endpointResult{targets: targets,
+			properties: httpmodel.WithDestinationEvidence(fact.Properties, state.resolution, state.evidence)}, nil
+	}
+	if contract.Authority != httpmodel.AuthorityLocal || !validRoute {
+		result, boundaryErr := materializeRequestBoundary(ctx, writer, fact, contract, route, requestBoundaryName(fact, method, route))
+		if boundaryErr == nil {
+			marked, _ := httpmodel.ParseDestinationContract(result.properties, route)
+			cache.setRequest(key, result.targets, marked.Resolution, marked.Evidence)
+		}
+		return result, boundaryErr
+	}
+
+	if err := cache.loadEndpointCatalog(ctx, q); err != nil {
+		return endpointResult{}, err
+	}
+	indexes := cache.endpointCatalog.BestCandidateIndexes(method, route)
+	if len(indexes) == 1 {
+		result := endpointResult{targets: []string{cache.endpointNodes[indexes[0]].ID}, properties: httpmodel.WithDestinationEvidence(
+			fact.Properties, httpmodel.DestinationResolved, httpmodel.EvidenceRoute)}
+		cache.setRequest(key, result.targets, httpmodel.DestinationResolved, httpmodel.EvidenceRoute)
+		return result, nil
+	}
+	resolution := httpmodel.DestinationUnresolved
+	if len(indexes) > 1 {
+		resolution = httpmodel.DestinationAmbiguous
+	}
+	external := externalNode(fact.Target, graph.KindEndpoint)
+	if err := writer.addNode(ctx, nodeParams(external, 1)); err != nil {
+		return endpointResult{}, err
+	}
+	result := endpointResult{targets: []string{external.ID}, properties: httpmodel.WithDestinationEvidence(
+		fact.Properties, resolution, httpmodel.EvidenceRoute)}
+	cache.setRequest(key, result.targets, resolution, httpmodel.EvidenceRoute)
+	return result, nil
+}
+
+func requestBoundaryResolution(contract httpmodel.DestinationContract) (
+	httpmodel.DestinationResolution, httpmodel.DestinationEvidence,
+) {
+	if contract.Authority == httpmodel.AuthorityExternal {
+		return httpmodel.DestinationExternal, httpmodel.EvidenceExplicitAuthority
+	}
+	if contract.Authority == httpmodel.AuthorityUnknown {
+		return httpmodel.DestinationUnresolved, httpmodel.EvidenceUnknownAuthority
+	}
+	return httpmodel.DestinationUnresolved, httpmodel.EvidenceRoute
+}
+
+func requestBoundaryName(fact graph.Fact, method string, route httpmodel.Route) string {
+	if name := strings.TrimSpace(fact.Target); name != "" {
+		return name
+	}
+	if method != "" && route.Canonical != "" {
+		return method + " " + route.Canonical
+	}
+	return fact.TargetID
+}
+
+func materializeRequestBoundary(ctx context.Context, writer *batchWriter, fact graph.Fact,
+	contract httpmodel.DestinationContract, route httpmodel.Route, name string,
+) (endpointResult, error) {
+	external := externalNode(name, graph.KindEndpoint)
+	if err := writer.addNode(ctx, nodeParams(external, 1)); err != nil {
+		return endpointResult{}, err
+	}
+	resolution, evidence := requestBoundaryResolution(contract)
+	properties := httpmodel.WithDestinationEvidence(fact.Properties, resolution, evidence)
+	marked, err := httpmodel.ParseDestinationContract(properties, route)
+	if err != nil {
+		return endpointResult{}, fmt.Errorf("request fact %s: %w", fact.ID, err)
+	}
+	if err := marked.ValidateTarget(true); err != nil {
+		return endpointResult{}, fmt.Errorf("request fact %s: %w", fact.ID, err)
+	}
+	return endpointResult{targets: []string{external.ID}, properties: properties}, nil
+}
+
+func requestFactMethodRoute(fact graph.Fact) (string, httpmodel.Route, bool) {
+	method := strings.TrimSpace(fact.Properties["http_method"])
+	routeText := strings.TrimSpace(fact.Properties["http_route"])
+	if targetMethod, targetRoute, ok := strings.Cut(strings.TrimSpace(fact.Target), " "); ok {
+		if method == "" {
+			method = targetMethod
+		}
+		if routeText == "" {
+			routeText = targetRoute
+		}
+	}
+	normalized, methodErr := httpmodel.NormalizeMethod(method)
+	route, routeErr := httpmodel.ParseRoute(routeText)
+	return normalized, route, methodErr == nil && routeErr == nil && fact.Properties["http_invalid"] != "true"
+}
+
+func endpointNodeMethodRoute(node graph.Node) (string, httpmodel.Route, bool) {
+	method := strings.TrimSpace(node.Properties["method"])
+	routeText := strings.TrimSpace(node.Properties["route"])
+	if targetMethod, targetRoute, ok := strings.Cut(strings.TrimSpace(node.Name), " "); ok {
+		if method == "" {
+			method = targetMethod
+		}
+		if routeText == "" {
+			routeText = targetRoute
+		}
+	}
+	normalized, methodErr := httpmodel.NormalizeMethod(method)
+	route, routeErr := httpmodel.ParseRoute(routeText)
+	return normalized, route, methodErr == nil && routeErr == nil && node.Properties["http_invalid"] != "true"
 }
 
 func filterCandidates(fact graph.Fact, direction endpointDirection, rows []resolutionCandidate) []resolutionCandidate {
@@ -949,6 +1182,58 @@ func (r *Repository) EdgesTo(ctx context.Context, id string) ([]graph.Edge, erro
 		return nil, err
 	}
 	return edgesFromRows(rows), nil
+}
+
+// ExternalRequestEdges returns unresolved HTTP request boundaries in stable,
+// bounded pages. Both endpoint and source nodes are hydrated by the same query
+// so federation can build its reverse projection without N+1 adjacency loads.
+func (r *Repository) ExternalRequestEdges(ctx context.Context, after string, limit int) (graph.ExternalRequestEdgePage, error) {
+	if limit <= 0 {
+		return graph.ExternalRequestEdgePage{}, fmt.Errorf("external request edge limit must be positive")
+	}
+	if limit == int(^uint(0)>>1) {
+		return graph.ExternalRequestEdgePage{}, fmt.Errorf("external request edge limit is too large")
+	}
+	rows, err := r.queries.ListExternalRequestEdges(ctx, sqlcgen.ListExternalRequestEdgesParams{
+		AfterID: after, MaxResults: int64(limit) + 1,
+	})
+	if err != nil {
+		return graph.ExternalRequestEdgePage{}, err
+	}
+	page := graph.ExternalRequestEdgePage{Items: make([]graph.ExternalRequestEdge, 0, min(len(rows), limit))}
+	if len(rows) > limit {
+		rows = rows[:limit]
+		page.Next = rows[len(rows)-1].EdgeID
+	}
+	for _, row := range rows {
+		edgeProperties, err := decodeRelationProperties("edge "+row.EdgeID, row.EdgeProperties)
+		if err != nil {
+			return graph.ExternalRequestEdgePage{}, err
+		}
+		sourceProperties, err := decodeRelationProperties("source node "+row.SourceID, row.SourceProperties)
+		if err != nil {
+			return graph.ExternalRequestEdgePage{}, err
+		}
+		targetProperties, err := decodeRelationProperties("target node "+row.TargetID, row.TargetProperties)
+		if err != nil {
+			return graph.ExternalRequestEdgePage{}, err
+		}
+		page.Items = append(page.Items, graph.ExternalRequestEdge{
+			Edge: graph.Edge{ID: row.EdgeID, FactID: row.EdgeFactID, FromID: row.EdgeFromID, ToID: row.EdgeToID,
+				Kind: graph.EdgeKind(row.EdgeKind), Producer: row.EdgeProducer,
+				Location:   graph.Location{Path: row.EdgePath, Line: int(row.EdgeLine), Column: int(row.EdgeColumnNo), EndLine: int(row.EdgeEndLine)},
+				Properties: edgeProperties},
+			Source: graph.Node{ID: row.SourceID, Kind: graph.NodeKind(row.SourceKind), Name: row.SourceName,
+				QualifiedName: row.SourceQualifiedName, Language: row.SourceLanguage,
+				Location:   graph.Location{Path: row.SourcePath, Line: int(row.SourceLine), Column: int(row.SourceColumnNo), EndLine: int(row.SourceEndLine)},
+				Properties: sourceProperties, OwnerFile: row.SourceOwnerFile, External: row.SourceExternal != 0},
+			Target: graph.Node{ID: row.TargetID, Kind: graph.NodeKind(row.TargetKind), Name: row.TargetName,
+				QualifiedName: row.TargetQualifiedName, Language: row.TargetLanguage,
+				Location:   graph.Location{Path: row.TargetPath, Line: int(row.TargetLine), Column: int(row.TargetColumnNo), EndLine: int(row.TargetEndLine)},
+				Properties: targetProperties, OwnerFile: row.TargetOwnerFile, External: row.TargetExternal != 0},
+		})
+	}
+	return page, nil
 }
 
 // RelationEdges loads at most Limit+1 rows for each exact relation and joins

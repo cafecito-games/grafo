@@ -3,4 +3,4 @@
 // query-only open cannot accept a graph the writer would rebuild.
 package indexversion
 
-const Semantic = "33"
+const Semantic = "35"

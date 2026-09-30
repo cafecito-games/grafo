@@ -13,12 +13,14 @@ import (
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/httpmodel"
 	"github.com/cafecito-games/grafo/internal/indexer"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	configparser "github.com/cafecito-games/grafo/internal/parser/config"
 	gdscriptparser "github.com/cafecito-games/grafo/internal/parser/gdscript"
 	godotparser "github.com/cafecito-games/grafo/internal/parser/godot"
 	golangparser "github.com/cafecito-games/grafo/internal/parser/golang"
+	manifestparser "github.com/cafecito-games/grafo/internal/parser/manifest"
 	markdownparser "github.com/cafecito-games/grafo/internal/parser/markdown"
 	protobufparser "github.com/cafecito-games/grafo/internal/parser/protobuf"
 	"github.com/cafecito-games/grafo/internal/parser/protobufbinding"
@@ -75,6 +77,129 @@ func (legacyVerbEndpointParser) Parse(_ context.Context, input parserapi.Input) 
 		QualifiedName: "endpoint:POST /v1/characters@client.go:3:2", Location: location})
 	builder.AddFact(builder.FileID(), graph.EdgeExposes, endpoint, "", "", location, nil)
 	return builder.Finish(), nil
+}
+
+func TestServiceHTTPAuthorityResolutionConvergesIncrementalAndClean(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	write(t, filepath.Join(root, "go.mod"), "module example.com/service\n\ngo 1.26\n")
+	enableIndexerChi(t, root)
+	writeHTTPFixture := func(call string) {
+		write(t, filepath.Join(root, "service.go"), `package service
+import (
+	"net/http"
+	"github.com/go-chi/chi/v5"
+)
+func Handler(http.ResponseWriter, *http.Request) {}
+func Routes() { router := chi.NewRouter(); router.Get("/users/{id}", Handler) }
+type API struct { baseURL string }
+func (api *API) Call() { _, _ = http.Get(`+call+`) }
+`)
+	}
+	writeHTTPFixture(`api.baseURL + "/users/42"`)
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(golangparser.New(), manifestparser.New()))
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	assertIndexedRequestResolution(t, ctx, repository, true, httpmodel.DestinationUnresolved)
+
+	writeHTTPFixture(`"/users/42"`)
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	incremental := indexedRequestEdges(t, ctx, repository)
+	assertIndexedRequestResolution(t, ctx, repository, false, httpmodel.DestinationResolved)
+	if _, err := service.Run(ctx, project, indexer.Options{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	clean := indexedRequestEdges(t, ctx, repository)
+	if !reflect.DeepEqual(incremental, clean) {
+		t.Fatalf("incremental request resolution differs from clean rebuild:\n%#v\n%#v", incremental, clean)
+	}
+
+	writeHTTPFixture(`api.baseURL + "/users/42"`)
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	incremental = indexedRequestEdges(t, ctx, repository)
+	assertIndexedRequestResolution(t, ctx, repository, true, httpmodel.DestinationUnresolved)
+	if _, err := service.Run(ctx, project, indexer.Options{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	clean = indexedRequestEdges(t, ctx, repository)
+	if !reflect.DeepEqual(incremental, clean) {
+		t.Fatalf("incremental unknown-authority resolution differs from clean rebuild:\n%#v\n%#v", incremental, clean)
+	}
+}
+
+func enableIndexerChi(t *testing.T, root string) {
+	t.Helper()
+	modulePath := filepath.Join(root, "go.mod")
+	content, err := os.ReadFile(modulePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, modulePath, string(content)+"\nrequire github.com/go-chi/chi/v5 v5.0.0\nreplace github.com/go-chi/chi/v5 => ./third_party/chi\n")
+	if err := os.MkdirAll(filepath.Join(root, "third_party", "chi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "third_party", "chi", "go.mod"), "module github.com/go-chi/chi/v5\n\ngo 1.26\n")
+	write(t, filepath.Join(root, "third_party", "chi", "chi.go"), `package chi
+import "net/http"
+type Router interface {
+	http.Handler
+	Get(string, http.HandlerFunc)
+}
+type Mux struct{}
+func NewRouter() *Mux { return &Mux{} }
+func (*Mux) ServeHTTP(http.ResponseWriter, *http.Request) {}
+func (*Mux) Get(string, http.HandlerFunc) {}
+`)
+}
+
+func indexedRequestEdges(t *testing.T, ctx context.Context, repository *sqlite.Repository) []graph.Edge {
+	t.Helper()
+	call, err := query.NewService(repository).Resolve(ctx, "example.com/service.API.Call")
+	if err != nil {
+		t.Fatal(err)
+	}
+	edges, err := repository.EdgesFrom(ctx, call.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := []graph.Edge{}
+	for _, edge := range edges {
+		if edge.Kind == graph.EdgeRequests {
+			result = append(result, edge)
+		}
+	}
+	return result
+}
+
+func assertIndexedRequestResolution(t *testing.T, ctx context.Context, repository *sqlite.Repository,
+	external bool, resolution httpmodel.DestinationResolution,
+) {
+	t.Helper()
+	edges := indexedRequestEdges(t, ctx, repository)
+	if len(edges) != 1 {
+		t.Fatalf("request edges = %#v", edges)
+	}
+	target, err := repository.Node(ctx, edges[0].ToID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.External != external || edges[0].Properties[httpmodel.PropertyDestinationResolution] != string(resolution) {
+		t.Fatalf("request target=%#v edge=%#v", target, edges[0])
+	}
 }
 
 func TestServiceIncrementallyRemovesLegacyVerbOnlyEndpoint(t *testing.T) {
@@ -351,6 +476,116 @@ export function execute() { const service = new Service(); service.run(); }
 		t.Fatalf("forced clean rebuild did not converge: %#v", clean)
 	}
 	assertNoOutgoingTarget(t, ctx, repository, "src/app.execute", graph.EdgeCalls, "src/other.Other.run")
+}
+
+func TestServiceReconcilesTypeScriptFetchMethodsAndTopology(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	write(t, filepath.Join(root, "server.ts"), `
+function health() {}
+function createOrder() {}
+function updateOrder() {}
+const app = express();
+app.get("/health", health);
+app.post("/orders", createOrder);
+app.patch("/orders", updateOrder);
+`)
+	client := func(method string) string {
+		return fmt.Sprintf(`
+export function defaultHealth() { return fetch("/health"); }
+export function writeOrder() { return fetch("/orders", { method: %q }); }
+export function wrongMethod() { return fetch("/orders", { method: "DELETE" }); }
+export function unknownMethod(method: string) { return fetch("/orders", { method }); }
+export function dynamicURL(url: string) { return fetch(url, { method: "POST" }); }
+`, method)
+	}
+	write(t, filepath.Join(root, "client.ts"), client("POST"))
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(typescriptparser.New()))
+	first, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Updated) != 2 {
+		t.Fatalf("initial TypeScript report = %#v", first)
+	}
+	assertTypeScriptFetchTopology(t, ctx, repository, "POST")
+
+	write(t, filepath.Join(root, "client.ts"), client("PATCH"))
+	incremental, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(incremental.Updated) != 2 || incremental.Updated[0] != "client.ts" || incremental.Updated[1] != "server.ts" {
+		t.Fatalf("incremental TypeScript report = %#v", incremental)
+	}
+	assertTypeScriptFetchTopology(t, ctx, repository, "PATCH")
+	incrementalCounts := incremental.Counts
+
+	clean, err := service.Run(ctx, project, indexer.Options{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(incrementalCounts, clean.Counts) {
+		t.Fatalf("incremental fetch reconciliation differs from clean rebuild:\n%#v\n%#v", incrementalCounts, clean.Counts)
+	}
+	assertTypeScriptFetchTopology(t, ctx, repository, "PATCH")
+}
+
+func assertTypeScriptFetchTopology(t *testing.T, ctx context.Context, repository graph.TopologyRepository, writeMethod string) {
+	t.Helper()
+	requests, err := query.NewTopology(repository).OutboundRequests(ctx, query.TopologyOptions{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bySource := map[string]query.OutboundRequest{}
+	for _, request := range requests.Requests {
+		bySource[request.Source.Name] = request
+	}
+	if len(bySource) != 4 {
+		t.Fatalf("persisted fetch requests = %#v", requests)
+	}
+	tests := []struct {
+		source, method string
+		status         query.BoundaryStatus
+	}{
+		{source: "defaultHealth", method: "GET", status: query.BoundaryResolved},
+		{source: "writeOrder", method: writeMethod, status: query.BoundaryResolved},
+		{source: "wrongMethod", method: "DELETE", status: query.BoundaryUnresolved},
+		{source: "unknownMethod", method: "ANY", status: query.BoundaryUnresolved},
+	}
+	for _, test := range tests {
+		request := bySource[test.source]
+		if request.Method != test.method || request.Status != test.status {
+			t.Fatalf("%s request = %#v", test.source, request)
+		}
+	}
+	if bySource["unknownMethod"].Evidence.Properties["http_method_unknown"] != "true" {
+		t.Fatalf("unknown method evidence = %#v", bySource["unknownMethod"].Evidence)
+	}
+	topology, err := query.NewTopology(repository).ServiceTopology(ctx, query.TopologyOptions{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := map[string]bool{}
+	for _, link := range topology.Links {
+		if link.Status == query.BoundaryResolved {
+			resolved[link.Method+" "+link.Route] = true
+		}
+	}
+	for _, request := range []string{"GET /health", writeMethod + " /orders"} {
+		if !resolved[request] {
+			t.Fatalf("topology did not resolve %s: %#v", request, topology)
+		}
+	}
 }
 
 func TestServiceIndexesOnlyChangedFiles(t *testing.T) {

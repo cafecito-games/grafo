@@ -835,27 +835,50 @@ func (t *Topology) collectOutboundRequests(ctx context.Context, options Topology
 		}
 		request.Truncated = requestTruncated
 		request.Target.Method, request.Target.Route = method, route
-		candidates := []graph.ScopedNode{}
-		bestRank := httpmodel.RankNone
-		if validRoute && request.Authority == "" && base.Properties["http_authority_unknown"] != "true" {
+		localTargets := map[string]graph.ScopedNode{}
+		hasEligibleBoundary := false
+		var authorityState httpmodel.AuthorityState
+		for index, edge := range group.edges {
+			edgeTarget, ok := nodes[edge.ToID]
+			if !ok {
+				return nil, fmt.Errorf("request edge %s targets missing node %s", edge.ID, edge.ToID)
+			}
+			_, edgeRoute, _ := requestMethodRoute(edge, edgeTarget)
+			contract, contractErr := httpmodel.ParseDestinationContract(edge.Properties, edgeRoute)
+			if contractErr != nil {
+				return nil, fmt.Errorf("request edge %s: %w", edge.ID, contractErr)
+			}
+			if err := contract.ValidateTarget(edgeTarget.External); err != nil {
+				return nil, fmt.Errorf("request edge %s: %w", edge.ID, err)
+			}
+			if index > 0 && contract.Authority != authorityState {
+				return nil, fmt.Errorf("request fact %s has conflicting authority states", base.FactID)
+			}
+			authorityState = contract.Authority
+			if contract.Authority == httpmodel.AuthorityLocal &&
+				(contract.Resolution == httpmodel.DestinationAmbiguous || contract.Resolution == httpmodel.DestinationUnresolved) {
+				hasEligibleBoundary = true
+			}
+			if !edgeTarget.External {
+				localTargets[edgeTarget.ID] = scopes[edgeTarget.ID]
+			}
+		}
+		candidates := make([]graph.ScopedNode, 0, len(localTargets))
+		for _, candidate := range localTargets {
+			candidates = append(candidates, candidate)
+		}
+		if len(candidates) == 0 && hasEligibleBoundary && validRoute {
+			compatible := make([]httpmodel.EndpointCandidate, 0, len(declarations))
 			for _, declaration := range declarations {
-				if declaration.method != method || declaration.route.Authority != "" {
-					continue
-				}
-				rank := httpmodel.Compatibility(declaration.route, routeModel)
-				if rank == httpmodel.RankNone || bestRank != httpmodel.RankNone && rank > bestRank {
-					continue
-				}
-				if bestRank == httpmodel.RankNone || rank < bestRank {
-					bestRank = rank
-					candidates = candidates[:0]
-				}
-				candidates = append(candidates, declaration.scoped)
+				compatible = append(compatible, httpmodel.EndpointCandidate{Method: declaration.method, Route: declaration.route})
+			}
+			for _, index := range httpmodel.BestCandidateIndexes(method, routeModel, compatible) {
+				candidates = append(candidates, declarations[index].scoped)
 			}
 		}
 		sortScopedNodes(candidates)
-		switch len(candidates) {
-		case 0:
+		switch {
+		case len(candidates) == 0:
 			request.Status = BoundaryUnresolved
 			externalScoped := graph.ScopedNode{Node: target}
 			request.Destination, requestTruncated, err = t.endpoint(ctx, externalScoped, limit, owners)
@@ -865,7 +888,7 @@ func (t *Topology) collectOutboundRequests(ctx context.Context, options Topology
 			request.Truncated = request.Truncated || requestTruncated
 			request.Destination.Method, request.Destination.Route = method, route
 			base = preferredEdge(group.edges, "", nodes)
-		case 1:
+		case len(candidates) == 1:
 			request.Status = BoundaryResolved
 			request.Destination, requestTruncated, err = t.endpoint(ctx, candidates[0], limit, owners)
 			if err != nil {

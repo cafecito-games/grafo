@@ -358,7 +358,7 @@ func propertyEvidence() []Evidence {
 		{"edge.order/pattern/framework", "effective handler and middleware chain", []Capability{CapabilityCatalogTopology}, "internal/query/topology.go", 594},
 		{"edge.role/streaming", "Protobuf field, RPC, and oneof role", []Capability{CapabilityMessageFieldFlow}, "internal/parser/protobuf/protobuf.go", 293},
 		{"edge.projection/accessor", "generated binding projection form", []Capability{CapabilityMessageFieldFlow}, "internal/parser/protobufbinding/parser.go", 64},
-		{"edge.specifier/type_only/binding_kind/exported/reexport", "module resolution semantics", []Capability{CapabilityStructural}, "internal/parser/typescript/typescript.go", 277},
+		{"edge.specifier/type_only/binding_kind/exported/reexport", "module resolution semantics", []Capability{CapabilityStructural}, "internal/parser/typescript/typescript.go", 310},
 		{"edge.resolution/federated", "resolution authority and cross-repository attribution", []Capability{CapabilityStructural, CapabilityCatalogTopology}, "internal/federation/repository.go", 820},
 	}
 	result := make([]Evidence, 0, len(values))
@@ -418,9 +418,9 @@ func operationEvidence() []Operation {
 		{"events", []Capability{CapabilityCatalogTopology}, "internal/query/catalog.go", 319},
 		{"orphaned-events", []Capability{CapabilityCatalogTopology}, "internal/query/catalog.go", 356},
 		{"endpoints", []Capability{CapabilityCatalogTopology}, "internal/query/topology.go", 503},
-		{"outbound-requests", []Capability{CapabilityCatalogTopology}, "internal/query/topology.go", 923},
+		{"outbound-requests", []Capability{CapabilityCatalogTopology}, "internal/query/topology.go", 943},
 		{"find-handler", []Capability{CapabilityCatalogTopology}, "internal/query/topology.go", 594},
-		{"service-topology", []Capability{CapabilityCatalogTopology}, "internal/query/topology.go", 1238},
+		{"service-topology", []Capability{CapabilityCatalogTopology}, "internal/query/topology.go", 1258},
 		{"message-flow", []Capability{CapabilityMessageFieldFlow, CapabilityTransportFlow}, "internal/query/messageflow.go", 155},
 		{"message-coverage", []Capability{CapabilityMessageFieldFlow, CapabilityTransportFlow}, "internal/query/messageflow.go", 358},
 		{"find-tests", []Capability{CapabilityTestCoverage}, "internal/query/testcoverage.go", 87},

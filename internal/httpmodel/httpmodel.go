@@ -52,6 +52,229 @@ type Route struct {
 	trailingSlash bool
 }
 
+// Request destination properties form the persisted contract between
+// reconciliation, federation, and topology. Extractor authority properties are
+// source evidence; destination properties are derived evidence and must agree
+// with both the authority state and the edge target.
+const (
+	PropertyAuthority             = "http_authority"
+	PropertyAuthorityUnknown      = "http_authority_unknown"
+	PropertyDestinationResolution = "http_destination_resolution"
+	PropertyDestinationEvidence   = "http_destination_evidence"
+)
+
+type AuthorityState string
+
+const (
+	AuthorityLocal    AuthorityState = "local"
+	AuthorityExternal AuthorityState = "external"
+	AuthorityUnknown  AuthorityState = "unknown"
+)
+
+type DestinationResolution string
+
+const (
+	DestinationResolved   DestinationResolution = "resolved"
+	DestinationAmbiguous  DestinationResolution = "ambiguous"
+	DestinationUnresolved DestinationResolution = "unresolved"
+	DestinationExternal   DestinationResolution = "external"
+)
+
+type DestinationEvidence string
+
+const (
+	EvidenceRoute             DestinationEvidence = "route"
+	EvidenceExactTarget       DestinationEvidence = "exact_target"
+	EvidenceFederated         DestinationEvidence = "federated"
+	EvidenceUnknownAuthority  DestinationEvidence = "unknown_authority"
+	EvidenceExplicitAuthority DestinationEvidence = "explicit_authority"
+)
+
+// DestinationContract is the canonical interpretation of extractor authority
+// evidence and reconciler destination evidence for one request fact.
+type DestinationContract struct {
+	Authority  AuthorityState
+	Resolution DestinationResolution
+	Evidence   DestinationEvidence
+}
+
+// ParseDestinationContract validates source and derived request properties.
+// The parsed route is included because older extractors encoded an absolute
+// authority only in the symbolic target rather than in edge properties.
+func ParseDestinationContract(properties map[string]string, route Route) (DestinationContract, error) {
+	contract := DestinationContract{}
+	authority := strings.TrimSpace(properties[PropertyAuthority])
+	if route.Authority != "" {
+		if authority != "" && !strings.EqualFold(authority, route.Authority) {
+			return contract, fmt.Errorf("conflicting HTTP authorities %q and %q", authority, route.Authority)
+		}
+		authority = route.Authority
+	}
+	unknown, err := strictBooleanProperty(properties, PropertyAuthorityUnknown)
+	if err != nil {
+		return contract, err
+	}
+	if unknown && authority != "" {
+		return contract, fmt.Errorf("HTTP authority is both explicit and unknown")
+	}
+	switch {
+	case authority != "":
+		contract.Authority = AuthorityExternal
+	case unknown:
+		contract.Authority = AuthorityUnknown
+	default:
+		contract.Authority = AuthorityLocal
+	}
+
+	contract.Resolution = DestinationResolution(strings.TrimSpace(properties[PropertyDestinationResolution]))
+	contract.Evidence = DestinationEvidence(strings.TrimSpace(properties[PropertyDestinationEvidence]))
+	if contract.Resolution == "" && contract.Evidence == "" {
+		return contract, nil
+	}
+	if contract.Resolution == "" || contract.Evidence == "" {
+		return DestinationContract{}, fmt.Errorf("HTTP destination resolution and evidence must be present together")
+	}
+	if err := contract.validate(); err != nil {
+		return DestinationContract{}, err
+	}
+	return contract, nil
+}
+
+func strictBooleanProperty(properties map[string]string, key string) (bool, error) {
+	value, ok := properties[key]
+	if !ok || strings.TrimSpace(value) == "" || strings.TrimSpace(value) == "false" {
+		return false, nil
+	}
+	if strings.TrimSpace(value) == "true" {
+		return true, nil
+	}
+	return false, fmt.Errorf("invalid %s value %q", key, value)
+}
+
+func (contract DestinationContract) validate() error {
+	switch contract.Resolution {
+	case DestinationResolved:
+		switch contract.Evidence {
+		case EvidenceExactTarget:
+			if contract.Authority == AuthorityExternal {
+				return fmt.Errorf("an explicit external authority cannot resolve to a local target")
+			}
+		case EvidenceRoute, EvidenceFederated:
+			if contract.Authority != AuthorityLocal {
+				return fmt.Errorf("%s evidence cannot resolve %s authority locally", contract.Evidence, contract.Authority)
+			}
+		default:
+			return fmt.Errorf("invalid resolved HTTP destination evidence %q", contract.Evidence)
+		}
+	case DestinationAmbiguous:
+		if contract.Authority != AuthorityLocal || contract.Evidence != EvidenceRoute && contract.Evidence != EvidenceFederated {
+			return fmt.Errorf("invalid ambiguous HTTP destination evidence %q for %s authority", contract.Evidence, contract.Authority)
+		}
+	case DestinationUnresolved:
+		if contract.Authority == AuthorityExternal {
+			return fmt.Errorf("explicit external authority must use external destination state")
+		}
+		if contract.Authority == AuthorityUnknown && contract.Evidence != EvidenceUnknownAuthority {
+			return fmt.Errorf("unknown HTTP authority requires unknown-authority evidence")
+		}
+		if contract.Authority == AuthorityLocal && contract.Evidence != EvidenceRoute {
+			return fmt.Errorf("unmatched local HTTP authority requires route evidence")
+		}
+	case DestinationExternal:
+		if contract.Authority != AuthorityExternal || contract.Evidence != EvidenceExplicitAuthority {
+			return fmt.Errorf("external HTTP destination requires explicit-authority evidence")
+		}
+	default:
+		return fmt.Errorf("invalid HTTP destination resolution %q", contract.Resolution)
+	}
+	return nil
+}
+
+// ValidateTarget fails closed when persisted destination evidence disagrees
+// with the actual edge target. Legacy external edges remain explicitly
+// unresolved; a legacy local edge is unsafe because it lacks resolution proof.
+func (contract DestinationContract) ValidateTarget(external bool) error {
+	if contract.Resolution == "" {
+		if external {
+			return nil
+		}
+		return fmt.Errorf("local HTTP destination lacks resolution evidence")
+	}
+	if contract.Resolution == DestinationResolved && external {
+		return fmt.Errorf("resolved HTTP destination targets an external node")
+	}
+	if contract.Resolution != DestinationResolved && !external {
+		return fmt.Errorf("%s HTTP destination targets a local node", contract.Resolution)
+	}
+	return nil
+}
+
+// WithDestinationEvidence copies properties and replaces only the derived
+// destination evidence. Extractor evidence is never mutated in place.
+func WithDestinationEvidence(properties map[string]string, resolution DestinationResolution,
+	evidence DestinationEvidence,
+) map[string]string {
+	result := make(map[string]string, len(properties)+2)
+	for key, value := range properties {
+		if key != PropertyDestinationResolution && key != PropertyDestinationEvidence {
+			result[key] = value
+		}
+	}
+	result[PropertyDestinationResolution] = string(resolution)
+	result[PropertyDestinationEvidence] = string(evidence)
+	return result
+}
+
+// EndpointCandidate contains only the language-neutral declaration evidence
+// needed to rank a request against endpoint declarations.
+type EndpointCandidate struct {
+	Method string
+	Route  Route
+}
+
+// CandidateCatalog indexes a stable endpoint snapshot by method so repeated
+// requests do not rescan declarations which cannot possibly match. Returned
+// indexes always refer to the original candidate slice.
+type CandidateCatalog struct {
+	candidates []EndpointCandidate
+	byMethod   map[string][]int
+}
+
+// NewCandidateCatalog builds a reusable method index without changing input
+// order, which keeps ambiguity presentation deterministic for callers.
+func NewCandidateCatalog(candidates []EndpointCandidate) CandidateCatalog {
+	catalog := CandidateCatalog{candidates: append([]EndpointCandidate(nil), candidates...), byMethod: map[string][]int{}}
+	for index, candidate := range catalog.candidates {
+		catalog.byMethod[candidate.Method] = append(catalog.byMethod[candidate.Method], index)
+	}
+	return catalog
+}
+
+// BestCandidateIndexes applies route compatibility only to declarations with
+// the requested method and returns indexes into the original candidate slice.
+func (catalog CandidateCatalog) BestCandidateIndexes(method string, request Route) []int {
+	best := RankNone
+	indexes := []int{}
+	for _, index := range catalog.byMethod[method] {
+		rank := Compatibility(catalog.candidates[index].Route, request)
+		if rank == RankNone || best != RankNone && rank > best {
+			continue
+		}
+		if best == RankNone || rank < best {
+			best = rank
+			indexes = indexes[:0]
+		}
+		indexes = append(indexes, index)
+	}
+	return indexes
+}
+
+// BestCandidateIndexes applies method compatibility and the strongest shared
+// route rank, preserving input order for deterministic caller presentation.
+func BestCandidateIndexes(method string, request Route, candidates []EndpointCandidate) []int {
+	return NewCandidateCatalog(candidates).BestCandidateIndexes(method, request)
+}
+
 // NormalizeMethod trims, validates, and canonicalizes an HTTP method token.
 func NormalizeMethod(value string) (string, error) {
 	method := strings.Trim(value, " ")

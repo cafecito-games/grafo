@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/httpmodel"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	treesitter "github.com/tree-sitter/go-tree-sitter"
 	tstypescript "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
@@ -101,6 +102,20 @@ type scope struct {
 	receiver  string
 	symbols   map[string]string
 	types     map[string]string
+	lexical   *lexicalEnvironment
+}
+
+type lexicalEnvironment struct {
+	parent   *lexicalEnvironment
+	deferred bool
+	bindings map[string]*lexicalBinding
+}
+
+type lexicalBinding struct {
+	declaration uint
+	initializer *treesitter.Node
+	constant    bool
+	environment *lexicalEnvironment
 }
 
 type extractor struct {
@@ -124,6 +139,20 @@ type importBinding struct {
 	module     *moduleInfo
 	symbol     symbolRef
 	unresolved bool
+}
+
+type fetchMethodState uint8
+
+const (
+	fetchMethodAbsent fetchMethodState = iota
+	fetchMethodExact
+	fetchMethodUnknown
+)
+
+type fetchMethodEvidence struct {
+	state      fetchMethodState
+	raw        string
+	expression string
 }
 
 func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseResult, error) {
@@ -167,7 +196,9 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 	e := &extractor{b: b, input: input, source: input.Content, module: module, moduleID: moduleID,
 		catalog: catalog, info: info, bindings: map[string]importBinding{}, reported: map[string]bool{}}
 	e.reportCatalogDiagnostics()
-	e.walk(root, scope{currentID: b.FileID(), parentID: b.FileID(), symbols: map[string]string{}, types: map[string]string{}})
+	rootEnvironment := e.newLexicalEnvironment(root, nil, false)
+	e.seedHoistedBindings(root, rootEnvironment)
+	e.walk(root, scope{currentID: b.FileID(), parentID: b.FileID(), symbols: map[string]string{}, types: map[string]string{}, lexical: rootEnvironment})
 	return b.Finish(), nil
 }
 
@@ -206,6 +237,9 @@ func (p *Parser) storeCatalog(root string, catalog *moduleCatalog) {
 func (e *extractor) walk(node *treesitter.Node, current scope) {
 	if node == nil {
 		return
+	}
+	if isLexicalScopeNode(node) && node.Kind() != "program" {
+		current.lexical = e.newLexicalEnvironment(node, current.lexical, false)
 	}
 	switch node.Kind() {
 	case "import_statement":
@@ -485,16 +519,21 @@ func (e *extractor) parseFunction(node *treesitter.Node, current scope, kind gra
 	if strings.HasPrefix(strings.TrimSpace(e.text(node)), "async ") {
 		properties["async"] = "true"
 	}
-	if parameters := node.ChildByFieldName("parameters"); parameters != nil {
+	if parameters := functionParameters(node); parameters != nil {
 		properties["parameters"] = strings.TrimSpace(e.text(parameters))
 	}
 	nodeID := e.b.Declare(current.parentID, graph.Node{Kind: kind, Name: name,
 		QualifiedName: qualified, Location: loc, Properties: properties})
+	functionEnvironment := &lexicalEnvironment{parent: current.lexical, deferred: true, bindings: map[string]*lexicalBinding{}}
+	if kind == graph.KindFunction && isIdentifier(name) {
+		functionEnvironment.bind(name, node, nil, false)
+	}
 	functionScope := scope{currentID: nodeID, parentID: nodeID, container: qualified,
-		receiver: current.receiver, symbols: map[string]string{}, types: map[string]string{}}
-	e.declareParameters(node.ChildByFieldName("parameters"), functionScope)
+		receiver: current.receiver, symbols: map[string]string{}, types: map[string]string{}, lexical: functionEnvironment}
+	e.declareParameters(node, functionScope)
 	body := node.ChildByFieldName("body")
 	if body != nil {
+		e.seedHoistedBindings(body, functionEnvironment)
 		e.walk(body, functionScope)
 	}
 }
@@ -512,19 +551,25 @@ func (e *extractor) parseFunctionVariable(node *treesitter.Node, current scope) 
 	qualified := e.qualify(current.container, name)
 	loc := e.location(node)
 	properties := map[string]string{"form": value.Kind()}
-	if parameters := value.ChildByFieldName("parameters"); parameters != nil {
+	if parameters := functionParameters(value); parameters != nil {
 		properties["parameters"] = strings.TrimSpace(e.text(parameters))
 	}
 	nodeID := e.b.Declare(current.parentID, graph.Node{Kind: graph.KindFunction, Name: name,
 		QualifiedName: qualified, Location: loc, Properties: properties})
-	functionScope := scope{currentID: nodeID, parentID: nodeID, container: qualified,
-		receiver: current.receiver, symbols: map[string]string{}, types: map[string]string{}}
-	e.declareParameters(value.ChildByFieldName("parameters"), functionScope)
-	body := value.ChildByFieldName("body")
-	if body == nil {
-		body = value
+	functionEnvironment := &lexicalEnvironment{parent: current.lexical, deferred: true, bindings: map[string]*lexicalBinding{}}
+	if innerName := strings.TrimSpace(e.text(value.ChildByFieldName("name"))); isIdentifier(innerName) {
+		functionEnvironment.bind(innerName, value, nil, false)
 	}
-	e.walkChildren(body, functionScope)
+	functionScope := scope{currentID: nodeID, parentID: nodeID, container: qualified,
+		receiver: current.receiver, symbols: map[string]string{}, types: map[string]string{}, lexical: functionEnvironment}
+	e.declareParameters(value, functionScope)
+	body := value.ChildByFieldName("body")
+	if body != nil {
+		e.seedHoistedBindings(body, functionEnvironment)
+		e.walk(body, functionScope)
+	} else {
+		e.walkChildren(value, functionScope)
+	}
 	return true
 }
 
@@ -541,7 +586,7 @@ func (e *extractor) parseClass(node *treesitter.Node, current scope) {
 	body := node.ChildByFieldName("body")
 	if body != nil {
 		e.walkChildren(body, scope{currentID: classID, parentID: classID, container: qualified,
-			receiver: qualified, symbols: map[string]string{}, types: map[string]string{}})
+			receiver: qualified, symbols: map[string]string{}, types: map[string]string{}, lexical: current.lexical})
 	}
 }
 
@@ -558,7 +603,7 @@ func (e *extractor) parseInterface(node *treesitter.Node, current scope) {
 	body := node.ChildByFieldName("body")
 	if body != nil {
 		e.walkChildren(body, scope{currentID: interfaceID, parentID: interfaceID, container: qualified,
-			symbols: map[string]string{}, types: map[string]string{}})
+			symbols: map[string]string{}, types: map[string]string{}, lexical: current.lexical})
 	}
 }
 
@@ -651,10 +696,16 @@ func (e *extractor) parseCall(node *treesitter.Node, current scope) {
 	loc := e.location(node)
 	args := namedArguments(node.ChildByFieldName("arguments"))
 	method := strings.ToLower(graph.SimpleName(strings.TrimSuffix(callee, "?")))
-	if len(args) > 0 && isStringNode(args[0]) && (callee == "fetch" || strings.HasPrefix(callee, "axios.") || strings.HasSuffix(callee, ".request")) {
+	if len(args) > 0 && callee == "fetch" && e.isUnshadowedGlobal("fetch", current) {
+		if route, ok := e.staticString(args[0], current); ok {
+			e.addFetchRequest(fromID, loc, route, args, current)
+			return
+		}
+	}
+	if len(args) > 0 && isStringNode(args[0]) && (strings.HasPrefix(callee, "axios.") || strings.HasSuffix(callee, ".request")) {
 		route := parserapi.Unquote(e.text(args[0]))
 		httpMethod := strings.ToUpper(method)
-		if callee == "fetch" || httpMethod == "REQUEST" {
+		if httpMethod == "REQUEST" {
 			httpMethod = "ANY"
 		}
 		e.b.AddFact(fromID, graph.EdgeRequests, "", httpMethod+" "+route, graph.KindEndpoint, loc, nil)
@@ -703,32 +754,434 @@ func (e *extractor) parseCall(node *treesitter.Node, current scope) {
 	e.b.AddFact(fromID, graph.EdgeCalls, "", callee, targetKind, loc, properties)
 }
 
-func (e *extractor) declareParameters(parameters *treesitter.Node, current scope) {
+func (e *extractor) addFetchRequest(fromID string, loc graph.Location, route string, args []*treesitter.Node, current scope) {
+	method := fetchMethodEvidence{state: fetchMethodAbsent, raw: "GET", expression: "<default>"}
+	if len(args) > 1 {
+		method = e.fetchRequestInitMethod(args[1], current, 0)
+	}
+	properties := map[string]string{
+		"http_api":               "fetch",
+		"http_method_expression": method.expression,
+		"http_raw_route":         route,
+		"http_route_expression":  strings.TrimSpace(e.text(args[0])),
+		"http_source":            "call",
+	}
+	httpMethod := "ANY"
+	switch method.state {
+	case fetchMethodAbsent:
+		method.raw, method.expression = "GET", "<default>"
+		fallthrough
+	case fetchMethodExact:
+		normalized, err := httpmodel.NormalizeMethod(method.raw)
+		if err != nil {
+			properties["http_invalid"] = "true"
+			properties["http_raw_method"] = method.raw
+			e.b.Diagnostic(loc.Line, "warning", fmt.Sprintf("invalid fetch method %q: %v", method.raw, err))
+		} else {
+			httpMethod = normalized
+			properties["http_method"] = normalized
+			properties["http_raw_method"] = method.raw
+		}
+	case fetchMethodUnknown:
+		properties["http_invalid"] = "true"
+		properties["http_method_unknown"] = "true"
+	}
+	properties["http_method_expression"] = method.expression
+	if httpMethod == "ANY" {
+		properties["http_method"] = httpMethod
+	}
+	if parsed, err := httpmodel.ParseRoute(route); err == nil {
+		properties["http_route"] = parsed.Canonical
+		if parsed.Query != "" {
+			properties["http_query"] = parsed.Query
+		}
+		if parsed.Fragment != "" {
+			properties["http_fragment"] = parsed.Fragment
+		}
+		if parsed.Authority != "" {
+			properties["http_scheme"] = parsed.Scheme
+			properties["http_authority"] = parsed.Authority
+		}
+	}
+	e.b.AddFact(fromID, graph.EdgeRequests, "", httpMethod+" "+route, graph.KindEndpoint, loc, properties)
+}
+
+func (e *extractor) fetchRequestInitMethod(node *treesitter.Node, current scope, depth int) fetchMethodEvidence {
+	if depth >= 16 {
+		return fetchMethodEvidence{state: fetchMethodUnknown, expression: strings.TrimSpace(e.text(node))}
+	}
+	node = unwrapTypeScriptExpression(node)
+	if node == nil {
+		return fetchMethodEvidence{state: fetchMethodUnknown}
+	}
+	if node.Kind() == "null" ||
+		(node.Kind() == "undefined" || node.Kind() == "identifier") && strings.TrimSpace(e.text(node)) == "undefined" &&
+			e.isUnshadowedGlobal("undefined", current) {
+		return fetchMethodEvidence{state: fetchMethodAbsent, raw: "GET", expression: "<default>"}
+	}
+	if node.Kind() != "object" {
+		return fetchMethodEvidence{state: fetchMethodUnknown, expression: strings.TrimSpace(e.text(node))}
+	}
+	result := fetchMethodEvidence{state: fetchMethodAbsent, raw: "GET", expression: "<default>"}
+	for index := uint(0); index < node.NamedChildCount(); index++ {
+		member := node.NamedChild(index)
+		switch member.Kind() {
+		case "pair":
+			key, known := e.requestInitPropertyKey(member.ChildByFieldName("key"), current)
+			if !known {
+				result = fetchMethodEvidence{state: fetchMethodUnknown, expression: strings.TrimSpace(e.text(member))}
+				continue
+			}
+			if key != "method" {
+				continue
+			}
+			value := member.ChildByFieldName("value")
+			if raw, ok := e.staticString(value, current); ok {
+				result = fetchMethodEvidence{state: fetchMethodExact, raw: raw, expression: strings.TrimSpace(e.text(value))}
+			} else {
+				result = fetchMethodEvidence{state: fetchMethodUnknown, expression: strings.TrimSpace(e.text(value))}
+			}
+		case "shorthand_property_identifier":
+			if strings.TrimSpace(e.text(member)) != "method" {
+				continue
+			}
+			if raw, ok := e.staticString(member, current); ok {
+				result = fetchMethodEvidence{state: fetchMethodExact, raw: raw, expression: strings.TrimSpace(e.text(member))}
+			} else {
+				result = fetchMethodEvidence{state: fetchMethodUnknown, expression: strings.TrimSpace(e.text(member))}
+			}
+		case "spread_element":
+			spread := namedChild(member, 0)
+			spreadMethod := e.fetchRequestInitMethod(spread, current, depth+1)
+			if spreadMethod.state != fetchMethodAbsent {
+				result = spreadMethod
+				if result.state == fetchMethodUnknown {
+					result.expression = strings.TrimSpace(e.text(member))
+				}
+			}
+		case "method_definition":
+			name, known := e.requestInitPropertyKey(member.ChildByFieldName("name"), current)
+			if !known || name == "method" {
+				result = fetchMethodEvidence{state: fetchMethodUnknown, expression: strings.TrimSpace(e.text(member))}
+			}
+		}
+	}
+	return result
+}
+
+func (e *extractor) requestInitPropertyKey(node *treesitter.Node, current scope) (string, bool) {
+	if node == nil {
+		return "", false
+	}
+	if node.Kind() == "computed_property_name" {
+		node = namedChild(node, 0)
+		if value, ok := e.staticString(node, current); ok {
+			return value, true
+		}
+		return "", false
+	}
+	if node.Kind() == "string" {
+		return parserapi.Unquote(e.text(node)), true
+	}
+	return strings.TrimSpace(e.text(node)), true
+}
+
+func (e *extractor) staticString(node *treesitter.Node, current scope) (string, bool) {
+	return e.staticStringSeen(node, current, map[*lexicalBinding]bool{})
+}
+
+func (e *extractor) staticStringSeen(node *treesitter.Node, current scope, seen map[*lexicalBinding]bool) (string, bool) {
+	node = unwrapTypeScriptExpression(node)
+	if node == nil {
+		return "", false
+	}
+	switch node.Kind() {
+	case "string":
+		return parserapi.Unquote(e.text(node)), true
+	case "template_string":
+		text := strings.TrimSpace(e.text(node))
+		if strings.Contains(text, "${") {
+			return "", false
+		}
+		return parserapi.Unquote(text), true
+	case "identifier", "shorthand_property_identifier":
+		return e.lexicalConstant(strings.TrimSpace(e.text(node)), node, current.lexical, seen)
+	default:
+		return "", false
+	}
+}
+
+func (e *extractor) isUnshadowedGlobal(name string, current scope) bool {
+	if _, imported := e.bindings[name]; imported {
+		return false
+	}
+	return current.lexical == nil || !current.lexical.has(name)
+}
+
+func (e *extractor) lexicalConstant(name string, use *treesitter.Node, environment *lexicalEnvironment,
+	seen map[*lexicalBinding]bool,
+) (string, bool) {
+	crossedDeferred := false
+	for current := environment; current != nil; current = current.parent {
+		binding, ok := current.bindings[name]
+		if ok {
+			if !binding.constant || binding.initializer == nil || seen[binding] ||
+				binding.declaration >= use.StartByte() && !crossedDeferred {
+				return "", false
+			}
+			seen[binding] = true
+			value, exact := e.staticStringSeen(binding.initializer, scope{lexical: binding.environment}, seen)
+			delete(seen, binding)
+			return value, exact
+		}
+		crossedDeferred = crossedDeferred || current.deferred
+	}
+	return "", false
+}
+
+func (environment *lexicalEnvironment) has(name string) bool {
+	for current := environment; current != nil; current = current.parent {
+		if _, ok := current.bindings[name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (environment *lexicalEnvironment) bind(name string, declaration, initializer *treesitter.Node, constant bool) {
+	if environment == nil || name == "" {
+		return
+	}
+	if existing, ok := environment.bindings[name]; ok {
+		existing.initializer = nil
+		existing.constant = false
+		return
+	}
+	start := uint(0)
+	if declaration != nil {
+		start = declaration.StartByte()
+	}
+	environment.bindings[name] = &lexicalBinding{declaration: start, initializer: initializer,
+		constant: constant, environment: environment}
+}
+
+func (environment *lexicalEnvironment) markDynamic(name string) {
+	for current := environment; current != nil; current = current.parent {
+		if binding, ok := current.bindings[name]; ok {
+			binding.initializer = nil
+			binding.constant = false
+			return
+		}
+	}
+}
+
+func isLexicalScopeNode(node *treesitter.Node) bool {
+	switch node.Kind() {
+	case "program", "statement_block", "for_statement", "for_in_statement", "for_of_statement", "catch_clause", "switch_body":
+		return true
+	default:
+		return false
+	}
+}
+
+func (e *extractor) newLexicalEnvironment(node *treesitter.Node, parent *lexicalEnvironment,
+	deferred bool,
+) *lexicalEnvironment {
+	environment := &lexicalEnvironment{parent: parent, deferred: deferred, bindings: map[string]*lexicalBinding{}}
+	if node == nil {
+		return environment
+	}
+	for index := uint(0); index < node.NamedChildCount(); index++ {
+		e.seedLexicalBinding(node.NamedChild(index), environment)
+	}
+	if node.Kind() == "catch_clause" {
+		parameter := node.ChildByFieldName("parameter")
+		for _, identifier := range e.bindingIdentifiers(parameter) {
+			environment.bind(strings.TrimSpace(e.text(identifier)), identifier, nil, false)
+		}
+	}
+	return environment
+}
+
+func (e *extractor) seedLexicalBinding(node *treesitter.Node, environment *lexicalEnvironment) {
+	if node == nil {
+		return
+	}
+	if node.Kind() == "export_statement" {
+		for index := uint(0); index < node.NamedChildCount(); index++ {
+			child := node.NamedChild(index)
+			switch child.Kind() {
+			case "lexical_declaration", "function_declaration", "generator_function_declaration",
+				"class_declaration", "abstract_class_declaration":
+				e.seedLexicalBinding(child, environment)
+			}
+		}
+		return
+	}
+	switch node.Kind() {
+	case "lexical_declaration":
+		constant := strings.HasPrefix(strings.TrimSpace(e.text(node)), "const ")
+		for index := uint(0); index < node.NamedChildCount(); index++ {
+			declarator := node.NamedChild(index)
+			if declarator.Kind() != "variable_declarator" {
+				continue
+			}
+			nameNode := declarator.ChildByFieldName("name")
+			identifiers := e.bindingIdentifiers(nameNode)
+			simple := nameNode != nil && nameNode.Kind() == "identifier" && len(identifiers) == 1
+			for _, identifier := range identifiers {
+				initializer := (*treesitter.Node)(nil)
+				if simple && constant {
+					initializer = declarator.ChildByFieldName("value")
+				}
+				environment.bind(strings.TrimSpace(e.text(identifier)), identifier, initializer, simple && constant)
+			}
+		}
+	case "switch_case", "switch_default":
+		for index := uint(0); index < node.NamedChildCount(); index++ {
+			e.seedLexicalBinding(node.NamedChild(index), environment)
+		}
+	case "function_declaration", "generator_function_declaration", "class_declaration", "abstract_class_declaration":
+		nameNode := node.ChildByFieldName("name")
+		name := strings.TrimSpace(e.text(nameNode))
+		if isIdentifier(name) {
+			environment.bind(name, node, nil, false)
+		}
+	}
+}
+
+func (e *extractor) seedHoistedBindings(node *treesitter.Node, environment *lexicalEnvironment) {
+	if node == nil {
+		return
+	}
+	if node.Kind() == "variable_declaration" {
+		for index := uint(0); index < node.NamedChildCount(); index++ {
+			declarator := node.NamedChild(index)
+			if declarator.Kind() != "variable_declarator" {
+				continue
+			}
+			for _, identifier := range e.bindingIdentifiers(declarator.ChildByFieldName("name")) {
+				environment.bind(strings.TrimSpace(e.text(identifier)), identifier, nil, false)
+			}
+		}
+		return
+	}
+	switch node.Kind() {
+	case "function_declaration", "generator_function_declaration", "function_expression", "generator_function",
+		"arrow_function", "method_definition", "class", "class_declaration", "abstract_class_declaration":
+		return
+	}
+	for index := uint(0); index < node.NamedChildCount(); index++ {
+		e.seedHoistedBindings(node.NamedChild(index), environment)
+	}
+}
+
+func functionParameters(function *treesitter.Node) *treesitter.Node {
+	if function == nil {
+		return nil
+	}
+	if parameters := function.ChildByFieldName("parameters"); parameters != nil {
+		return parameters
+	}
+	return function.ChildByFieldName("parameter")
+}
+
+func (e *extractor) bindingIdentifiers(pattern *treesitter.Node) []*treesitter.Node {
+	if pattern == nil {
+		return nil
+	}
+	switch pattern.Kind() {
+	case "identifier", "shorthand_property_identifier_pattern":
+		return []*treesitter.Node{pattern}
+	case "required_parameter", "optional_parameter":
+		if child := pattern.ChildByFieldName("pattern"); child != nil {
+			return e.bindingIdentifiers(child)
+		}
+		if child := pattern.ChildByFieldName("name"); child != nil {
+			return e.bindingIdentifiers(child)
+		}
+		for index := uint(0); index < pattern.NamedChildCount(); index++ {
+			if identifiers := e.bindingIdentifiers(pattern.NamedChild(index)); len(identifiers) > 0 {
+				return identifiers
+			}
+		}
+		return nil
+	case "assignment_pattern":
+		return e.bindingIdentifiers(pattern.ChildByFieldName("left"))
+	case "pair_pattern":
+		return e.bindingIdentifiers(pattern.ChildByFieldName("value"))
+	case "object_assignment_pattern":
+		if child := pattern.ChildByFieldName("left"); child != nil {
+			return e.bindingIdentifiers(child)
+		}
+		return e.bindingIdentifiers(pattern.ChildByFieldName("name"))
+	case "rest_pattern":
+		if child := pattern.ChildByFieldName("argument"); child != nil {
+			return e.bindingIdentifiers(child)
+		}
+		return e.bindingIdentifiers(namedChild(pattern, 0))
+	case "object_pattern", "array_pattern":
+		var identifiers []*treesitter.Node
+		for index := uint(0); index < pattern.NamedChildCount(); index++ {
+			identifiers = append(identifiers, e.bindingIdentifiers(pattern.NamedChild(index))...)
+		}
+		return identifiers
+	default:
+		if pattern.NamedChildCount() == 0 && isIdentifier(strings.TrimSpace(e.text(pattern))) {
+			return []*treesitter.Node{pattern}
+		}
+		return nil
+	}
+}
+
+func unwrapTypeScriptExpression(node *treesitter.Node) *treesitter.Node {
+	for depth := 0; node != nil && depth < 16; depth++ {
+		switch node.Kind() {
+		case "as_expression", "satisfies_expression", "parenthesized_expression", "non_null_expression":
+			node = namedChild(node, 0)
+		case "type_assertion":
+			node = namedChild(node, node.NamedChildCount()-1)
+		default:
+			return node
+		}
+	}
+	return node
+}
+
+func namedChild(node *treesitter.Node, index uint) *treesitter.Node {
+	if node == nil || index >= node.NamedChildCount() {
+		return nil
+	}
+	return node.NamedChild(index)
+}
+
+func (e *extractor) declareParameters(function *treesitter.Node, current scope) {
+	parameters := functionParameters(function)
 	if parameters == nil {
 		return
 	}
-	for i := uint(0); i < parameters.NamedChildCount(); i++ {
-		parameter := parameters.NamedChild(i)
-		nameNode := parameter
-		if pattern := parameter.ChildByFieldName("pattern"); pattern != nil {
-			nameNode = pattern
-		} else if name := parameter.ChildByFieldName("name"); name != nil {
-			nameNode = name
+	parameterNodes := []*treesitter.Node{parameters}
+	if parameters.Kind() == "formal_parameters" {
+		parameterNodes = parameterNodes[:0]
+		for i := uint(0); i < parameters.NamedChildCount(); i++ {
+			parameterNodes = append(parameterNodes, parameters.NamedChild(i))
 		}
-		name := strings.TrimSpace(e.text(nameNode))
-		if !isIdentifier(name) {
-			continue
-		}
+	}
+	for _, parameter := range parameterNodes {
 		typeText := e.typeText(parameter)
-		properties := map[string]string{}
-		if typeText != "" {
-			properties["type"] = typeText
-		}
-		id := e.b.Declare(current.currentID, graph.Node{Kind: graph.KindParameter, Name: name,
-			QualifiedName: current.container + "." + name, Location: e.location(parameter), Properties: properties})
-		current.symbols[name] = id
-		if typeText != "" {
-			current.types[name] = e.qualifyType(typeText)
+		for _, identifier := range e.bindingIdentifiers(parameter) {
+			name := strings.TrimSpace(e.text(identifier))
+			properties := map[string]string{}
+			if typeText != "" {
+				properties["type"] = typeText
+			}
+			id := e.b.Declare(current.currentID, graph.Node{Kind: graph.KindParameter, Name: name,
+				QualifiedName: current.container + "." + name, Location: e.location(identifier), Properties: properties})
+			current.symbols[name] = id
+			current.lexical.bind(name, identifier, nil, false)
+			if typeText != "" {
+				current.types[name] = e.qualifyType(typeText)
+			}
 		}
 	}
 }
@@ -778,6 +1231,7 @@ func (e *extractor) parseAssignment(node *treesitter.Node, current scope) {
 	if targetID == "" {
 		return
 	}
+	current.lexical.markDynamic(strings.TrimSpace(e.text(left)))
 	for _, sourceID := range e.referencedVariables(right, current.symbols) {
 		e.b.AddFact(sourceID, graph.EdgeAssigns, targetID, "", graph.KindVariable, e.location(node), nil)
 	}
