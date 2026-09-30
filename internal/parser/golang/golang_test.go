@@ -543,6 +543,7 @@ func (getter) Get(string) string { return "" }
 func (http getter) Call() {
 	_ = http.Get("Authorization")
 }
+
 `)
 	result, err := golangparser.NewWithSemanticLoader(nil).Parse(context.Background(), parserapi.Input{
 		Path: "client.go", Content: content, Repository: "client", RepoID: "repo", GoModule: "example.com/client",
@@ -594,6 +595,11 @@ func Call(ctx context.Context, id string) {
 
 func Direct(id string) {
 	request, _ := http.NewRequest(http.MethodGet, orders+url.PathEscape(id)+"?expand=true", nil)
+	_, _ = http.DefaultClient.Do(request)
+}
+
+func Lower() {
+	request, _ := http.NewRequest("get", "/lower", nil)
 	_, _ = http.DefaultClient.Do(request)
 }
 
@@ -974,6 +980,7 @@ func NotHTTP() {
 	want := map[string]string{
 		"POST /charge/{_}":                       "example.com/client.Call",
 		"GET /orders/{_}":                        "example.com/client.Direct",
+		"get /lower":                             "example.com/client.Lower",
 		"GET /ready":                             "example.com/client.Convenience",
 		"GET /client-get":                        "example.com/client.ClientConvenience",
 		"HEAD /client-head":                      "example.com/client.ClientConvenience",
@@ -1048,6 +1055,9 @@ func NotHTTP() {
 			fact.Properties["http_source"] == "" {
 			t.Fatalf("request %q lacks semantic provenance: %#v", target, fact)
 		}
+	}
+	if found["get /lower"].Properties["http_method"] != "get" {
+		t.Fatalf("lower-case request method was not preserved: %#v", found["get /lower"])
 	}
 	for _, target := range []string{"GET /alternative", "DELETE /alternative", "GET /branch-left", "POST /branch-right"} {
 		if found[target].Properties["conditional"] != "true" {

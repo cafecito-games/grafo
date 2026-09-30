@@ -935,11 +935,11 @@ func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input,
 			if baseOK && imports[base.Name] == "net/http" {
 				switch selector.Sel.Name {
 				case "Get":
-					syntaxRequestMethod = "get"
+					syntaxRequestMethod = "GET"
 				case "Head":
-					syntaxRequestMethod = "head"
+					syntaxRequestMethod = "HEAD"
 				case "Post", "PostForm":
-					syntaxRequestMethod = "post"
+					syntaxRequestMethod = "POST"
 				}
 			}
 		}
@@ -1236,7 +1236,7 @@ func addHTTPRequest(b *parserapi.Builder, fromID string, loc graph.Location, met
 func addHTTPRequestWithProperties(b *parserapi.Builder, fromID string, loc graph.Location, method, route string,
 	extra map[string]string,
 ) {
-	normalizedMethod, methodErr := httpmodel.NormalizeMethod(method)
+	normalizedMethod, methodErr := httpmodel.PreserveMethod(method)
 	parsedRoute, routeErr := httpmodel.ParseRoute(route)
 	properties := map[string]string{"http_raw_method": method, "http_raw_route": route}
 	for key, value := range extra {

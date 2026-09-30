@@ -187,7 +187,7 @@ func (t *Topology) normalize(ctx context.Context, options TopologyOptions) (Topo
 	options.Component = strings.TrimSpace(options.Component)
 	options.Method = strings.Trim(options.Method, " ")
 	if options.Method != "" {
-		method, err := httpmodel.NormalizeMethod(options.Method)
+		method, err := httpmodel.PreserveMethod(options.Method)
 		if err != nil {
 			return options, 0, err
 		}
@@ -706,7 +706,7 @@ func requestMethodRoute(edge graph.Edge, target graph.Node) (string, httpmodel.R
 			route = fallbackRoute
 		}
 	}
-	normalizedMethod, methodErr := httpmodel.NormalizeMethod(method)
+	normalizedMethod, methodErr := httpmodel.PreserveMethod(method)
 	parsedRoute, routeErr := httpmodel.ParseRoute(route)
 	if targetRoute, err := httpmodel.ParseRoute(fallbackRoute); err == nil && parsedRoute.Authority == "" {
 		parsedRoute.Scheme = targetRoute.Scheme

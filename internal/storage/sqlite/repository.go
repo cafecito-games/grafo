@@ -808,7 +808,7 @@ func requestFactMethodRoute(fact graph.Fact) (string, httpmodel.Route, bool) {
 			routeText = targetRoute
 		}
 	}
-	normalized, methodErr := httpmodel.NormalizeMethod(method)
+	normalized, methodErr := httpmodel.PreserveMethod(method)
 	route, routeErr := httpmodel.ParseRoute(routeText)
 	return normalized, route, methodErr == nil && routeErr == nil && fact.Properties["http_invalid"] != "true"
 }

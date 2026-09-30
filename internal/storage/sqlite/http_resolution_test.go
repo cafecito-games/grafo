@@ -137,6 +137,47 @@ func TestRequestResolutionRanksExactMethodOverANYAndExcludesHost(t *testing.T) {
 		httpmodel.DestinationAmbiguous, httpmodel.EvidenceRoute)
 }
 
+func TestRequestResolutionPreservesCaseSensitiveMethods(t *testing.T) {
+	ctx := context.Background()
+	repository, err := Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	endpoints := []graph.Node{
+		{ID: "lower", Kind: graph.KindEndpoint, Name: "get /case", QualifiedName: "endpoint:lower", OwnerFile: "server.go",
+			Properties: map[string]string{"method": "get", "route": "/case"}},
+		{ID: "upper", Kind: graph.KindEndpoint, Name: "GET /case", QualifiedName: "endpoint:upper", OwnerFile: "server.go",
+			Properties: map[string]string{"method": "GET", "route": "/case"}},
+	}
+	sources := []graph.Node{
+		{ID: "lower-source", Kind: graph.KindFunction, Name: "Lower", QualifiedName: "client.Lower", OwnerFile: "client.go"},
+		{ID: "upper-source", Kind: graph.KindFunction, Name: "Upper", QualifiedName: "client.Upper", OwnerFile: "client.go"},
+		{ID: "exact-lower-source", Kind: graph.KindFunction, Name: "ExactLower", QualifiedName: "client.ExactLower", OwnerFile: "client.go"},
+	}
+	facts := []graph.Fact{
+		{ID: "lower-request", FromID: sources[0].ID, Kind: graph.EdgeRequests, Target: "get /case", TargetKind: graph.KindEndpoint,
+			OwnerFile: "client.go", Properties: map[string]string{"http_method": "get", "http_route": "/case"}},
+		{ID: "upper-request", FromID: sources[1].ID, Kind: graph.EdgeRequests, Target: "GET /case", TargetKind: graph.KindEndpoint,
+			OwnerFile: "client.go", Properties: map[string]string{"http_method": "GET", "http_route": "/case"}},
+		{ID: "exact-lower-request", FromID: sources[2].ID, Kind: graph.EdgeRequests, TargetID: endpoints[0].ID,
+			Target: "get /case", TargetKind: graph.KindEndpoint, OwnerFile: "client.go",
+			Properties: map[string]string{"http_method": "get", "http_route": "/case"}},
+	}
+	if err := repository.ReplaceOwner(ctx, "client.go", graph.ParseResult{Nodes: sources, Facts: facts}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.ReplaceOwner(ctx, "server.go", graph.ParseResult{Nodes: endpoints}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertResolvedTarget(t, ctx, repository, sources[0].ID, endpoints[0].ID)
+	assertResolvedTarget(t, ctx, repository, sources[1].ID, endpoints[1].ID)
+	assertResolvedTarget(t, ctx, repository, sources[2].ID, endpoints[0].ID)
+}
+
 func assertResolvedTarget(t *testing.T, ctx context.Context, repository *Repository, sourceID, targetID string) {
 	t.Helper()
 	edges, err := repository.EdgesFrom(ctx, sourceID)

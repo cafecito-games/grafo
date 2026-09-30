@@ -51,6 +51,24 @@ func TestHTTPProjectionRanksExactMethodOverANYAndExcludesHost(t *testing.T) {
 	}
 }
 
+func TestHTTPProjectionPreservesCaseSensitiveRequestMethods(t *testing.T) {
+	candidates := []federatedHTTPCandidate{
+		{scoped: graph.ScopedNode{Node: graph.Node{ID: "lower"}}, match: httpmodel.EndpointCandidate{Method: "get", Route: mustHTTPRoute(t, "/case")}},
+		{scoped: graph.ScopedNode{Node: graph.Node{ID: "upper"}}, match: httpmodel.EndpointCandidate{Method: "GET", Route: mustHTTPRoute(t, "/case")}},
+	}
+	projection := &federatedHTTPProjection{candidates: candidates, catalog: httpmodel.NewCandidateCatalog([]httpmodel.EndpointCandidate{
+		candidates[0].match, candidates[1].match,
+	})}
+	for method, want := range map[string]string{"get": "lower", "GET": "upper"} {
+		got := projection.resolve(graph.Edge{Kind: graph.EdgeRequests, Properties: map[string]string{
+			"http_method": method, "http_route": "/case",
+		}}, graph.Node{Kind: graph.KindEndpoint, External: true})
+		if len(got) != 1 || got[0].Node.ID != want {
+			t.Fatalf("%s candidates = %#v, want %s", method, got, want)
+		}
+	}
+}
+
 func mustHTTPRoute(t *testing.T, value string) httpmodel.Route {
 	t.Helper()
 	route, err := httpmodel.ParseRoute(value)

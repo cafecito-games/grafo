@@ -1007,7 +1007,7 @@ func requestEdgeMethodRoute(edge graph.Edge, target graph.Node) (string, httpmod
 			routeText = fallbackRoute
 		}
 	}
-	normalized, methodErr := httpmodel.NormalizeMethod(method)
+	normalized, methodErr := httpmodel.PreserveMethod(method)
 	route, routeErr := httpmodel.ParseRoute(routeText)
 	return normalized, route, methodErr == nil && routeErr == nil && edge.Properties["http_invalid"] != "true"
 }
