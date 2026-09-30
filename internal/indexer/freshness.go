@@ -170,10 +170,21 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 		return FreshnessProbe{}, err
 	}
 	var keys map[string]string
+	membershipGitCommands := 0
+	membershipFallback := ""
 	if reuseWorkspaceKeys && cacheable && previous != nil && hiddenSemanticDigest == previous.hiddenSemanticDigest &&
 		equalFreshnessMap(evidence, previous.workspaceSemanticEvidence) {
 		keys = cloneFreshnessMap(previous.workspaceSemanticKeys)
 	} else {
+		discovered, discoverErr := discoverFiles(ctx, project, registry)
+		if discoverErr != nil {
+			return FreshnessProbe{}, fmt.Errorf("discover workspace semantic membership: %w", discoverErr)
+		}
+		semanticInput.SourcePaths = discovered.paths
+		membershipGitCommands = discovered.gitCommands
+		if len(discovered.diagnostics) > 0 {
+			membershipFallback = discovered.diagnostics[0].Message
+		}
 		keys, err = registry.WorkspaceSemanticKeys(ctx, semanticInput)
 		if err != nil {
 			return FreshnessProbe{}, err
@@ -182,6 +193,13 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 	if !project.GitManaged || project.gitSnapshot == nil {
 		return FreshnessProbe{
 			Project: project, Fallback: "non-Git project requires a conservative full refresh",
+			workspaceSemanticKeys: cloneFreshnessMap(keys), workspaceSemanticEvidence: cloneFreshnessMap(evidence),
+			hiddenSemanticDigest: hiddenSemanticDigest,
+		}, nil
+	}
+	if membershipFallback != "" {
+		return FreshnessProbe{
+			Project: project, Fallback: membershipFallback, GitCommands: project.gitSnapshot.Commands + hiddenGitCommands + membershipGitCommands,
 			workspaceSemanticKeys: cloneFreshnessMap(keys), workspaceSemanticEvidence: cloneFreshnessMap(evidence),
 			hiddenSemanticDigest: hiddenSemanticDigest,
 		}, nil
@@ -252,7 +270,7 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 	}
 	return FreshnessProbe{
 		Project: project, Token: FreshnessToken{version: FreshnessTokenVersion, digest: encoder.sum()},
-		Supported: true, GitCommands: snapshot.Commands + hiddenGitCommands,
+		Supported: true, GitCommands: snapshot.Commands + hiddenGitCommands + membershipGitCommands,
 		workspaceSemanticKeys: cloneFreshnessMap(keys), workspaceSemanticEvidence: cloneFreshnessMap(evidence),
 		hiddenSemanticDigest: hiddenSemanticDigest,
 	}, nil

@@ -11,9 +11,13 @@ import (
 )
 
 type Input struct {
-	Root        string
-	Path        string
-	Content     []byte
+	Root    string
+	Path    string
+	Content []byte
+	// SourcePaths is the authoritative repository-relative source membership
+	// for this indexing run. A nil slice means the caller has no membership
+	// snapshot and repository-wide parsers must use their deterministic fallback.
+	SourcePaths []string
 	Repository  string
 	RepoID      string
 	GoModule    string

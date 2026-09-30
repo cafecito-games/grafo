@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	pathpkg "path"
 	"path/filepath"
@@ -484,9 +485,19 @@ var (
 // up to the repository root looking for project.godot, so Godot projects
 // nested in a monorepo resolve against their own configuration. A repository
 // without a project file yields an empty Project and no error.
-func LoadProject(root, path string) (Project, error) {
+func LoadProject(root, path string, memberships ...[]string) (Project, error) {
 	if root == "" {
 		return Project{}, nil
+	}
+	if len(memberships) > 1 {
+		return Project{}, fmt.Errorf("Godot project lookup accepts at most one membership snapshot")
+	}
+	if len(memberships) == 1 && memberships[0] != nil {
+		membership, err := normalizeMembership(memberships[0])
+		if err != nil {
+			return Project{}, err
+		}
+		return loadProjectFromMembership(root, path, membership)
 	}
 	directory := filepath.Dir(filepath.FromSlash(strings.TrimPrefix(path, "./")))
 	for {
@@ -504,6 +515,42 @@ func LoadProject(root, path string) (Project, error) {
 			return Project{}, nil
 		}
 		parent := filepath.Dir(directory)
+		if parent == directory {
+			return Project{}, nil
+		}
+		directory = parent
+	}
+}
+
+func loadProjectFromMembership(root, sourcePath string, membership []string) (Project, error) {
+	cleanSource := pathpkg.Clean(filepath.ToSlash(sourcePath))
+	if cleanSource == "." || cleanSource == ".." || pathpkg.IsAbs(cleanSource) || strings.HasPrefix(cleanSource, "../") {
+		return Project{}, fmt.Errorf("invalid Godot source membership path %q", sourcePath)
+	}
+	projects := make(map[string]bool, len(membership))
+	for _, path := range membership {
+		if filepath.Base(path) == ProjectFileName {
+			projects[path] = true
+		}
+	}
+	directory := pathpkg.Dir(cleanSource)
+	for {
+		relative := pathpkg.Join(directory, ProjectFileName)
+		if projects[relative] {
+			absolute := filepath.Join(root, filepath.FromSlash(relative))
+			info, err := os.Lstat(absolute)
+			if err != nil {
+				return Project{}, err
+			}
+			if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+				return Project{}, fmt.Errorf("Godot project %s is not a safe regular file", relative)
+			}
+			return loadFile(absolute, relative, info)
+		}
+		if directory == "." || directory == "/" {
+			return Project{}, nil
+		}
+		parent := pathpkg.Dir(directory)
 		if parent == directory {
 			return Project{}, nil
 		}

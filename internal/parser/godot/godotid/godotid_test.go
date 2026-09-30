@@ -149,6 +149,166 @@ func TestAliasesRejectContradictoryEvidence(t *testing.T) {
 	}
 }
 
+func TestAliasesHonorExplicitRepositoryMembership(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "project.godot", "config_version=5\n")
+	write(t, root, "scenes/tracked.tscn", "[gd_scene format=3 uid=\"uid://tracked\"]\n")
+	write(t, root, "scenes/untracked.tscn", "[gd_scene format=3 uid=\"uid://untracked\"]\n")
+	for _, excluded := range []string{
+		"ignored/copy.tscn",
+		".worktrees/child/copy.tscn",
+		".grafo/copy.tscn",
+		".godot/copy.tscn",
+		".git/copy.tscn",
+		".hg/copy.tscn",
+		".svn/copy.tscn",
+		"node_modules/dependency/copy.tscn",
+		"vendor/dependency/copy.tscn",
+	} {
+		write(t, root, excluded, "[gd_scene format=3 uid=\"uid://tracked\"]\n")
+	}
+
+	membership := []string{
+		"project.godot",
+		"scenes/tracked.tscn",
+		"scenes/untracked.tscn",
+		// The indexer normally removes hard-excluded paths before constructing
+		// membership. Keeping a few here proves the scanner also defends the
+		// shared boundary when called directly.
+		".worktrees/child/copy.tscn",
+		".grafo/copy.tscn",
+		".godot/copy.tscn",
+		"vendor/dependency/copy.tscn",
+	}
+	aliases, err := godotid.LoadAliases(root, membership)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if declared, ok := aliases.Declared("uid://tracked"); !ok || len(declared) != 1 || declared[0] != "scenes/tracked" {
+		t.Fatalf("tracked declarations = %#v (ok=%t)", declared, ok)
+	}
+	if declared, ok := aliases.Declared("uid://untracked"); !ok || len(declared) != 1 || declared[0] != "scenes/untracked" {
+		t.Fatalf("eligible untracked declaration = %#v (ok=%t)", declared, ok)
+	}
+	if len(aliases.Projects) != 1 || aliases.Projects[0] != "project.godot" {
+		t.Fatalf("projects = %#v", aliases.Projects)
+	}
+
+	before := aliases.Digest
+	write(t, root, ".worktrees/child/copy.tscn", "[gd_scene format=3 uid=\"uid://changed\"]\n")
+	write(t, root, "ignored/copy.tscn", "[gd_scene format=3 uid=\"uid://changed-too\"]\n")
+	after, err := godotid.LoadAliases(root, membership)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Digest != before {
+		t.Fatalf("excluded edits changed digest: before=%s after=%s", before, after.Digest)
+	}
+
+	different, err := godotid.AliasesFor(root, []string{"scenes/untracked.tscn"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := different.Declared("uid://tracked"); ok {
+		t.Fatal("alias cache reused a table from a different membership snapshot")
+	}
+	if declared, ok := different.Declared("uid://untracked"); !ok || len(declared) != 1 {
+		t.Fatalf("replacement membership was not scanned: %#v (ok=%t)", declared, ok)
+	}
+}
+
+func TestAliasesMembershipMatchesNonGitFallback(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "project.godot", "config_version=5\n")
+	write(t, root, "scenes/a.tscn", "[gd_scene format=3 uid=\"uid://a\"]\n")
+	write(t, root, "scripts/player.gd.uid", "uid://player\n")
+	write(t, root, ".worktrees/child/project.godot", "config_version=5\n")
+	write(t, root, ".worktrees/child/scenes/a.tscn", "[gd_scene format=3 uid=\"uid://a\"]\n")
+
+	explicit, err := godotid.LoadAliases(root, []string{
+		"scripts/player.gd.uid", "project.godot", "scenes/a.tscn",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fallback, err := godotid.LoadAliases(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if explicit.Digest != fallback.Digest {
+		t.Fatalf("fallback digest %s differs from explicit membership %s", fallback.Digest, explicit.Digest)
+	}
+	if declared, _ := fallback.Declared("uid://a"); len(declared) != 1 || declared[0] != "scenes/a" {
+		t.Fatalf("fallback crossed repository boundary: %#v", declared)
+	}
+}
+
+func TestAliasesExplicitMembershipKeepsUnknownEvidenceFailClosed(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "scenes/known.tscn", "[gd_scene format=3 uid=\"uid://known\"]\n")
+	write(t, root, "scenes/huge.tscn",
+		"[gd_scene format=3 script_class=\""+strings.Repeat("x", 2<<20)+"\"]\n")
+
+	aliases, err := godotid.LoadAliases(root, []string{
+		"scenes/known.tscn", "scenes/huge.tscn", "scenes/disappeared.tscn",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !aliases.Incomplete() || !containsAll(aliases.Unknown, "scenes/disappeared.tscn", "scenes/huge.tscn") {
+		t.Fatalf("unknown evidence = %#v", aliases.Unknown)
+	}
+	if aliases.Agrees("uid://known", "scenes/known") {
+		t.Fatal("known declaration was accepted while eligible evidence remained unknown")
+	}
+}
+
+func TestLoadProjectHonorsExplicitRepositoryMembership(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "project.godot", "[autoload]\nRoot=\"*res://root.gd\"\n")
+	write(t, root, "nested/project.godot", "[autoload]\nNested=\"*res://nested.gd\"\n")
+	write(t, root, "nested/scenes/main.tscn", "[gd_scene format=3]\n")
+
+	membership := []string{"project.godot", "nested/scenes/main.tscn"}
+	project, err := godotid.LoadProject(root, "nested/scenes/main.tscn", membership)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project.Path != "project.godot" {
+		t.Fatalf("ignored nested project became the owner: %#v", project)
+	}
+	if _, ok := project.Autoload("Root"); !ok {
+		t.Fatalf("eligible root project was not loaded: %#v", project)
+	}
+	if _, ok := project.Autoload("Nested"); ok {
+		t.Fatalf("excluded nested project contributed declarations: %#v", project)
+	}
+
+	fallback, err := godotid.LoadProject(root, "nested/scenes/main.tscn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fallback.Path != "nested/project.godot" {
+		t.Fatalf("non-Git fallback did not discover nearest project: %#v", fallback)
+	}
+}
+
+func containsAll(values []string, wanted ...string) bool {
+	for _, want := range wanted {
+		found := false
+		for _, value := range values {
+			if value == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
 func write(t *testing.T, root, name, content string) {
 	t.Helper()
 	path := filepath.Join(root, filepath.FromSlash(name))

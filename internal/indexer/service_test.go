@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -1927,6 +1928,100 @@ func TestServiceKeepsContradictedGodotUIDsUnresolved(t *testing.T) {
 	}
 	if len(stale.OutboundInstances) != 0 {
 		t.Fatalf("moved UID left a stale composition edge: %#v", stale.OutboundInstances)
+	}
+}
+
+func TestServiceBoundsGodotAliasesToGitMembership(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	runGit(t, root, "init", "-b", "main")
+	write(t, filepath.Join(root, ".gitignore"), ".worktrees/\nignored/\n")
+	write(t, mkdirFor(t, root, "project.godot"), "config_version=5\n")
+	write(t, mkdirFor(t, root, "scenes/target.tscn"),
+		"[gd_scene format=3 uid=\"uid://shared\"]\n\n[node name=\"Target\" type=\"Node\"]\n")
+	write(t, mkdirFor(t, root, "scenes/caller.tscn"),
+		"[gd_scene load_steps=2 format=3]\n\n"+
+			"[ext_resource type=\"PackedScene\" uid=\"uid://shared\" path=\"res://scenes/target.tscn\" id=\"1_target\"]\n\n"+
+			"[node name=\"Root\" type=\"Node\"]\n\n"+
+			"[node name=\"Child\" parent=\".\" instance=ExtResource(\"1_target\")]\n")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "fixture")
+
+	child := filepath.Join(root, ".worktrees", "child")
+	runGit(t, root, "worktree", "add", "-b", "child-boundary", child)
+	t.Cleanup(func() {
+		command := exec.Command("git", "-C", root, "worktree", "remove", "--force", child)
+		_ = command.Run()
+	})
+	write(t, mkdirFor(t, root, "ignored/copy.tscn"),
+		"[gd_scene format=3 uid=\"uid://shared\"]\n\n[node name=\"Ignored\" type=\"Node\"]\n")
+	write(t, mkdirFor(t, root, "scenes/untracked.tscn"),
+		"[gd_scene format=3 uid=\"uid://untracked\"]\n\n[node name=\"Untracked\" type=\"Node\"]\n")
+
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(godotparser.New()))
+	first, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(first.Updated, "scenes/untracked.tscn") {
+		t.Fatalf("eligible untracked resource was not indexed: %#v", first.Updated)
+	}
+	for _, diagnostic := range first.Diagnostics {
+		if strings.Contains(diagnostic.Message, "uid://shared") {
+			t.Fatalf("excluded duplicate UID affected parent checkout: %#v", first.Diagnostics)
+		}
+	}
+	composition, err := query.NewService(repository).GodotComposition(ctx, "scenes/caller", query.GodotCompositionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertComposition(t, composition.OutboundInstances, "scenes/target", graph.KindGodotScene)
+
+	// The linked child remains a valid repository root in its own right.
+	childProject, err := indexer.DiscoverProject(ctx, child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if childProject.Root != child {
+		t.Fatalf("child worktree root = %q, want %q", childProject.Root, child)
+	}
+	childRepository, err := sqlite.Open(ctx, childProject.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childService := indexer.NewService(childRepository, parserapi.NewRegistry(godotparser.New()))
+	childReport, err := childService.Run(ctx, childProject, indexer.Options{})
+	if closeErr := childRepository.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, diagnostic := range childReport.Diagnostics {
+		if strings.Contains(diagnostic.Message, "uid://shared") {
+			t.Fatalf("child worktree could not index its own resources: %#v", childReport.Diagnostics)
+		}
+	}
+
+	write(t, filepath.Join(child, "scenes", "target.tscn"),
+		"[gd_scene format=3 uid=\"uid://changed-in-child\"]\n\n[node name=\"Target\" type=\"Node\"]\n")
+	write(t, filepath.Join(root, "ignored", "copy.tscn"),
+		"[gd_scene format=3 uid=\"uid://changed-while-ignored\"]\n\n[node name=\"Ignored\" type=\"Node\"]\n")
+	repeated, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repeated.Updated) != 0 || len(repeated.Removed) != 0 {
+		t.Fatalf("excluded edits dirtied parent Godot semantics: %#v", repeated)
 	}
 }
 

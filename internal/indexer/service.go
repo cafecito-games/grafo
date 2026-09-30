@@ -320,9 +320,10 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		return report, err
 	}
 	report.Skipped = append(report.Skipped, discovered.skipped...)
+	report.Diagnostics = append(report.Diagnostics, discovered.diagnostics...)
 	report.ScopedOut = discovered.scopedOut
 	workspaceSemanticKeys, err := s.parsers.WorkspaceSemanticKeys(ctx, parserapi.Input{
-		Root: project.Root, Repository: project.Name, RepoID: project.ID, GoModule: project.GoModule,
+		Root: project.Root, SourcePaths: paths, Repository: project.Name, RepoID: project.ID, GoModule: project.GoModule,
 	})
 	if err != nil {
 		return report, err
@@ -432,7 +433,7 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 			continue
 		}
 		input := parserapi.Input{Root: project.Root, Path: path, Content: content,
-			Repository: project.Name, RepoID: project.ID, GoModule: project.GoModule}
+			SourcePaths: paths, Repository: project.Name, RepoID: project.ID, GoModule: project.GoModule}
 		digest := sha256.New()
 		_, _ = digest.Write(content)
 		_, _ = digest.Write([]byte{0})

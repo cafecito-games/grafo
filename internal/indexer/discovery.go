@@ -7,25 +7,17 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	"github.com/cafecito-games/grafo/internal/projectconfig"
+	"github.com/cafecito-games/grafo/internal/repositorypath"
 )
-
-var ignoredDirectories = map[string]bool{
-	".git": true, ".grafo": true, ".worktrees": true, "node_modules": true, "vendor": true,
-	"dist": true, "build": true, "coverage": true, ".next": true, ".turbo": true,
-}
-
-var ignoredFiles = map[string]bool{
-	"package-lock.json": true, "npm-shrinkwrap.json": true, "composer.lock": true,
-}
 
 type discoveredFiles struct {
 	paths       []string
 	skipped     []string
+	diagnostics []graph.Diagnostic
 	scopedOut   int
 	gitCommands int
 }
@@ -36,6 +28,7 @@ func discoverFiles(ctx context.Context, project Project, registry *parserapi.Reg
 
 func discoverFilesWithCatalog(ctx context.Context, project Project, registry *parserapi.Registry, known map[string]graph.FileRecord, reuseKnown bool, scope projectconfig.IndexScope) (discoveredFiles, error) {
 	var candidates []string
+	var diagnostics []graph.Diagnostic
 	gitCommands := 0
 	if reuseKnown {
 		candidates = make([]string, 0, len(known))
@@ -55,6 +48,9 @@ func discoverFilesWithCatalog(ctx context.Context, project Project, registry *pa
 					candidates = append(candidates, filepath.ToSlash(string(raw)))
 				}
 			}
+		} else {
+			diagnostics = append(diagnostics, graph.Diagnostic{Level: "warning",
+				Message: "enumerate Git source membership: " + err.Error() + "; using filesystem fallback"})
 		}
 	}
 	if candidates == nil {
@@ -62,7 +58,7 @@ func discoverFilesWithCatalog(ctx context.Context, project Project, registry *pa
 			if err != nil {
 				return err
 			}
-			if entry.IsDir() && path != project.Root && ignoredDirectories[entry.Name()] {
+			if entry.IsDir() && path != project.Root && repositorypath.DirectoryIgnored(entry.Name()) {
 				return filepath.SkipDir
 			}
 			if entry.IsDir() {
@@ -86,7 +82,7 @@ func discoverFilesWithCatalog(ctx context.Context, project Project, registry *pa
 		info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
 		candidates = append(candidates, projectconfig.FileName)
 	}
-	result := discoveredFiles{paths: make([]string, 0, len(candidates)), gitCommands: gitCommands}
+	result := discoveredFiles{paths: make([]string, 0, len(candidates)), diagnostics: diagnostics, gitCommands: gitCommands}
 	if reuseKnown {
 		seen := map[string]bool{}
 		for _, path := range candidates {
@@ -136,17 +132,8 @@ func discoverFilesWithCatalog(ctx context.Context, project Project, registry *pa
 	return result, nil
 }
 
-func ignoredPath(path string) bool {
-	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
-		if ignoredDirectories[part] {
-			return true
-		}
-	}
-	return false
-}
-
 // PathIgnored reports whether the production indexer excludes a repository
 // path before parser routing.
 func PathIgnored(path string) bool {
-	return ignoredPath(path) || ignoredFiles[strings.ToLower(filepath.Base(path))]
+	return repositorypath.Ignored(path)
 }
