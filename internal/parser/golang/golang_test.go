@@ -426,6 +426,115 @@ func ShadowedImport() {
 	assertHasFact(t, result.Facts, graph.EdgeCalls, "http.Get")
 }
 
+func TestSyntaxHTTPFallbackHonorsLexicalImportShadowing(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "block",
+			body: `{
+				var http getter
+				_ = http.Get("shadowed")
+			}`,
+		},
+		{
+			name: "if init",
+			body: `if http := newGetter(); true {
+				_ = http.Get("shadowed")
+			}`,
+		},
+		{
+			name: "for init",
+			body: `for http := newGetter(); false; {
+				_ = http.Get("shadowed")
+			}`,
+		},
+		{
+			name: "switch init",
+			body: `switch http := newGetter(); 0 {
+			case 0:
+				_ = http.Get("shadowed")
+			}`,
+		},
+		{
+			name: "range",
+			body: `for _, http := range []getter{newGetter()} {
+				_ = http.Get("shadowed")
+			}`,
+		},
+		{
+			name: "select receive",
+			body: `ch := make(chan getter)
+			select {
+			case http := <-ch:
+				_ = http.Get("shadowed")
+			default:
+			}`,
+		},
+		{
+			name: "function literal local",
+			body: `func() {
+				http := newGetter()
+				_ = http.Get("shadowed")
+			}()`,
+		},
+		{
+			name: "function literal parameter",
+			body: `func(http getter) {
+				_ = http.Get("shadowed")
+			}(newGetter())`,
+		},
+		{
+			name: "function literal result",
+			body: `func() (http getter) {
+				_ = http.Get("shadowed")
+				return
+			}()`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			content := []byte(`package client
+import "net/http"
+type getter struct{}
+func (getter) Get(string) string { return "" }
+func newGetter() getter { return getter{} }
+func Calls() {
+` + test.body + `
+	_, _ = http.Get("/after-scope")
+}
+`)
+			result, err := golangparser.NewWithSemanticLoader(nil).Parse(context.Background(), parserapi.Input{
+				Path: "client.go", Content: content, Repository: "client", RepoID: "repo", GoModule: "example.com/client",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var requests, ordinaryCalls int
+			for _, fact := range result.Facts {
+				switch {
+				case fact.Kind == graph.EdgeRequests:
+					requests++
+					if fact.Target != "GET /after-scope" {
+						t.Errorf("shadowed receiver emitted outbound request: %#v", fact)
+					}
+				case fact.Kind == graph.EdgeCalls && fact.Target == "http.Get":
+					ordinaryCalls++
+				}
+			}
+			if requests != 1 {
+				t.Errorf("outbound requests = %d, want only the post-scope package call: %#v", requests, result.Facts)
+			}
+			if ordinaryCalls == 0 {
+				t.Errorf("shadowed receiver call was not preserved as an ordinary call: %#v", result.Facts)
+			}
+		})
+	}
+}
+
 func TestPackageSemanticLoaderExtractsOutboundHTTPThroughWrappers(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/client\n\ngo 1.26\n")

@@ -537,21 +537,26 @@ func resolveProtocolProjection(index protocolProjectionIndex, binding string) (p
 type functionBindings struct {
 	symbols           map[string]string
 	types             map[string]string
-	declarationStarts map[string][]token.Pos
+	declarationScopes map[string][]lexicalScope
+}
+
+type lexicalScope struct {
+	start token.Pos
+	end   token.Pos
 }
 
 func collectFunctionBindings(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input, pkg string, imports map[string]string, functionName, functionID string, decl *goast.FuncDecl) functionBindings {
-	bindings := functionBindings{symbols: map[string]string{}, types: map[string]string{}, declarationStarts: map[string][]token.Pos{}}
-	recordDeclaration := func(name string, scopeStart token.Pos) {
+	bindings := functionBindings{symbols: map[string]string{}, types: map[string]string{}, declarationScopes: map[string][]lexicalScope{}}
+	recordDeclaration := func(name string, scopeStart, scopeEnd token.Pos) {
 		if name != "" && name != "_" {
-			bindings.declarationStarts[name] = append(bindings.declarationStarts[name], scopeStart)
+			bindings.declarationScopes[name] = append(bindings.declarationScopes[name], lexicalScope{start: scopeStart, end: scopeEnd})
 		}
 	}
-	declare := func(name string, kind graph.NodeKind, typeText string, scopeStart token.Pos, loc graph.Location) {
+	declare := func(name string, kind graph.NodeKind, typeText string, scopeStart, scopeEnd token.Pos, loc graph.Location) {
 		if name == "" || name == "_" {
 			return
 		}
-		recordDeclaration(name, scopeStart)
+		recordDeclaration(name, scopeStart, scopeEnd)
 		qualified := functionName + "." + name
 		if kind == graph.KindVariable {
 			qualified += fmt.Sprintf("@%d", loc.Line)
@@ -567,22 +572,68 @@ func collectFunctionBindings(b *parserapi.Builder, fset *token.FileSet, input pa
 			bindings.types[name] = qualifyGoType(typeText, pkg, imports)
 		}
 	}
+	parents := map[goast.Node]goast.Node{}
+	var stack []goast.Node
+	goast.Inspect(decl.Body, func(node goast.Node) bool {
+		if node == nil {
+			stack = stack[:len(stack)-1]
+			return true
+		}
+		if len(stack) > 0 {
+			parents[node] = stack[len(stack)-1]
+		}
+		stack = append(stack, node)
+		return true
+	})
+	lexicalScopeEnd := func(node goast.Node) token.Pos {
+		child := node
+		for parent := parents[child]; parent != nil; parent = parents[child] {
+			switch scope := parent.(type) {
+			case *goast.BlockStmt:
+				return scope.End()
+			case *goast.CaseClause:
+				return scope.End()
+			case *goast.CommClause:
+				return scope.End()
+			case *goast.IfStmt:
+				if scope.Init == child {
+					return scope.End()
+				}
+			case *goast.ForStmt:
+				if scope.Init == child {
+					return scope.End()
+				}
+			case *goast.SwitchStmt:
+				if scope.Init == child {
+					return scope.End()
+				}
+			case *goast.TypeSwitchStmt:
+				if scope.Init == child || scope.Assign == child {
+					return scope.End()
+				}
+			}
+			child = parent
+		}
+		return decl.End()
+	}
 	functionScopeStart := decl.End()
+	functionScopeEnd := decl.End()
 	if decl.Body != nil {
 		functionScopeStart = decl.Body.Pos()
+		functionScopeEnd = decl.Body.End()
 	}
 	if decl.Type.Params != nil {
 		for _, field := range decl.Type.Params.List {
 			typeText := render(fset, field.Type)
 			for _, name := range field.Names {
-				declare(name.Name, graph.KindParameter, typeText, functionScopeStart, location(input.Path, fset, name.Pos(), name.End()))
+				declare(name.Name, graph.KindParameter, typeText, functionScopeStart, functionScopeEnd, location(input.Path, fset, name.Pos(), name.End()))
 			}
 		}
 	}
 	if decl.Type.Results != nil {
 		for _, field := range decl.Type.Results.List {
 			for _, name := range field.Names {
-				recordDeclaration(name.Name, functionScopeStart)
+				recordDeclaration(name.Name, functionScopeStart, functionScopeEnd)
 			}
 		}
 	}
@@ -603,7 +654,7 @@ func collectFunctionBindings(b *parserapi.Builder, fset *token.FileSet, input pa
 				} else if len(value.Rhs) == 1 {
 					typeText = inferGoExprType(value.Rhs[0], fset, pkg, imports, bindings.types)
 				}
-				declare(ident.Name, graph.KindVariable, typeText, value.End(), location(input.Path, fset, ident.Pos(), ident.End()))
+				declare(ident.Name, graph.KindVariable, typeText, value.End(), lexicalScopeEnd(value), location(input.Path, fset, ident.Pos(), ident.End()))
 			}
 		case *goast.DeclStmt:
 			gen, ok := value.Decl.(*goast.GenDecl)
@@ -615,24 +666,35 @@ func collectFunctionBindings(b *parserapi.Builder, fset *token.FileSet, input pa
 				case *goast.ValueSpec:
 					for index, name := range spec.Names {
 						if gen.Tok != token.VAR {
-							recordDeclaration(name.Name, spec.End())
+							recordDeclaration(name.Name, spec.End(), lexicalScopeEnd(value))
 							continue
 						}
 						typeText := render(fset, spec.Type)
 						if typeText == "" && index < len(spec.Values) {
 							typeText = inferGoExprType(spec.Values[index], fset, pkg, imports, bindings.types)
 						}
-						declare(name.Name, graph.KindVariable, typeText, spec.End(), location(input.Path, fset, name.Pos(), name.End()))
+						declare(name.Name, graph.KindVariable, typeText, spec.End(), lexicalScopeEnd(value), location(input.Path, fset, name.Pos(), name.End()))
 					}
 				case *goast.TypeSpec:
-					recordDeclaration(spec.Name.Name, spec.End())
+					recordDeclaration(spec.Name.Name, spec.End(), lexicalScopeEnd(value))
 				}
 			}
 		case *goast.RangeStmt:
 			if value.Tok == token.DEFINE {
 				for _, expression := range []goast.Expr{value.Key, value.Value} {
 					if ident, ok := expression.(*goast.Ident); ok {
-						recordDeclaration(ident.Name, value.Body.Pos())
+						recordDeclaration(ident.Name, value.Body.Pos(), value.Body.End())
+					}
+				}
+			}
+		case *goast.FuncLit:
+			for _, fields := range []*goast.FieldList{value.Type.Params, value.Type.Results} {
+				if fields == nil {
+					continue
+				}
+				for _, field := range fields.List {
+					for _, name := range field.Names {
+						recordDeclaration(name.Name, value.Body.Pos(), value.Body.End())
 					}
 				}
 			}
@@ -851,13 +913,19 @@ func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input,
 	// safe to classify from syntax; net/http also defines verb-named accessors.
 	syntaxRequestMethod := ""
 	if !semantic.Available {
-		switch callee {
-		case "net/http.Get":
-			syntaxRequestMethod = "get"
-		case "net/http.Head":
-			syntaxRequestMethod = "head"
-		case "net/http.Post", "net/http.PostForm":
-			syntaxRequestMethod = "post"
+		selector, selectorOK := call.Fun.(*goast.SelectorExpr)
+		if selectorOK {
+			base, baseOK := selector.X.(*goast.Ident)
+			if baseOK && imports[base.Name] == "net/http" {
+				switch selector.Sel.Name {
+				case "Get":
+					syntaxRequestMethod = "get"
+				case "Head":
+					syntaxRequestMethod = "head"
+				case "Post", "PostForm":
+					syntaxRequestMethod = "post"
+				}
+			}
 		}
 		if syntaxRequestMethod != "" && !syntaxCallUsesImport(call, imports, bindings, "net/http") {
 			syntaxRequestMethod = ""
@@ -899,8 +967,8 @@ func syntaxCallUsesImport(call *goast.CallExpr, imports map[string]string, bindi
 	if !ok || imports[base.Name] != importPath {
 		return false
 	}
-	for _, scopeStart := range bindings.declarationStarts[base.Name] {
-		if scopeStart <= call.Pos() {
+	for _, scope := range bindings.declarationScopes[base.Name] {
+		if scope.start <= call.Pos() && call.Pos() < scope.end {
 			return false
 		}
 	}
