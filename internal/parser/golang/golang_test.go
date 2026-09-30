@@ -369,6 +369,7 @@ import (
 )
 type getter struct{}
 func (getter) Get(string) string { return "" }
+func newGetter() getter { return getter{} }
 func Calls(request *http.Request, response *http.Response, headers http.Header, values url.Values, local getter) {
 	_, _ = http.Get("/package-get")
 	_, _ = http.Head("/package-head")
@@ -382,6 +383,11 @@ func Calls(request *http.Request, response *http.Response, headers http.Header, 
 	_ = values.Get("query")
 	_ = local.Get("user-defined")
 }
+func ShadowedImport() {
+	_, _ = http.Get("/before-shadow")
+	http := newGetter()
+	_ = http.Get("Authorization")
+}
 `)
 	result, err := golangparser.NewWithSemanticLoader(nil).Parse(context.Background(), parserapi.Input{
 		Path: "client.go", Content: content, Repository: "client", RepoID: "repo", GoModule: "example.com/client",
@@ -394,6 +400,7 @@ func Calls(request *http.Request, response *http.Response, headers http.Header, 
 		"HEAD /package-head": false,
 		"POST /package-post": false,
 		"POST /package-form": false,
+		"GET /before-shadow": false,
 	}
 	requestCount := 0
 	for _, fact := range result.Facts {
@@ -416,6 +423,7 @@ func Calls(request *http.Request, response *http.Response, headers http.Header, 
 	for _, target := range []string{"net/http.Header.Get", "net/url.Values.Get", "example.com/client.getter.Get"} {
 		assertHasFact(t, result.Facts, graph.EdgeCalls, target)
 	}
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "http.Get")
 }
 
 func TestPackageSemanticLoaderExtractsOutboundHTTPThroughWrappers(t *testing.T) {

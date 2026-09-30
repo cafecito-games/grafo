@@ -535,16 +535,23 @@ func resolveProtocolProjection(index protocolProjectionIndex, binding string) (p
 }
 
 type functionBindings struct {
-	symbols map[string]string
-	types   map[string]string
+	symbols           map[string]string
+	types             map[string]string
+	declarationStarts map[string][]token.Pos
 }
 
 func collectFunctionBindings(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input, pkg string, imports map[string]string, functionName, functionID string, decl *goast.FuncDecl) functionBindings {
-	bindings := functionBindings{symbols: map[string]string{}, types: map[string]string{}}
-	declare := func(name string, kind graph.NodeKind, typeText string, loc graph.Location) {
+	bindings := functionBindings{symbols: map[string]string{}, types: map[string]string{}, declarationStarts: map[string][]token.Pos{}}
+	recordDeclaration := func(name string, scopeStart token.Pos) {
+		if name != "" && name != "_" {
+			bindings.declarationStarts[name] = append(bindings.declarationStarts[name], scopeStart)
+		}
+	}
+	declare := func(name string, kind graph.NodeKind, typeText string, scopeStart token.Pos, loc graph.Location) {
 		if name == "" || name == "_" {
 			return
 		}
+		recordDeclaration(name, scopeStart)
 		qualified := functionName + "." + name
 		if kind == graph.KindVariable {
 			qualified += fmt.Sprintf("@%d", loc.Line)
@@ -560,11 +567,22 @@ func collectFunctionBindings(b *parserapi.Builder, fset *token.FileSet, input pa
 			bindings.types[name] = qualifyGoType(typeText, pkg, imports)
 		}
 	}
+	functionScopeStart := decl.End()
+	if decl.Body != nil {
+		functionScopeStart = decl.Body.Pos()
+	}
 	if decl.Type.Params != nil {
 		for _, field := range decl.Type.Params.List {
 			typeText := render(fset, field.Type)
 			for _, name := range field.Names {
-				declare(name.Name, graph.KindParameter, typeText, location(input.Path, fset, name.Pos(), name.End()))
+				declare(name.Name, graph.KindParameter, typeText, functionScopeStart, location(input.Path, fset, name.Pos(), name.End()))
+			}
+		}
+	}
+	if decl.Type.Results != nil {
+		for _, field := range decl.Type.Results.List {
+			for _, name := range field.Names {
+				recordDeclaration(name.Name, functionScopeStart)
 			}
 		}
 	}
@@ -585,24 +603,37 @@ func collectFunctionBindings(b *parserapi.Builder, fset *token.FileSet, input pa
 				} else if len(value.Rhs) == 1 {
 					typeText = inferGoExprType(value.Rhs[0], fset, pkg, imports, bindings.types)
 				}
-				declare(ident.Name, graph.KindVariable, typeText, location(input.Path, fset, ident.Pos(), ident.End()))
+				declare(ident.Name, graph.KindVariable, typeText, value.End(), location(input.Path, fset, ident.Pos(), ident.End()))
 			}
 		case *goast.DeclStmt:
 			gen, ok := value.Decl.(*goast.GenDecl)
-			if !ok || gen.Tok != token.VAR {
+			if !ok {
 				return true
 			}
 			for _, raw := range gen.Specs {
-				spec, ok := raw.(*goast.ValueSpec)
-				if !ok {
-					continue
-				}
-				for index, name := range spec.Names {
-					typeText := render(fset, spec.Type)
-					if typeText == "" && index < len(spec.Values) {
-						typeText = inferGoExprType(spec.Values[index], fset, pkg, imports, bindings.types)
+				switch spec := raw.(type) {
+				case *goast.ValueSpec:
+					for index, name := range spec.Names {
+						if gen.Tok != token.VAR {
+							recordDeclaration(name.Name, spec.End())
+							continue
+						}
+						typeText := render(fset, spec.Type)
+						if typeText == "" && index < len(spec.Values) {
+							typeText = inferGoExprType(spec.Values[index], fset, pkg, imports, bindings.types)
+						}
+						declare(name.Name, graph.KindVariable, typeText, spec.End(), location(input.Path, fset, name.Pos(), name.End()))
 					}
-					declare(name.Name, graph.KindVariable, typeText, location(input.Path, fset, name.Pos(), name.End()))
+				case *goast.TypeSpec:
+					recordDeclaration(spec.Name.Name, spec.End())
+				}
+			}
+		case *goast.RangeStmt:
+			if value.Tok == token.DEFINE {
+				for _, expression := range []goast.Expr{value.Key, value.Value} {
+					if ident, ok := expression.(*goast.Ident); ok {
+						recordDeclaration(ident.Name, value.Body.Pos())
+					}
 				}
 			}
 		}
@@ -828,6 +859,10 @@ func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input,
 		case "net/http.Post", "net/http.PostForm":
 			syntaxRequestMethod = "post"
 		}
+		if syntaxRequestMethod != "" && !syntaxCallUsesImport(call, imports, bindings, "net/http") {
+			syntaxRequestMethod = ""
+			callee = render(fset, call.Fun)
+		}
 	}
 	if syntaxRequestMethod != "" && len(call.Args) > 0 {
 		if route, ok := stringArgument(call.Args, 0); ok {
@@ -853,6 +888,23 @@ func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input,
 		properties = map[string]string{"resolution": "go/types"}
 	}
 	b.AddFact(fromID, graph.EdgeCalls, "", callee, "", loc, properties)
+}
+
+func syntaxCallUsesImport(call *goast.CallExpr, imports map[string]string, bindings functionBindings, importPath string) bool {
+	selector, ok := call.Fun.(*goast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	base, ok := selector.X.(*goast.Ident)
+	if !ok || imports[base.Name] != importPath {
+		return false
+	}
+	for _, scopeStart := range bindings.declarationStarts[base.Name] {
+		if scopeStart <= call.Pos() {
+			return false
+		}
+	}
+	return true
 }
 
 func emitChiEndpoints(b *parserapi.Builder, semantic SemanticView) {
