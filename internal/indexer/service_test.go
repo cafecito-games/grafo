@@ -1431,6 +1431,103 @@ func assertHTTPRequestSet(t *testing.T, ctx context.Context, repository graph.To
 	}
 }
 
+func TestServiceIndexesServeMuxRoutesForAuthorityAwareTopology(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	write(t, filepath.Join(root, "go.mod"), "module example.com/uzir\n\ngo 1.26\n")
+	write(t, filepath.Join(root, "routes.go"), `package uzir
+import "net/http"
+func handler(http.ResponseWriter, *http.Request) {}
+func Routes() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/agents", handler)
+	mux.HandleFunc("GET /v1/status", handler)
+	mux.HandleFunc("POST /v1/observe", handler)
+	mux.HandleFunc("POST /v1/map", handler)
+	mux.HandleFunc("GET /v1/events", handler)
+	mux.HandleFunc("POST /v1/actions", handler)
+	mux.HandleFunc("POST /v1/shutdown", handler)
+	mux.HandleFunc("GET cortex.example/v1/status", handler)
+}
+`)
+	write(t, filepath.Join(root, "client.go"), `package uzir
+import "net/http"
+func Call() {
+	http.Get("/api/agents")
+	http.Get("/v1/status")
+	http.Post("/v1/observe", "application/json", nil)
+	http.Post("/v1/map", "application/json", nil)
+	http.Get("/v1/events")
+	http.Post("/v1/actions", "application/json", nil)
+	http.Post("/v1/shutdown", "application/json", nil)
+}
+`)
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(golangparser.New()))
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+
+	topology := query.NewTopology(repository)
+	endpoints, err := topology.Endpoints(ctx, query.TopologyOptions{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{
+		"GET /api/agents": true, "GET /v1/status": true, "POST /v1/observe": true,
+		"POST /v1/map": true, "GET /v1/events": true, "POST /v1/actions": true,
+		"POST /v1/shutdown": true, "GET //cortex.example/v1/status": true,
+	}
+	for _, endpoint := range endpoints.Endpoints {
+		delete(want, endpoint.Name)
+		if endpoint.Name == "GET //cortex.example/v1/status" && endpoint.Authority != "cortex.example" {
+			t.Fatalf("host-qualified endpoint lost authority: %#v", endpoint)
+		}
+		if endpoint.HandlerStatus != query.BoundaryResolved || len(endpoint.Handlers) != 1 ||
+			endpoint.Handlers[0].Node.QualifiedName != "example.com/uzir.handler" {
+			t.Fatalf("ServeMux handler evidence = %#v", endpoint)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing Uzir-shaped endpoints: %#v; catalog=%#v", want, endpoints)
+	}
+	requests, err := topology.OutboundRequests(ctx, query.TopologyOptions{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requests.Requests) != 7 {
+		t.Fatalf("outbound requests = %#v", requests)
+	}
+	for _, request := range requests.Requests {
+		if request.Status != query.BoundaryResolved || request.Destination.Authority != "" {
+			t.Fatalf("unqualified request crossed a host-qualified boundary: %#v", request)
+		}
+	}
+
+	before, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Run(ctx, project, indexer.Options{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("ServeMux clean rebuild differs: before=%#v after=%#v", before, after)
+	}
+}
+
 func TestServiceDoesNotPersistMembershipForFileLostAfterDiscovery(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

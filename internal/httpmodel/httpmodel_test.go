@@ -16,6 +16,7 @@ func TestParseRouteCanonicalizesIdentityAndPreservesEvidence(t *testing.T) {
 		{name: "regex repetition", input: `/users/{characterID:[0-9]{2}}`, canonical: `/users/{_:[0-9]{2}}`},
 		{name: "escaped regex", input: `/users/{characterID:\d+}`, canonical: `/users/{_:\d+}`},
 		{name: "catchall", input: "/assets/{path...}", canonical: "/assets/{_...}"},
+		{name: "ServeMux end marker", input: "/posts/{$}", canonical: "/posts/{$}"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -66,6 +67,9 @@ func TestCompatibilityRanksOnlyProvenMatches(t *testing.T) {
 		{name: "unknown does not satisfy regex", declaration: `/users/{id:[0-9]+}`, request: "/users/{value}", want: RankNone},
 		{name: "same regex is compatible", declaration: `/users/{id:[0-9]+}`, request: `/users/{value:[0-9]+}`, want: RankTemplate},
 		{name: "catchall is lowest confidence", declaration: "/assets/{path...}", request: "/assets/css/app.css", want: RankCatchAll},
+		{name: "catchall accepts trailing slash", declaration: "/assets/{path...}", request: "/assets/", want: RankCatchAll},
+		{name: "ServeMux end marker requires trailing slash", declaration: "/posts/{$}", request: "/posts/", want: RankTemplate},
+		{name: "ServeMux end marker rejects no slash", declaration: "/posts/{$}", request: "/posts", want: RankNone},
 		{name: "dynamic catchall needs catchall declaration", declaration: "/assets/{file}", request: "/assets/{path...}", want: RankNone},
 		{name: "segment count differs", declaration: "/users/{id}", request: "/users/42/profile", want: RankNone},
 	}

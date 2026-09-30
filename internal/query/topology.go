@@ -46,6 +46,7 @@ type Endpoint struct {
 	Resource
 	Method        string         `json:"method"`
 	Route         string         `json:"route"`
+	Authority     string         `json:"authority,omitempty"`
 	Exposers      []UsageSite    `json:"exposers"`
 	Handlers      []UsageSite    `json:"handlers"`
 	HandlerStatus BoundaryStatus `json:"handler_status"`
@@ -439,7 +440,8 @@ func (t *Topology) endpoint(ctx context.Context, scoped graph.ScopedNode, limit 
 	resource := newResource(scoped)
 	owners.annotate(&resource)
 	return Endpoint{Resource: resource, Method: method, Route: route,
-		Exposers: exposers, Handlers: handlers, HandlerStatus: status,
+		Authority: strings.TrimSpace(scoped.Node.Properties["authority"]),
+		Exposers:  exposers, Handlers: handlers, HandlerStatus: status,
 		Middleware: resolvedMiddleware, UnresolvedMiddleware: unresolvedMiddleware,
 		MiddlewareTruncated: middlewareTruncated}, exposedTruncated || handlersTruncated || middlewareTruncated, nil
 }
@@ -688,6 +690,7 @@ func endpointRouteCandidate(scoped graph.ScopedNode) (routeCandidate, bool) {
 	if methodErr != nil || routeErr != nil || scoped.Node.Properties["http_invalid"] == "true" {
 		return routeCandidate{}, false
 	}
+	parsedRoute.Authority = strings.TrimSpace(scoped.Node.Properties["authority"])
 	return routeCandidate{scoped: scoped, method: normalizedMethod, route: parsedRoute}, true
 }
 
@@ -836,7 +839,7 @@ func (t *Topology) collectOutboundRequests(ctx context.Context, options Topology
 		bestRank := httpmodel.RankNone
 		if validRoute && request.Authority == "" && base.Properties["http_authority_unknown"] != "true" {
 			for _, declaration := range declarations {
-				if declaration.method != method {
+				if declaration.method != method || declaration.route.Authority != "" {
 					continue
 				}
 				rank := httpmodel.Compatibility(declaration.route, routeModel)

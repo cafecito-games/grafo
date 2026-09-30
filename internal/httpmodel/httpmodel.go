@@ -27,6 +27,7 @@ const (
 	segmentParameter
 	segmentRegex
 	segmentCatchAll
+	segmentEnd
 )
 
 type segment struct {
@@ -40,14 +41,15 @@ type segment struct {
 // matching. Canonical never contains a query or fragment, and parameter names
 // are replaced without erasing regex constraints or catchall semantics.
 type Route struct {
-	Raw       string
-	Path      string
-	Canonical string
-	Query     string
-	Fragment  string
-	Scheme    string
-	Authority string
-	segments  []segment
+	Raw           string
+	Path          string
+	Canonical     string
+	Query         string
+	Fragment      string
+	Scheme        string
+	Authority     string
+	segments      []segment
+	trailingSlash bool
 }
 
 // NormalizeMethod trims, validates, and canonicalizes an HTTP method token.
@@ -118,6 +120,7 @@ func ParseRoute(value string) (Route, error) {
 	if hasDotSegment(path) {
 		return Route{}, fmt.Errorf("HTTP route %q contains a dot segment", value)
 	}
+	trailingSlash := path != "/" && strings.HasSuffix(path, "/")
 	if path != "/" {
 		path = strings.TrimRight(path, "/")
 		if path == "" {
@@ -129,7 +132,8 @@ func ParseRoute(value string) (Route, error) {
 		return Route{}, fmt.Errorf("invalid HTTP route %q: %w", value, err)
 	}
 	return Route{Raw: raw, Path: path, Canonical: canonical, Query: query,
-		Fragment: fragment, Scheme: scheme, Authority: authority, segments: segments}, nil
+		Fragment: fragment, Scheme: scheme, Authority: authority, segments: segments,
+		trailingSlash: trailingSlash}, nil
 }
 
 func cutOutsideTemplate(value string, separator byte) (string, string) {
@@ -193,8 +197,8 @@ func parseSegments(path string) ([]segment, string, error) {
 		if err != nil {
 			return nil, "", err
 		}
-		if parsed.kind == segmentCatchAll && index != len(parts)-1 {
-			return nil, "", fmt.Errorf("catchall must be the final segment")
+		if (parsed.kind == segmentCatchAll || parsed.kind == segmentEnd) && index != len(parts)-1 {
+			return nil, "", fmt.Errorf("terminal wildcard must be the final segment")
 		}
 		segments = append(segments, parsed)
 		canonical = append(canonical, identity)
@@ -216,6 +220,9 @@ func parseSegment(value string) (segment, string, error) {
 		return segment{}, "", fmt.Errorf("malformed template segment %q", value)
 	}
 	inside := value[1 : len(value)-1]
+	if inside == "$" {
+		return segment{kind: segmentEnd}, "{$}", nil
+	}
 	if strings.HasSuffix(inside, "...") {
 		if strings.TrimSuffix(inside, "...") == "" {
 			return segment{}, "", fmt.Errorf("catchall name is empty")
@@ -282,10 +289,22 @@ func Compatibility(declaration, request Route) MatchRank {
 		declared := declaration.segments[declarationIndex]
 		if declared.kind == segmentCatchAll {
 			if requestIndex >= len(request.segments) {
+				if request.trailingSlash {
+					hasCatchAll = true
+					declarationIndex++
+					break
+				}
 				return RankNone
 			}
 			hasCatchAll = true
 			requestIndex = len(request.segments)
+			declarationIndex++
+			break
+		}
+		if declared.kind == segmentEnd && requestIndex >= len(request.segments) {
+			if !request.trailingSlash {
+				return RankNone
+			}
 			declarationIndex++
 			break
 		}
@@ -328,6 +347,8 @@ func compatibleSegment(declaration, request segment) bool {
 		default:
 			return false
 		}
+	case segmentEnd:
+		return request.kind == segmentEnd
 	default:
 		return false
 	}

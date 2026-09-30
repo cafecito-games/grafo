@@ -222,6 +222,7 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 		}
 	}
 	emitChiEndpoints(b, semantic)
+	emitServeMuxEndpoints(b, semantic)
 	emitSemanticHTTPRequests(b, semantic)
 	if haveBindingRegistry {
 		emitProtocolUses(b, semantic, bindingRegistry)
@@ -895,6 +896,9 @@ func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input,
 	}
 	loc := location(input.Path, fset, call.Pos(), call.End())
 	callOffset := fset.Position(call.Lparen).Offset
+	if semantic.ServeMuxEndpointCalls[callOffset] {
+		return
+	}
 	if callee == "os.Getenv" || callee == "os.LookupEnv" {
 		if key, ok := stringArgument(call.Args, 0); ok {
 			b.AddFact(fromID, graph.EdgeReadsConfig, "", key, graph.KindConfigKey, loc, nil)
@@ -902,14 +906,19 @@ func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input,
 		return
 	}
 	if callee == "http.HandleFunc" || callee == "http.Handle" || callee == "net/http.HandleFunc" || callee == "net/http.Handle" {
-		if route, ok := stringArgument(call.Args, 0); ok {
-			endpointID := addEndpoint(b, loc, "ANY", route)
-			b.AddFact(fromID, graph.EdgeExposes, endpointID, "", "", loc, nil)
-			if len(call.Args) > 1 {
-				b.AddFact(endpointID, graph.EdgeHandledBy, "", render(fset, call.Args[1]), "", loc, nil)
+		if patternValue, ok := stringArgument(call.Args, 0); ok && !semantic.Available {
+			pattern, patternErr := parseServeMuxPattern(patternValue)
+			if patternErr != nil {
+				b.Diagnostic(loc.Line, "warning", "invalid net/http ServeMux pattern: "+patternErr.Error())
+			} else {
+				endpointID := addServeMuxEndpoint(b, loc, pattern)
+				b.AddFact(fromID, graph.EdgeExposes, endpointID, "", "", loc, nil)
+				if len(call.Args) > 1 {
+					b.AddFact(endpointID, graph.EdgeHandledBy, "", render(fset, call.Args[1]), "", loc, nil)
+				}
+				return
 			}
 		}
-		return
 	}
 	method := strings.ToLower(graph.SimpleName(callee))
 	if semantic.HTTPRequestCalls[callOffset] {
@@ -1009,6 +1018,27 @@ func emitChiEndpoints(b *parserapi.Builder, semantic SemanticView) {
 			b.AddFact(endpointID, graph.EdgeUsesMiddleware, "", middleware.Target, middleware.TargetKind,
 				middleware.Location, middlewareProperties)
 		}
+	}
+}
+
+func emitServeMuxEndpoints(b *parserapi.Builder, semantic SemanticView) {
+	for _, endpoint := range semantic.ServeMuxEndpoints {
+		pattern := serveMuxPattern{raw: endpoint.Pattern, method: endpoint.Method, host: endpoint.Host, route: endpoint.Route}
+		endpointID := addServeMuxEndpoint(b, endpoint.Location, pattern)
+		properties := map[string]string{
+			"resolution": "go/types", "evidence": "go/types", "framework": "net/http",
+			"raw_pattern": endpoint.Pattern,
+		}
+		if endpoint.Host != "" {
+			properties["authority"] = endpoint.Host
+		}
+		exposerID := graph.NodeID(endpoint.FunctionKind, endpoint.Function, b.Input.RepoID, b.Input.Path)
+		b.AddFact(exposerID, graph.EdgeExposes, endpointID, "", "", endpoint.Location, cloneStringMap(properties))
+		if endpoint.Unresolved {
+			properties["unresolved"] = "true"
+		}
+		b.AddFact(endpointID, graph.EdgeHandledBy, "", endpoint.Handler, endpoint.HandlerKind,
+			endpoint.Location, properties)
 	}
 }
 
@@ -1149,9 +1179,26 @@ func isBuiltinGoType(value string) bool {
 }
 
 func addEndpoint(b *parserapi.Builder, loc graph.Location, method, route string) string {
+	return addEndpointWithEvidence(b, loc, method, route, "", nil)
+}
+
+func addServeMuxEndpoint(b *parserapi.Builder, loc graph.Location, pattern serveMuxPattern) string {
+	properties := map[string]string{"raw_pattern": pattern.raw, "framework": "net/http"}
+	if pattern.host != "" {
+		properties["authority"] = pattern.host
+	}
+	return addEndpointWithEvidence(b, loc, pattern.method, pattern.route, pattern.host, properties)
+}
+
+func addEndpointWithEvidence(b *parserapi.Builder, loc graph.Location, method, route, authority string,
+	extra map[string]string,
+) string {
 	normalizedMethod, methodErr := httpmodel.NormalizeMethod(method)
 	parsedRoute, routeErr := httpmodel.ParseRoute(route)
 	properties := map[string]string{"raw_method": method, "raw_route": route}
+	for key, value := range extra {
+		properties[key] = value
+	}
 	identityMethod, identityRoute := normalizedMethod, route
 	if methodErr == nil {
 		properties["method"] = normalizedMethod
@@ -1169,6 +1216,9 @@ func addEndpoint(b *parserapi.Builder, loc graph.Location, method, route string)
 	if methodErr != nil || routeErr != nil {
 		properties["http_invalid"] = "true"
 		b.Diagnostic(loc.Line, "warning", fmt.Sprintf("invalid HTTP endpoint %q %q: %v", method, route, firstError(methodErr, routeErr)))
+	}
+	if authority != "" && routeErr == nil {
+		identityRoute = "//" + authority + parsedRoute.Canonical
 	}
 	name := identityMethod + " " + identityRoute
 	return b.AddNode(graph.Node{Kind: graph.KindEndpoint, Name: name,
