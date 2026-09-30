@@ -491,7 +491,7 @@ func LoadProject(root, path string, memberships ...[]string) (Project, error) {
 		return Project{}, nil
 	}
 	if len(memberships) > 1 {
-		return Project{}, fmt.Errorf("Godot project lookup accepts at most one membership snapshot")
+		return Project{}, fmt.Errorf("godot project lookup accepts at most one membership snapshot")
 	}
 	if len(memberships) == 1 && memberships[0] != nil {
 		membership, err := normalizeMembership(memberships[0])

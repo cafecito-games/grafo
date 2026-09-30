@@ -208,7 +208,7 @@ func AliasesFor(root string, memberships ...[]string) (*Aliases, error) {
 
 func aliasScanInput(root string, memberships [][]string) (string, []string, string, error) {
 	if len(memberships) > 1 {
-		return "", nil, "", fmt.Errorf("Godot alias scan accepts at most one membership snapshot")
+		return "", nil, "", fmt.Errorf("godot alias scan accepts at most one membership snapshot")
 	}
 	abs, err := filepath.Abs(root)
 	if err != nil {
