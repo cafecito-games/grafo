@@ -121,6 +121,77 @@ func TestServiceIncrementallyRemovesLegacyVerbOnlyEndpoint(t *testing.T) {
 	}
 }
 
+func TestServiceSemanticRebuildRemovesLegacyHeaderRequest(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	write(t, filepath.Join(root, "go.mod"), "module example.com/client\n\ngo 1.26\n")
+	source := []byte(`package client
+import "net/http"
+func Run(request *http.Request) {
+	_ = request.Header.Get("Authorization")
+	_, _ = http.Get("/health")
+}
+`)
+	write(t, filepath.Join(root, "client.go"), string(source))
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(golangparser.New()))
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	assertHTTPRequestSet(t, ctx, repository, []string{"GET /health"})
+
+	input := parserapi.Input{Root: root, Path: "client.go", Content: source, Repository: project.Name,
+		RepoID: project.ID, GoModule: project.GoModule}
+	legacy := parserapi.NewBuilder(input, "go")
+	legacy.AddFact(legacy.FileID(), graph.EdgeRequests, "", "GET Authorization", graph.KindEndpoint,
+		graph.Location{Path: "client.go", Line: 4, Column: 6}, map[string]string{
+			"http_method": "GET", "http_raw_method": "get", "http_raw_route": "Authorization",
+		})
+	if err := repository.ReplaceFile(ctx, graph.FileRecord{Path: "client.go", Hash: "legacy-header-request",
+		Language: "go", Size: int64(len(source)), IndexedAt: graph.NowUTC()}, legacy.Finish()); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.SetMeta(ctx, "semantic_index_version", "31"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertHTTPRequestSet(t, ctx, repository, []string{"GET Authorization"})
+
+	rebuilt, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebuilt.Rebuild != "semantic schema changed" || !reflect.DeepEqual(rebuilt.Updated, []string{"client.go"}) {
+		t.Fatalf("legacy request did not trigger a semantic rebuild: %#v", rebuilt)
+	}
+	assertHTTPRequestSet(t, ctx, repository, []string{"GET /health"})
+
+	unchanged, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(unchanged.Updated) != 0 || unchanged.Unchanged != 1 {
+		t.Fatalf("unchanged reindex did not converge: %#v", unchanged)
+	}
+	clean, err := service.Run(ctx, project, indexer.Options{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(rebuilt.Counts, clean.Counts) {
+		t.Fatalf("semantic rebuild differs from clean rebuild:\n%#v\n%#v", rebuilt.Counts, clean.Counts)
+	}
+}
+
 func TestServiceNormalizesProducerBeforePersistence(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

@@ -171,6 +171,10 @@ func Routes() {
 			{Function: "example.com/sample/api.Routes", FunctionKind: graph.KindFunction, Method: "GET", Route: "/users/{characterID}/?view=full#details", Handler: "example.com/sample/api.Handler", HandlerKind: graph.KindFunction, Location: graph.Location{Path: "api/routes.go", Line: 4, Column: 2}},
 			{Function: "example.com/sample/api.Routes", FunctionKind: graph.KindFunction, Method: "GET", Route: "/bad/%zz", Handler: "example.com/sample/api.Handler", HandlerKind: graph.KindFunction, Location: graph.Location{Path: "api/routes.go", Line: 4, Column: 2}},
 		},
+		HTTPRequests: []golangparser.SemanticHTTPRequest{
+			{Function: "example.com/sample/api.Routes", FunctionKind: graph.KindFunction, Method: "GET", Route: "https://api.example.test/users/{id}/?expand=true#top", Sink: "net/http.Get", Source: "net/http.Get", Location: graph.Location{Path: "api/routes.go", Line: 5, Column: 9}},
+			{Function: "example.com/sample/api.Routes", FunctionKind: graph.KindFunction, Method: "GET", Route: "https://api.example.test/users/{id}/?expand=false#other", Sink: "net/http.Get", Source: "net/http.Get", Location: graph.Location{Path: "api/routes.go", Line: 6, Column: 9}},
+		},
 	}})
 	result, err := parser.Parse(context.Background(), parserapi.Input{
 		Path: "api/routes.go", Content: content, Repository: "sample", RepoID: "repo", GoModule: "example.com/sample",
@@ -249,6 +253,168 @@ func Use(c *Client, body, response any) {
 	}
 	for _, method := range []string{"Connect", "Delete", "Get", "Head", "Options", "Patch", "Post", "Put", "Trace"} {
 		assertHasFact(t, result.Facts, graph.EdgeCalls, "example.com/client.Client."+method)
+	}
+}
+
+func TestPackageSemanticLoaderClassifiesOnlyProvenOutboundHTTPCalls(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/client\n\ngo 1.26\n")
+	content := []byte(`package client
+
+import (
+	"net/http"
+	"net/url"
+)
+
+type getter struct{}
+func (getter) Get(string) string { return "" }
+
+func Requests() {
+	client := &http.Client{}
+	request := &http.Request{}
+	response := &http.Response{}
+	headers := http.Header{}
+	values := url.Values{}
+
+	_, _ = http.Get("/package-get")
+	_, _ = http.Head("/package-head")
+	_, _ = http.Post("/package-post", "text/plain", nil)
+	_, _ = http.PostForm("/package-form", nil)
+	_, _ = http.DefaultClient.Get("/default-client")
+	_, _ = client.Get("/custom-client")
+
+	_ = request.Header.Get("Authorization")
+	requestHeaders := request.Header
+	_ = requestHeaders.Get("X-Request-Alias")
+	_ = response.Header.Get("Content-Type")
+	_ = headers.Get("Location")
+	_ = values.Get("query")
+	var local getter
+	_ = local.Get("user-defined")
+}
+`)
+	writeFile(t, filepath.Join(root, "client.go"), string(content))
+
+	result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "client.go", Content: content, Repository: "client",
+		RepoID: "repo", GoModule: "example.com/client",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantRequests := map[string]bool{
+		"GET /package-get":    false,
+		"HEAD /package-head":  false,
+		"POST /package-post":  false,
+		"POST /package-form":  false,
+		"GET /default-client": false,
+		"GET /custom-client":  false,
+	}
+	requestCount := 0
+	for _, fact := range result.Facts {
+		if fact.Kind != graph.EdgeRequests {
+			continue
+		}
+		requestCount++
+		if _, ok := wantRequests[fact.Target]; !ok {
+			t.Fatalf("accessor or unrelated method emitted outbound request %q: %#v", fact.Target, fact)
+		}
+		wantRequests[fact.Target] = true
+	}
+	if requestCount != len(wantRequests) {
+		t.Fatalf("outbound request count = %d, want %d: %#v", requestCount, len(wantRequests), result.Facts)
+	}
+	for target, found := range wantRequests {
+		if !found {
+			t.Errorf("missing proven outbound request %q", target)
+		}
+	}
+	for _, target := range []string{"net/http.Header.Get", "net/url.Values.Get", "example.com/client.getter.Get"} {
+		assertHasFact(t, result.Facts, graph.EdgeCalls, target)
+	}
+
+	testContent := []byte(`package client
+import (
+	"net/http"
+	"testing"
+)
+func TestHeaderRead(t *testing.T) {
+	response := &http.Response{}
+	_ = response.Header.Get("Content-Type")
+	_ = t
+}
+`)
+	writeFile(t, filepath.Join(root, "client_test.go"), string(testContent))
+	testResult, err := golangparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "client_test.go", Content: testContent, Repository: "client",
+		RepoID: "repo", GoModule: "example.com/client",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fact := range testResult.Facts {
+		if fact.Kind == graph.EdgeRequests {
+			t.Fatalf("header read in Go test emitted outbound request: %#v", fact)
+		}
+	}
+	assertHasFact(t, testResult.Facts, graph.EdgeCalls, "net/http.Header.Get")
+}
+
+func TestSyntaxHTTPFallbackExcludesReceiverMethodsWithoutTypeEvidence(t *testing.T) {
+	content := []byte(`package client
+import (
+	"net/http"
+	"net/url"
+)
+type getter struct{}
+func (getter) Get(string) string { return "" }
+func Calls(request *http.Request, response *http.Response, headers http.Header, values url.Values, local getter) {
+	_, _ = http.Get("/package-get")
+	_, _ = http.Head("/package-head")
+	_, _ = http.Post("/package-post", "text/plain", nil)
+	_, _ = http.PostForm("/package-form", nil)
+	_ = request.Header.Get("Authorization")
+	requestHeaders := request.Header
+	_ = requestHeaders.Get("X-Request-Alias")
+	_ = response.Header.Get("Content-Type")
+	_ = headers.Get("Location")
+	_ = values.Get("query")
+	_ = local.Get("user-defined")
+}
+`)
+	result, err := golangparser.NewWithSemanticLoader(nil).Parse(context.Background(), parserapi.Input{
+		Path: "client.go", Content: content, Repository: "client", RepoID: "repo", GoModule: "example.com/client",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRequests := map[string]bool{
+		"GET /package-get":   false,
+		"HEAD /package-head": false,
+		"POST /package-post": false,
+		"POST /package-form": false,
+	}
+	requestCount := 0
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeRequests {
+			requestCount++
+			if _, ok := wantRequests[fact.Target]; !ok {
+				t.Fatalf("receiver method emitted outbound request without type evidence: %#v", fact)
+			}
+			wantRequests[fact.Target] = true
+		}
+	}
+	if requestCount != len(wantRequests) {
+		t.Fatalf("outbound requests = %d, want %d exact package convenience calls: %#v", requestCount, len(wantRequests), result.Facts)
+	}
+	for target, found := range wantRequests {
+		if !found {
+			t.Errorf("missing exact package convenience request %q", target)
+		}
+	}
+	for _, target := range []string{"net/http.Header.Get", "net/url.Values.Get", "example.com/client.getter.Get"} {
+		assertHasFact(t, result.Facts, graph.EdgeCalls, target)
 	}
 }
 

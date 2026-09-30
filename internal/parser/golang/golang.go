@@ -812,12 +812,26 @@ func parseCall(b *parserapi.Builder, fset *token.FileSet, input parserapi.Input,
 		return
 	}
 	method := strings.ToLower(graph.SimpleName(callee))
-	if isHTTPMethod(method) && len(call.Args) > 0 && (strings.HasPrefix(callee, "net/http.") || strings.HasPrefix(callee, "http.")) {
-		if semantic.HTTPRequestCalls[callOffset] {
-			return
+	if semantic.HTTPRequestCalls[callOffset] {
+		return
+	}
+	// Receiver-based requests require the go/types evidence emitted above. When
+	// semantic loading is unavailable, only exact imported package functions are
+	// safe to classify from syntax; net/http also defines verb-named accessors.
+	syntaxRequestMethod := ""
+	if !semantic.Available {
+		switch callee {
+		case "net/http.Get":
+			syntaxRequestMethod = "get"
+		case "net/http.Head":
+			syntaxRequestMethod = "head"
+		case "net/http.Post", "net/http.PostForm":
+			syntaxRequestMethod = "post"
 		}
+	}
+	if syntaxRequestMethod != "" && len(call.Args) > 0 {
 		if route, ok := stringArgument(call.Args, 0); ok {
-			addHTTPRequest(b, fromID, loc, method, route)
+			addHTTPRequest(b, fromID, loc, syntaxRequestMethod, route)
 			return
 		}
 	}
@@ -1092,15 +1106,6 @@ func firstError(errors ...error) error {
 		}
 	}
 	return nil
-}
-
-func isHTTPMethod(method string) bool {
-	switch method {
-	case "get", "post", "put", "patch", "delete", "head", "options":
-		return true
-	default:
-		return false
-	}
 }
 
 func stringArgument(args []goast.Expr, index int) (string, bool) {
