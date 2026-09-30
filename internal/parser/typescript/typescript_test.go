@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -340,6 +341,314 @@ app.post("/checkout", checkout);
 	assertHasFactKind(t, result.Facts, graph.EdgeAssigns)
 	assertHasFactKind(t, result.Facts, graph.EdgePasses)
 	assertHasFactKind(t, result.Facts, graph.EdgeReturns)
+}
+
+func TestParserInfersFetchRequestMethodsAndFailsClosed(t *testing.T) {
+	content := []byte(`
+function send(dynamicMethod: string, dynamicURL: string, unknownInit: RequestInit) {
+  const METHOD = "post" as const;
+  fetch("/health");
+  fetch("/credentials", { credentials: "same-origin" });
+  fetch("/literal-get", { method: "get" });
+  fetch("/literal-post", { method: "POST" });
+  fetch("/literal-patch", { method: ("PATCH" as const) });
+  fetch("/literal-delete", { "method": "DELETE", credentials: "include" });
+  fetch("/constant", { method: (METHOD) } as const);
+  fetch("/ordered-exact", { ...unknownInit, method: "PATCH" });
+  fetch("/known-spread", { method: "DELETE", ...{ credentials: "include" } });
+  fetch("/spread-method", { ...{ method: "PUT" } });
+  fetch("/ordered-unknown", { method: "POST", ...unknownInit });
+  fetch("/dynamic", { method: dynamicMethod });
+  fetch("/invalid", { method: "BAD METHOD" });
+  fetch(dynamicURL, { method: "POST" });
+  similarlyNamedFetch("/not-fetch", { method: "POST" });
+  axios.post("/axios", {});
+  client.request("/legacy", {});
+}
+`)
+	result, err := typescriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "src/client.ts", Content: content, Repository: "sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"GET /health",
+		"GET /credentials",
+		"GET /literal-get",
+		"POST /literal-post",
+		"PATCH /literal-patch",
+		"DELETE /literal-delete",
+		"POST /constant",
+		"PATCH /ordered-exact",
+		"DELETE /known-spread",
+		"PUT /spread-method",
+		"ANY /ordered-unknown",
+		"ANY /dynamic",
+		"ANY /invalid",
+		"POST /axios",
+		"ANY /legacy",
+	}
+	requests := requestFactsByTarget(result.Facts)
+	if len(requests) != len(want) {
+		t.Fatalf("request count = %d, want %d; got %#v", len(requests), len(want), requests)
+	}
+	for _, target := range want {
+		if _, ok := requests[target]; !ok {
+			t.Fatalf("missing request %q; got %#v", target, requests)
+		}
+	}
+	if requests["GET /health"].Properties["http_method_expression"] != "<default>" ||
+		requests["GET /health"].Properties["http_raw_method"] != "GET" {
+		t.Fatalf("default method evidence = %#v", requests["GET /health"].Properties)
+	}
+	if requests["POST /constant"].Properties["http_method_expression"] != "(METHOD)" ||
+		requests["POST /constant"].Properties["http_raw_method"] != "post" {
+		t.Fatalf("constant method evidence = %#v", requests["POST /constant"].Properties)
+	}
+	for _, target := range []string{"ANY /ordered-unknown", "ANY /dynamic"} {
+		if requests[target].Properties["http_method_unknown"] != "true" {
+			t.Fatalf("%s did not retain unknown-method evidence: %#v", target, requests[target])
+		}
+	}
+	if requests["ANY /invalid"].Properties["http_invalid"] != "true" {
+		t.Fatalf("invalid method was not marked invalid: %#v", requests["ANY /invalid"])
+	}
+	assertDiagnosticContains(t, result.Diagnostics, "invalid fetch method")
+	assertLacksFact(t, result.Facts, graph.EdgeRequests, "POST "+"dynamicURL")
+	assertLacksFact(t, result.Facts, graph.EdgeRequests, "POST /not-fetch")
+}
+
+func TestParserEvaluatesFetchRequestInitCases(t *testing.T) {
+	tests := []struct {
+		name        string
+		declaration string
+		call        string
+		want        string
+		unknown     bool
+	}{
+		{name: "explicit undefined defaults", call: `fetch("/undefined", undefined)`, want: "GET /undefined"},
+		{name: "constant shorthand", declaration: `const method = "POST" as const;`, call: `fetch("/shorthand", { method })`, want: "POST /shorthand"},
+		{name: "computed literal key", call: `fetch("/computed", { ["method"]: "PATCH" })`, want: "PATCH /computed"},
+		{name: "unknown computed key after method", call: `fetch("/computed-unknown", { method: "POST", [key]: value })`, want: "ANY /computed-unknown", unknown: true},
+		{name: "later method overrides unknown computed key", call: `fetch("/computed-overridden", { [key]: value, method: "POST" })`, want: "POST /computed-overridden"},
+		{name: "dynamic options", call: `fetch("/options", init)`, want: "ANY /options", unknown: true},
+		{name: "parameter shadows outer constant", declaration: ``, call: `fetch("/shadowed", { method: METHOD })`, want: "ANY /shadowed", unknown: true},
+		{name: "dynamic template URL", call: "fetch(`/orders/${value}`, { method: \"POST\" })"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			content := `const METHOD = "GET" as const;
+function send(METHOD: string, key: string, value: unknown, init: RequestInit) {
+` + test.declaration + "\n" + test.call + `;
+}`
+			result, err := typescriptparser.New().Parse(context.Background(), parserapi.Input{
+				Path: "src/case.ts", Content: []byte(content), Repository: "sample",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			requests := requestFactsByTarget(result.Facts)
+			if test.want == "" {
+				if len(requests) != 0 {
+					t.Fatalf("dynamic URL emitted requests: %#v", requests)
+				}
+				return
+			}
+			request, ok := requests[test.want]
+			if !ok || len(requests) != 1 {
+				t.Fatalf("requests = %#v, want only %q", requests, test.want)
+			}
+			if got := request.Properties["http_method_unknown"] == "true"; got != test.unknown {
+				t.Fatalf("unknown evidence = %v, want %v: %#v", got, test.unknown, request)
+			}
+		})
+	}
+}
+
+func TestParserHonorsLexicalBindingsForFetchMethods(t *testing.T) {
+	tests := []struct {
+		name           string
+		content        string
+		want           map[string]string
+		wantCalls      []string
+		wantFetchCalls int
+		wantUnknown    []string
+	}{
+		{
+			name: "shadowed fetch callees remain ordinary calls",
+			content: `
+function withParameter(fetch: (url: string) => void) { fetch("/parameter"); }
+function withBinding() { fetch("/binding"); const fetch = (url: string) => url; }
+function withFunction() { fetch("/function"); function fetch(url: string) { return url; } }
+`,
+			wantCalls:      []string{"fetch"},
+			wantFetchCalls: 3,
+		},
+		{
+			name: "binding patterns shadow fetch",
+			content: `
+const singular = fetch => fetch("/arrow-single");
+function withObject({ fetch }: { fetch: (url: string) => void }) { fetch("/object-pattern"); }
+function withArray([fetch]: Array<(url: string) => void>) { fetch("/array-pattern"); }
+function withRest(...fetch: Array<(url: string) => void>) { fetch("/rest-pattern"); }
+`,
+			wantCalls:      []string{"fetch"},
+			wantFetchCalls: 4,
+		},
+		{
+			name: "var bindings hoist to function scope",
+			content: `
+const METHOD = "POST" as const;
+function shadowFetch() {
+  fetch("/before-var");
+  { var fetch = (url: string) => url; }
+  fetch("/after-var");
+}
+function shadowMethod() {
+  { var METHOD = "PATCH"; }
+  fetch("/var-method", { method: METHOD });
+}
+`,
+			want:           map[string]string{"/var-method": "ANY"},
+			wantCalls:      []string{"fetch"},
+			wantFetchCalls: 2,
+			wantUnknown:    []string{"/var-method"},
+		},
+		{
+			name: "switch cases seed lexical bindings",
+			content: `
+const METHOD = "POST" as const;
+function switchMethod(kind: string) {
+  switch (kind) {
+    case "patch":
+      const METHOD = "PATCH" as const;
+      fetch("/switch-method", { method: METHOD });
+      break;
+  }
+  fetch("/after-switch", { method: METHOD });
+}
+function switchFetch(kind: string) {
+  switch (kind) {
+    case "local":
+      const fetch = (url: string) => url;
+      fetch("/switch-fetch");
+      break;
+  }
+}
+`,
+			want: map[string]string{
+				"/switch-method": "PATCH",
+				"/after-switch":  "POST",
+			},
+			wantCalls:      []string{"fetch"},
+			wantFetchCalls: 1,
+		},
+		{
+			name: "block shadow restores outer constant",
+			content: `
+const METHOD = "POST" as const;
+function send() {
+  fetch("/outer-before", { method: METHOD });
+  {
+    const METHOD = "PATCH" as const;
+    fetch("/inner", { method: METHOD });
+  }
+  fetch("/outer-after", { method: METHOD });
+}
+`,
+			want: map[string]string{
+				"/outer-before": "POST",
+				"/inner":        "PATCH",
+				"/outer-after":  "POST",
+			},
+		},
+		{
+			name: "same scope respects declaration order",
+			content: `
+function send() {
+  fetch("/before", { method: METHOD });
+  const METHOD = "POST" as const;
+  fetch("/after", { method: METHOD });
+}
+`,
+			want: map[string]string{
+				"/before": "ANY",
+				"/after":  "POST",
+			},
+			wantUnknown: []string{"/before"},
+		},
+		{
+			name: "function resolves later module constant",
+			content: `
+function send() { fetch("/later", { method: METHOD }); }
+const METHOD = "DELETE" as const;
+`,
+			want: map[string]string{"/later": "DELETE"},
+		},
+		{
+			name: "shadowed undefined stays dynamic",
+			content: `
+function withParameter(undefined: RequestInit) { fetch("/parameter-undefined", undefined); }
+function withBinding() { const undefined = { credentials: "include" }; fetch("/binding-undefined", undefined); }
+function withGlobal() { fetch("/global-undefined", undefined); }
+`,
+			want: map[string]string{
+				"/parameter-undefined": "ANY",
+				"/binding-undefined":   "ANY",
+				"/global-undefined":    "GET",
+			},
+			wantUnknown: []string{"/parameter-undefined", "/binding-undefined"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := typescriptparser.New().Parse(context.Background(), parserapi.Input{
+				Path: "src/lexical.ts", Content: []byte(test.content), Repository: "sample",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			requests := requestFactsByTarget(result.Facts)
+			if len(requests) != len(test.want) {
+				t.Fatalf("requests = %#v, want %#v", requests, test.want)
+			}
+			for route, method := range test.want {
+				fact, ok := requests[method+" "+route]
+				if !ok {
+					t.Fatalf("missing %s %s; requests = %#v", method, route, requests)
+				}
+				if slices.Contains(test.wantUnknown, route) && fact.Properties["http_method_unknown"] != "true" {
+					t.Fatalf("%s did not retain unknown-method evidence: %#v", route, fact)
+				}
+			}
+			for _, target := range test.wantCalls {
+				assertHasFact(t, result.Facts, graph.EdgeCalls, target)
+			}
+			if test.wantFetchCalls > 0 {
+				calls := 0
+				for _, fact := range result.Facts {
+					if fact.Kind == graph.EdgeCalls && fact.Target == "fetch" {
+						calls++
+					}
+				}
+				if calls != test.wantFetchCalls {
+					t.Fatalf("ordinary fetch calls = %d, want %d; facts = %#v", calls, test.wantFetchCalls, result.Facts)
+				}
+			}
+		})
+	}
+}
+
+func requestFactsByTarget(facts []graph.Fact) map[string]graph.Fact {
+	result := map[string]graph.Fact{}
+	for _, fact := range facts {
+		if fact.Kind == graph.EdgeRequests {
+			result[fact.Target] = fact
+		}
+	}
+	return result
 }
 
 func assertHasFactKind(t *testing.T, facts []graph.Fact, kind graph.EdgeKind) {

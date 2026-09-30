@@ -358,7 +358,7 @@ func propertyEvidence() []Evidence {
 		{"edge.order/pattern/framework", "effective handler and middleware chain", []Capability{CapabilityCatalogTopology}, "internal/query/topology.go", 592},
 		{"edge.role/streaming", "Protobuf field, RPC, and oneof role", []Capability{CapabilityMessageFieldFlow}, "internal/parser/protobuf/protobuf.go", 293},
 		{"edge.projection/accessor", "generated binding projection form", []Capability{CapabilityMessageFieldFlow}, "internal/parser/protobufbinding/parser.go", 64},
-		{"edge.specifier/type_only/binding_kind/exported/reexport", "module resolution semantics", []Capability{CapabilityStructural}, "internal/parser/typescript/typescript.go", 277},
+		{"edge.specifier/type_only/binding_kind/exported/reexport", "module resolution semantics", []Capability{CapabilityStructural}, "internal/parser/typescript/typescript.go", 310},
 		{"edge.resolution/federated", "resolution authority and cross-repository attribution", []Capability{CapabilityStructural, CapabilityCatalogTopology}, "internal/federation/repository.go", 820},
 	}
 	result := make([]Evidence, 0, len(values))
