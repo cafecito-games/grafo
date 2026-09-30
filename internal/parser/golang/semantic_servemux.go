@@ -220,7 +220,7 @@ func parseServeMuxPattern(value string) (serveMuxPattern, error) {
 	normalizedMethod := "ANY"
 	if method != "" {
 		var err error
-		normalizedMethod, err = httpmodel.NormalizeMethod(method)
+		normalizedMethod, err = httpmodel.PreserveMethod(method)
 		if err != nil {
 			return serveMuxPattern{}, err
 		}
@@ -233,30 +233,27 @@ func parseServeMuxPattern(value string) (serveMuxPattern, error) {
 	if strings.Contains(host, "{") {
 		return serveMuxPattern{}, fmt.Errorf("host contains '{'")
 	}
-	if host != "" {
-		parsed, err := url.Parse("http://" + host)
-		if err != nil || parsed.Host != host || parsed.User != nil || parsed.Path != "" {
-			return serveMuxPattern{}, fmt.Errorf("invalid host %q", host)
-		}
-	}
-	if strings.ContainsAny(route, "?#") {
-		return serveMuxPattern{}, fmt.Errorf("path contains query or fragment delimiter")
-	}
 	if method != "" && normalizedMethod != "CONNECT" && cleanServeMuxPath(route) != route {
 		return serveMuxPattern{}, fmt.Errorf("non-CONNECT pattern with unclean path")
 	}
 	segments := strings.Split(strings.TrimPrefix(route, "/"), "/")
+	canonical := make([]string, 0, len(segments))
 	seen := map[string]bool{}
 	catchAll := strings.HasSuffix(route, "/") && route != "/"
 	for index, segment := range segments {
 		if segment == "" {
+			if index < len(segments)-1 || route == "/" {
+				canonical = append(canonical, "")
+			}
 			continue
 		}
 		open := strings.IndexByte(segment, '{')
 		if open < 0 {
-			if _, err := url.PathUnescape(segment); err != nil {
-				return serveMuxPattern{}, fmt.Errorf("invalid escaped path segment %q", segment)
+			literal, err := url.PathUnescape(segment)
+			if err != nil {
+				literal = segment
 			}
+			canonical = append(canonical, encodeServeMuxLiteral(literal))
 			continue
 		}
 		if open != 0 || !strings.HasSuffix(segment, "}") {
@@ -267,6 +264,7 @@ func parseServeMuxPattern(value string) (serveMuxPattern, error) {
 			if index != len(segments)-1 {
 				return serveMuxPattern{}, fmt.Errorf("{$} not at end")
 			}
+			canonical = append(canonical, segment)
 			continue
 		}
 		multi := strings.HasSuffix(name, "...")
@@ -282,15 +280,28 @@ func parseServeMuxPattern(value string) (serveMuxPattern, error) {
 		}
 		seen[name] = true
 		catchAll = catchAll || multi
+		canonical = append(canonical, segment)
+	}
+	route = "/" + strings.Join(canonical, "/")
+	if catchAll && strings.HasSuffix(value, "/") {
+		route = strings.TrimSuffix(route, "/") + "/{_...}"
 	}
 	if _, err := httpmodel.ParseRoute(route); err != nil {
 		return serveMuxPattern{}, err
 	}
-	if strings.HasSuffix(route, "/") && route != "/" {
-		route += "{_...}"
-	}
 	return serveMuxPattern{raw: value, method: normalizedMethod, host: host, route: route,
 		pathOnly: method == "", catchAll: catchAll}, nil
+}
+
+func encodeServeMuxLiteral(value string) string {
+	// Shared request parsing deliberately rejects dot segments. A method-less
+	// ServeMux pattern accepts them, so preserve the declaration as inert,
+	// round-trippable evidence without making it look like a matchable request.
+	if value == "." || value == ".." {
+		encoded := strings.Repeat("%2E", len(value))
+		return url.PathEscape(encoded)
+	}
+	return url.PathEscape(value)
 }
 
 func cleanServeMuxPath(value string) string {

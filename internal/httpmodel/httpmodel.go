@@ -228,8 +228,9 @@ func WithDestinationEvidence(properties map[string]string, resolution Destinatio
 // EndpointCandidate contains only the language-neutral declaration evidence
 // needed to rank a request against endpoint declarations.
 type EndpointCandidate struct {
-	Method string
-	Route  Route
+	Method    string
+	Authority string
+	Route     Route
 }
 
 // CandidateCatalog indexes a stable endpoint snapshot by method so repeated
@@ -253,10 +254,27 @@ func NewCandidateCatalog(candidates []EndpointCandidate) CandidateCatalog {
 // BestCandidateIndexes applies route compatibility only to declarations with
 // the requested method and returns indexes into the original candidate slice.
 func (catalog CandidateCatalog) BestCandidateIndexes(method string, request Route) []int {
+	if request.Authority != "" {
+		return nil
+	}
+	if indexes := catalog.bestCandidateIndexes(method, request); len(indexes) > 0 {
+		return indexes
+	}
+	if method != "ANY" {
+		return catalog.bestCandidateIndexes("ANY", request)
+	}
+	return nil
+}
+
+func (catalog CandidateCatalog) bestCandidateIndexes(method string, request Route) []int {
 	best := RankNone
 	indexes := []int{}
 	for _, index := range catalog.byMethod[method] {
-		rank := Compatibility(catalog.candidates[index].Route, request)
+		candidate := catalog.candidates[index]
+		if candidate.Authority != "" || candidate.Route.Authority != "" {
+			continue
+		}
+		rank := Compatibility(candidate.Route, request)
 		if rank == RankNone || best != RankNone && rank > best {
 			continue
 		}
@@ -267,6 +285,19 @@ func (catalog CandidateCatalog) BestCandidateIndexes(method string, request Rout
 		indexes = append(indexes, index)
 	}
 	return indexes
+}
+
+// CandidateCompatible reports whether one declaration is eligible for a
+// request. ANY is the explicit method-less declaration identity; qualified
+// declarations never prove an unqualified local destination.
+func CandidateCompatible(method string, request Route, candidate EndpointCandidate) bool {
+	if request.Authority != "" || candidate.Authority != "" || candidate.Route.Authority != "" {
+		return false
+	}
+	if candidate.Method != method && candidate.Method != "ANY" {
+		return false
+	}
+	return Compatibility(candidate.Route, request) != RankNone
 }
 
 // BestCandidateIndexes applies method compatibility and the strongest shared
@@ -289,6 +320,22 @@ func NormalizeMethod(value string) (string, error) {
 	return strings.ToUpper(method), nil
 }
 
+// PreserveMethod validates an HTTP method token without changing its
+// case-sensitive identity. ServeMux declarations use this because Go matches
+// method tokens exactly.
+func PreserveMethod(value string) (string, error) {
+	method := strings.Trim(value, " ")
+	if method == "" {
+		return "", fmt.Errorf("HTTP method is empty")
+	}
+	for _, character := range method {
+		if !methodTokenCharacter(character) {
+			return "", fmt.Errorf("invalid HTTP method %q", value)
+		}
+	}
+	return method, nil
+}
+
 func methodTokenCharacter(character rune) bool {
 	if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' {
 		return true
@@ -309,7 +356,6 @@ func ParseRoute(value string) (Route, error) {
 	if _, err := url.Parse(raw); err != nil {
 		return Route{}, fmt.Errorf("parse HTTP route %q: %w", value, err)
 	}
-
 	core, fragment := cutOutsideTemplate(raw, '#')
 	core, query := cutOutsideTemplate(core, '?')
 	if _, err := url.QueryUnescape(query); err != nil {
@@ -359,6 +405,16 @@ func ParseRoute(value string) (Route, error) {
 		trailingSlash: trailingSlash}, nil
 }
 
+func hasDotSegment(path string) bool {
+	for _, value := range strings.Split(path, "/") {
+		decoded, err := url.PathUnescape(value)
+		if err == nil && (decoded == "." || decoded == "..") {
+			return true
+		}
+	}
+	return false
+}
+
 func cutOutsideTemplate(value string, separator byte) (string, string) {
 	depth := 0
 	escaped := false
@@ -398,16 +454,6 @@ func cutOutsideTemplate(value string, separator byte) (string, string) {
 	return value, ""
 }
 
-func hasDotSegment(path string) bool {
-	for _, value := range strings.Split(path, "/") {
-		decoded, err := url.PathUnescape(value)
-		if err == nil && (decoded == "." || decoded == "..") {
-			return true
-		}
-	}
-	return false
-}
-
 func parseSegments(path string) ([]segment, string, error) {
 	if path == "/" {
 		return nil, "/", nil
@@ -437,7 +483,11 @@ func parseSegment(value string) (segment, string, error) {
 		if strings.Contains(value, "\\") {
 			return segment{}, "", fmt.Errorf("literal segment contains a backslash")
 		}
-		return segment{kind: segmentLiteral, literal: value}, value, nil
+		literal, err := url.PathUnescape(value)
+		if err != nil {
+			literal = value
+		}
+		return segment{kind: segmentLiteral, literal: literal}, value, nil
 	}
 	if len(value) < 3 || value[0] != '{' || value[len(value)-1] != '}' {
 		return segment{}, "", fmt.Errorf("malformed template segment %q", value)
@@ -503,7 +553,7 @@ func Join(prefixValue, leafValue string) (Route, error) {
 // declaration. The declaration is directional: an unknown request value never
 // proves a literal or regex-constrained declaration.
 func Compatibility(declaration, request Route) MatchRank {
-	if declaration.Canonical == request.Canonical && allLiteral(declaration.segments) && allLiteral(request.segments) {
+	if declaration.trailingSlash == request.trailingSlash && literalSegmentsEqual(declaration.segments, request.segments) {
 		return RankExact
 	}
 	declarationIndex, requestIndex := 0, 0
@@ -544,6 +594,18 @@ func Compatibility(declaration, request Route) MatchRank {
 		return RankCatchAll
 	}
 	return RankTemplate
+}
+
+func literalSegmentsEqual(left, right []segment) bool {
+	if len(left) != len(right) || !allLiteral(left) || !allLiteral(right) {
+		return false
+	}
+	for index := range left {
+		if left[index].literal != right[index].literal {
+			return false
+		}
+	}
+	return true
 }
 
 func allLiteral(segments []segment) bool {

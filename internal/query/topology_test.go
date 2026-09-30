@@ -769,6 +769,11 @@ func newTopologyFixture() *catalogRepository {
 	}
 	add("payments-a", graph.Node{ID: "n:get-charge", Kind: graph.KindEndpoint, Name: "GET /charge",
 		QualifiedName: "endpoint:GET /charge@a.go:8", Properties: map[string]string{"method": "GET", "route": "/charge"}})
+	add("payments-a", graph.Node{ID: "n:any-charge", Kind: graph.KindEndpoint, Name: "ANY /charge",
+		QualifiedName: "endpoint:ANY /charge@a.go:9", Properties: map[string]string{"method": "ANY", "route": "/charge"}})
+	add("payments-a", graph.Node{ID: "n:host-charge", Kind: graph.KindEndpoint, Name: "POST //api.example.test/charge",
+		QualifiedName: "endpoint:POST //api.example.test/charge@a.go:10",
+		Properties:    map[string]string{"method": "POST", "route": "/charge", "authority": "api.example.test"}})
 	add("client", graph.Node{ID: "n:external-charge", Kind: graph.KindEndpoint, Name: "POST /charge",
 		QualifiedName: "POST /charge", External: true,
 		Properties: map[string]string{"unresolved": "true"}})

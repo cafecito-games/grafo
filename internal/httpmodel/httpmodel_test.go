@@ -162,6 +162,46 @@ func TestBestCandidateIndexesKeepsOnlyTheStrongestCompatibleRank(t *testing.T) {
 	}
 }
 
+func TestBestCandidateIndexesUsesMethodTierAndAuthority(t *testing.T) {
+	request := mustRoute(t, "/users/42")
+	candidates := []EndpointCandidate{
+		{Method: "ANY", Route: mustRoute(t, "/users/42")},
+		{Method: "GET", Route: mustRoute(t, "/users/{id}")},
+		{Method: "GET", Authority: "api.example.test", Route: mustRoute(t, "/users/42")},
+	}
+	if indexes := BestCandidateIndexes("GET", request, candidates); len(indexes) != 1 || indexes[0] != 1 {
+		t.Fatalf("GET candidate indexes = %v, want exact-method tier [1]", indexes)
+	}
+	if indexes := BestCandidateIndexes("POST", request, candidates); len(indexes) != 1 || indexes[0] != 0 {
+		t.Fatalf("POST candidate indexes = %v, want ANY fallback [0]", indexes)
+	}
+	request.Authority = "external.example.test"
+	if indexes := BestCandidateIndexes("POST", request, candidates); len(indexes) != 0 {
+		t.Fatalf("external request candidate indexes = %v, want none", indexes)
+	}
+	if indexes := BestCandidateIndexes("GET", mustRoute(t, "/lower"), []EndpointCandidate{
+		{Method: "get", Route: mustRoute(t, "/lower")},
+	}); len(indexes) != 0 {
+		t.Fatalf("case-distinct method candidate indexes = %v, want none", indexes)
+	}
+}
+
+func TestParseRoutePreservesSegmentIdentityAndInvalidEscapes(t *testing.T) {
+	for _, value := range []string{"/files/a%2fb", "/literal%3Fquery%23fragment", "/bad/%25zz", "/a/%252E%252E/b"} {
+		if _, err := ParseRoute(value); err != nil {
+			t.Fatalf("ParseRoute(%q): %v", value, err)
+		}
+	}
+	left := mustRoute(t, "/files/a%2fb")
+	right := mustRoute(t, "/files/a%2Fb")
+	if Compatibility(left, right) != RankExact {
+		t.Fatalf("escaped segment identity differs: left=%#v right=%#v", left, right)
+	}
+	if route := mustRoute(t, "/literal%3Fquery%23fragment"); route.Query != "" || route.Fragment != "" {
+		t.Fatalf("escaped literals became URL structure: %#v", route)
+	}
+}
+
 func TestCandidateCatalogReusesMethodIndexWithoutNarrowingRoutes(t *testing.T) {
 	candidates := []EndpointCandidate{}
 	for index := 0; index < 1_000; index++ {

@@ -82,6 +82,73 @@ func TestRequestResolutionPersistsAmbiguity(t *testing.T) {
 	assertRequestResolution(t, ctx, repository, source.ID, true, httpmodel.DestinationAmbiguous, httpmodel.EvidenceRoute)
 }
 
+func TestRequestResolutionRanksExactMethodOverANYAndExcludesHost(t *testing.T) {
+	ctx := context.Background()
+	repository, err := Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+
+	endpoints := []graph.Node{
+		{ID: "any", Kind: graph.KindEndpoint, Name: "ANY /items/42", QualifiedName: "endpoint:any", OwnerFile: "server.go",
+			Properties: map[string]string{"method": "ANY", "route": "/items/42"}},
+		{ID: "get", Kind: graph.KindEndpoint, Name: "GET /items/{id}", QualifiedName: "endpoint:get", OwnerFile: "server.go",
+			Properties: map[string]string{"method": "GET", "route": "/items/{id}"}},
+		{ID: "host", Kind: graph.KindEndpoint, Name: "GET //api.example.test/items/42", QualifiedName: "endpoint:host", OwnerFile: "server.go",
+			Properties: map[string]string{"method": "GET", "route": "/items/42", "authority": "api.example.test"}},
+		{ID: "fallback-a", Kind: graph.KindEndpoint, Name: "ANY /fallback/{id}", QualifiedName: "endpoint:fallback-a", OwnerFile: "server.go",
+			Properties: map[string]string{"method": "ANY", "route": "/fallback/{id}"}},
+		{ID: "fallback-b", Kind: graph.KindEndpoint, Name: "ANY /fallback/{name}", QualifiedName: "endpoint:fallback-b", OwnerFile: "server.go",
+			Properties: map[string]string{"method": "ANY", "route": "/fallback/{name}"}},
+	}
+	sources := []graph.Node{
+		{ID: "get-source", Kind: graph.KindFunction, Name: "Get", QualifiedName: "client.Get", OwnerFile: "client.go"},
+		{ID: "post-source", Kind: graph.KindFunction, Name: "Post", QualifiedName: "client.Post", OwnerFile: "client.go"},
+		{ID: "exact-host-source", Kind: graph.KindFunction, Name: "ExactHost", QualifiedName: "client.ExactHost", OwnerFile: "client.go"},
+		{ID: "fallback-source", Kind: graph.KindFunction, Name: "Fallback", QualifiedName: "client.Fallback", OwnerFile: "client.go"},
+	}
+	facts := []graph.Fact{
+		{ID: "get-request", FromID: sources[0].ID, Kind: graph.EdgeRequests, Target: "GET /items/42", TargetKind: graph.KindEndpoint,
+			OwnerFile: "client.go", Properties: requestProperties("/items/42", nil)},
+		{ID: "post-request", FromID: sources[1].ID, Kind: graph.EdgeRequests, Target: "POST /items/42", TargetKind: graph.KindEndpoint,
+			OwnerFile: "client.go", Properties: map[string]string{"http_method": "POST", "http_route": "/items/42", "http_raw_route": "/items/42"}},
+		{ID: "exact-host-request", FromID: sources[2].ID, Kind: graph.EdgeRequests, TargetID: endpoints[2].ID,
+			Target: "GET /items/42", TargetKind: graph.KindEndpoint, OwnerFile: "client.go", Properties: requestProperties("/items/42", nil)},
+		{ID: "fallback-request", FromID: sources[3].ID, Kind: graph.EdgeRequests, Target: "POST /fallback/42",
+			TargetKind: graph.KindEndpoint, OwnerFile: "client.go",
+			Properties: map[string]string{"http_method": "POST", "http_route": "/fallback/42", "http_raw_route": "/fallback/42"}},
+	}
+	if err := repository.ReplaceOwner(ctx, "client.go", graph.ParseResult{Nodes: sources, Facts: facts}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.ReplaceOwner(ctx, "server.go", graph.ParseResult{Nodes: endpoints}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	assertResolvedTarget(t, ctx, repository, sources[0].ID, endpoints[1].ID)
+	assertResolvedTarget(t, ctx, repository, sources[1].ID, endpoints[0].ID)
+	assertRequestResolution(t, ctx, repository, sources[2].ID, true,
+		httpmodel.DestinationUnresolved, httpmodel.EvidenceRoute)
+	assertRequestResolution(t, ctx, repository, sources[3].ID, true,
+		httpmodel.DestinationAmbiguous, httpmodel.EvidenceRoute)
+}
+
+func assertResolvedTarget(t *testing.T, ctx context.Context, repository *Repository, sourceID, targetID string) {
+	t.Helper()
+	edges, err := repository.EdgesFrom(ctx, sourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edges) != 1 || edges[0].ToID != targetID ||
+		edges[0].Properties[httpmodel.PropertyDestinationResolution] != string(httpmodel.DestinationResolved) {
+		t.Fatalf("resolved edge from %s = %#v, want target %s", sourceID, edges, targetID)
+	}
+}
+
 func TestRequestResolutionReconcilesLegacyUnsafeLocalEdge(t *testing.T) {
 	ctx := context.Background()
 	repository, err := Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))

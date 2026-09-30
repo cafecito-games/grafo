@@ -2572,6 +2572,12 @@ func routes(dynamic string, unresolved http.Handler) {
 	(&http.ServeMux{}).HandleFunc("GET example.test/hosted/{name}", handler)
 	mux.HandleFunc("GET /conflict", handler)
 	mux.HandleFunc("GET /conflict", other)
+	mux.HandleFunc("get /lower", handler)
+	mux.HandleFunc("GET /literal?query#fragment", handler)
+	mux.HandleFunc("GET /trail ", handler)
+	mux.HandleFunc("GET /bad/%zz", handler)
+	mux.HandleFunc("/a/../b", handler)
+	mux.HandleFunc("CONNECT /connect/../raw", handler)
 
 	mux.HandleFunc(dynamic, handler)
 	mux.HandleFunc("GET relative", handler)
@@ -2591,20 +2597,26 @@ func routes(dynamic string, unresolved http.Handler) {
 	}
 
 	want := map[string]string{
-		"GET /api/agents":               "example.com/mux.handler",
-		"POST /v1/observe":              "example.com/mux.handler",
-		"PATCH /v1/map":                 "example.com/mux.handler",
-		"DELETE /v1/actions/{_}":        "example.com/mux.handler",
-		"HEAD /v1/status":               "example.com/mux.handler",
-		"ANY /v1/events":                "example.com/mux.handler",
-		"PUT /v1/assets/{_...}":         "example.com/mux.handler",
-		"OPTIONS /v1/unresolved":        "unresolved",
-		"GET /v1/shutdown":              "example.com/mux.handler",
-		"ANY /default":                  "example.com/mux.other",
-		"POST /default-explicit":        "example.com/mux.handler",
-		"CONNECT /field":                "example.com/mux.server.methodHandler",
-		"TRACE /constructor":            "example.com/mux.handler",
-		"GET //example.test/hosted/{_}": "example.com/mux.handler",
+		"GET /api/agents":                 "example.com/mux.handler",
+		"POST /v1/observe":                "example.com/mux.handler",
+		"PATCH /v1/map":                   "example.com/mux.handler",
+		"DELETE /v1/actions/{_}":          "example.com/mux.handler",
+		"HEAD /v1/status":                 "example.com/mux.handler",
+		"ANY /v1/events":                  "example.com/mux.handler",
+		"PUT /v1/assets/{_...}":           "example.com/mux.handler",
+		"OPTIONS /v1/unresolved":          "unresolved",
+		"GET /v1/shutdown":                "example.com/mux.handler",
+		"ANY /default":                    "example.com/mux.other",
+		"POST /default-explicit":          "example.com/mux.handler",
+		"CONNECT /field":                  "example.com/mux.server.methodHandler",
+		"TRACE /constructor":              "example.com/mux.handler",
+		"GET //example.test/hosted/{_}":   "example.com/mux.handler",
+		"get /lower":                      "example.com/mux.handler",
+		"GET /literal%3Fquery%23fragment": "example.com/mux.handler",
+		"GET /trail%20":                   "example.com/mux.handler",
+		"GET /bad/%25zz":                  "example.com/mux.handler",
+		"ANY /a/%252E%252E/b":             "example.com/mux.handler",
+		"CONNECT /connect/%252E%252E/raw": "example.com/mux.handler",
 	}
 	endpoints := map[string]graph.Node{}
 	endpointCount := 0

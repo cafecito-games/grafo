@@ -923,7 +923,8 @@ func (r *Repository) buildFederatedHTTPProjection(ctx context.Context) (*federat
 				continue
 			}
 			scoped.Repository = item.project.Name
-			match := httpmodel.EndpointCandidate{Method: candidateMethod, Route: candidateRoute}
+			match := httpmodel.EndpointCandidate{Method: candidateMethod,
+				Authority: candidateRoute.Authority, Route: candidateRoute}
 			projection.candidates = append(projection.candidates, federatedHTTPCandidate{scoped: scoped, match: match})
 			matches = append(matches, match)
 		}
@@ -1022,8 +1023,9 @@ func endpointNodeMethodRoute(node graph.Node) (string, httpmodel.Route, bool) {
 			routeText = fallbackRoute
 		}
 	}
-	normalized, methodErr := httpmodel.NormalizeMethod(method)
+	normalized, methodErr := httpmodel.PreserveMethod(method)
 	route, routeErr := httpmodel.ParseRoute(routeText)
+	route.Authority = strings.TrimSpace(node.Properties["authority"])
 	return normalized, route, methodErr == nil && routeErr == nil && node.Properties["http_invalid"] != "true"
 }
 

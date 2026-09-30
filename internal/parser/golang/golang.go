@@ -1194,6 +1194,9 @@ func addEndpointWithEvidence(b *parserapi.Builder, loc graph.Location, method, r
 	extra map[string]string,
 ) string {
 	normalizedMethod, methodErr := httpmodel.NormalizeMethod(method)
+	if extra["framework"] == "net/http" {
+		normalizedMethod, methodErr = httpmodel.PreserveMethod(method)
+	}
 	parsedRoute, routeErr := httpmodel.ParseRoute(route)
 	properties := map[string]string{"raw_method": method, "raw_route": route}
 	for key, value := range extra {
