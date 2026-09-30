@@ -56,6 +56,59 @@ func (projectFreshnessParser) Parse(context.Context, parserapi.Input) (graph.Par
 }
 func (projectFreshnessParser) SemanticDependencies() []string { return []string{"project.godot"} }
 
+type scopedFreshnessParser struct{ paths *[]string }
+
+func (scopedFreshnessParser) Language() string          { return "scoped-freshness" }
+func (scopedFreshnessParser) Supports(path string) bool { return filepath.Ext(path) == ".snap" }
+func (scopedFreshnessParser) Parse(context.Context, parserapi.Input) (graph.ParseResult, error) {
+	return graph.ParseResult{}, nil
+}
+func (p scopedFreshnessParser) WorkspaceSemanticKey(_ context.Context, input parserapi.Input) (string, error) {
+	*p.paths = append([]string(nil), input.SourcePaths...)
+	return strings.Join(input.SourcePaths, "\x00"), nil
+}
+func (scopedFreshnessParser) SemanticDependencies() []string { return []string{"project.godot"} }
+
+func TestFreshnessHonorsConfiguredIndexScope(t *testing.T) {
+	root := t.TempDir()
+	runGit(t, root, "init", "-b", "main")
+	for path, content := range map[string]string{
+		"grafo.yaml":             "index:\n  exclude:\n    - excluded/**\n",
+		"sample.snap":            "included",
+		"excluded/hidden.snap":   "excluded",
+		"excluded/project.godot": "[application]\nconfig/name=\"excluded\"\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, path)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, path), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+
+	var paths []string
+	registry := parserapi.NewRegistry(scopedFreshnessParser{paths: &paths})
+	first, err := indexer.ProbeFreshness(context.Background(), root, registry, indexer.FreshnessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(paths, ",") != "sample.snap" {
+		t.Fatalf("workspace semantic membership = %v, want only included source", paths)
+	}
+	if err := os.WriteFile(filepath.Join(root, "excluded", "project.godot"), []byte("[application]\nconfig/name=\"changed\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second, err := indexer.ReprobeFreshness(context.Background(), first, registry, indexer.FreshnessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Token.Equal(second.Token) {
+		t.Fatal("configured-out semantic dependency changed freshness")
+	}
+}
+
 func TestFreshnessIgnoresProjectsOutsideGitMembership(t *testing.T) {
 	root := t.TempDir()
 	runGit(t, root, "init", "-b", "main")

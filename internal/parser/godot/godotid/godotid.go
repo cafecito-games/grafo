@@ -502,13 +502,14 @@ func LoadProject(root, path string, memberships ...[]string) (Project, error) {
 	}
 	directory := filepath.Dir(filepath.FromSlash(strings.TrimPrefix(path, "./")))
 	for {
-		candidate := filepath.Join(root, directory, ProjectFileName)
-		info, err := os.Stat(candidate)
+		relative := filepath.ToSlash(filepath.Join(directory, ProjectFileName))
+		relative = strings.TrimPrefix(relative, "./")
+		candidate, info, err := repositorypath.ResolveRegularFile(root, relative)
 		switch {
-		case err == nil && !info.IsDir():
-			relative := filepath.ToSlash(filepath.Join(directory, ProjectFileName))
-			relative = strings.TrimPrefix(relative, "./")
+		case err == nil:
 			return loadFile(candidate, relative, info)
+		case errors.Is(err, repositorypath.ErrUnsafe):
+			return Project{}, err
 		case err != nil && !errors.Is(err, os.ErrNotExist):
 			return Project{}, err
 		}

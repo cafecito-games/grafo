@@ -316,6 +316,9 @@ func TestMembershipRejectsSymlinkedAncestorTraversal(t *testing.T) {
 	if _, err := godotid.LoadProject(root, "linked/scene.tscn", membership); err == nil {
 		t.Fatal("project lookup followed a symlinked ancestor outside the root")
 	}
+	if _, err := godotid.LoadProject(root, "linked/scene.tscn"); err == nil {
+		t.Fatal("fallback project lookup followed a symlinked ancestor outside the root")
+	}
 }
 
 func containsAll(values []string, wanted ...string) bool {
