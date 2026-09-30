@@ -281,6 +281,116 @@ export function execute() { const service = new Service(); service.run(); }
 	assertNoOutgoingTarget(t, ctx, repository, "src/app.execute", graph.EdgeCalls, "src/other.Other.run")
 }
 
+func TestServiceReconcilesTypeScriptFetchMethodsAndTopology(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	write(t, filepath.Join(root, "server.ts"), `
+function health() {}
+function createOrder() {}
+function updateOrder() {}
+const app = express();
+app.get("/health", health);
+app.post("/orders", createOrder);
+app.patch("/orders", updateOrder);
+`)
+	client := func(method string) string {
+		return fmt.Sprintf(`
+export function defaultHealth() { return fetch("/health"); }
+export function writeOrder() { return fetch("/orders", { method: %q }); }
+export function wrongMethod() { return fetch("/orders", { method: "DELETE" }); }
+export function unknownMethod(method: string) { return fetch("/orders", { method }); }
+export function dynamicURL(url: string) { return fetch(url, { method: "POST" }); }
+`, method)
+	}
+	write(t, filepath.Join(root, "client.ts"), client("POST"))
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(typescriptparser.New()))
+	first, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Updated) != 2 {
+		t.Fatalf("initial TypeScript report = %#v", first)
+	}
+	assertTypeScriptFetchTopology(t, ctx, repository, "POST")
+
+	write(t, filepath.Join(root, "client.ts"), client("PATCH"))
+	incremental, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(incremental.Updated) != 2 || incremental.Updated[0] != "client.ts" || incremental.Updated[1] != "server.ts" {
+		t.Fatalf("incremental TypeScript report = %#v", incremental)
+	}
+	assertTypeScriptFetchTopology(t, ctx, repository, "PATCH")
+	incrementalCounts := incremental.Counts
+
+	clean, err := service.Run(ctx, project, indexer.Options{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(incrementalCounts, clean.Counts) {
+		t.Fatalf("incremental fetch reconciliation differs from clean rebuild:\n%#v\n%#v", incrementalCounts, clean.Counts)
+	}
+	assertTypeScriptFetchTopology(t, ctx, repository, "PATCH")
+}
+
+func assertTypeScriptFetchTopology(t *testing.T, ctx context.Context, repository graph.TopologyRepository, writeMethod string) {
+	t.Helper()
+	requests, err := query.NewTopology(repository).OutboundRequests(ctx, query.TopologyOptions{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bySource := map[string]query.OutboundRequest{}
+	for _, request := range requests.Requests {
+		bySource[request.Source.Name] = request
+	}
+	if len(bySource) != 4 {
+		t.Fatalf("persisted fetch requests = %#v", requests)
+	}
+	tests := []struct {
+		source, method string
+		status         query.BoundaryStatus
+	}{
+		{source: "defaultHealth", method: "GET", status: query.BoundaryResolved},
+		{source: "writeOrder", method: writeMethod, status: query.BoundaryResolved},
+		{source: "wrongMethod", method: "DELETE", status: query.BoundaryUnresolved},
+		{source: "unknownMethod", method: "ANY", status: query.BoundaryUnresolved},
+	}
+	for _, test := range tests {
+		request := bySource[test.source]
+		if request.Method != test.method || request.Status != test.status {
+			t.Fatalf("%s request = %#v", test.source, request)
+		}
+	}
+	if bySource["unknownMethod"].Evidence.Properties["http_method_unknown"] != "true" {
+		t.Fatalf("unknown method evidence = %#v", bySource["unknownMethod"].Evidence)
+	}
+	topology, err := query.NewTopology(repository).ServiceTopology(ctx, query.TopologyOptions{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := map[string]bool{}
+	for _, link := range topology.Links {
+		if link.Status == query.BoundaryResolved {
+			resolved[link.Method+" "+link.Route] = true
+		}
+	}
+	for _, request := range []string{"GET /health", writeMethod + " /orders"} {
+		if !resolved[request] {
+			t.Fatalf("topology did not resolve %s: %#v", request, topology)
+		}
+	}
+}
+
 func TestServiceIndexesOnlyChangedFiles(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

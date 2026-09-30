@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/httpmodel"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	treesitter "github.com/tree-sitter/go-tree-sitter"
 	tstypescript "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
@@ -95,12 +96,13 @@ func isTypeScriptSemanticInput(path string) bool {
 }
 
 type scope struct {
-	currentID string
-	parentID  string
-	container string
-	receiver  string
-	symbols   map[string]string
-	types     map[string]string
+	currentID       string
+	parentID        string
+	container       string
+	receiver        string
+	symbols         map[string]string
+	types           map[string]string
+	constantStrings map[string]string
 }
 
 type extractor struct {
@@ -124,6 +126,20 @@ type importBinding struct {
 	module     *moduleInfo
 	symbol     symbolRef
 	unresolved bool
+}
+
+type fetchMethodState uint8
+
+const (
+	fetchMethodAbsent fetchMethodState = iota
+	fetchMethodExact
+	fetchMethodUnknown
+)
+
+type fetchMethodEvidence struct {
+	state      fetchMethodState
+	raw        string
+	expression string
 }
 
 func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseResult, error) {
@@ -167,7 +183,7 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 	e := &extractor{b: b, input: input, source: input.Content, module: module, moduleID: moduleID,
 		catalog: catalog, info: info, bindings: map[string]importBinding{}, reported: map[string]bool{}}
 	e.reportCatalogDiagnostics()
-	e.walk(root, scope{currentID: b.FileID(), parentID: b.FileID(), symbols: map[string]string{}, types: map[string]string{}})
+	e.walk(root, scope{currentID: b.FileID(), parentID: b.FileID(), symbols: map[string]string{}, types: map[string]string{}, constantStrings: map[string]string{}})
 	return b.Finish(), nil
 }
 
@@ -491,7 +507,8 @@ func (e *extractor) parseFunction(node *treesitter.Node, current scope, kind gra
 	nodeID := e.b.Declare(current.parentID, graph.Node{Kind: kind, Name: name,
 		QualifiedName: qualified, Location: loc, Properties: properties})
 	functionScope := scope{currentID: nodeID, parentID: nodeID, container: qualified,
-		receiver: current.receiver, symbols: map[string]string{}, types: map[string]string{}}
+		receiver: current.receiver, symbols: map[string]string{}, types: map[string]string{},
+		constantStrings: cloneStringMap(current.constantStrings)}
 	e.declareParameters(node.ChildByFieldName("parameters"), functionScope)
 	body := node.ChildByFieldName("body")
 	if body != nil {
@@ -518,7 +535,8 @@ func (e *extractor) parseFunctionVariable(node *treesitter.Node, current scope) 
 	nodeID := e.b.Declare(current.parentID, graph.Node{Kind: graph.KindFunction, Name: name,
 		QualifiedName: qualified, Location: loc, Properties: properties})
 	functionScope := scope{currentID: nodeID, parentID: nodeID, container: qualified,
-		receiver: current.receiver, symbols: map[string]string{}, types: map[string]string{}}
+		receiver: current.receiver, symbols: map[string]string{}, types: map[string]string{},
+		constantStrings: cloneStringMap(current.constantStrings)}
 	e.declareParameters(value.ChildByFieldName("parameters"), functionScope)
 	body := value.ChildByFieldName("body")
 	if body == nil {
@@ -541,7 +559,8 @@ func (e *extractor) parseClass(node *treesitter.Node, current scope) {
 	body := node.ChildByFieldName("body")
 	if body != nil {
 		e.walkChildren(body, scope{currentID: classID, parentID: classID, container: qualified,
-			receiver: qualified, symbols: map[string]string{}, types: map[string]string{}})
+			receiver: qualified, symbols: map[string]string{}, types: map[string]string{},
+			constantStrings: cloneStringMap(current.constantStrings)})
 	}
 }
 
@@ -558,7 +577,7 @@ func (e *extractor) parseInterface(node *treesitter.Node, current scope) {
 	body := node.ChildByFieldName("body")
 	if body != nil {
 		e.walkChildren(body, scope{currentID: interfaceID, parentID: interfaceID, container: qualified,
-			symbols: map[string]string{}, types: map[string]string{}})
+			symbols: map[string]string{}, types: map[string]string{}, constantStrings: cloneStringMap(current.constantStrings)})
 	}
 }
 
@@ -651,10 +670,16 @@ func (e *extractor) parseCall(node *treesitter.Node, current scope) {
 	loc := e.location(node)
 	args := namedArguments(node.ChildByFieldName("arguments"))
 	method := strings.ToLower(graph.SimpleName(strings.TrimSuffix(callee, "?")))
-	if len(args) > 0 && isStringNode(args[0]) && (callee == "fetch" || strings.HasPrefix(callee, "axios.") || strings.HasSuffix(callee, ".request")) {
+	if len(args) > 0 && callee == "fetch" {
+		if route, ok := e.staticString(args[0], current); ok {
+			e.addFetchRequest(fromID, loc, route, args, current)
+			return
+		}
+	}
+	if len(args) > 0 && isStringNode(args[0]) && (strings.HasPrefix(callee, "axios.") || strings.HasSuffix(callee, ".request")) {
 		route := parserapi.Unquote(e.text(args[0]))
 		httpMethod := strings.ToUpper(method)
-		if callee == "fetch" || httpMethod == "REQUEST" {
+		if httpMethod == "REQUEST" {
 			httpMethod = "ANY"
 		}
 		e.b.AddFact(fromID, graph.EdgeRequests, "", httpMethod+" "+route, graph.KindEndpoint, loc, nil)
@@ -703,6 +728,187 @@ func (e *extractor) parseCall(node *treesitter.Node, current scope) {
 	e.b.AddFact(fromID, graph.EdgeCalls, "", callee, targetKind, loc, properties)
 }
 
+func (e *extractor) addFetchRequest(fromID string, loc graph.Location, route string, args []*treesitter.Node, current scope) {
+	method := fetchMethodEvidence{state: fetchMethodAbsent, raw: "GET", expression: "<default>"}
+	if len(args) > 1 {
+		method = e.fetchRequestInitMethod(args[1], current, 0)
+	}
+	properties := map[string]string{
+		"http_api":               "fetch",
+		"http_method_expression": method.expression,
+		"http_raw_route":         route,
+		"http_route_expression":  strings.TrimSpace(e.text(args[0])),
+		"http_source":            "call",
+	}
+	httpMethod := "ANY"
+	switch method.state {
+	case fetchMethodAbsent:
+		method.raw, method.expression = "GET", "<default>"
+		fallthrough
+	case fetchMethodExact:
+		normalized, err := httpmodel.NormalizeMethod(method.raw)
+		if err != nil {
+			properties["http_invalid"] = "true"
+			properties["http_raw_method"] = method.raw
+			e.b.Diagnostic(loc.Line, "warning", fmt.Sprintf("invalid fetch method %q: %v", method.raw, err))
+		} else {
+			httpMethod = normalized
+			properties["http_method"] = normalized
+			properties["http_raw_method"] = method.raw
+		}
+	case fetchMethodUnknown:
+		properties["http_invalid"] = "true"
+		properties["http_method_unknown"] = "true"
+	}
+	properties["http_method_expression"] = method.expression
+	if httpMethod == "ANY" {
+		properties["http_method"] = httpMethod
+	}
+	if parsed, err := httpmodel.ParseRoute(route); err == nil {
+		properties["http_route"] = parsed.Canonical
+		if parsed.Query != "" {
+			properties["http_query"] = parsed.Query
+		}
+		if parsed.Fragment != "" {
+			properties["http_fragment"] = parsed.Fragment
+		}
+		if parsed.Authority != "" {
+			properties["http_scheme"] = parsed.Scheme
+			properties["http_authority"] = parsed.Authority
+		}
+	}
+	e.b.AddFact(fromID, graph.EdgeRequests, "", httpMethod+" "+route, graph.KindEndpoint, loc, properties)
+}
+
+func (e *extractor) fetchRequestInitMethod(node *treesitter.Node, current scope, depth int) fetchMethodEvidence {
+	if depth >= 16 {
+		return fetchMethodEvidence{state: fetchMethodUnknown, expression: strings.TrimSpace(e.text(node))}
+	}
+	node = unwrapTypeScriptExpression(node)
+	if node == nil {
+		return fetchMethodEvidence{state: fetchMethodUnknown}
+	}
+	if node.Kind() == "undefined" || node.Kind() == "null" || node.Kind() == "identifier" && strings.TrimSpace(e.text(node)) == "undefined" {
+		return fetchMethodEvidence{state: fetchMethodAbsent, raw: "GET", expression: "<default>"}
+	}
+	if node.Kind() != "object" {
+		return fetchMethodEvidence{state: fetchMethodUnknown, expression: strings.TrimSpace(e.text(node))}
+	}
+	result := fetchMethodEvidence{state: fetchMethodAbsent, raw: "GET", expression: "<default>"}
+	for index := uint(0); index < node.NamedChildCount(); index++ {
+		member := node.NamedChild(index)
+		switch member.Kind() {
+		case "pair":
+			key, known := e.requestInitPropertyKey(member.ChildByFieldName("key"), current)
+			if !known {
+				result = fetchMethodEvidence{state: fetchMethodUnknown, expression: strings.TrimSpace(e.text(member))}
+				continue
+			}
+			if key != "method" {
+				continue
+			}
+			value := member.ChildByFieldName("value")
+			if raw, ok := e.staticString(value, current); ok {
+				result = fetchMethodEvidence{state: fetchMethodExact, raw: raw, expression: strings.TrimSpace(e.text(value))}
+			} else {
+				result = fetchMethodEvidence{state: fetchMethodUnknown, expression: strings.TrimSpace(e.text(value))}
+			}
+		case "shorthand_property_identifier":
+			if strings.TrimSpace(e.text(member)) != "method" {
+				continue
+			}
+			if raw, ok := e.staticString(member, current); ok {
+				result = fetchMethodEvidence{state: fetchMethodExact, raw: raw, expression: strings.TrimSpace(e.text(member))}
+			} else {
+				result = fetchMethodEvidence{state: fetchMethodUnknown, expression: strings.TrimSpace(e.text(member))}
+			}
+		case "spread_element":
+			spread := namedChild(member, 0)
+			spreadMethod := e.fetchRequestInitMethod(spread, current, depth+1)
+			if spreadMethod.state != fetchMethodAbsent {
+				result = spreadMethod
+				if result.state == fetchMethodUnknown {
+					result.expression = strings.TrimSpace(e.text(member))
+				}
+			}
+		case "method_definition":
+			name, known := e.requestInitPropertyKey(member.ChildByFieldName("name"), current)
+			if !known || name == "method" {
+				result = fetchMethodEvidence{state: fetchMethodUnknown, expression: strings.TrimSpace(e.text(member))}
+			}
+		}
+	}
+	return result
+}
+
+func (e *extractor) requestInitPropertyKey(node *treesitter.Node, current scope) (string, bool) {
+	if node == nil {
+		return "", false
+	}
+	if node.Kind() == "computed_property_name" {
+		node = namedChild(node, 0)
+		if value, ok := e.staticString(node, current); ok {
+			return value, true
+		}
+		return "", false
+	}
+	if node.Kind() == "string" {
+		return parserapi.Unquote(e.text(node)), true
+	}
+	return strings.TrimSpace(e.text(node)), true
+}
+
+func (e *extractor) staticString(node *treesitter.Node, current scope) (string, bool) {
+	node = unwrapTypeScriptExpression(node)
+	if node == nil {
+		return "", false
+	}
+	switch node.Kind() {
+	case "string":
+		return parserapi.Unquote(e.text(node)), true
+	case "template_string":
+		text := strings.TrimSpace(e.text(node))
+		if strings.Contains(text, "${") {
+			return "", false
+		}
+		return parserapi.Unquote(text), true
+	case "identifier", "shorthand_property_identifier":
+		value, ok := current.constantStrings[strings.TrimSpace(e.text(node))]
+		return value, ok
+	default:
+		return "", false
+	}
+}
+
+func unwrapTypeScriptExpression(node *treesitter.Node) *treesitter.Node {
+	for depth := 0; node != nil && depth < 16; depth++ {
+		switch node.Kind() {
+		case "as_expression", "satisfies_expression", "parenthesized_expression", "non_null_expression":
+			node = namedChild(node, 0)
+		case "type_assertion":
+			node = namedChild(node, node.NamedChildCount()-1)
+		default:
+			return node
+		}
+	}
+	return node
+}
+
+func namedChild(node *treesitter.Node, index uint) *treesitter.Node {
+	if node == nil || index >= node.NamedChildCount() {
+		return nil
+	}
+	return node.NamedChild(index)
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
+}
+
 func (e *extractor) declareParameters(parameters *treesitter.Node, current scope) {
 	if parameters == nil {
 		return
@@ -727,6 +933,7 @@ func (e *extractor) declareParameters(parameters *treesitter.Node, current scope
 		id := e.b.Declare(current.currentID, graph.Node{Kind: graph.KindParameter, Name: name,
 			QualifiedName: current.container + "." + name, Location: e.location(parameter), Properties: properties})
 		current.symbols[name] = id
+		delete(current.constantStrings, name)
 		if typeText != "" {
 			current.types[name] = e.qualifyType(typeText)
 		}
@@ -761,6 +968,16 @@ func (e *extractor) parseVariable(node *treesitter.Node, current scope) {
 	if typeText != "" {
 		current.types[name] = e.qualifyType(typeText)
 	}
+	if current.constantStrings == nil {
+		current.constantStrings = map[string]string{}
+	}
+	delete(current.constantStrings, name)
+	if declaration := node.Parent(); declaration != nil && declaration.Kind() == "lexical_declaration" &&
+		strings.HasPrefix(strings.TrimSpace(e.text(declaration)), "const ") {
+		if constant, ok := e.staticString(value, current); ok {
+			current.constantStrings[name] = constant
+		}
+	}
 	for _, sourceID := range e.referencedVariables(value, current.symbols) {
 		if sourceID != id {
 			e.b.AddFact(sourceID, graph.EdgeAssigns, id, "", graph.KindVariable, loc, nil)
@@ -778,6 +995,7 @@ func (e *extractor) parseAssignment(node *treesitter.Node, current scope) {
 	if targetID == "" {
 		return
 	}
+	delete(current.constantStrings, strings.TrimSpace(e.text(left)))
 	for _, sourceID := range e.referencedVariables(right, current.symbols) {
 		e.b.AddFact(sourceID, graph.EdgeAssigns, targetID, "", graph.KindVariable, e.location(node), nil)
 	}
