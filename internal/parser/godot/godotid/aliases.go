@@ -8,11 +8,14 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/cafecito-games/grafo/internal/repositorypath"
 )
 
 // Alias scanning reads each candidate file only as far as its own UID
@@ -36,13 +39,6 @@ const (
 	// not be read.
 	verdictUnknown
 )
-
-// skippedDirectories are never scanned for UID declarations: they hold Godot's
-// own generated cache, Grafo's indexes, version control data, or vendored
-// dependencies, none of which own project resources.
-var skippedDirectories = map[string]bool{
-	".git": true, ".godot": true, ".grafo": true, ".hg": true, ".svn": true, "node_modules": true,
-}
 
 var uidPattern = regexp.MustCompile(`uid="(uid://[^"]*)"`)
 
@@ -160,7 +156,10 @@ func (a *Aliases) describeUnknown() string {
 		strings.Join(a.Unknown[:named], ", "), len(a.Unknown)-named)
 }
 
-type aliasCacheEntry struct{ aliases *Aliases }
+type aliasCacheEntry struct {
+	membershipKey string
+	aliases       *Aliases
+}
 
 var (
 	aliasMu    sync.Mutex
@@ -170,47 +169,123 @@ var (
 // LoadAliases scans a repository for UID declarations and project locations,
 // replacing any cached table. The indexer calls this once per run through the
 // workspace semantic key, which is what keeps the cached table fresh.
-func LoadAliases(root string) (*Aliases, error) {
+func LoadAliases(root string, memberships ...[]string) (*Aliases, error) {
 	if root == "" {
 		return &Aliases{byUID: map[string][]string{}}, nil
 	}
-	aliases, err := scanAliases(root)
+	root, membership, key, err := aliasScanInput(root, memberships)
+	if err != nil {
+		return nil, err
+	}
+	aliases, err := scanAliases(root, membership)
 	if err != nil {
 		return nil, err
 	}
 	aliasMu.Lock()
-	aliasCache[root] = aliasCacheEntry{aliases: aliases}
+	aliasCache[root] = aliasCacheEntry{membershipKey: key, aliases: aliases}
 	aliasMu.Unlock()
 	return aliases, nil
 }
 
 // AliasesFor returns the cached alias table for a repository, scanning once if
 // no run has loaded it yet.
-func AliasesFor(root string) (*Aliases, error) {
+func AliasesFor(root string, memberships ...[]string) (*Aliases, error) {
 	if root == "" {
 		return &Aliases{byUID: map[string][]string{}}, nil
+	}
+	root, _, key, err := aliasScanInput(root, memberships)
+	if err != nil {
+		return nil, err
 	}
 	aliasMu.Lock()
 	entry, ok := aliasCache[root]
 	aliasMu.Unlock()
-	if ok {
+	if ok && entry.membershipKey == key {
 		return entry.aliases, nil
 	}
-	return LoadAliases(root)
+	return LoadAliases(root, memberships...)
 }
 
-func scanAliases(root string) (*Aliases, error) {
+func aliasScanInput(root string, memberships [][]string) (string, []string, string, error) {
+	if len(memberships) > 1 {
+		return "", nil, "", fmt.Errorf("godot alias scan accepts at most one membership snapshot")
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", nil, "", fmt.Errorf("resolve Godot alias root: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", nil, "", fmt.Errorf("resolve Godot alias root: %w", err)
+	}
+	var membership []string
+	if len(memberships) == 1 {
+		membership, err = normalizeMembership(memberships[0])
+		if err != nil {
+			return "", nil, "", err
+		}
+	}
+	return resolved, membership, aliasMembershipKey(resolved, membership), nil
+}
+
+func normalizeMembership(paths []string) ([]string, error) {
+	if paths == nil {
+		return nil, nil
+	}
+	seen := make(map[string]bool, len(paths))
+	result := make([]string, 0, len(paths))
+	for _, candidate := range paths {
+		candidate = filepath.ToSlash(candidate)
+		clean := pathpkg.Clean(candidate)
+		if clean == "." || clean == ".." || pathpkg.IsAbs(clean) || strings.HasPrefix(clean, "../") {
+			return nil, fmt.Errorf("invalid Godot alias membership path %q", candidate)
+		}
+		if seen[clean] || repositorypath.Ignored(clean) {
+			continue
+		}
+		if filepath.Base(clean) != ProjectFileName && !canDeclareUID(clean) {
+			continue
+		}
+		seen[clean] = true
+		result = append(result, clean)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func aliasMembershipKey(root string, membership []string) string {
+	if membership == nil {
+		return root + "\x00fallback"
+	}
+	digest := sha256.New()
+	_, _ = digest.Write([]byte("godotid-membership-v1\x00"))
+	for _, path := range membership {
+		_, _ = digest.Write([]byte(path + "\x00"))
+	}
+	return root + "\x00membership:" + hex.EncodeToString(digest.Sum(nil))
+}
+
+func scanAliases(root string, membership []string) (*Aliases, error) {
 	aliases := &Aliases{byUID: map[string][]string{}}
 	declarations := map[string]map[string]bool{}
+	if membership != nil {
+		for _, relative := range membership {
+			scanAliasCandidate(root, relative, aliases, declarations)
+		}
+		return finishAliases(aliases, declarations), nil
+	}
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			if entry != nil && entry.IsDir() {
 				return fs.SkipDir
 			}
+			if relative, relErr := filepath.Rel(root, path); relErr == nil && canDeclareUID(relative) {
+				aliases.Unknown = append(aliases.Unknown, filepath.ToSlash(relative))
+			}
 			return nil
 		}
 		if entry.IsDir() {
-			if path != root && skippedDirectories[entry.Name()] {
+			if path != root && repositorypath.DirectoryIgnored(entry.Name()) {
 				return fs.SkipDir
 			}
 			return nil
@@ -223,34 +298,64 @@ func scanAliases(root string) (*Aliases, error) {
 			return nil
 		}
 		relative = filepath.ToSlash(relative)
-		if filepath.Base(relative) == ProjectFileName {
-			aliases.Projects = append(aliases.Projects, relative)
-			return nil
+		if !repositorypath.Ignored(relative) {
+			recordAliasCandidate(path, relative, aliases, declarations)
 		}
-		uid, owner, verdict := scanDeclaration(path, relative)
-		if verdict == verdictUnknown {
-			aliases.Unknown = append(aliases.Unknown, relative)
-			return nil
-		}
-		if verdict != verdictDeclared || uid == "" || owner == "" {
-			return nil
-		}
-		if declarations[uid] == nil {
-			declarations[uid] = map[string]bool{}
-		}
-		declarations[uid][owner] = true
 		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("scan Godot UID declarations: %w", err)
 	}
+	return finishAliases(aliases, declarations), nil
+}
+
+func scanAliasCandidate(root, relative string, aliases *Aliases, declarations map[string]map[string]bool) {
+	absolute, _, err := repositorypath.ResolveRegularFile(root, relative)
+	if err != nil {
+		if canDeclareUID(relative) {
+			aliases.Unknown = append(aliases.Unknown, relative)
+		}
+		return
+	}
+	recordAliasCandidate(absolute, relative, aliases, declarations)
+}
+
+func recordAliasCandidate(absolute, relative string, aliases *Aliases, declarations map[string]map[string]bool) {
+	if filepath.Base(relative) == ProjectFileName {
+		aliases.Projects = append(aliases.Projects, relative)
+		return
+	}
+	uid, owner, verdict := scanDeclaration(absolute, relative)
+	if verdict == verdictUnknown {
+		aliases.Unknown = append(aliases.Unknown, relative)
+		return
+	}
+	if verdict != verdictDeclared || uid == "" || owner == "" {
+		return
+	}
+	if declarations[uid] == nil {
+		declarations[uid] = map[string]bool{}
+	}
+	declarations[uid][owner] = true
+}
+
+func canDeclareUID(relative string) bool {
+	switch strings.ToLower(filepath.Ext(relative)) {
+	case ".uid", ".import", ".tscn", ".tres", ".escn":
+		return true
+	default:
+		return false
+	}
+}
+
+func finishAliases(aliases *Aliases, declarations map[string]map[string]bool) *Aliases {
 	for uid, declaring := range declarations {
 		aliases.byUID[uid] = sortedSet(declaring)
 	}
 	sort.Strings(aliases.Projects)
 	sort.Strings(aliases.Unknown)
 	aliases.Digest = aliasDigest(aliases)
-	return aliases, nil
+	return aliases
 }
 
 // scanDeclaration returns the UID a file declares for itself, the canonical
