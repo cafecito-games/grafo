@@ -622,6 +622,13 @@ func collectFunctionBindings(b *parserapi.Builder, fset *token.FileSet, input pa
 		functionScopeStart = decl.Body.Pos()
 		functionScopeEnd = decl.Body.End()
 	}
+	if decl.Recv != nil {
+		for _, field := range decl.Recv.List {
+			for _, name := range field.Names {
+				recordDeclaration(name.Name, functionScopeStart, functionScopeEnd)
+			}
+		}
+	}
 	if decl.Type.Params != nil {
 		for _, field := range decl.Type.Params.List {
 			typeText := render(fset, field.Type)

@@ -535,6 +535,29 @@ func Calls() {
 	}
 }
 
+func TestSyntaxHTTPFallbackHonorsMethodReceiverShadowing(t *testing.T) {
+	content := []byte(`package client
+import "net/http"
+type getter struct{}
+func (getter) Get(string) string { return "" }
+func (http getter) Call() {
+	_ = http.Get("Authorization")
+}
+`)
+	result, err := golangparser.NewWithSemanticLoader(nil).Parse(context.Background(), parserapi.Input{
+		Path: "client.go", Content: content, Repository: "client", RepoID: "repo", GoModule: "example.com/client",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeRequests {
+			t.Fatalf("shadowed receiver emitted outbound request: %#v", fact)
+		}
+	}
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "http.Get")
+}
+
 func TestPackageSemanticLoaderExtractsOutboundHTTPThroughWrappers(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/client\n\ngo 1.26\n")
