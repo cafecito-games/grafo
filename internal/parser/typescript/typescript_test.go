@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -461,6 +462,108 @@ function send(METHOD: string, key: string, value: unknown, init: RequestInit) {
 			}
 			if got := request.Properties["http_method_unknown"] == "true"; got != test.unknown {
 				t.Fatalf("unknown evidence = %v, want %v: %#v", got, test.unknown, request)
+			}
+		})
+	}
+}
+
+func TestParserHonorsLexicalBindingsForFetchMethods(t *testing.T) {
+	tests := []struct {
+		name        string
+		content     string
+		want        map[string]string
+		wantCalls   []string
+		wantUnknown []string
+	}{
+		{
+			name: "shadowed fetch callees remain ordinary calls",
+			content: `
+function withParameter(fetch: (url: string) => void) { fetch("/parameter"); }
+function withBinding() { fetch("/binding"); const fetch = (url: string) => url; }
+function withFunction() { fetch("/function"); function fetch(url: string) { return url; } }
+`,
+			wantCalls: []string{"fetch"},
+		},
+		{
+			name: "block shadow restores outer constant",
+			content: `
+const METHOD = "POST" as const;
+function send() {
+  fetch("/outer-before", { method: METHOD });
+  {
+    const METHOD = "PATCH" as const;
+    fetch("/inner", { method: METHOD });
+  }
+  fetch("/outer-after", { method: METHOD });
+}
+`,
+			want: map[string]string{
+				"/outer-before": "POST",
+				"/inner":        "PATCH",
+				"/outer-after":  "POST",
+			},
+		},
+		{
+			name: "same scope respects declaration order",
+			content: `
+function send() {
+  fetch("/before", { method: METHOD });
+  const METHOD = "POST" as const;
+  fetch("/after", { method: METHOD });
+}
+`,
+			want: map[string]string{
+				"/before": "ANY",
+				"/after":  "POST",
+			},
+			wantUnknown: []string{"/before"},
+		},
+		{
+			name: "function resolves later module constant",
+			content: `
+function send() { fetch("/later", { method: METHOD }); }
+const METHOD = "DELETE" as const;
+`,
+			want: map[string]string{"/later": "DELETE"},
+		},
+		{
+			name: "shadowed undefined stays dynamic",
+			content: `
+function withParameter(undefined: RequestInit) { fetch("/parameter-undefined", undefined); }
+function withBinding() { const undefined = { credentials: "include" }; fetch("/binding-undefined", undefined); }
+function withGlobal() { fetch("/global-undefined", undefined); }
+`,
+			want: map[string]string{
+				"/parameter-undefined": "ANY",
+				"/binding-undefined":   "ANY",
+				"/global-undefined":    "GET",
+			},
+			wantUnknown: []string{"/parameter-undefined", "/binding-undefined"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := typescriptparser.New().Parse(context.Background(), parserapi.Input{
+				Path: "src/lexical.ts", Content: []byte(test.content), Repository: "sample",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			requests := requestFactsByTarget(result.Facts)
+			if len(requests) != len(test.want) {
+				t.Fatalf("requests = %#v, want %#v", requests, test.want)
+			}
+			for route, method := range test.want {
+				fact, ok := requests[method+" "+route]
+				if !ok {
+					t.Fatalf("missing %s %s; requests = %#v", method, route, requests)
+				}
+				if slices.Contains(test.wantUnknown, route) && fact.Properties["http_method_unknown"] != "true" {
+					t.Fatalf("%s did not retain unknown-method evidence: %#v", route, fact)
+				}
+			}
+			for _, target := range test.wantCalls {
+				assertHasFact(t, result.Facts, graph.EdgeCalls, target)
 			}
 		})
 	}

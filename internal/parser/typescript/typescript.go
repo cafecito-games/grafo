@@ -96,13 +96,26 @@ func isTypeScriptSemanticInput(path string) bool {
 }
 
 type scope struct {
-	currentID       string
-	parentID        string
-	container       string
-	receiver        string
-	symbols         map[string]string
-	types           map[string]string
-	constantStrings map[string]string
+	currentID string
+	parentID  string
+	container string
+	receiver  string
+	symbols   map[string]string
+	types     map[string]string
+	lexical   *lexicalEnvironment
+}
+
+type lexicalEnvironment struct {
+	parent   *lexicalEnvironment
+	deferred bool
+	bindings map[string]*lexicalBinding
+}
+
+type lexicalBinding struct {
+	declaration uint
+	initializer *treesitter.Node
+	constant    bool
+	environment *lexicalEnvironment
 }
 
 type extractor struct {
@@ -183,7 +196,8 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 	e := &extractor{b: b, input: input, source: input.Content, module: module, moduleID: moduleID,
 		catalog: catalog, info: info, bindings: map[string]importBinding{}, reported: map[string]bool{}}
 	e.reportCatalogDiagnostics()
-	e.walk(root, scope{currentID: b.FileID(), parentID: b.FileID(), symbols: map[string]string{}, types: map[string]string{}, constantStrings: map[string]string{}})
+	rootEnvironment := e.newLexicalEnvironment(root, nil, false)
+	e.walk(root, scope{currentID: b.FileID(), parentID: b.FileID(), symbols: map[string]string{}, types: map[string]string{}, lexical: rootEnvironment})
 	return b.Finish(), nil
 }
 
@@ -222,6 +236,9 @@ func (p *Parser) storeCatalog(root string, catalog *moduleCatalog) {
 func (e *extractor) walk(node *treesitter.Node, current scope) {
 	if node == nil {
 		return
+	}
+	if isLexicalScopeNode(node) && node.Kind() != "program" {
+		current.lexical = e.newLexicalEnvironment(node, current.lexical, false)
 	}
 	switch node.Kind() {
 	case "import_statement":
@@ -506,9 +523,12 @@ func (e *extractor) parseFunction(node *treesitter.Node, current scope, kind gra
 	}
 	nodeID := e.b.Declare(current.parentID, graph.Node{Kind: kind, Name: name,
 		QualifiedName: qualified, Location: loc, Properties: properties})
+	functionEnvironment := &lexicalEnvironment{parent: current.lexical, deferred: true, bindings: map[string]*lexicalBinding{}}
+	if kind == graph.KindFunction && isIdentifier(name) {
+		functionEnvironment.bind(name, node, nil, false)
+	}
 	functionScope := scope{currentID: nodeID, parentID: nodeID, container: qualified,
-		receiver: current.receiver, symbols: map[string]string{}, types: map[string]string{},
-		constantStrings: cloneStringMap(current.constantStrings)}
+		receiver: current.receiver, symbols: map[string]string{}, types: map[string]string{}, lexical: functionEnvironment}
 	e.declareParameters(node.ChildByFieldName("parameters"), functionScope)
 	body := node.ChildByFieldName("body")
 	if body != nil {
@@ -534,15 +554,19 @@ func (e *extractor) parseFunctionVariable(node *treesitter.Node, current scope) 
 	}
 	nodeID := e.b.Declare(current.parentID, graph.Node{Kind: graph.KindFunction, Name: name,
 		QualifiedName: qualified, Location: loc, Properties: properties})
+	functionEnvironment := &lexicalEnvironment{parent: current.lexical, deferred: true, bindings: map[string]*lexicalBinding{}}
+	if innerName := strings.TrimSpace(e.text(value.ChildByFieldName("name"))); isIdentifier(innerName) {
+		functionEnvironment.bind(innerName, value, nil, false)
+	}
 	functionScope := scope{currentID: nodeID, parentID: nodeID, container: qualified,
-		receiver: current.receiver, symbols: map[string]string{}, types: map[string]string{},
-		constantStrings: cloneStringMap(current.constantStrings)}
+		receiver: current.receiver, symbols: map[string]string{}, types: map[string]string{}, lexical: functionEnvironment}
 	e.declareParameters(value.ChildByFieldName("parameters"), functionScope)
 	body := value.ChildByFieldName("body")
-	if body == nil {
-		body = value
+	if body != nil {
+		e.walk(body, functionScope)
+	} else {
+		e.walkChildren(value, functionScope)
 	}
-	e.walkChildren(body, functionScope)
 	return true
 }
 
@@ -559,8 +583,7 @@ func (e *extractor) parseClass(node *treesitter.Node, current scope) {
 	body := node.ChildByFieldName("body")
 	if body != nil {
 		e.walkChildren(body, scope{currentID: classID, parentID: classID, container: qualified,
-			receiver: qualified, symbols: map[string]string{}, types: map[string]string{},
-			constantStrings: cloneStringMap(current.constantStrings)})
+			receiver: qualified, symbols: map[string]string{}, types: map[string]string{}, lexical: current.lexical})
 	}
 }
 
@@ -577,7 +600,7 @@ func (e *extractor) parseInterface(node *treesitter.Node, current scope) {
 	body := node.ChildByFieldName("body")
 	if body != nil {
 		e.walkChildren(body, scope{currentID: interfaceID, parentID: interfaceID, container: qualified,
-			symbols: map[string]string{}, types: map[string]string{}, constantStrings: cloneStringMap(current.constantStrings)})
+			symbols: map[string]string{}, types: map[string]string{}, lexical: current.lexical})
 	}
 }
 
@@ -670,7 +693,7 @@ func (e *extractor) parseCall(node *treesitter.Node, current scope) {
 	loc := e.location(node)
 	args := namedArguments(node.ChildByFieldName("arguments"))
 	method := strings.ToLower(graph.SimpleName(strings.TrimSuffix(callee, "?")))
-	if len(args) > 0 && callee == "fetch" {
+	if len(args) > 0 && callee == "fetch" && e.isUnshadowedGlobal("fetch", current) {
 		if route, ok := e.staticString(args[0], current); ok {
 			e.addFetchRequest(fromID, loc, route, args, current)
 			return
@@ -788,7 +811,9 @@ func (e *extractor) fetchRequestInitMethod(node *treesitter.Node, current scope,
 	if node == nil {
 		return fetchMethodEvidence{state: fetchMethodUnknown}
 	}
-	if node.Kind() == "undefined" || node.Kind() == "null" || node.Kind() == "identifier" && strings.TrimSpace(e.text(node)) == "undefined" {
+	if node.Kind() == "null" ||
+		(node.Kind() == "undefined" || node.Kind() == "identifier") && strings.TrimSpace(e.text(node)) == "undefined" &&
+			e.isUnshadowedGlobal("undefined", current) {
 		return fetchMethodEvidence{state: fetchMethodAbsent, raw: "GET", expression: "<default>"}
 	}
 	if node.Kind() != "object" {
@@ -859,6 +884,10 @@ func (e *extractor) requestInitPropertyKey(node *treesitter.Node, current scope)
 }
 
 func (e *extractor) staticString(node *treesitter.Node, current scope) (string, bool) {
+	return e.staticStringSeen(node, current, map[*lexicalBinding]bool{})
+}
+
+func (e *extractor) staticStringSeen(node *treesitter.Node, current scope, seen map[*lexicalBinding]bool) (string, bool) {
 	node = unwrapTypeScriptExpression(node)
 	if node == nil {
 		return "", false
@@ -873,10 +902,140 @@ func (e *extractor) staticString(node *treesitter.Node, current scope) (string, 
 		}
 		return parserapi.Unquote(text), true
 	case "identifier", "shorthand_property_identifier":
-		value, ok := current.constantStrings[strings.TrimSpace(e.text(node))]
-		return value, ok
+		return e.lexicalConstant(strings.TrimSpace(e.text(node)), node, current.lexical, seen)
 	default:
 		return "", false
+	}
+}
+
+func (e *extractor) isUnshadowedGlobal(name string, current scope) bool {
+	if _, imported := e.bindings[name]; imported {
+		return false
+	}
+	return current.lexical == nil || !current.lexical.has(name)
+}
+
+func (e *extractor) lexicalConstant(name string, use *treesitter.Node, environment *lexicalEnvironment,
+	seen map[*lexicalBinding]bool,
+) (string, bool) {
+	crossedDeferred := false
+	for current := environment; current != nil; current = current.parent {
+		binding, ok := current.bindings[name]
+		if ok {
+			if !binding.constant || binding.initializer == nil || seen[binding] ||
+				binding.declaration >= use.StartByte() && !crossedDeferred {
+				return "", false
+			}
+			seen[binding] = true
+			value, exact := e.staticStringSeen(binding.initializer, scope{lexical: binding.environment}, seen)
+			delete(seen, binding)
+			return value, exact
+		}
+		crossedDeferred = crossedDeferred || current.deferred
+	}
+	return "", false
+}
+
+func (environment *lexicalEnvironment) has(name string) bool {
+	for current := environment; current != nil; current = current.parent {
+		if _, ok := current.bindings[name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (environment *lexicalEnvironment) bind(name string, declaration, initializer *treesitter.Node, constant bool) {
+	if environment == nil || name == "" {
+		return
+	}
+	if existing, ok := environment.bindings[name]; ok {
+		existing.initializer = nil
+		existing.constant = false
+		return
+	}
+	start := uint(0)
+	if declaration != nil {
+		start = declaration.StartByte()
+	}
+	environment.bindings[name] = &lexicalBinding{declaration: start, initializer: initializer,
+		constant: constant, environment: environment}
+}
+
+func (environment *lexicalEnvironment) markDynamic(name string) {
+	for current := environment; current != nil; current = current.parent {
+		if binding, ok := current.bindings[name]; ok {
+			binding.initializer = nil
+			binding.constant = false
+			return
+		}
+	}
+}
+
+func isLexicalScopeNode(node *treesitter.Node) bool {
+	switch node.Kind() {
+	case "program", "statement_block", "for_statement", "for_in_statement", "for_of_statement", "catch_clause", "switch_body":
+		return true
+	default:
+		return false
+	}
+}
+
+func (e *extractor) newLexicalEnvironment(node *treesitter.Node, parent *lexicalEnvironment,
+	deferred bool,
+) *lexicalEnvironment {
+	environment := &lexicalEnvironment{parent: parent, deferred: deferred, bindings: map[string]*lexicalBinding{}}
+	if node == nil {
+		return environment
+	}
+	for index := uint(0); index < node.NamedChildCount(); index++ {
+		e.seedLexicalBinding(node.NamedChild(index), environment)
+	}
+	if node.Kind() == "catch_clause" {
+		parameter := node.ChildByFieldName("parameter")
+		name := strings.TrimSpace(e.text(parameter))
+		if isIdentifier(name) {
+			environment.bind(name, parameter, nil, false)
+		}
+	}
+	return environment
+}
+
+func (e *extractor) seedLexicalBinding(node *treesitter.Node, environment *lexicalEnvironment) {
+	if node == nil {
+		return
+	}
+	if node.Kind() == "export_statement" {
+		for index := uint(0); index < node.NamedChildCount(); index++ {
+			child := node.NamedChild(index)
+			switch child.Kind() {
+			case "lexical_declaration", "variable_declaration", "function_declaration", "generator_function_declaration",
+				"class_declaration", "abstract_class_declaration":
+				e.seedLexicalBinding(child, environment)
+			}
+		}
+		return
+	}
+	switch node.Kind() {
+	case "lexical_declaration", "variable_declaration":
+		constant := node.Kind() == "lexical_declaration" && strings.HasPrefix(strings.TrimSpace(e.text(node)), "const ")
+		for index := uint(0); index < node.NamedChildCount(); index++ {
+			declarator := node.NamedChild(index)
+			if declarator.Kind() != "variable_declarator" {
+				continue
+			}
+			nameNode := declarator.ChildByFieldName("name")
+			name := strings.TrimSpace(e.text(nameNode))
+			if isIdentifier(name) {
+				environment.bind(name, declarator, declarator.ChildByFieldName("value"), constant)
+			}
+		}
+	case "function_declaration", "generator_function_declaration", "class_declaration", "abstract_class_declaration":
+		nameNode := node.ChildByFieldName("name")
+		name := strings.TrimSpace(e.text(nameNode))
+		if isIdentifier(name) {
+			environment.bind(name, node, nil, false)
+		}
 	}
 }
 
@@ -899,14 +1058,6 @@ func namedChild(node *treesitter.Node, index uint) *treesitter.Node {
 		return nil
 	}
 	return node.NamedChild(index)
-}
-
-func cloneStringMap(values map[string]string) map[string]string {
-	cloned := make(map[string]string, len(values))
-	for key, value := range values {
-		cloned[key] = value
-	}
-	return cloned
 }
 
 func (e *extractor) declareParameters(parameters *treesitter.Node, current scope) {
@@ -933,7 +1084,7 @@ func (e *extractor) declareParameters(parameters *treesitter.Node, current scope
 		id := e.b.Declare(current.currentID, graph.Node{Kind: graph.KindParameter, Name: name,
 			QualifiedName: current.container + "." + name, Location: e.location(parameter), Properties: properties})
 		current.symbols[name] = id
-		delete(current.constantStrings, name)
+		current.lexical.bind(name, parameter, nil, false)
 		if typeText != "" {
 			current.types[name] = e.qualifyType(typeText)
 		}
@@ -968,16 +1119,6 @@ func (e *extractor) parseVariable(node *treesitter.Node, current scope) {
 	if typeText != "" {
 		current.types[name] = e.qualifyType(typeText)
 	}
-	if current.constantStrings == nil {
-		current.constantStrings = map[string]string{}
-	}
-	delete(current.constantStrings, name)
-	if declaration := node.Parent(); declaration != nil && declaration.Kind() == "lexical_declaration" &&
-		strings.HasPrefix(strings.TrimSpace(e.text(declaration)), "const ") {
-		if constant, ok := e.staticString(value, current); ok {
-			current.constantStrings[name] = constant
-		}
-	}
 	for _, sourceID := range e.referencedVariables(value, current.symbols) {
 		if sourceID != id {
 			e.b.AddFact(sourceID, graph.EdgeAssigns, id, "", graph.KindVariable, loc, nil)
@@ -995,7 +1136,7 @@ func (e *extractor) parseAssignment(node *treesitter.Node, current scope) {
 	if targetID == "" {
 		return
 	}
-	delete(current.constantStrings, strings.TrimSpace(e.text(left)))
+	current.lexical.markDynamic(strings.TrimSpace(e.text(left)))
 	for _, sourceID := range e.referencedVariables(right, current.symbols) {
 		e.b.AddFact(sourceID, graph.EdgeAssigns, targetID, "", graph.KindVariable, e.location(node), nil)
 	}
