@@ -469,11 +469,12 @@ function send(METHOD: string, key: string, value: unknown, init: RequestInit) {
 
 func TestParserHonorsLexicalBindingsForFetchMethods(t *testing.T) {
 	tests := []struct {
-		name        string
-		content     string
-		want        map[string]string
-		wantCalls   []string
-		wantUnknown []string
+		name           string
+		content        string
+		want           map[string]string
+		wantCalls      []string
+		wantFetchCalls int
+		wantUnknown    []string
 	}{
 		{
 			name: "shadowed fetch callees remain ordinary calls",
@@ -482,7 +483,67 @@ function withParameter(fetch: (url: string) => void) { fetch("/parameter"); }
 function withBinding() { fetch("/binding"); const fetch = (url: string) => url; }
 function withFunction() { fetch("/function"); function fetch(url: string) { return url; } }
 `,
-			wantCalls: []string{"fetch"},
+			wantCalls:      []string{"fetch"},
+			wantFetchCalls: 3,
+		},
+		{
+			name: "binding patterns shadow fetch",
+			content: `
+const singular = fetch => fetch("/arrow-single");
+function withObject({ fetch }: { fetch: (url: string) => void }) { fetch("/object-pattern"); }
+function withArray([fetch]: Array<(url: string) => void>) { fetch("/array-pattern"); }
+function withRest(...fetch: Array<(url: string) => void>) { fetch("/rest-pattern"); }
+`,
+			wantCalls:      []string{"fetch"},
+			wantFetchCalls: 4,
+		},
+		{
+			name: "var bindings hoist to function scope",
+			content: `
+const METHOD = "POST" as const;
+function shadowFetch() {
+  fetch("/before-var");
+  { var fetch = (url: string) => url; }
+  fetch("/after-var");
+}
+function shadowMethod() {
+  { var METHOD = "PATCH"; }
+  fetch("/var-method", { method: METHOD });
+}
+`,
+			want:           map[string]string{"/var-method": "ANY"},
+			wantCalls:      []string{"fetch"},
+			wantFetchCalls: 2,
+			wantUnknown:    []string{"/var-method"},
+		},
+		{
+			name: "switch cases seed lexical bindings",
+			content: `
+const METHOD = "POST" as const;
+function switchMethod(kind: string) {
+  switch (kind) {
+    case "patch":
+      const METHOD = "PATCH" as const;
+      fetch("/switch-method", { method: METHOD });
+      break;
+  }
+  fetch("/after-switch", { method: METHOD });
+}
+function switchFetch(kind: string) {
+  switch (kind) {
+    case "local":
+      const fetch = (url: string) => url;
+      fetch("/switch-fetch");
+      break;
+  }
+}
+`,
+			want: map[string]string{
+				"/switch-method": "PATCH",
+				"/after-switch":  "POST",
+			},
+			wantCalls:      []string{"fetch"},
+			wantFetchCalls: 1,
 		},
 		{
 			name: "block shadow restores outer constant",
@@ -564,6 +625,17 @@ function withGlobal() { fetch("/global-undefined", undefined); }
 			}
 			for _, target := range test.wantCalls {
 				assertHasFact(t, result.Facts, graph.EdgeCalls, target)
+			}
+			if test.wantFetchCalls > 0 {
+				calls := 0
+				for _, fact := range result.Facts {
+					if fact.Kind == graph.EdgeCalls && fact.Target == "fetch" {
+						calls++
+					}
+				}
+				if calls != test.wantFetchCalls {
+					t.Fatalf("ordinary fetch calls = %d, want %d; facts = %#v", calls, test.wantFetchCalls, result.Facts)
+				}
 			}
 		})
 	}

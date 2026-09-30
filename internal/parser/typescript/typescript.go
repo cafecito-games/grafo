@@ -197,6 +197,7 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 		catalog: catalog, info: info, bindings: map[string]importBinding{}, reported: map[string]bool{}}
 	e.reportCatalogDiagnostics()
 	rootEnvironment := e.newLexicalEnvironment(root, nil, false)
+	e.seedHoistedBindings(root, rootEnvironment)
 	e.walk(root, scope{currentID: b.FileID(), parentID: b.FileID(), symbols: map[string]string{}, types: map[string]string{}, lexical: rootEnvironment})
 	return b.Finish(), nil
 }
@@ -518,7 +519,7 @@ func (e *extractor) parseFunction(node *treesitter.Node, current scope, kind gra
 	if strings.HasPrefix(strings.TrimSpace(e.text(node)), "async ") {
 		properties["async"] = "true"
 	}
-	if parameters := node.ChildByFieldName("parameters"); parameters != nil {
+	if parameters := functionParameters(node); parameters != nil {
 		properties["parameters"] = strings.TrimSpace(e.text(parameters))
 	}
 	nodeID := e.b.Declare(current.parentID, graph.Node{Kind: kind, Name: name,
@@ -529,9 +530,10 @@ func (e *extractor) parseFunction(node *treesitter.Node, current scope, kind gra
 	}
 	functionScope := scope{currentID: nodeID, parentID: nodeID, container: qualified,
 		receiver: current.receiver, symbols: map[string]string{}, types: map[string]string{}, lexical: functionEnvironment}
-	e.declareParameters(node.ChildByFieldName("parameters"), functionScope)
+	e.declareParameters(node, functionScope)
 	body := node.ChildByFieldName("body")
 	if body != nil {
+		e.seedHoistedBindings(body, functionEnvironment)
 		e.walk(body, functionScope)
 	}
 }
@@ -549,7 +551,7 @@ func (e *extractor) parseFunctionVariable(node *treesitter.Node, current scope) 
 	qualified := e.qualify(current.container, name)
 	loc := e.location(node)
 	properties := map[string]string{"form": value.Kind()}
-	if parameters := value.ChildByFieldName("parameters"); parameters != nil {
+	if parameters := functionParameters(value); parameters != nil {
 		properties["parameters"] = strings.TrimSpace(e.text(parameters))
 	}
 	nodeID := e.b.Declare(current.parentID, graph.Node{Kind: graph.KindFunction, Name: name,
@@ -560,9 +562,10 @@ func (e *extractor) parseFunctionVariable(node *treesitter.Node, current scope) 
 	}
 	functionScope := scope{currentID: nodeID, parentID: nodeID, container: qualified,
 		receiver: current.receiver, symbols: map[string]string{}, types: map[string]string{}, lexical: functionEnvironment}
-	e.declareParameters(value.ChildByFieldName("parameters"), functionScope)
+	e.declareParameters(value, functionScope)
 	body := value.ChildByFieldName("body")
 	if body != nil {
+		e.seedHoistedBindings(body, functionEnvironment)
 		e.walk(body, functionScope)
 	} else {
 		e.walkChildren(value, functionScope)
@@ -993,9 +996,8 @@ func (e *extractor) newLexicalEnvironment(node *treesitter.Node, parent *lexical
 	}
 	if node.Kind() == "catch_clause" {
 		parameter := node.ChildByFieldName("parameter")
-		name := strings.TrimSpace(e.text(parameter))
-		if isIdentifier(name) {
-			environment.bind(name, parameter, nil, false)
+		for _, identifier := range e.bindingIdentifiers(parameter) {
+			environment.bind(strings.TrimSpace(e.text(identifier)), identifier, nil, false)
 		}
 	}
 	return environment
@@ -1009,7 +1011,7 @@ func (e *extractor) seedLexicalBinding(node *treesitter.Node, environment *lexic
 		for index := uint(0); index < node.NamedChildCount(); index++ {
 			child := node.NamedChild(index)
 			switch child.Kind() {
-			case "lexical_declaration", "variable_declaration", "function_declaration", "generator_function_declaration",
+			case "lexical_declaration", "function_declaration", "generator_function_declaration",
 				"class_declaration", "abstract_class_declaration":
 				e.seedLexicalBinding(child, environment)
 			}
@@ -1017,18 +1019,27 @@ func (e *extractor) seedLexicalBinding(node *treesitter.Node, environment *lexic
 		return
 	}
 	switch node.Kind() {
-	case "lexical_declaration", "variable_declaration":
-		constant := node.Kind() == "lexical_declaration" && strings.HasPrefix(strings.TrimSpace(e.text(node)), "const ")
+	case "lexical_declaration":
+		constant := strings.HasPrefix(strings.TrimSpace(e.text(node)), "const ")
 		for index := uint(0); index < node.NamedChildCount(); index++ {
 			declarator := node.NamedChild(index)
 			if declarator.Kind() != "variable_declarator" {
 				continue
 			}
 			nameNode := declarator.ChildByFieldName("name")
-			name := strings.TrimSpace(e.text(nameNode))
-			if isIdentifier(name) {
-				environment.bind(name, declarator, declarator.ChildByFieldName("value"), constant)
+			identifiers := e.bindingIdentifiers(nameNode)
+			simple := nameNode != nil && nameNode.Kind() == "identifier" && len(identifiers) == 1
+			for _, identifier := range identifiers {
+				initializer := (*treesitter.Node)(nil)
+				if simple && constant {
+					initializer = declarator.ChildByFieldName("value")
+				}
+				environment.bind(strings.TrimSpace(e.text(identifier)), identifier, initializer, simple && constant)
 			}
+		}
+	case "switch_case", "switch_default":
+		for index := uint(0); index < node.NamedChildCount(); index++ {
+			e.seedLexicalBinding(node.NamedChild(index), environment)
 		}
 	case "function_declaration", "generator_function_declaration", "class_declaration", "abstract_class_declaration":
 		nameNode := node.ChildByFieldName("name")
@@ -1036,6 +1047,90 @@ func (e *extractor) seedLexicalBinding(node *treesitter.Node, environment *lexic
 		if isIdentifier(name) {
 			environment.bind(name, node, nil, false)
 		}
+	}
+}
+
+func (e *extractor) seedHoistedBindings(node *treesitter.Node, environment *lexicalEnvironment) {
+	if node == nil {
+		return
+	}
+	if node.Kind() == "variable_declaration" {
+		for index := uint(0); index < node.NamedChildCount(); index++ {
+			declarator := node.NamedChild(index)
+			if declarator.Kind() != "variable_declarator" {
+				continue
+			}
+			for _, identifier := range e.bindingIdentifiers(declarator.ChildByFieldName("name")) {
+				environment.bind(strings.TrimSpace(e.text(identifier)), identifier, nil, false)
+			}
+		}
+		return
+	}
+	switch node.Kind() {
+	case "function_declaration", "generator_function_declaration", "function_expression", "generator_function",
+		"arrow_function", "method_definition", "class", "class_declaration", "abstract_class_declaration":
+		return
+	}
+	for index := uint(0); index < node.NamedChildCount(); index++ {
+		e.seedHoistedBindings(node.NamedChild(index), environment)
+	}
+}
+
+func functionParameters(function *treesitter.Node) *treesitter.Node {
+	if function == nil {
+		return nil
+	}
+	if parameters := function.ChildByFieldName("parameters"); parameters != nil {
+		return parameters
+	}
+	return function.ChildByFieldName("parameter")
+}
+
+func (e *extractor) bindingIdentifiers(pattern *treesitter.Node) []*treesitter.Node {
+	if pattern == nil {
+		return nil
+	}
+	switch pattern.Kind() {
+	case "identifier", "shorthand_property_identifier_pattern":
+		return []*treesitter.Node{pattern}
+	case "required_parameter", "optional_parameter":
+		if child := pattern.ChildByFieldName("pattern"); child != nil {
+			return e.bindingIdentifiers(child)
+		}
+		if child := pattern.ChildByFieldName("name"); child != nil {
+			return e.bindingIdentifiers(child)
+		}
+		for index := uint(0); index < pattern.NamedChildCount(); index++ {
+			if identifiers := e.bindingIdentifiers(pattern.NamedChild(index)); len(identifiers) > 0 {
+				return identifiers
+			}
+		}
+		return nil
+	case "assignment_pattern":
+		return e.bindingIdentifiers(pattern.ChildByFieldName("left"))
+	case "pair_pattern":
+		return e.bindingIdentifiers(pattern.ChildByFieldName("value"))
+	case "object_assignment_pattern":
+		if child := pattern.ChildByFieldName("left"); child != nil {
+			return e.bindingIdentifiers(child)
+		}
+		return e.bindingIdentifiers(pattern.ChildByFieldName("name"))
+	case "rest_pattern":
+		if child := pattern.ChildByFieldName("argument"); child != nil {
+			return e.bindingIdentifiers(child)
+		}
+		return e.bindingIdentifiers(namedChild(pattern, 0))
+	case "object_pattern", "array_pattern":
+		var identifiers []*treesitter.Node
+		for index := uint(0); index < pattern.NamedChildCount(); index++ {
+			identifiers = append(identifiers, e.bindingIdentifiers(pattern.NamedChild(index))...)
+		}
+		return identifiers
+	default:
+		if pattern.NamedChildCount() == 0 && isIdentifier(strings.TrimSpace(e.text(pattern))) {
+			return []*treesitter.Node{pattern}
+		}
+		return nil
 	}
 }
 
@@ -1060,33 +1155,33 @@ func namedChild(node *treesitter.Node, index uint) *treesitter.Node {
 	return node.NamedChild(index)
 }
 
-func (e *extractor) declareParameters(parameters *treesitter.Node, current scope) {
+func (e *extractor) declareParameters(function *treesitter.Node, current scope) {
+	parameters := functionParameters(function)
 	if parameters == nil {
 		return
 	}
-	for i := uint(0); i < parameters.NamedChildCount(); i++ {
-		parameter := parameters.NamedChild(i)
-		nameNode := parameter
-		if pattern := parameter.ChildByFieldName("pattern"); pattern != nil {
-			nameNode = pattern
-		} else if name := parameter.ChildByFieldName("name"); name != nil {
-			nameNode = name
+	parameterNodes := []*treesitter.Node{parameters}
+	if parameters.Kind() == "formal_parameters" {
+		parameterNodes = parameterNodes[:0]
+		for i := uint(0); i < parameters.NamedChildCount(); i++ {
+			parameterNodes = append(parameterNodes, parameters.NamedChild(i))
 		}
-		name := strings.TrimSpace(e.text(nameNode))
-		if !isIdentifier(name) {
-			continue
-		}
+	}
+	for _, parameter := range parameterNodes {
 		typeText := e.typeText(parameter)
-		properties := map[string]string{}
-		if typeText != "" {
-			properties["type"] = typeText
-		}
-		id := e.b.Declare(current.currentID, graph.Node{Kind: graph.KindParameter, Name: name,
-			QualifiedName: current.container + "." + name, Location: e.location(parameter), Properties: properties})
-		current.symbols[name] = id
-		current.lexical.bind(name, parameter, nil, false)
-		if typeText != "" {
-			current.types[name] = e.qualifyType(typeText)
+		for _, identifier := range e.bindingIdentifiers(parameter) {
+			name := strings.TrimSpace(e.text(identifier))
+			properties := map[string]string{}
+			if typeText != "" {
+				properties["type"] = typeText
+			}
+			id := e.b.Declare(current.currentID, graph.Node{Kind: graph.KindParameter, Name: name,
+				QualifiedName: current.container + "." + name, Location: e.location(identifier), Properties: properties})
+			current.symbols[name] = id
+			current.lexical.bind(name, identifier, nil, false)
+			if typeText != "" {
+				current.types[name] = e.qualifyType(typeText)
+			}
 		}
 	}
 }
