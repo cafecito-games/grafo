@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	pathpkg "path"
 	"path/filepath"
@@ -32,6 +33,7 @@ import (
 	"github.com/cafecito-games/gdparser/configfile"
 	configast "github.com/cafecito-games/gdparser/configfile/ast"
 	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/repositorypath"
 )
 
 // ProjectFileName is the tracked Godot project configuration file. Its
@@ -484,19 +486,30 @@ var (
 // up to the repository root looking for project.godot, so Godot projects
 // nested in a monorepo resolve against their own configuration. A repository
 // without a project file yields an empty Project and no error.
-func LoadProject(root, path string) (Project, error) {
+func LoadProject(root, path string, memberships ...[]string) (Project, error) {
 	if root == "" {
 		return Project{}, nil
 	}
+	if len(memberships) > 1 {
+		return Project{}, fmt.Errorf("godot project lookup accepts at most one membership snapshot")
+	}
+	if len(memberships) == 1 && memberships[0] != nil {
+		membership, err := normalizeMembership(memberships[0])
+		if err != nil {
+			return Project{}, err
+		}
+		return loadProjectFromMembership(root, path, membership)
+	}
 	directory := filepath.Dir(filepath.FromSlash(strings.TrimPrefix(path, "./")))
 	for {
-		candidate := filepath.Join(root, directory, ProjectFileName)
-		info, err := os.Stat(candidate)
+		relative := filepath.ToSlash(filepath.Join(directory, ProjectFileName))
+		relative = strings.TrimPrefix(relative, "./")
+		candidate, info, err := repositorypath.ResolveRegularFile(root, relative)
 		switch {
-		case err == nil && !info.IsDir():
-			relative := filepath.ToSlash(filepath.Join(directory, ProjectFileName))
-			relative = strings.TrimPrefix(relative, "./")
+		case err == nil:
 			return loadFile(candidate, relative, info)
+		case errors.Is(err, repositorypath.ErrUnsafe):
+			return Project{}, err
 		case err != nil && !errors.Is(err, os.ErrNotExist):
 			return Project{}, err
 		}
@@ -504,6 +517,38 @@ func LoadProject(root, path string) (Project, error) {
 			return Project{}, nil
 		}
 		parent := filepath.Dir(directory)
+		if parent == directory {
+			return Project{}, nil
+		}
+		directory = parent
+	}
+}
+
+func loadProjectFromMembership(root, sourcePath string, membership []string) (Project, error) {
+	cleanSource := pathpkg.Clean(filepath.ToSlash(sourcePath))
+	if cleanSource == "." || cleanSource == ".." || pathpkg.IsAbs(cleanSource) || strings.HasPrefix(cleanSource, "../") {
+		return Project{}, fmt.Errorf("invalid Godot source membership path %q", sourcePath)
+	}
+	projects := make(map[string]bool, len(membership))
+	for _, path := range membership {
+		if filepath.Base(path) == ProjectFileName {
+			projects[path] = true
+		}
+	}
+	directory := pathpkg.Dir(cleanSource)
+	for {
+		relative := pathpkg.Join(directory, ProjectFileName)
+		if projects[relative] {
+			absolute, info, err := repositorypath.ResolveRegularFile(root, relative)
+			if err != nil {
+				return Project{}, err
+			}
+			return loadFile(absolute, relative, info)
+		}
+		if directory == "." || directory == "/" {
+			return Project{}, nil
+		}
+		parent := pathpkg.Dir(directory)
 		if parent == directory {
 			return Project{}, nil
 		}
