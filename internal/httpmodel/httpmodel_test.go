@@ -91,6 +91,70 @@ func TestNormalizeMethodRejectsMalformedTokens(t *testing.T) {
 	}
 }
 
+func TestDestinationContractFailsClosedOnConflictingEvidence(t *testing.T) {
+	local := mustRoute(t, "/users")
+	external := mustRoute(t, "https://api.example.test/users")
+	tests := []struct {
+		name       string
+		properties map[string]string
+		route      Route
+	}{
+		{name: "unknown is not a boolean", properties: map[string]string{PropertyAuthorityUnknown: "maybe"}, route: local},
+		{name: "explicit and unknown", properties: map[string]string{PropertyAuthority: "api.example.test", PropertyAuthorityUnknown: "true"}, route: local},
+		{name: "route and property authority disagree", properties: map[string]string{PropertyAuthority: "other.test"}, route: external},
+		{name: "resolution lacks evidence", properties: map[string]string{PropertyDestinationResolution: string(DestinationResolved)}, route: local},
+		{name: "unknown route resolution", properties: map[string]string{PropertyDestinationResolution: "guessed", PropertyDestinationEvidence: string(EvidenceRoute)}, route: local},
+		{name: "unknown authority resolved by route", properties: map[string]string{PropertyAuthorityUnknown: "true", PropertyDestinationResolution: string(DestinationResolved), PropertyDestinationEvidence: string(EvidenceRoute)}, route: local},
+		{name: "explicit authority marked local", properties: map[string]string{PropertyAuthority: "api.example.test", PropertyDestinationResolution: string(DestinationResolved), PropertyDestinationEvidence: string(EvidenceExactTarget)}, route: local},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := ParseDestinationContract(test.properties, test.route); err == nil {
+				t.Fatalf("corrupt contract succeeded: %#v", test.properties)
+			}
+		})
+	}
+}
+
+func TestDestinationContractRequiresProofForLocalTargets(t *testing.T) {
+	route := mustRoute(t, "/users")
+	legacy, err := ParseDestinationContract(nil, route)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.ValidateTarget(false); err == nil {
+		t.Fatal("legacy local target without proof was trusted")
+	}
+	if err := legacy.ValidateTarget(true); err != nil {
+		t.Fatalf("legacy external boundary did not remain unresolved: %v", err)
+	}
+	proven, err := ParseDestinationContract(map[string]string{
+		PropertyAuthorityUnknown:      "true",
+		PropertyDestinationResolution: string(DestinationResolved),
+		PropertyDestinationEvidence:   string(EvidenceExactTarget),
+	}, route)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proven.ValidateTarget(false); err != nil {
+		t.Fatalf("exact local proof was rejected: %v", err)
+	}
+}
+
+func TestBestCandidateIndexesKeepsOnlyTheStrongestCompatibleRank(t *testing.T) {
+	request := mustRoute(t, "/users/42")
+	candidates := []EndpointCandidate{
+		{Method: "POST", Route: mustRoute(t, "/users/42")},
+		{Method: "GET", Route: mustRoute(t, "/users/{id}")},
+		{Method: "GET", Route: mustRoute(t, "/users/42")},
+		{Method: "GET", Route: mustRoute(t, "/users/{name}")},
+	}
+	indexes := BestCandidateIndexes("GET", request, candidates)
+	if len(indexes) != 1 || indexes[0] != 2 {
+		t.Fatalf("best candidate indexes = %v, want [2]", indexes)
+	}
+}
+
 func mustRoute(t *testing.T, value string) Route {
 	t.Helper()
 	route, err := ParseRoute(value)

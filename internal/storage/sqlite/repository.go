@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/httpmodel"
 	"github.com/cafecito-games/grafo/internal/semantic"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/migrations"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/sqlcgen"
@@ -358,15 +359,20 @@ func (r *Repository) reconcileBatch(ctx context.Context, resolved *resolutionCac
 			if err != nil {
 				return err
 			}
-			targets, err := resolveTargets(ctx, q, writer, fact, row.TargetExists != 0, resolved)
+			targetResult, err := resolveTargets(ctx, q, writer, fact, row.TargetExists != 0, resolved)
 			if err != nil {
 				return err
+			}
+			targets := targetResult.targets
+			edgeProperties := fact.Properties
+			if targetResult.properties != nil {
+				edgeProperties = targetResult.properties
 			}
 			for _, source := range sources {
 				for _, target := range targets {
 					edge := graph.Edge{ID: graph.EdgeID(fact.ID, target), FactID: fact.ID,
 						FromID: source, ToID: target, Kind: fact.Kind, Producer: fact.Producer, Location: fact.Location,
-						Properties: fact.Properties}
+						Properties: edgeProperties}
 					if err := writer.addEdge(ctx, edgeParams(edge)); err != nil {
 						return err
 					}
@@ -472,6 +478,9 @@ type resolutionKey struct {
 	target     string
 	targetKind graph.NodeKind
 	edgeKind   graph.EdgeKind
+	authority  httpmodel.AuthorityState
+	method     string
+	route      string
 }
 
 type resolutionCacheEntry struct {
@@ -483,10 +492,17 @@ type resolutionCache struct {
 	capacity int
 	entries  map[resolutionKey]*list.Element
 	recent   *list.List
+	requests map[resolutionKey]requestCacheState
+}
+
+type requestCacheState struct {
+	resolution httpmodel.DestinationResolution
+	evidence   httpmodel.DestinationEvidence
 }
 
 func newResolutionCache(capacity int) *resolutionCache {
-	return &resolutionCache{capacity: capacity, entries: make(map[resolutionKey]*list.Element, capacity), recent: list.New()}
+	return &resolutionCache{capacity: capacity, entries: make(map[resolutionKey]*list.Element, capacity),
+		recent: list.New(), requests: make(map[resolutionKey]requestCacheState, capacity)}
 }
 
 func (c *resolutionCache) get(key resolutionKey) ([]string, bool) {
@@ -510,8 +526,26 @@ func (c *resolutionCache) set(key resolutionKey, targets []string) {
 		return
 	}
 	oldest := c.recent.Back()
-	delete(c.entries, oldest.Value.(resolutionCacheEntry).key)
+	oldestKey := oldest.Value.(resolutionCacheEntry).key
+	delete(c.entries, oldestKey)
+	delete(c.requests, oldestKey)
 	c.recent.Remove(oldest)
+}
+
+func (c *resolutionCache) getRequest(key resolutionKey) ([]string, requestCacheState, bool) {
+	targets, ok := c.get(key)
+	if !ok {
+		return nil, requestCacheState{}, false
+	}
+	state, ok := c.requests[key]
+	return targets, state, ok
+}
+
+func (c *resolutionCache) setRequest(key resolutionKey, targets []string,
+	resolution httpmodel.DestinationResolution, evidence httpmodel.DestinationEvidence,
+) {
+	c.set(key, targets)
+	c.requests[key] = requestCacheState{resolution: resolution, evidence: evidence}
 }
 
 type resolutionCandidate struct {
@@ -520,32 +554,41 @@ type resolutionCandidate struct {
 	qualifiedName string
 }
 
-func resolveSources(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter, fact graph.Fact, sourceExists bool, cache *resolutionCache) ([]string, error) {
-	return resolveEndpoint(ctx, q, writer, fact, sourceEndpoint, sourceExists, cache)
+type endpointResult struct {
+	targets    []string
+	properties map[string]string
 }
 
-func resolveTargets(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter, fact graph.Fact, targetExists bool, cache *resolutionCache) ([]string, error) {
+func resolveSources(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter, fact graph.Fact, sourceExists bool, cache *resolutionCache) ([]string, error) {
+	result, err := resolveEndpoint(ctx, q, writer, fact, sourceEndpoint, sourceExists, cache)
+	return result.targets, err
+}
+
+func resolveTargets(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter, fact graph.Fact, targetExists bool, cache *resolutionCache) (endpointResult, error) {
 	return resolveEndpoint(ctx, q, writer, fact, targetEndpoint, targetExists, cache)
 }
 
-func resolveEndpoint(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter, fact graph.Fact, direction endpointDirection, exactExists bool, cache *resolutionCache) ([]string, error) {
+func resolveEndpoint(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter, fact graph.Fact, direction endpointDirection, exactExists bool, cache *resolutionCache) (endpointResult, error) {
+	if direction == targetEndpoint && fact.Kind == graph.EdgeRequests {
+		return resolveRequestTarget(ctx, q, writer, fact, exactExists, cache)
+	}
 	exactID, name, kind := fact.TargetID, fact.Target, fact.TargetKind
 	if direction == sourceEndpoint {
 		exactID, name, kind = fact.FromID, fact.Source, fact.SourceKind
 	}
 	if exactID != "" {
 		if exactExists {
-			return []string{exactID}, nil
+			return endpointResult{targets: []string{exactID}}, nil
 		}
 		external := externalNode(exactID, "")
 		if err := writer.addNode(ctx, nodeParams(external, 1)); err != nil {
-			return nil, err
+			return endpointResult{}, err
 		}
-		return []string{external.ID}, nil
+		return endpointResult{targets: []string{external.ID}}, nil
 	}
 	key := resolutionKey{direction: direction, target: name, targetKind: kind, edgeKind: fact.Kind}
 	if targets, ok := cache.get(key); ok {
-		return targets, nil
+		return endpointResult{targets: targets}, nil
 	}
 	var targets []string
 	var rows []resolutionCandidate
@@ -553,7 +596,7 @@ func resolveEndpoint(ctx context.Context, q *sqlcgen.Queries, writer *batchWrite
 		if kind == "" {
 			found, err := q.FindNodesExact(ctx, name)
 			if err != nil {
-				return nil, err
+				return endpointResult{}, err
 			}
 			rows = make([]resolutionCandidate, 0, len(found))
 			for _, row := range found {
@@ -563,7 +606,7 @@ func resolveEndpoint(ctx context.Context, q *sqlcgen.Queries, writer *batchWrite
 			found, err := q.FindNodesExactKind(ctx, sqlcgen.FindNodesExactKindParams{
 				Target: name, Kind: string(kind)})
 			if err != nil {
-				return nil, err
+				return endpointResult{}, err
 			}
 			rows = make([]resolutionCandidate, 0, len(found))
 			for _, row := range found {
@@ -587,12 +630,172 @@ func resolveEndpoint(ctx context.Context, q *sqlcgen.Queries, writer *batchWrite
 	if len(targets) == 0 {
 		external := externalNode(name, kind)
 		if err := writer.addNode(ctx, nodeParams(external, 1)); err != nil {
-			return nil, err
+			return endpointResult{}, err
 		}
 		targets = []string{external.ID}
 	}
 	cache.set(key, targets)
-	return targets, nil
+	return endpointResult{targets: targets}, nil
+}
+
+func resolveRequestTarget(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter, fact graph.Fact,
+	exactExists bool, cache *resolutionCache,
+) (endpointResult, error) {
+	method, route, validRoute := requestFactMethodRoute(fact)
+	contract, err := httpmodel.ParseDestinationContract(fact.Properties, route)
+	if err != nil {
+		return endpointResult{}, fmt.Errorf("request fact %s: %w", fact.ID, err)
+	}
+	if fact.TargetID != "" {
+		if exactExists {
+			row, nodeErr := q.GetNode(ctx, fact.TargetID)
+			if nodeErr != nil {
+				return endpointResult{}, nodeErr
+			}
+			if row.External != 0 {
+				resolution, evidence := requestResolutionForTargets(contract, []string{fact.TargetID}, fact.TargetID)
+				properties := httpmodel.WithDestinationEvidence(fact.Properties, resolution, evidence)
+				marked, markErr := httpmodel.ParseDestinationContract(properties, route)
+				if markErr != nil {
+					return endpointResult{}, fmt.Errorf("request fact %s: %w", fact.ID, markErr)
+				}
+				if err := marked.ValidateTarget(true); err != nil {
+					return endpointResult{}, fmt.Errorf("request fact %s: %w", fact.ID, err)
+				}
+				return endpointResult{targets: []string{fact.TargetID}, properties: properties}, nil
+			}
+			properties := httpmodel.WithDestinationEvidence(fact.Properties,
+				httpmodel.DestinationResolved, httpmodel.EvidenceExactTarget)
+			marked, markErr := httpmodel.ParseDestinationContract(properties, route)
+			if markErr != nil {
+				return endpointResult{}, fmt.Errorf("request fact %s: %w", fact.ID, markErr)
+			}
+			if err := marked.ValidateTarget(false); err != nil {
+				return endpointResult{}, fmt.Errorf("request fact %s: %w", fact.ID, err)
+			}
+			return endpointResult{targets: []string{fact.TargetID}, properties: properties}, nil
+		}
+		return materializeRequestBoundary(ctx, writer, fact, contract, route, fact.TargetID)
+	}
+
+	key := resolutionKey{direction: targetEndpoint, target: fact.Target, targetKind: fact.TargetKind,
+		edgeKind: fact.Kind, authority: contract.Authority, method: method, route: route.Canonical}
+	if targets, state, ok := cache.getRequest(key); ok {
+		return endpointResult{targets: targets,
+			properties: httpmodel.WithDestinationEvidence(fact.Properties, state.resolution, state.evidence)}, nil
+	}
+	if contract.Authority != httpmodel.AuthorityLocal || !validRoute {
+		result, boundaryErr := materializeRequestBoundary(ctx, writer, fact, contract, route, fact.Target)
+		if boundaryErr == nil {
+			marked, _ := httpmodel.ParseDestinationContract(result.properties, route)
+			cache.setRequest(key, result.targets, marked.Resolution, marked.Evidence)
+		}
+		return result, boundaryErr
+	}
+
+	rows, err := q.ListNodesByKind(ctx, sqlcgen.ListNodesByKindParams{
+		Kind: string(graph.KindEndpoint), MinExternal: 0, MaxExternal: 0,
+		NameFragment: "", PathPrefixesJson: "[]", MaxResults: -1,
+	})
+	if err != nil {
+		return endpointResult{}, err
+	}
+	nodes := make([]graph.Node, 0, len(rows))
+	candidates := make([]httpmodel.EndpointCandidate, 0, len(rows))
+	for _, row := range rows {
+		node := nodeFromRow(row)
+		candidateMethod, candidateRoute, ok := endpointNodeMethodRoute(node)
+		if !ok {
+			continue
+		}
+		nodes = append(nodes, node)
+		candidates = append(candidates, httpmodel.EndpointCandidate{Method: candidateMethod, Route: candidateRoute})
+	}
+	indexes := httpmodel.BestCandidateIndexes(method, route, candidates)
+	if len(indexes) == 1 {
+		result := endpointResult{targets: []string{nodes[indexes[0]].ID}, properties: httpmodel.WithDestinationEvidence(
+			fact.Properties, httpmodel.DestinationResolved, httpmodel.EvidenceRoute)}
+		cache.setRequest(key, result.targets, httpmodel.DestinationResolved, httpmodel.EvidenceRoute)
+		return result, nil
+	}
+	resolution := httpmodel.DestinationUnresolved
+	if len(indexes) > 1 {
+		resolution = httpmodel.DestinationAmbiguous
+	}
+	external := externalNode(fact.Target, graph.KindEndpoint)
+	if err := writer.addNode(ctx, nodeParams(external, 1)); err != nil {
+		return endpointResult{}, err
+	}
+	result := endpointResult{targets: []string{external.ID}, properties: httpmodel.WithDestinationEvidence(
+		fact.Properties, resolution, httpmodel.EvidenceRoute)}
+	cache.setRequest(key, result.targets, resolution, httpmodel.EvidenceRoute)
+	return result, nil
+}
+
+func requestResolutionForTargets(contract httpmodel.DestinationContract, targets []string, symbolic string) (
+	httpmodel.DestinationResolution, httpmodel.DestinationEvidence,
+) {
+	if len(targets) == 1 && targets[0] != externalNode(symbolic, graph.KindEndpoint).ID {
+		return httpmodel.DestinationResolved, httpmodel.EvidenceRoute
+	}
+	if contract.Authority == httpmodel.AuthorityExternal {
+		return httpmodel.DestinationExternal, httpmodel.EvidenceExplicitAuthority
+	}
+	if contract.Authority == httpmodel.AuthorityUnknown {
+		return httpmodel.DestinationUnresolved, httpmodel.EvidenceUnknownAuthority
+	}
+	return httpmodel.DestinationUnresolved, httpmodel.EvidenceRoute
+}
+
+func materializeRequestBoundary(ctx context.Context, writer *batchWriter, fact graph.Fact,
+	contract httpmodel.DestinationContract, route httpmodel.Route, name string,
+) (endpointResult, error) {
+	external := externalNode(name, graph.KindEndpoint)
+	if err := writer.addNode(ctx, nodeParams(external, 1)); err != nil {
+		return endpointResult{}, err
+	}
+	resolution, evidence := requestResolutionForTargets(contract, []string{external.ID}, name)
+	properties := httpmodel.WithDestinationEvidence(fact.Properties, resolution, evidence)
+	marked, err := httpmodel.ParseDestinationContract(properties, route)
+	if err != nil {
+		return endpointResult{}, fmt.Errorf("request fact %s: %w", fact.ID, err)
+	}
+	if err := marked.ValidateTarget(true); err != nil {
+		return endpointResult{}, fmt.Errorf("request fact %s: %w", fact.ID, err)
+	}
+	return endpointResult{targets: []string{external.ID}, properties: properties}, nil
+}
+
+func requestFactMethodRoute(fact graph.Fact) (string, httpmodel.Route, bool) {
+	method := strings.TrimSpace(fact.Properties["http_method"])
+	routeText := strings.TrimSpace(fact.Properties["http_route"])
+	if targetMethod, targetRoute, ok := strings.Cut(strings.TrimSpace(fact.Target), " "); ok {
+		if method == "" {
+			method = targetMethod
+		}
+		if routeText == "" {
+			routeText = targetRoute
+		}
+	}
+	normalized, methodErr := httpmodel.NormalizeMethod(method)
+	route, routeErr := httpmodel.ParseRoute(routeText)
+	return normalized, route, methodErr == nil && routeErr == nil && fact.Properties["http_invalid"] != "true"
+}
+
+func endpointNodeMethodRoute(node graph.Node) (string, httpmodel.Route, bool) {
+	method := strings.TrimSpace(node.Properties["method"])
+	routeText := strings.TrimSpace(node.Properties["route"])
+	if targetMethod, targetRoute, ok := strings.Cut(strings.TrimSpace(node.Name), " "); ok {
+		if method == "" {
+			method = targetMethod
+		}
+		if routeText == "" {
+			routeText = targetRoute
+		}
+	}
+	normalized, methodErr := httpmodel.NormalizeMethod(method)
+	route, routeErr := httpmodel.ParseRoute(routeText)
+	return normalized, route, methodErr == nil && routeErr == nil && node.Properties["http_invalid"] != "true"
 }
 
 func filterCandidates(fact graph.Fact, direction endpointDirection, rows []resolutionCandidate) []resolutionCandidate {

@@ -11,6 +11,7 @@ import (
 	embeddingcache "github.com/cafecito-games/grafo/internal/embedding/cache"
 	"github.com/cafecito-games/grafo/internal/federation"
 	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/httpmodel"
 	"github.com/cafecito-games/grafo/internal/indexer"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	gdscriptparser "github.com/cafecito-games/grafo/internal/parser/gdscript"
@@ -87,6 +88,7 @@ import "net/http"
 func Call() { http.Get("/charge") }
 type API struct { baseURL string }
 func (api *API) Unknown() { http.Get(api.baseURL + "/charge") }
+func External() { http.Get("https://api.example.test/charge") }
 `)
 	write(t, filepath.Join(serverRoot, "go.mod"), "module example.com/server\n\ngo 1.26\n")
 	enableChi(t, serverRoot)
@@ -114,7 +116,9 @@ func Routes() { router := chi.NewRouter(); router.Get("/charge", Handler) }
 	if len(result.Nodes) != 2 || result.Nodes[1].Node.Kind != graph.KindEndpoint || result.Nodes[1].Node.Name != "GET /charge" {
 		t.Fatalf("cross-repository endpoint was not resolved: %#v", result.Nodes)
 	}
-	if len(result.Edges) != 1 || result.Edges[0].Properties["federated"] != "true" {
+	if len(result.Edges) != 1 || result.Edges[0].Properties["federated"] != "true" ||
+		result.Edges[0].Properties[httpmodel.PropertyDestinationResolution] != string(httpmodel.DestinationResolved) ||
+		result.Edges[0].Properties[httpmodel.PropertyDestinationEvidence] != string(httpmodel.EvidenceFederated) {
 		t.Fatalf("expected a federated request edge: %#v", result.Edges)
 	}
 	located, err := repository.ProjectForNode(ctx, result.Root.ID)
@@ -154,6 +158,16 @@ func Routes() { router := chi.NewRouter(); router.Get("/charge", Handler) }
 		if edge.FromID == unknown.Root.ID {
 			t.Fatalf("incoming federation invented an unknown-authority request: %#v", incoming)
 		}
+	}
+	external, err := query.NewService(repository).Neighborhood(ctx, "example.com/client.External", "", 1,
+		query.Outgoing, []graph.EdgeKind{graph.EdgeRequests}, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(external.Edges) != 1 || external.Edges[0].Properties["federated"] == "true" ||
+		len(external.Nodes) != 2 || !external.Nodes[1].Node.External ||
+		external.Edges[0].Properties[httpmodel.PropertyDestinationResolution] != string(httpmodel.DestinationExternal) {
+		t.Fatalf("explicit external authority crossed the federation boundary: %#v", external)
 	}
 	dependency, err := query.NewService(repository).Neighborhood(ctx, "example.com/client", "", 1,
 		query.Outgoing, []graph.EdgeKind{graph.EdgeDependsOn}, 20)

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/httpmodel"
 	"github.com/cafecito-games/grafo/internal/indexer"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	"github.com/cafecito-games/grafo/internal/semantic"
@@ -555,16 +556,16 @@ func (r *Repository) EdgesFrom(ctx context.Context, id string) ([]graph.Edge, er
 	}
 	var result []graph.Edge
 	for _, edge := range raw {
-		if !federationAllowed(edge) {
+		if !federationAllowed(edge, graph.Node{}) {
 			result = append(result, edge)
 			continue
 		}
 		target, err := r.Node(ctx, edge.ToID)
-		if err != nil || !target.External {
+		if err != nil || !target.External || !federationAllowed(edge, target) {
 			result = append(result, edge)
 			continue
 		}
-		candidates, err := r.exactCandidates(ctx, target, edge.Kind)
+		candidates, err := r.resolutionCandidates(ctx, target, edge)
 		if err != nil {
 			return nil, err
 		}
@@ -600,7 +601,7 @@ func (r *Repository) EdgesTo(ctx context.Context, id string) ([]graph.Edge, erro
 				return nil, err
 			}
 			for _, edge := range edges {
-				if federationAllowed(edge) && candidateAllowed(edge.Kind, target) {
+				if federationAllowed(edge, graph.Node{}) && candidateAllowed(edge.Kind, target) {
 					result = append(result, federatedEdge(edge, target.ID))
 				}
 			}
@@ -634,7 +635,7 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 	case graph.OutgoingRelations:
 		projected := make([]graph.HydratedRelationEdge, 0, len(items))
 		for _, item := range items {
-			if !federationAllowed(item.Edge) {
+			if !federationAllowed(item.Edge, item.Counterpart) {
 				projected = append(projected, item)
 				continue
 			}
@@ -642,7 +643,7 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 				projected = append(projected, item)
 				continue
 			}
-			candidates, err := r.exactCandidates(ctx, item.Counterpart, item.Edge.Kind)
+			candidates, err := r.resolutionCandidates(ctx, item.Counterpart, item.Edge)
 			if err != nil {
 				return graph.RelationEdgePage{}, err
 			}
@@ -690,7 +691,7 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 						}
 						truncated = truncated || page.Truncated
 						for _, item := range page.Items {
-							if !federationAllowed(item.Edge) {
+							if !federationAllowed(item.Edge, unresolved) {
 								continue
 							}
 							item.Edge = federatedEdge(item.Edge, target.ID)
@@ -814,6 +815,84 @@ func matchingExternalNodes(ctx context.Context, repository memberRepository, tar
 	return matcher.ExternalNodesMatching(ctx, target)
 }
 
+func (r *Repository) resolutionCandidates(ctx context.Context, target graph.Node, edge graph.Edge) ([]graph.ScopedNode, error) {
+	if edge.Kind != graph.EdgeRequests {
+		return r.exactCandidates(ctx, target, edge.Kind)
+	}
+	method, requestRoute, ok := requestEdgeMethodRoute(edge, target)
+	if !ok {
+		return nil, nil
+	}
+	type candidate struct {
+		scoped graph.ScopedNode
+		match  httpmodel.EndpointCandidate
+	}
+	var candidates []candidate
+	for _, item := range r.members {
+		nodes, err := item.repository.ListNodesByKind(ctx, graph.NodeListQuery{
+			Kinds: []graph.NodeKind{graph.KindEndpoint}, Visibility: graph.LocalNodes,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, scoped := range nodes {
+			candidateMethod, candidateRoute, valid := endpointNodeMethodRoute(scoped.Node)
+			if !valid {
+				continue
+			}
+			scoped.Repository = item.project.Name
+			candidates = append(candidates, candidate{scoped: scoped,
+				match: httpmodel.EndpointCandidate{Method: candidateMethod, Route: candidateRoute}})
+		}
+	}
+	matches := make([]httpmodel.EndpointCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		matches = append(matches, candidate.match)
+	}
+	indexes := httpmodel.BestCandidateIndexes(method, requestRoute, matches)
+	result := make([]graph.ScopedNode, 0, len(indexes))
+	for _, index := range indexes {
+		result = append(result, candidates[index].scoped)
+	}
+	return result, nil
+}
+
+func requestEdgeMethodRoute(edge graph.Edge, target graph.Node) (string, httpmodel.Route, bool) {
+	method := strings.TrimSpace(edge.Properties["http_method"])
+	routeText := strings.TrimSpace(edge.Properties["http_route"])
+	label := strings.TrimSpace(target.QualifiedName)
+	if label == "" {
+		label = strings.TrimSpace(target.Name)
+	}
+	if fallbackMethod, fallbackRoute, ok := strings.Cut(label, " "); ok {
+		if method == "" {
+			method = fallbackMethod
+		}
+		if routeText == "" {
+			routeText = fallbackRoute
+		}
+	}
+	normalized, methodErr := httpmodel.NormalizeMethod(method)
+	route, routeErr := httpmodel.ParseRoute(routeText)
+	return normalized, route, methodErr == nil && routeErr == nil && edge.Properties["http_invalid"] != "true"
+}
+
+func endpointNodeMethodRoute(node graph.Node) (string, httpmodel.Route, bool) {
+	method := strings.TrimSpace(node.Properties["method"])
+	routeText := strings.TrimSpace(node.Properties["route"])
+	if fallbackMethod, fallbackRoute, ok := strings.Cut(strings.TrimSpace(node.Name), " "); ok {
+		if method == "" {
+			method = fallbackMethod
+		}
+		if routeText == "" {
+			routeText = fallbackRoute
+		}
+	}
+	normalized, methodErr := httpmodel.NormalizeMethod(method)
+	route, routeErr := httpmodel.ParseRoute(routeText)
+	return normalized, route, methodErr == nil && routeErr == nil && node.Properties["http_invalid"] != "true"
+}
+
 func candidateAllowed(relation graph.EdgeKind, node graph.Node) bool {
 	kind := node.Kind
 	switch relation {
@@ -858,8 +937,27 @@ func candidateAllowed(relation graph.EdgeKind, node graph.Node) bool {
 	}
 }
 
-func federationAllowed(edge graph.Edge) bool {
-	return edge.Kind != graph.EdgeRequests || edge.Properties["http_authority_unknown"] != "true"
+func federationAllowed(edge graph.Edge, target graph.Node) bool {
+	if edge.Kind != graph.EdgeRequests {
+		return true
+	}
+	routeText := strings.TrimSpace(edge.Properties["http_route"])
+	if routeText == "" {
+		label := strings.TrimSpace(target.QualifiedName)
+		if label == "" {
+			label = strings.TrimSpace(target.Name)
+		}
+		if _, value, ok := strings.Cut(label, " "); ok {
+			routeText = value
+		}
+	}
+	route, _ := httpmodel.ParseRoute(routeText)
+	contract, err := httpmodel.ParseDestinationContract(edge.Properties, route)
+	if err != nil || contract.Authority != httpmodel.AuthorityLocal {
+		return false
+	}
+	return contract.Resolution == "" || contract.Resolution == httpmodel.DestinationUnresolved ||
+		contract.Resolution == httpmodel.DestinationAmbiguous
 }
 
 func federatedEdge(edge graph.Edge, targetID string) graph.Edge {
@@ -868,6 +966,10 @@ func federatedEdge(edge graph.Edge, targetID string) graph.Edge {
 	properties := make(map[string]string, len(edge.Properties)+1)
 	for key, value := range edge.Properties {
 		properties[key] = value
+	}
+	if edge.Kind == graph.EdgeRequests {
+		properties = httpmodel.WithDestinationEvidence(properties,
+			httpmodel.DestinationResolved, httpmodel.EvidenceFederated)
 	}
 	properties["federated"] = "true"
 	edge.Properties = properties

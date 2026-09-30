@@ -201,6 +201,10 @@
           "path": "services/client.ts",
           "line": 2,
           "column": 10
+        },
+        "properties": {
+          "http_destination_evidence": "route",
+          "http_destination_resolution": "resolved"
         }
       },
       {
@@ -320,6 +324,10 @@
               "path": "services/client.ts",
               "line": 2,
               "column": 10
+            },
+            "properties": {
+              "http_destination_evidence": "route",
+              "http_destination_resolution": "resolved"
             }
           },
           {
