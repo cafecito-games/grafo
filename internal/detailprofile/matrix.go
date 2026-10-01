@@ -425,7 +425,7 @@ func operationEvidence() []Operation {
 		{"message-coverage", []Capability{CapabilityMessageFieldFlow, CapabilityTransportFlow}, "internal/query/messageflow.go", 358},
 		{"find-tests", []Capability{CapabilityTestCoverage}, "internal/query/testcoverage.go", 87},
 		{"test-coverage", []Capability{CapabilityTestCoverage}, "internal/query/testcoverage.go", 74},
-		{"semantic-reuse", []Capability{CapabilitySemanticReuse}, "internal/semantic/service.go", 205},
+		{"semantic-reuse", []Capability{CapabilitySemanticReuse}, "internal/semantic/search.go", 156},
 	}
 	result := make([]Operation, 0, len(values))
 	for _, value := range values {

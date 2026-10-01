@@ -838,8 +838,11 @@ func (a *App) mcp(ctx context.Context, args parsedArguments) error {
 		return err
 	}
 	service.WithSearch(searchService).WithSearchFactory(newSearchService)
-	service.WithReusableFactory(func(_ graph.ReadRepository, projects []indexer.Project) func(context.Context, string, int) (semantic.SearchResult, error) {
-		return func(searchContext context.Context, text string, limit int) (semantic.SearchResult, error) {
+	// The tool call must not block on a full embedding backfill: SearchWith
+	// bounds backfill, ranking, and graph resolution inside its budget and
+	// reports coverage, so a cold cache answers instead of timing out.
+	service.WithReusableFactory(func(_ graph.ReadRepository, projects []indexer.Project) mcpserver.ReusableSearch {
+		return func(searchContext context.Context, request semantic.SearchRequest) (semantic.SearchResult, error) {
 			repository, closeRepository, openErr := openReadOnlyProjects(searchContext, projects)
 			if openErr != nil {
 				return semantic.SearchResult{}, openErr
@@ -850,10 +853,7 @@ func (a *App) mcp(ctx context.Context, args parsedArguments) error {
 				return semantic.SearchResult{}, serviceErr
 			}
 			defer func() { _ = closeCache() }()
-			if _, syncErr := semanticService.Sync(searchContext); syncErr != nil {
-				return semantic.SearchResult{}, syncErr
-			}
-			return semanticService.Search(searchContext, text, limit)
+			return semanticService.SearchWith(searchContext, request)
 		}
 	})
 	return service.Run(ctx, Version)
@@ -919,7 +919,7 @@ func (a *App) embed(ctx context.Context, args parsedArguments) error {
 
 func (a *App) reusable(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) == 0 {
-		return fmt.Errorf("usage: grafo reusable <description> [--repo path | --repos pathA,pathB] [--limit 5]")
+		return fmt.Errorf("usage: grafo reusable <description> [--repo path | --repos pathA,pathB] [--limit 5] [--budget 45s] [--language name] [--path-prefix dir]")
 	}
 	limit, err := intOption(args, "limit", 5)
 	if err != nil {
@@ -935,10 +935,13 @@ func (a *App) reusable(ctx context.Context, args parsedArguments) error {
 		return err
 	}
 	defer func() { _ = closeCache() }()
-	if _, err := service.Sync(ctx); err != nil {
+	budget, err := durationOption(args, "budget")
+	if err != nil {
 		return err
 	}
-	result, err := service.Search(ctx, strings.Join(args.positionals, " "), limit)
+	result, err := service.SearchWith(ctx, semantic.SearchRequest{Query: strings.Join(args.positionals, " "),
+		Limit: limit, Budget: budget, Languages: splitList(args.values["language"]),
+		PathPrefixes: splitList(args.values["path-prefix"])})
 	if err != nil {
 		return err
 	}
@@ -949,7 +952,30 @@ func (a *App) reusable(ctx context.Context, args parsedArguments) error {
 		a.printf("%.4f  %-12s  %-48s  %s · %d connected nodes\n",
 			match.Score, match.Node.Kind, match.Node.QualifiedName, formatLocation(match.Node.Location), len(match.Context.Nodes)-1)
 	}
+	if result.Status != semantic.StatusComplete {
+		a.printf("%s · %d/%d documents embedded · %dms\n", result.Status,
+			result.Coverage.Embedded, result.Coverage.Documents, result.Timings.TotalMilliseconds)
+		for _, note := range result.Notes {
+			a.printf("  %s\n", note)
+		}
+		if result.NextAction != "" {
+			a.printf("  next: %s\n", result.NextAction)
+		}
+	}
 	return nil
+}
+
+// durationOption reads an optional Go duration option such as --budget 30s.
+func durationOption(args parsedArguments, name string) (time.Duration, error) {
+	raw := strings.TrimSpace(args.values[name])
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("--%s expects a positive Go duration such as 30s", name)
+	}
+	return value, nil
 }
 
 func newSemanticService(ctx context.Context, repository graph.ReadRepository, args parsedArguments) (*semantic.Service, func() error, error) {
@@ -2677,6 +2703,7 @@ var valueOptions = map[string]bool{
 	"filter": true, "method": true, "route": true, "event": true, "component": true,
 	"package": true, "message": true, "oneof": true, "status": true,
 	"progress": true, "older-than": true, "max-bytes": true, "keep": true,
+	"budget": true,
 }
 
 // progressCommands bounds the globally parsed --progress option to the
@@ -2697,6 +2724,7 @@ var pathPrefixCommands = map[string]bool{
 	"outbound-requests": true, "list-outbound-requests": true, "list_outbound_requests": true,
 	"service-topology": true, "get-service-topology": true, "get_service_topology": true,
 	"message-coverage": true, "list-message-coverage": true, "list_message_coverage": true,
+	"reusable": true, "find-reusable-code": true,
 }
 
 func parseArguments(arguments []string) (parsedArguments, error) {
@@ -2846,7 +2874,7 @@ Usage:
   grafo embed [path] [--model embeddinggemma] [--ollama-url http://localhost:11434] [--force]
   grafo embed-cache status [--json]
   grafo embed-cache prune [--model name] [--older-than duration] [--max-bytes n] [--dry-run] [--yes] [--json]
-  grafo reusable <description> [--repo path | --repos pathA,pathB] [--limit 5] [--json]
+  grafo reusable <description> [--repo path | --repos pathA,pathB] [--limit 5] [--budget 45s] [--language name] [--path-prefix dir] [--json]
   grafo find <text> [--limit 20] [--repo path | --repos pathA,pathB] [--json]
   grafo show <symbol-or-id> [--kind function] [--repo path | --repos pathA,pathB] [--json]
   grafo source <symbol-or-id> [--kind function] [--context-lines 2] [--max-lines 200] [--json]
