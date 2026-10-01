@@ -1,0 +1,146 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      increment:
+        description: "Semantic version component to increment"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  verify:
+    name: Verify
+    # Some packages only build on Linux, so the gate stays where CI runs it
+    # rather than on the macOS release runner.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - run: go test -race ./...
+      - run: go vet ./...
+
+  goreleaser:
+    name: GoReleaser
+    needs: verify
+    # Releases cross-compile CGO targets from macOS; see .goreleaser.yaml.
+    runs-on: macos-latest
+    timeout-minutes: 60
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          # Manual releases always tag the latest default-branch commit, even
+          # if a different branch was selected in the Actions UI.
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.repository.default_branch || github.ref }}
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Compute version and create release tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_INCREMENT: ${{ inputs.increment }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_error="${RUNNER_TEMP}/grafo-latest-release-error"
+          if latest_tag="$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name' 2>"${release_error}")"; then
+            :
+          elif grep -q 'HTTP 404' "${release_error}"; then
+            latest_tag="v0.0.0"
+          else
+            cat "${release_error}" >&2
+            exit 1
+          fi
+
+          current="${latest_tag#v}"
+          stable_semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          if [[ ! "${current}" =~ ${stable_semver} ]]; then
+            echo "::error::Latest published release ${latest_tag} is not a stable semantic version"
+            exit 1
+          fi
+
+          IFS='.' read -r major minor patch <<< "${current}"
+          case "${RELEASE_INCREMENT}" in
+            major)
+              major=$((major + 1))
+              minor=0
+              patch=0
+              ;;
+            minor)
+              minor=$((minor + 1))
+              patch=0
+              ;;
+            patch)
+              patch=$((patch + 1))
+              ;;
+            *)
+              echo "::error::Unknown release increment ${RELEASE_INCREMENT}"
+              exit 1
+              ;;
+          esac
+
+          tag="v${major}.${minor}.${patch}"
+          head_sha="$(git rev-parse HEAD)"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            git fetch --force origin "refs/tags/${tag}:refs/tags/${tag}"
+            tag_sha="$(git rev-list -n 1 "${tag}")"
+            if [[ "${tag_sha}" != "${head_sha}" ]]; then
+              echo "::error::${tag} already points to ${tag_sha}, not current main ${head_sha}"
+              exit 1
+            fi
+            echo "Reusing ${tag} at ${head_sha} for a release retry"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag --annotate "${tag}" --message "grafo ${tag}"
+            git push origin "refs/tags/${tag}"
+            echo "Created ${tag} at ${head_sha}"
+          fi
+
+          {
+            echo "### Releasing ${tag}"
+            echo "Previous release: \`${latest_tag}\`"
+            echo "Increment: \`${RELEASE_INCREMENT}\`"
+            echo "Commit: \`${head_sha}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

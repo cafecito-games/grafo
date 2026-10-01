@@ -1,0 +1,112 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: grafo
+
+# The tree-sitter grammars are C libraries, so every target needs CGO and a
+# matching C toolchain. Releases therefore run on macOS, where the system
+# clang covers both Darwin architectures, and Zig cross-compiles the Linux and
+# Windows targets. The pinned glibc floor keeps the Linux binaries usable on
+# distributions older than the runner's own.
+builds:
+  - id: grafo
+    main: ./cmd/grafo
+    binary: grafo
+    env:
+      - CGO_ENABLED=1
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w -X github.com/cafecito-games/grafo/internal/version.Value={{ .Version }}
+    overrides:
+      - goos: darwin
+        goarch: amd64
+        env:
+          - CGO_ENABLED=1
+          - CGO_CFLAGS=-arch x86_64
+          - CGO_LDFLAGS=-arch x86_64
+      - goos: darwin
+        goarch: arm64
+        env:
+          - CGO_ENABLED=1
+          - CGO_CFLAGS=-arch arm64
+          - CGO_LDFLAGS=-arch arm64
+      - goos: linux
+        goarch: amd64
+        env:
+          - CGO_ENABLED=1
+          - CC=zig cc -target x86_64-linux-gnu.2.17
+          - CXX=zig c++ -target x86_64-linux-gnu.2.17
+      - goos: linux
+        goarch: arm64
+        env:
+          - CGO_ENABLED=1
+          - CC=zig cc -target aarch64-linux-gnu.2.17
+          - CXX=zig c++ -target aarch64-linux-gnu.2.17
+      - goos: windows
+        goarch: amd64
+        env:
+          - CGO_ENABLED=1
+          - CC=zig cc -target x86_64-windows-gnu
+          - CXX=zig c++ -target x86_64-windows-gnu
+      - goos: windows
+        goarch: arm64
+        env:
+          - CGO_ENABLED=1
+          - CC=zig cc -target aarch64-windows-gnu
+          - CXX=zig c++ -target aarch64-windows-gnu
+
+archives:
+  - id: binaries
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - '^ci:'
+
+homebrew_casks:
+  - name: grafo
+    repository:
+      owner: cafecito-games
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://github.com/cafecito-games/grafo"
+    description: "Code graph indexer and query CLI for agent-assisted development"
+    # The release binaries are not notarized, so strip the quarantine attribute
+    # on install to keep Gatekeeper from blocking the executable.
+    hooks:
+      post:
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/grafo"]
+          end
+
+release:
+  draft: false
+  prerelease: auto

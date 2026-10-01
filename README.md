@@ -12,10 +12,27 @@ is local, incremental, branch-aware, and stored in SQLite.
 
 [Architecture and extension points](docs/architecture.md)
 
-## Quick start
+## Install
+
+Homebrew is the supported way to get a prebuilt binary on macOS and Linux:
+
+```sh
+brew install cafecito-games/tap/grafo
+```
+
+Building from source needs a C toolchain, because the tree-sitter grammars are
+C libraries:
 
 ```sh
 go install github.com/cafecito-games/grafo/cmd/grafo@latest
+```
+
+Prebuilt archives for macOS, Linux, and Windows are also attached to every
+[release](https://github.com/cafecito-games/grafo/releases).
+
+## Quick start
+
+```sh
 grafo install
 grafo index .
 grafo status
@@ -921,6 +938,23 @@ The non-GDScript Godot formats can be checked against the same project with:
 
 ```sh
 GRAFO_GODOT_CORPUS=/path/to/project go test ./internal/parser/godot -run TestCorpus -count=1
+```
+
+### Releasing
+
+Releases are cut from the `Release` GitHub Actions workflow. Running it manually
+with a `patch`, `minor`, or `major` increment tags the current default-branch
+commit and publishes that tag; pushing a `v*` tag publishes it directly.
+GoReleaser attaches the archives and checksums to the GitHub release and updates
+the `grafo` cask in [cafecito-games/homebrew-tap](https://github.com/cafecito-games/homebrew-tap).
+
+Every target links the tree-sitter C grammars, so the release job runs on macOS:
+the system clang covers both Darwin architectures and [Zig](https://ziglang.org/)
+cross-compiles the Linux and Windows targets. To reproduce the full artifact set
+locally, install Zig and run:
+
+```sh
+task release:snapshot
 ```
 
 ### End-to-end corpus benchmark
