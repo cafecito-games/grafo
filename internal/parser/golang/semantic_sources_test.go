@@ -82,11 +82,15 @@ func TestWorkspaceSemanticKeyTracksVendoredDeclarations(t *testing.T) {
 			changed: true,
 		},
 		{
-			// A vendored body is a package-local fact for a package that is
-			// never extracted, so it cannot change any repository file.
+			// A vendored body cannot change any repository file, so invalidating
+			// on it is conservative rather than necessary. It is accepted
+			// deliberately: parsing a declaration surface out of every vendored
+			// file is the most expensive thing the workspace key can do, and a
+			// vendor tree changes through `go mod vendor`, which rewrites
+			// vendor/modules.txt anyway. See semanticWorkspaceKey.
 			name:    "vendored body rewritten",
 			mutate:  map[string]string{dependency: "package dep\n\nfunc Format(value string) string { return value + \"\" }\n"},
-			changed: false,
+			changed: true,
 		},
 		{
 			name:    "vendored package added",

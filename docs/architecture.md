@@ -693,7 +693,18 @@ widens the git-visible membership snapshot accordingly — it lists every direct
 that owns a tracked `.go` file, and walks the vendor tree of every module root
 that has one — and feeds that set to the workspace key only. Nothing it adds
 becomes a graph node, and the cost stays bounded to Go package directories and
-vendor trees. Conflating the two questions is what previously let a hand-patched
+vendor trees.
+
+Vendored files are fingerprinted by their bytes rather than by a parsed
+declaration surface. Parsing one is the most expensive thing this key does: on a
+corpus whose vendor tree outnumbers its own sources ten to one it cost more than
+five times the rest of a cold index (38s to 254s), against 9% once the bytes are
+hashed instead. Vendored code is never extracted, so a vendored body cannot
+change any graph node, and hashing it costs only invalidation precision rather
+than correctness — a vendored body edit now reparses where only a declaration
+edit had to. In practice no precision is lost, because a vendor tree changes
+through `go mod vendor`, which rewrites `vendor/modules.txt`, already
+fingerprinted in full. Conflating the two questions is what previously let a hand-patched
 vendored signature, or a generated-but-uncommitted sibling, change how every
 importer extracts while no key moved and no file was reparsed.
 

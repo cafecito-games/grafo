@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // Grafo asks two different questions about a Go file, and semanticPathIgnored
@@ -161,4 +162,17 @@ func joinRepositoryPath(directory, name string) string {
 		return name
 	}
 	return directory + "/" + name
+}
+
+// isVendoredPath reports whether path lies inside a vendor tree. Vendored
+// sources are resolution evidence but never graph sources, so the key
+// fingerprints their bytes rather than parsing a declaration surface out of
+// them; see semanticWorkspaceKey for why that trade is sound.
+func isVendoredPath(path string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
+		if part == "vendor" {
+			return true
+		}
+	}
+	return false
 }

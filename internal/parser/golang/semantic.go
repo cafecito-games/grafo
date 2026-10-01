@@ -1401,6 +1401,23 @@ func semanticWorkspaceKey(ctx context.Context, root string) (string, string, err
 			continue
 		}
 		digest.writeField(relative)
+		if isVendoredPath(relative) {
+			// A vendor tree can dwarf the repository, and parsing a declaration
+			// surface for each of its files is the single most expensive thing
+			// this key does: on a corpus whose vendor tree outnumbers its own
+			// sources 10:1 it cost more than five times the rest of a cold index.
+			//
+			// Vendored code is never extracted, so a vendored function body
+			// cannot change any graph node. Hashing the bytes instead of parsing
+			// them therefore costs only invalidation precision, never
+			// correctness: a vendored body edit now reparses the repository where
+			// a declaration edit already did. In practice that precision is not
+			// lost at all, because a vendor tree changes through `go mod vendor`,
+			// which rewrites vendor/modules.txt — already fingerprinted in full.
+			sum := sha256.Sum256(content)
+			digest.writeField("vendored:" + hex.EncodeToString(sum[:]))
+			continue
+		}
 		digest.writeField(declarationSurfaceDigest(relative, content))
 	}
 	// Vendor trees are not application modules, but their manifest controls
