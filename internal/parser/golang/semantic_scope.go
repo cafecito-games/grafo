@@ -19,7 +19,7 @@ import (
 // goSemanticSurfaceVersion tags the encoding of the repository-wide Go
 // declaration surface. Bump it whenever the encoding below changes so a
 // previously indexed graph cannot be reused against a different fingerprint.
-const goSemanticSurfaceVersion = "go-declaration-surface-v1"
+const goSemanticSurfaceVersion = "go-declaration-surface-v2"
 
 // goPackageScopeVersion tags the encoding of the package-local scope key.
 const goPackageScopeVersion = "go-package-scope-v1"
