@@ -11,11 +11,12 @@ import (
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/indexer"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestInspectIndexReportsMetadataAndCompatibilityWithoutMutation(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "branch.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "branch.sqlite")
 	repository, err := Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +63,7 @@ func TestInspectIndexReportsMetadataAndCompatibilityWithoutMutation(t *testing.T
 
 func TestInspectIndexReadsCommittedWALMetadata(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "live.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "live.sqlite")
 	repository, err := Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +92,7 @@ func TestInspectIndexReadsCommittedWALMetadata(t *testing.T) {
 
 func TestInspectIndexRetainsValidatedIdentityWhenMetricsFail(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "metrics-failure.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "metrics-failure.sqlite")
 	repository, err := Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +130,7 @@ func TestInspectIndexRetainsValidatedIdentityWhenMetricsFail(t *testing.T) {
 
 func TestInspectIndexClassifiesIncompatibleAndCorruptDatabases(t *testing.T) {
 	ctx := context.Background()
-	incompatiblePath := filepath.Join(t.TempDir(), "incompatible.sqlite")
+	incompatiblePath := filepath.Join(testtemp.Dir(t), "incompatible.sqlite")
 	repository, err := Open(ctx, incompatiblePath)
 	if err != nil {
 		t.Fatal(err)
@@ -148,7 +149,7 @@ func TestInspectIndexClassifiesIncompatibleAndCorruptDatabases(t *testing.T) {
 		t.Fatalf("incompatible inspection = %#v", inspection)
 	}
 
-	corruptPath := filepath.Join(t.TempDir(), "corrupt.sqlite")
+	corruptPath := filepath.Join(testtemp.Dir(t), "corrupt.sqlite")
 	if err := os.WriteFile(corruptPath, []byte("not a SQLite database"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +164,7 @@ func TestInspectIndexClassifiesIncompatibleAndCorruptDatabases(t *testing.T) {
 
 func TestCheckpointIndexRequiresSameVerifiedMetadataAndNeverMigrates(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "branch.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "branch.sqlite")
 	repository, err := Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -194,7 +195,7 @@ func TestCheckpointIndexRequiresSameVerifiedMetadataAndNeverMigrates(t *testing.
 		t.Fatalf("failed checkpoint changed index files: before=%#v after=%#v", beforeMismatch, afterMismatch)
 	}
 
-	bare := filepath.Join(t.TempDir(), "bare.sqlite")
+	bare := filepath.Join(testtemp.Dir(t), "bare.sqlite")
 	if err := os.WriteFile(bare, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}

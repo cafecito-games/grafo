@@ -9,12 +9,13 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/query"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func BenchmarkCatalogEvidence(b *testing.B) {
 	const degree = 10_000
 	ctx := context.Background()
-	repository, err := sqlite.Open(ctx, filepath.Join(b.TempDir(), "catalog.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(b), "catalog.sqlite"))
 	if err != nil {
 		b.Fatal(err)
 	}

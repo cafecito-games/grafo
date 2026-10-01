@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 // Finding 4: a service definition outlives the command that wrote it, so the
@@ -13,12 +15,12 @@ import (
 // toolchain creates, because refusing a valid installed location is as much a
 // defect as accepting an ephemeral one: both directions are asserted here.
 func TestInstallableBinaryAcceptsDurablePathsAndRefusesEphemeralOnes(t *testing.T) {
-	temporary := t.TempDir()
-	goTemp := t.TempDir()
-	goCache := t.TempDir()
-	home := t.TempDir()
+	temporary := testtemp.Dir(t)
+	goTemp := testtemp.Dir(t)
+	goCache := testtemp.Dir(t)
+	home := testtemp.Dir(t)
 	cacheHome := filepath.Join(home, ".cache")
-	durable := t.TempDir()
+	durable := testtemp.Dir(t)
 
 	tests := []struct {
 		name      string

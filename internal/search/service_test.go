@@ -12,6 +12,7 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 // fakeCatalog is a graph.FileCatalog backed by an in-memory map.
@@ -31,7 +32,7 @@ func (c fakeCatalog) Files(context.Context) (map[string]graph.FileRecord, error)
 // catalog lists exactly the given paths.
 func worktree(t *testing.T, name string, files map[string]string, languages map[string]string) Source {
 	t.Helper()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	records := map[string]graph.FileRecord{}
 	for path, content := range files {
 		absolute := filepath.Join(root, filepath.FromSlash(path))
@@ -340,7 +341,7 @@ func TestSearchSkipsBinaryAndOversized(t *testing.T) {
 
 func TestSearchSkipsMissingEscapingAndSymlinkedFiles(t *testing.T) {
 	source := worktree(t, "repo", map[string]string{"present.txt": "alpha\n"}, nil)
-	outside := filepath.Join(t.TempDir(), "secret.txt")
+	outside := filepath.Join(testtemp.Dir(t), "secret.txt")
 	if err := os.WriteFile(outside, []byte("alpha secret\n"), 0o644); err != nil {
 		t.Fatalf("write outside file: %v", err)
 	}
@@ -442,7 +443,7 @@ func TestSearchRequiresSources(t *testing.T) {
 }
 
 func TestSearchPropagatesCatalogError(t *testing.T) {
-	source := Source{Project: indexer.Project{Root: t.TempDir(), Name: "repo"},
+	source := Source{Project: indexer.Project{Root: testtemp.Dir(t), Name: "repo"},
 		Catalog: fakeCatalog{err: errors.New("catalog unavailable")}}
 	_, err := NewService([]Source{source}).Search(context.Background(), Request{Patterns: []string{"alpha"}})
 	if err == nil || !strings.Contains(err.Error(), "repo") {

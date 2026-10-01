@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cafecito-games/grafo/internal/indexer"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 // fakeRunner records the projects it was asked to index. It stands in for the
@@ -79,7 +80,7 @@ func TestSupervisorIndexesEveryRegisteredRoot(t *testing.T) {
 	supervisor, store := newTestSupervisor(t, runner, func(_ context.Context, root string) (indexer.Project, error) {
 		return fakeProject(root, "main"), nil
 	})
-	first, second := t.TempDir(), t.TempDir()
+	first, second := testtemp.Dir(t), testtemp.Dir(t)
 	for _, root := range []string{first, second} {
 		if _, _, err := store.Add(root, Settings{}); err != nil {
 			t.Fatal(err)
@@ -121,7 +122,7 @@ func TestBranchSwitchIndexesOnlyTheDiscoveredBranch(t *testing.T) {
 	supervisor, store := newTestSupervisor(t, runner, func(_ context.Context, root string) (indexer.Project, error) {
 		return fakeProject(root, branch), nil
 	})
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if _, _, err := store.Add(root, Settings{Interval: MinimumInterval}); err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +152,7 @@ func TestBranchDetectionFailureNeverIndexes(t *testing.T) {
 	supervisor, store := newTestSupervisor(t, runner, func(_ context.Context, root string) (indexer.Project, error) {
 		return indexer.Project{Root: root}, nil
 	})
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if _, _, err := store.Add(root, Settings{}); err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +173,7 @@ func TestMissingRootIsReportedAndNeverPruned(t *testing.T) {
 	supervisor, store := newTestSupervisor(t, runner, func(_ context.Context, root string) (indexer.Project, error) {
 		return fakeProject(root, "main"), nil
 	})
-	root := filepath.Join(t.TempDir(), "repository")
+	root := filepath.Join(testtemp.Dir(t), "repository")
 	if err := mkdir(root); err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +200,7 @@ func TestMissingRootIsReportedAndNeverPruned(t *testing.T) {
 }
 
 func TestOneFailingRootDoesNotStopOthers(t *testing.T) {
-	broken, healthy := t.TempDir(), t.TempDir()
+	broken, healthy := testtemp.Dir(t), testtemp.Dir(t)
 	runner := &fakeRunner{failFor: map[string]error{broken: errors.New("disk on fire")}}
 	supervisor, store := newTestSupervisor(t, runner, func(_ context.Context, root string) (indexer.Project, error) {
 		return fakeProject(root, "main"), nil
@@ -230,7 +231,7 @@ func TestOverflowHintForcesOneFullReconciliation(t *testing.T) {
 	supervisor, store := newTestSupervisor(t, runner, func(_ context.Context, root string) (indexer.Project, error) {
 		return fakeProject(root, "main"), nil
 	})
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if _, _, err := store.Add(root, Settings{Interval: MinimumInterval}); err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +290,7 @@ func TestMalformedRegistryStopsEveryMutation(t *testing.T) {
 }
 
 func TestForegroundIndexLockBlocksTheSupervisorRun(t *testing.T) {
-	indexPath := filepath.Join(t.TempDir(), ".grafo", "indexes", "main.sqlite")
+	indexPath := filepath.Join(testtemp.Dir(t), ".grafo", "indexes", "main.sqlite")
 	unlock, err := IndexLock(indexPath, time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -331,7 +332,7 @@ func TestSupervisorIndexesARealRepositoryIdempotentlyAcrossRestarts(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	source := "package app\n\nfunc Greet() string { return \"hi\" }\n"
 	if err := writeFile(filepath.Join(root, "app.go"), source); err != nil {
 		t.Fatal(err)
@@ -387,7 +388,7 @@ func TestConcurrentHintsAndPassesAreRaceFree(t *testing.T) {
 		return fakeProject(root, "main"), nil
 	})
 	for index := 0; index < 3; index++ {
-		if _, _, err := store.Add(t.TempDir(), Settings{Interval: MinimumInterval}); err != nil {
+		if _, _, err := store.Add(testtemp.Dir(t), Settings{Interval: MinimumInterval}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -429,7 +430,7 @@ func TestSupervisorNeverRequestsFullGraphCounts(t *testing.T) {
 	supervisor, store := newTestSupervisor(t, runner, func(_ context.Context, root string) (indexer.Project, error) {
 		return fakeProject(root, "main"), nil
 	})
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if _, _, err := store.Add(root, Settings{}); err != nil {
 		t.Fatal(err)
 	}

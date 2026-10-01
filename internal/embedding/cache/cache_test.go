@@ -17,11 +17,12 @@ import (
 
 	embeddingcache "github.com/cafecito-games/grafo/internal/embedding/cache"
 	"github.com/cafecito-games/grafo/internal/semantic"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestBinaryRoundTripStatusAndPrivacy(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "private", "embeddings.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "private", "embeddings.sqlite")
 	store, err := embeddingcache.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +87,7 @@ func TestBinaryRoundTripStatusAndPrivacy(t *testing.T) {
 
 func TestMalformedAndNonFiniteVectorsFailClosed(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "embeddings.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "embeddings.sqlite")
 	store, err := embeddingcache.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -145,7 +146,7 @@ func TestMalformedAndNonFiniteVectorsFailClosed(t *testing.T) {
 
 func TestConcurrentIdenticalUpsertIsIdempotent(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "embeddings.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "embeddings.sqlite")
 	first, err := embeddingcache.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -189,7 +190,7 @@ func TestConcurrentIdenticalUpsertIsIdempotent(t *testing.T) {
 
 func TestModelAndDocumentVersionAreExactCacheNamespaces(t *testing.T) {
 	ctx := context.Background()
-	store, err := embeddingcache.Open(ctx, filepath.Join(t.TempDir(), "embeddings.sqlite"))
+	store, err := embeddingcache.Open(ctx, filepath.Join(testtemp.Dir(t), "embeddings.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +221,7 @@ func TestModelAndDocumentVersionAreExactCacheNamespaces(t *testing.T) {
 
 func TestLoadBatchesBeyondSQLiteVariableLimit(t *testing.T) {
 	ctx := context.Background()
-	store, err := embeddingcache.Open(ctx, filepath.Join(t.TempDir(), "embeddings.sqlite"))
+	store, err := embeddingcache.Open(ctx, filepath.Join(testtemp.Dir(t), "embeddings.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,7 +248,7 @@ func TestLoadBatchesBeyondSQLiteVariableLimit(t *testing.T) {
 func TestAccessTimesAreCoalesced(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
-	path := filepath.Join(t.TempDir(), "embeddings.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "embeddings.sqlite")
 	store, err := embeddingcache.OpenWithOptions(ctx, path, embeddingcache.Options{Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
@@ -295,13 +296,13 @@ func TestResolvePathRejectsUnsafeTargets(t *testing.T) {
 		}
 	})
 	t.Run("directory", func(t *testing.T) {
-		path := t.TempDir()
+		path := testtemp.Dir(t)
 		if _, err := embeddingcache.Open(context.Background(), path); err == nil {
 			t.Fatal("directory cache path succeeded")
 		}
 	})
 	t.Run("symlink", func(t *testing.T) {
-		root := t.TempDir()
+		root := testtemp.Dir(t)
 		target := filepath.Join(root, "target")
 		if err := os.WriteFile(target, nil, 0o600); err != nil {
 			t.Fatal(err)
@@ -315,7 +316,7 @@ func TestResolvePathRejectsUnsafeTargets(t *testing.T) {
 		}
 	})
 	t.Run("symlinked parent component", func(t *testing.T) {
-		root := t.TempDir()
+		root := testtemp.Dir(t)
 		realParent := filepath.Join(root, "real")
 		if err := os.Mkdir(realParent, 0o700); err != nil {
 			t.Fatal(err)
@@ -332,7 +333,7 @@ func TestResolvePathRejectsUnsafeTargets(t *testing.T) {
 
 func TestOpenRejectsCorruptAndIncompatibleCachesWithoutReplacingThem(t *testing.T) {
 	t.Run("corrupt", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "embeddings.sqlite")
+		path := filepath.Join(testtemp.Dir(t), "embeddings.sqlite")
 		want := []byte("not a sqlite database")
 		if err := os.WriteFile(path, want, 0o600); err != nil {
 			t.Fatal(err)
@@ -349,7 +350,7 @@ func TestOpenRejectsCorruptAndIncompatibleCachesWithoutReplacingThem(t *testing.
 		}
 	})
 	t.Run("incompatible schema", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "embeddings.sqlite")
+		path := filepath.Join(testtemp.Dir(t), "embeddings.sqlite")
 		database, err := sql.Open("sqlite", path)
 		if err != nil {
 			t.Fatal(err)
@@ -363,7 +364,7 @@ func TestOpenRejectsCorruptAndIncompatibleCachesWithoutReplacingThem(t *testing.
 		}
 	})
 	t.Run("future version", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "embeddings.sqlite")
+		path := filepath.Join(testtemp.Dir(t), "embeddings.sqlite")
 		database, err := sql.Open("sqlite", path)
 		if err != nil {
 			t.Fatal(err)
@@ -381,7 +382,7 @@ func TestOpenRejectsCorruptAndIncompatibleCachesWithoutReplacingThem(t *testing.
 func TestPruneComposesFiltersUsesOldestFirstAndIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
-	path := filepath.Join(t.TempDir(), "embeddings.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "embeddings.sqlite")
 	store, err := embeddingcache.OpenWithOptions(ctx, path, embeddingcache.Options{Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
@@ -449,7 +450,7 @@ func TestPruneComposesFiltersUsesOldestFirstAndIsIdempotent(t *testing.T) {
 func TestRFC3339NanoTimestampsUseChronologicalBoundsAndAge(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 9, 28, 10, 0, 2, 0, time.UTC)
-	path := filepath.Join(t.TempDir(), "embeddings.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "embeddings.sqlite")
 	store, err := embeddingcache.OpenWithOptions(ctx, path, embeddingcache.Options{Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
@@ -499,7 +500,7 @@ func TestRFC3339NanoTimestampsUseChronologicalBoundsAndAge(t *testing.T) {
 
 func TestCanceledPruneRollsBack(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "embeddings.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "embeddings.sqlite")
 	store, err := embeddingcache.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -522,7 +523,7 @@ func TestCanceledPruneRollsBack(t *testing.T) {
 
 func TestPruneFailureRollsBackSelectedBatch(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "embeddings.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "embeddings.sqlite")
 	store, err := embeddingcache.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)

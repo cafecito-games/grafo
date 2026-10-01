@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/query"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestTopologyCommandsExposeEndpointsRequestsHandlersAndServices(t *testing.T) {
@@ -121,7 +122,7 @@ func TestTopologyRefusesAMixedFreshnessFederation(t *testing.T) {
 
 func topologyFixture(t *testing.T) string {
 	t.Helper()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(`module example.com/topology
 
 go 1.26
@@ -182,7 +183,7 @@ func CallOrders() {
 
 func componentTopologyFixture(t *testing.T) string {
 	t.Helper()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write := func(path, content string) {
 		t.Helper()
 		full := filepath.Join(root, path)

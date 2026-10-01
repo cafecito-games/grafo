@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/agentinstall"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 // hostEnvironment is the production environment with an overridable operating
@@ -15,7 +16,7 @@ type hostEnvironment struct {
 	agentinstall.OSEnvironment
 	goos string
 	// temporaryDir overrides the reported temporary directory. Tests keep their
-	// fixtures under t.TempDir(), which really is inside the OS temporary
+	// fixtures under testtemp.Dir(t), which really is inside the OS temporary
 	// directory, so a test binary there must not be judged ephemeral by the rule
 	// that protects production installs.
 	temporaryDir string
@@ -48,14 +49,14 @@ func isolatedEnvironmentFor(t *testing.T, goos string) agentinstall.Environment 
 
 func isolatedHost(t *testing.T, goos string) hostEnvironment {
 	t.Helper()
-	home := t.TempDir()
+	home := testtemp.Dir(t)
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
 	t.Setenv("GOTMPDIR", "")
 	t.Setenv("GOCACHE", "")
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
-	return hostEnvironment{goos: goos, temporaryDir: t.TempDir()}
+	return hostEnvironment{goos: goos, temporaryDir: testtemp.Dir(t)}
 }
 
 func mkdir(path string) error { return os.MkdirAll(path, 0o755) }

@@ -12,6 +12,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/search"
 	sourcecontext "github.com/cafecito-games/grafo/internal/source"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -20,7 +21,7 @@ import (
 func batchFixture(t *testing.T) (*sqlite.Repository, indexer.Project) {
 	t.Helper()
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "checkout.go"),
 		[]byte("package sample\n\nfunc Handler() {\n\tCharge()\n}\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -29,7 +30,7 @@ func batchFixture(t *testing.T) (*sqlite.Repository, indexer.Project) {
 		[]byte("package sample\n\nfunc Charge() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/indexer"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestStatusProgressModesKeepStdoutMachineReadable(t *testing.T) {
@@ -124,7 +125,7 @@ func TestStatusProgressOptionIsPositionIndependentAndValidatedBeforeOpen(t *test
 		}
 	}
 	var stdout, stderr bytes.Buffer
-	code := New(&stdout, &stderr).Run(context.Background(), []string{"status", "--progress", "wat", t.TempDir()})
+	code := New(&stdout, &stderr).Run(context.Background(), []string{"status", "--progress", "wat", testtemp.Dir(t)})
 	if code != 2 || !strings.Contains(stderr.String(), "--progress must be one of") {
 		t.Fatalf("invalid progress: code=%d stderr=%q", code, stderr.String())
 	}
@@ -218,7 +219,7 @@ func TestStatusJSONProgressOwnsTerminalError(t *testing.T) {
 }
 
 func TestStatusProgressErrorsArePathFreeAndHumanErrorsAreNotDuplicated(t *testing.T) {
-	missing := t.TempDir()
+	missing := testtemp.Dir(t)
 	var stdout, stderr bytes.Buffer
 	code := New(&stdout, &stderr).Run(context.Background(), []string{"status", "--progress=json", missing})
 	var missingEvent indexer.ProgressEvent
@@ -243,7 +244,7 @@ func TestStatusProgressErrorsArePathFreeAndHumanErrorsAreNotDuplicated(t *testin
 // two runs produce reports that differ only in their measured durations.
 func indexableRepository(t *testing.T) string {
 	t.Helper()
-	root := filepath.Join(t.TempDir(), "sample")
+	root := filepath.Join(testtemp.Dir(t), "sample")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -441,7 +442,7 @@ func TestIndexAcceptsProgressOptionAndRejectsUnknownMode(t *testing.T) {
 		t.Fatalf("parse index --progress = %#v, %v", args, err)
 	}
 	var stdout, stderr bytes.Buffer
-	code := New(&stdout, &stderr).Run(context.Background(), []string{"index", "--progress", "wat", t.TempDir()})
+	code := New(&stdout, &stderr).Run(context.Background(), []string{"index", "--progress", "wat", testtemp.Dir(t)})
 	if code != 2 || !strings.Contains(stderr.String(), "--progress must be one of") {
 		t.Fatalf("invalid progress: code=%d stderr=%q", code, stderr.String())
 	}

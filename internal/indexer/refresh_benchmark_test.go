@@ -11,6 +11,7 @@ import (
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	markdownparser "github.com/cafecito-games/grafo/internal/parser/markdown"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func BenchmarkUnchangedRefresh(b *testing.B) {
@@ -73,7 +74,7 @@ func BenchmarkQueryTriggeredRefresh(b *testing.B) {
 func benchmarkRefreshFixture(b *testing.B) (context.Context, indexer.Project, *indexer.Service, func()) {
 	b.Helper()
 	ctx := context.Background()
-	root := b.TempDir()
+	root := testtemp.Dir(b)
 	runGit(b, root, "init", "-b", "main")
 	runGit(b, root, "remote", "add", "origin", "git@example.invalid:fixtures/refresh.git")
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {

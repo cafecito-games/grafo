@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/parser/godot/godotid"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestIdentityCanonicalizesRepositoryRelativePaths(t *testing.T) {
@@ -105,7 +106,7 @@ Twice="*res://scripts/b.gd"
 // cross-file UID check possible, including that absence is never treated as
 // contradiction.
 func TestAliasesRejectContradictoryEvidence(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, root, "project.godot", "config_version=5\n")
 	write(t, root, "scenes/a.tscn", "[gd_scene format=3 uid=\"uid://a\"]\n\n[node name=\"A\" type=\"Node\"]\n")
 	write(t, root, "scenes/b.tscn", "[gd_scene format=3 uid=\"uid://b\"]\n\n[node name=\"B\" type=\"Node\"]\n")
@@ -150,7 +151,7 @@ func TestAliasesRejectContradictoryEvidence(t *testing.T) {
 }
 
 func TestAliasesHonorExplicitRepositoryMembership(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, root, "project.godot", "config_version=5\n")
 	write(t, root, "scenes/tracked.tscn", "[gd_scene format=3 uid=\"uid://tracked\"]\n")
 	write(t, root, "scenes/untracked.tscn", "[gd_scene format=3 uid=\"uid://untracked\"]\n")
@@ -218,7 +219,7 @@ func TestAliasesHonorExplicitRepositoryMembership(t *testing.T) {
 }
 
 func TestAliasesMembershipMatchesNonGitFallback(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, root, "project.godot", "config_version=5\n")
 	write(t, root, "scenes/a.tscn", "[gd_scene format=3 uid=\"uid://a\"]\n")
 	write(t, root, "scripts/player.gd.uid", "uid://player\n")
@@ -244,7 +245,7 @@ func TestAliasesMembershipMatchesNonGitFallback(t *testing.T) {
 }
 
 func TestAliasesExplicitMembershipKeepsUnknownEvidenceFailClosed(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, root, "scenes/known.tscn", "[gd_scene format=3 uid=\"uid://known\"]\n")
 	write(t, root, "scenes/huge.tscn",
 		"[gd_scene format=3 script_class=\""+strings.Repeat("x", 2<<20)+"\"]\n")
@@ -264,7 +265,7 @@ func TestAliasesExplicitMembershipKeepsUnknownEvidenceFailClosed(t *testing.T) {
 }
 
 func TestLoadProjectHonorsExplicitRepositoryMembership(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, root, "project.godot", "[autoload]\nRoot=\"*res://root.gd\"\n")
 	write(t, root, "nested/project.godot", "[autoload]\nNested=\"*res://nested.gd\"\n")
 	write(t, root, "nested/scenes/main.tscn", "[gd_scene format=3]\n")
@@ -294,8 +295,8 @@ func TestLoadProjectHonorsExplicitRepositoryMembership(t *testing.T) {
 }
 
 func TestMembershipRejectsSymlinkedAncestorTraversal(t *testing.T) {
-	root := t.TempDir()
-	outside := t.TempDir()
+	root := testtemp.Dir(t)
+	outside := testtemp.Dir(t)
 	write(t, outside, "project.godot", "[autoload]\nOutside=\"*res://outside.gd\"\n")
 	write(t, outside, "scene.tscn", "[gd_scene format=3 uid=\"uid://outside\"]\n")
 	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
@@ -353,7 +354,7 @@ func write(t *testing.T, root, name, content string) {
 // byte bound must not look undeclared, because an undeclared UID is treated as
 // agreeing with whatever path a reference pairs with it.
 func TestAliasesNeverTreatTruncatedEvidenceAsApproval(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, root, "project.godot", "config_version=5\n")
 	// A header long enough that the UID sits past any fixed prefix read.
 	padding := strings.Repeat("x", 32<<10)
@@ -415,7 +416,7 @@ func TestResolveRefusesToLeaveTheOwningProject(t *testing.T) {
 // truncation case: while the table cannot prove a UID is undeclared, it must not
 // report agreement for a UID it simply did not find.
 func TestAliasesFailClosedWhileAnyFileIsUnknown(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, root, "project.godot", "config_version=5\n")
 	write(t, root, "scenes/ok.tscn", "[gd_scene format=3 uid=\"uid://ok\"]\n\n[node name=\"A\" type=\"Node\"]\n")
 
@@ -496,7 +497,7 @@ func TestProjectDigestCoversEveryDeclarationField(t *testing.T) {
 // Uniqueness is what licenses the edge, so an unproven declaration must fail
 // closed and must name the file that prevented the proof.
 func TestAliasesRefuseAFoundUIDWhileAnyFileIsUnknown(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, root, "project.godot", "config_version=5\n")
 	write(t, root, "scenes/a.tscn", "[gd_scene format=3 uid=\"uid://shared\"]\n\n[node name=\"A\" type=\"Node\"]\n")
 

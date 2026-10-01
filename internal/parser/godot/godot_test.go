@@ -11,6 +11,7 @@ import (
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	godotparser "github.com/cafecito-games/grafo/internal/parser/godot"
 	"github.com/cafecito-games/grafo/internal/parser/godot/godotid"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestParserSupportsGodotSourceFormats(t *testing.T) {
@@ -416,7 +417,7 @@ func assertDiagnostic(t *testing.T, diagnostics []graph.Diagnostic, contains str
 // resource, so trusting the path would produce a confident edge to the wrong
 // scene.
 func TestParserKeepsUIDPathDisagreementUnresolved(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeProjectFile(t, root, "project.godot", "config_version=5\n")
 	writeProjectFile(t, root, "scenes/a.tscn", "[gd_scene format=3 uid=\"uid://shared\"]\n\n[node name=\"A\" type=\"Node\"]\n")
 	writeProjectFile(t, root, "scenes/b.tscn", "[gd_scene format=3 uid=\"uid://other\"]\n\n[node name=\"B\" type=\"Node\"]\n")
@@ -545,7 +546,7 @@ func TestParserKeepsRepeatedResourceIDsUnresolved(t *testing.T) {
 // the repository root: a res:// reference is relative to the project, so it must
 // canonicalize to a repository-relative identity under that project directory.
 func TestParserResolvesResourcesWithinNestedProject(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeProjectFile(t, root, "client/project.godot", "config_version=5\n\n[autoload]\nGame=\"*res://scripts/game.gd\"\n")
 	writeProjectFile(t, root, "client/scenes/enemy.tscn", "[gd_scene format=3 uid=\"uid://enemy123\"]\n\n[node name=\"Enemy\" type=\"Node\"]\n")
 
@@ -597,7 +598,7 @@ func writeProjectFile(t *testing.T, root, name, content string) {
 // means a scene and its script share one identity while each declares its own
 // UID, so "this path declares some other UID" is not evidence of disagreement.
 func TestParserTrustsPathWhenUIDIsDeclaredNowhere(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeProjectFile(t, root, "project.godot", "config_version=5\n")
 	writeProjectFile(t, root, "scenes/target.tscn", "[gd_scene format=3 uid=\"uid://current\"]\n\n[node name=\"T\" type=\"Node\"]\n")
 	writeProjectFile(t, root, "scenes/target.gd.uid", "uid://script\n")
@@ -621,7 +622,7 @@ func TestParserTrustsPathWhenUIDIsDeclaredNowhere(t *testing.T) {
 // unusable, so a later declaration reusing it under a different id must not
 // resolve from its path either.
 func TestParserKeepsEveryReferenceThroughABadUIDUnresolved(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeProjectFile(t, root, "project.godot", "config_version=5\n")
 	writeProjectFile(t, root, "scenes/a.tscn", "[gd_scene format=3 uid=\"uid://shared\"]\n\n[node name=\"A\" type=\"Node\"]\n")
 	writeProjectFile(t, root, "scenes/b.tscn", "[gd_scene format=3 uid=\"uid://b\"]\n\n[node name=\"B\" type=\"Node\"]\n")
@@ -678,7 +679,7 @@ func TestParserKeepsEveryReferenceThroughABadUIDUnresolved(t *testing.T) {
 // res:// is project-relative, so a reference that traverses out of its own
 // project is not a valid reference and must not resolve into a sibling project.
 func TestParserKeepsProjectEscapingReferencesUnresolved(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeProjectFile(t, root, "client/project.godot", "config_version=5\n")
 	writeProjectFile(t, root, "tools/probe/project.godot", "config_version=5\n")
 	writeProjectFile(t, root, "tools/probe/scenes/probe.tscn",
@@ -709,7 +710,7 @@ func TestParserKeepsProjectEscapingReferencesUnresolved(t *testing.T) {
 // too, and the diagnostic names the file that prevented the proof so it can be
 // fixed rather than merely reported.
 func TestParserNamesTheUnreadableFileThatBlockedAUIDProof(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeProjectFile(t, root, "project.godot", "config_version=5\n")
 	writeProjectFile(t, root, "scenes/target.tscn",
 		"[gd_scene format=3 uid=\"uid://target\"]\n\n[node name=\"T\" type=\"Node\"]\n")
@@ -826,7 +827,7 @@ props=7
 // carrying the node path that proves it, and an item that is not a group name is
 // diagnosed instead of guessed.
 func TestParserRecordsSceneNodeGroupMembership(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeProjectFile(t, root, "client/project.godot", "config_version=5\n")
 	result := parseIn(t, root, "client/scenes/arena.tscn", `[gd_scene format=3]
 

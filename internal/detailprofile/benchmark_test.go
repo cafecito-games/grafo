@@ -9,10 +9,11 @@ import (
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/detailprofile"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestBenchmarkProducesComparableRawProfileEvidence(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "app.py"), ""+
 		"def handle(value):\n"+
 		"    local = value\n"+
@@ -22,7 +23,7 @@ func TestBenchmarkProducesComparableRawProfileEvidence(t *testing.T) {
 	runGit(t, root, "config", "user.email", "detail@example.invalid")
 	runGit(t, root, "add", "app.py")
 	runGit(t, root, "commit", "-m", "fixture")
-	output := t.TempDir()
+	output := testtemp.Dir(t)
 
 	full, err := detailprofile.RunBenchmark(context.Background(), detailprofile.BenchmarkOptions{
 		Repository: root, Output: output, Profile: detailprofile.ProfileFull, Samples: 1, AllowDirtyGrafo: true,
@@ -54,14 +55,14 @@ func TestBenchmarkProducesComparableRawProfileEvidence(t *testing.T) {
 }
 
 func TestBenchmarkRemovesDatabasesWhenProjectionValidationFails(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "app.py"), "def handle():\n    return 1\n")
 	runGit(t, root, "init", "-b", "main")
 	runGit(t, root, "config", "user.name", "Detail Profile Test")
 	runGit(t, root, "config", "user.email", "detail@example.invalid")
 	runGit(t, root, "add", "app.py")
 	runGit(t, root, "commit", "-m", "fixture")
-	output := t.TempDir()
+	output := testtemp.Dir(t)
 
 	_, err := detailprofile.RunBenchmark(context.Background(), detailprofile.BenchmarkOptions{
 		Repository: root, Output: output, Profile: detailprofile.ProfileScopedFull,

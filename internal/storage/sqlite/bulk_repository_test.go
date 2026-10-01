@@ -10,6 +10,7 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/sqlcgen"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestBulkWritesAreExactlyEquivalentToSingleRowQueries(t *testing.T) {
@@ -131,7 +132,7 @@ func TestBulkLimitsAndCommittedInstrumentation(t *testing.T) {
 }
 
 func TestCanceledEdgeBatchRollsBackAndRestartResumesQueue(t *testing.T) {
-	database := filepath.Join(t.TempDir(), "graph.sqlite")
+	database := filepath.Join(testtemp.Dir(t), "graph.sqlite")
 	ctx := context.Background()
 	repository, err := Open(ctx, database)
 	if err != nil {
@@ -203,7 +204,7 @@ func TestCanceledEdgeBatchRollsBackAndRestartResumesQueue(t *testing.T) {
 }
 
 func TestCanceledNamedSourceBatchRollsBackAndRestartResumesQueue(t *testing.T) {
-	database := filepath.Join(t.TempDir(), "named-source.sqlite")
+	database := filepath.Join(testtemp.Dir(t), "named-source.sqlite")
 	ctx := context.Background()
 	repository, err := Open(ctx, database)
 	if err != nil {
@@ -312,7 +313,7 @@ func TestBulkExternalDeduplicationAndInternalConvergence(t *testing.T) {
 
 func openTestRepository(t testing.TB) *Repository {
 	t.Helper()
-	repository, err := Open(context.Background(), filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := Open(context.Background(), filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

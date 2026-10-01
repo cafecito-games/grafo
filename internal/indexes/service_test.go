@@ -16,11 +16,12 @@ import (
 	"github.com/cafecito-games/grafo/internal/indexer"
 	"github.com/cafecito-games/grafo/internal/service"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestListIsDeterministicAndAccountsForEveryBranchFile(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	project := discoverTestProject(t, root)
 	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 	current := seedIndex(t, project.IndexPath, project, project.Branch, now.Add(-time.Hour))
@@ -98,7 +99,7 @@ func TestRecommendCompactionRequiresBothThresholds(t *testing.T) {
 
 func TestCompactDryRunIsReadOnlyAndRealRunReportsCurrentIndex(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	project := discoverTestProject(t, root)
 	repository := seedIndex(t, project.IndexPath, project, project.Branch, time.Now().UTC())
 	closeRepositories(t, repository)
@@ -148,7 +149,7 @@ func TestCompactDryRunIsReadOnlyAndRealRunReportsCurrentIndex(t *testing.T) {
 
 func TestCompactDryRunAndRealRunBothRefuseNonWALWithoutMutation(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	project := discoverTestProject(t, root)
 	repository := seedIndex(t, project.IndexPath, project, project.Branch, time.Now().UTC())
 	closeRepositories(t, repository)
@@ -197,7 +198,7 @@ func TestCompactDryRunAndRealRunBothRefuseNonWALWithoutMutation(t *testing.T) {
 
 func TestCompactValidatesIntentTargetLockAndPendingState(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	manager := newManager()
 	discovered := false
 	manager.discover = func(context.Context, string) (indexer.Project, error) {
@@ -224,17 +225,17 @@ func TestCompactValidatesIntentTargetLockAndPendingState(t *testing.T) {
 		t.Fatalf("held lock error = %v", err)
 	}
 
-	missingRoot := t.TempDir()
+	missingRoot := testtemp.Dir(t)
 	if _, err := Compact(ctx, missingRoot, CompactPolicy{DryRun: true}); err == nil || !strings.Contains(err.Error(), "run 'grafo index'") {
 		t.Fatalf("missing index error = %v", err)
 	}
 
-	symlinkRoot := t.TempDir()
+	symlinkRoot := testtemp.Dir(t)
 	symlinkProject := discoverTestProject(t, symlinkRoot)
 	if err := os.MkdirAll(filepath.Dir(symlinkProject.IndexPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	external := filepath.Join(t.TempDir(), "external.sqlite")
+	external := filepath.Join(testtemp.Dir(t), "external.sqlite")
 	if err := os.WriteFile(external, []byte("outside"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +267,7 @@ func TestCompactValidatesIntentTargetLockAndPendingState(t *testing.T) {
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			candidateRoot := t.TempDir()
+			candidateRoot := testtemp.Dir(t)
 			candidate := discoverTestProject(t, candidateRoot)
 			test.create(candidate.IndexPath, candidate)
 			if _, err := Compact(ctx, candidateRoot, CompactPolicy{DryRun: true}); err == nil || !strings.Contains(err.Error(), "cannot be compacted") {
@@ -278,7 +279,7 @@ func TestCompactValidatesIntentTargetLockAndPendingState(t *testing.T) {
 
 func TestCompactRevalidatesCurrentIndexAfterLock(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	project := discoverTestProject(t, root)
 	repository := seedIndex(t, project.IndexPath, project, project.Branch, time.Now().UTC())
 	otherPath := filepath.Join(filepath.Dir(project.IndexPath), "other.sqlite")
@@ -305,7 +306,7 @@ func TestCompactRevalidatesCurrentIndexAfterLock(t *testing.T) {
 
 func TestListAbsentDirectoryAndUnsafeCandidatesFailClosed(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	project := discoverTestProject(t, root)
 	inventory, err := List(ctx, root)
 	if err != nil || len(inventory.Indexes) != 0 || inventory.Totals.Total != 0 {
@@ -315,7 +316,7 @@ func TestListAbsentDirectoryAndUnsafeCandidatesFailClosed(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(project.IndexPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	external := filepath.Join(t.TempDir(), "outside.sqlite")
+	external := filepath.Join(testtemp.Dir(t), "outside.sqlite")
 	if err := os.WriteFile(external, []byte("outside"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -345,9 +346,9 @@ func TestListAbsentDirectoryAndUnsafeCandidatesFailClosed(t *testing.T) {
 }
 
 func TestListRejectsSymlinkedIndexDirectoryAncestry(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	project := discoverTestProject(t, root)
-	external := t.TempDir()
+	external := testtemp.Dir(t)
 	if err := os.MkdirAll(filepath.Join(external, "indexes"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +366,7 @@ func TestListRejectsSymlinkedIndexDirectoryAncestry(t *testing.T) {
 
 func TestPruneIntersectsSelectorsAndDryRunIsNonMutating(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	project := discoverTestProject(t, root)
 	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 	current := seedIndex(t, project.IndexPath, project, project.Branch, now.Add(-time.Hour))
@@ -419,7 +420,7 @@ func TestPruneIntersectsSelectorsAndDryRunIsNonMutating(t *testing.T) {
 
 func TestPruneProtectsCurrentAndRejectsUnverifiedFutureAndLockedCandidates(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	project := discoverTestProject(t, root)
 	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 	current := seedIndex(t, project.IndexPath, project, project.Branch, now.Add(-72*time.Hour))
@@ -452,7 +453,7 @@ func TestPruneProtectsCurrentAndRejectsUnverifiedFutureAndLockedCandidates(t *te
 	if err := os.WriteFile(corruptPath, []byte("not sqlite"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	external := filepath.Join(t.TempDir(), "external.sqlite")
+	external := filepath.Join(testtemp.Dir(t), "external.sqlite")
 	if err := os.WriteFile(external, []byte("outside"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -460,7 +461,7 @@ func TestPruneProtectsCurrentAndRejectsUnverifiedFutureAndLockedCandidates(t *te
 	if err := os.Symlink(external, symlinkPath); err != nil {
 		t.Fatal(err)
 	}
-	unsafeSidecar := filepath.Join(t.TempDir(), "outside-wal")
+	unsafeSidecar := filepath.Join(testtemp.Dir(t), "outside-wal")
 	if err := os.WriteFile(unsafeSidecar, []byte("outside"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -522,7 +523,7 @@ func TestRetainedIndexesCountsCurrentTowardKeepLimit(t *testing.T) {
 
 func TestPruneRevalidatesCurrentIndexUnderCandidateLock(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	project := discoverTestProject(t, root)
 	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 	current := seedIndex(t, project.IndexPath, project, project.Branch, now.Add(-time.Hour))
@@ -558,7 +559,7 @@ func TestPruneRevalidatesCurrentIndexUnderCandidateLock(t *testing.T) {
 }
 
 func TestPruneValidatesBeforeWorkAndReportsPartialFailureAndCancellation(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	project := discoverTestProject(t, root)
 	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 	if _, err := Prune(context.Background(), root, Policy{Confirm: true, Now: now}); err == nil {
@@ -607,7 +608,7 @@ func TestPruneValidatesBeforeWorkAndReportsPartialFailureAndCancellation(t *test
 		t.Fatalf("independent sibling was not deleted: %v", err)
 	}
 
-	cancelRoot := t.TempDir()
+	cancelRoot := testtemp.Dir(t)
 	cancelProject := discoverTestProject(t, cancelRoot)
 	thirdPath := filepath.Join(filepath.Dir(cancelProject.IndexPath), "c-old.sqlite")
 	fourthPath := filepath.Join(filepath.Dir(cancelProject.IndexPath), "d-old.sqlite")
@@ -644,7 +645,7 @@ func TestPruneCheckpointAndSidecarFailuresAreTruthful(t *testing.T) {
 	keep := 0
 
 	t.Run("checkpoint failure leaves index files untouched", func(t *testing.T) {
-		root := t.TempDir()
+		root := testtemp.Dir(t)
 		project := discoverTestProject(t, root)
 		path := filepath.Join(filepath.Dir(project.IndexPath), "old.sqlite")
 		repository := seedIndex(t, path, project, "old", now.Add(-72*time.Hour))
@@ -664,7 +665,7 @@ func TestPruneCheckpointAndSidecarFailuresAreTruthful(t *testing.T) {
 	})
 
 	t.Run("disappearing sidecar is already absent", func(t *testing.T) {
-		root := t.TempDir()
+		root := testtemp.Dir(t)
 		project := discoverTestProject(t, root)
 		path := filepath.Join(filepath.Dir(project.IndexPath), "old.sqlite")
 		repository := seedIndex(t, path, project, "old", now.Add(-72*time.Hour))
@@ -697,7 +698,7 @@ func TestPruneCheckpointAndSidecarFailuresAreTruthful(t *testing.T) {
 	})
 
 	t.Run("sidecar failure reports partial reclaimed bytes", func(t *testing.T) {
-		root := t.TempDir()
+		root := testtemp.Dir(t)
 		project := discoverTestProject(t, root)
 		path := filepath.Join(filepath.Dir(project.IndexPath), "old.sqlite")
 		repository := seedIndex(t, path, project, "old", now.Add(-72*time.Hour))

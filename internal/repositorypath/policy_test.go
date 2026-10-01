@@ -6,11 +6,12 @@ import (
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/repositorypath"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestResolveRegularFileRejectsSymlinkedAncestorsAndEscapes(t *testing.T) {
-	root := t.TempDir()
-	outside := t.TempDir()
+	root := testtemp.Dir(t)
+	outside := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(outside, "outside.txt"), []byte("outside"), 0o644); err != nil {
 		t.Fatal(err)
 	}

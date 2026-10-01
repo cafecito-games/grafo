@@ -12,16 +12,17 @@ import (
 	"github.com/cafecito-games/grafo/internal/query"
 	sourcecontext "github.com/cafecito-games/grafo/internal/source"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestServiceReadsBoundedSymbolSpan(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	content := "package sample\n\nfunc Before() {}\n\nfunc Checkout() {\n\tcharge()\n}\n\nfunc After() {}\n"
 	if err := os.WriteFile(filepath.Join(root, "checkout.go"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,15 +46,15 @@ func TestServiceReadsBoundedSymbolSpan(t *testing.T) {
 
 func TestServiceRejectsSymlinkEscape(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
-	outside := filepath.Join(t.TempDir(), "secret.go")
+	root := testtemp.Dir(t)
+	outside := filepath.Join(testtemp.Dir(t), "secret.go")
 	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(outside, filepath.Join(root, "linked.go")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,14 +77,14 @@ func TestServiceRejectsSymlinkEscape(t *testing.T) {
 // the wrong symbol.
 func TestReadRefusesAmbiguousSelector(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	content := "package sample\n\nfunc Charge() {}\n"
 	for _, name := range []string{"a.go", "b.go"} {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,12 +118,12 @@ func TestReadRefusesAmbiguousSelector(t *testing.T) {
 // the same name instead of failing on ambiguity.
 func TestReadKindNarrowsResolution(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	content := "package sample\n\ntype Request struct {\n\tCharge int\n}\n\nfunc Charge() {}\n"
 	if err := os.WriteFile(filepath.Join(root, "sample.go"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

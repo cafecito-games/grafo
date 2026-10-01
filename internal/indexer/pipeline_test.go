@@ -27,6 +27,7 @@ import (
 	sqlparser "github.com/cafecito-games/grafo/internal/parser/sql"
 	postgresparser "github.com/cafecito-games/grafo/internal/parser/sql/postgres"
 	typescriptparser "github.com/cafecito-games/grafo/internal/parser/typescript"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 // recordingRepository captures the exact durable call sequence an indexing run
@@ -202,7 +203,7 @@ func pipelineRegistry() *parserapi.Registry {
 func runPipelineObservation(t *testing.T, workers int) pipelineObservation {
 	t.Helper()
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writePipelineCorpus(t, root)
 	project, err := indexer.DiscoverProject(ctx, root)
 	if err != nil {
@@ -281,7 +282,7 @@ func runPipelineObservation(t *testing.T, workers int) pipelineObservation {
 func runSelectedPassObservation(t *testing.T, workers int) pipelineObservation {
 	t.Helper()
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	writePipelineCorpus(t, root)
 	runGit(t, root, "add", "-A")
@@ -387,7 +388,7 @@ func (v vanishingTransform) Transform(_ context.Context, input parserapi.Input, 
 func TestServiceDropsFileThatVanishesAfterParsing(t *testing.T) {
 	for _, workers := range []int{1, 4} {
 		ctx := context.Background()
-		root := t.TempDir()
+		root := testtemp.Dir(t)
 		writePipelineCorpus(t, root)
 		project, err := indexer.DiscoverProject(ctx, root)
 		if err != nil {
@@ -445,7 +446,7 @@ func TestServiceParseWorkerCountDefaultsToBoundedPool(t *testing.T) {
 		t.Skip("the derived worker count is one on a single-core machine, so parses cannot overlap")
 	}
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writePipelineCorpus(t, root)
 	project, err := indexer.DiscoverProject(ctx, root)
 	if err != nil {
@@ -528,7 +529,7 @@ func (f failingTransform) Transform(_ context.Context, input parserapi.Input, pa
 func TestServiceParseStagePropagatesTransformFailure(t *testing.T) {
 	for _, workers := range []int{1, 4} {
 		ctx := context.Background()
-		root := t.TempDir()
+		root := testtemp.Dir(t)
 		writePipelineCorpus(t, root)
 		project, err := indexer.DiscoverProject(ctx, root)
 		if err != nil {
@@ -582,7 +583,7 @@ func (p *cancelingParser) Parse(_ context.Context, input parserapi.Input) (graph
 func TestServiceParseStageFailsCancelledRunWithoutRepositorySupport(t *testing.T) {
 	for _, workers := range []int{1, 4} {
 		ctx, cancel := context.WithCancel(context.Background())
-		root := t.TempDir()
+		root := testtemp.Dir(t)
 		writePipelineCorpus(t, root)
 		project, err := indexer.DiscoverProject(ctx, root)
 		if err != nil {
@@ -608,7 +609,7 @@ func TestServiceParseStageFailsCancelledRunWithoutRepositorySupport(t *testing.T
 func TestServiceParseStageStopsOnCancellation(t *testing.T) {
 	for _, workers := range []int{1, 4} {
 		ctx, cancel := context.WithCancel(context.Background())
-		root := t.TempDir()
+		root := testtemp.Dir(t)
 		writePipelineCorpus(t, root)
 		project, err := indexer.DiscoverProject(ctx, root)
 		if err != nil {
@@ -650,7 +651,7 @@ func TestServiceParseStageStopsOnCancellation(t *testing.T) {
 func TestServiceParseStageDropsFileRemovedBeforePersistence(t *testing.T) {
 	for _, workers := range []int{1, 4} {
 		ctx := context.Background()
-		root := t.TempDir()
+		root := testtemp.Dir(t)
 		if err := os.MkdirAll(filepath.Join(root, "app"), 0o755); err != nil {
 			t.Fatal(err)
 		}

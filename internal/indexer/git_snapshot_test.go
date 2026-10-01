@@ -13,10 +13,11 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestOptionalLockStatusMatchesDefaultPorcelainEvidence(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	snapshotRunGit(t, root, "init", "-b", "main")
 	if err := os.WriteFile(filepath.Join(root, "staged.snap"), []byte("one"), 0o644); err != nil {
 		t.Fatal(err)
@@ -88,7 +89,7 @@ func (r *scriptedGitRunner) Run(_ context.Context, directory string, arguments .
 }
 
 func TestDiscoverProjectSnapshotUsesThreeBoundedGitCommands(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	config := filepath.Join(root, "config")
 	if err := os.WriteFile(config, []byte("fixture"), 0o644); err != nil {
 		t.Fatal(err)
@@ -123,7 +124,7 @@ func TestDiscoverProjectSnapshotUsesThreeBoundedGitCommands(t *testing.T) {
 }
 
 func TestDiscoverProjectReusesUnchangedRemoteIdentity(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	config := filepath.Join(root, "config")
 	if err := os.WriteFile(config, []byte("fixture"), 0o644); err != nil {
 		t.Fatal(err)
@@ -205,7 +206,7 @@ func TestParseGitStatusPorcelainV2TreatsTypechangeAsMembershipChange(t *testing.
 }
 
 func TestDiscoverProjectFallsBackToRootForEmptyRemote(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	config := filepath.Join(root, "config")
 	if err := os.WriteFile(config, []byte("fixture"), 0o644); err != nil {
 		t.Fatal(err)
@@ -225,7 +226,7 @@ func TestDiscoverProjectFallsBackToRootForEmptyRemote(t *testing.T) {
 }
 
 func TestDiscoverProjectRejectsMalformedRemoteOrigin(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runner := &scriptedGitRunner{outputs: [][]byte{[]byte(root + "\n"), []byte("malformed")}}
 	if _, err := discoverProject(context.Background(), root, runner); err == nil {
 		t.Fatal("malformed remote origin was accepted")
@@ -233,7 +234,7 @@ func TestDiscoverProjectRejectsMalformedRemoteOrigin(t *testing.T) {
 }
 
 func TestDiscoverProjectUsesGitDetachedAbbreviation(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runner := &scriptedGitRunner{
 		outputs: [][]byte{
 			[]byte(root + "\n"), nil,
@@ -256,7 +257,7 @@ func TestDiscoverProjectUsesGitDetachedAbbreviation(t *testing.T) {
 }
 
 func TestDiscoverProjectPropagatesCanceledGitProbe(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runner := &scriptedGitRunner{
 		outputs: [][]byte{[]byte(root + "\n"), nil, nil},
 		errors:  []error{nil, errors.New("no remote"), context.Canceled},
@@ -289,7 +290,7 @@ func TestDetectGitChangesUsesOneExactHeadDiff(t *testing.T) {
 }
 
 func TestDiscoverFilesUsesInjectedExactMembershipCommand(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "file.snap"), []byte("fixture"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +310,7 @@ func TestDiscoverFilesUsesInjectedExactMembershipCommand(t *testing.T) {
 }
 
 func TestDiscoverFilesExcludesManagedWorktrees(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	for _, path := range []string{"kept.snap", ".worktrees/other/ignored.snap"} {
 		fullPath := filepath.Join(root, filepath.FromSlash(path))
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
@@ -331,7 +332,7 @@ func TestDiscoverFilesExcludesManagedWorktrees(t *testing.T) {
 }
 
 func TestDiscoverFilesDiagnosesGitMembershipFallback(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "fallback.snap"), []byte("fixture"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -350,8 +351,8 @@ func TestDiscoverFilesDiagnosesGitMembershipFallback(t *testing.T) {
 }
 
 func TestDiscoverFilesRejectsSymlinkedAncestorTraversal(t *testing.T) {
-	root := t.TempDir()
-	outside := t.TempDir()
+	root := testtemp.Dir(t)
+	outside := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(outside, "outside.snap"), []byte("outside"), 0o644); err != nil {
 		t.Fatal(err)
 	}

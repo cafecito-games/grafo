@@ -21,11 +21,12 @@ import (
 	"github.com/cafecito-games/grafo/internal/query"
 	"github.com/cafecito-games/grafo/internal/semantic"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestRefreshReportsAreCanonicalAndFailureReturnsNoSuccessSet(t *testing.T) {
 	ctx := context.Background()
-	left, right := t.TempDir(), t.TempDir()
+	left, right := testtemp.Dir(t), testtemp.Dir(t)
 	write(t, filepath.Join(left, "go.mod"), "module example.com/left\n\ngo 1.26\n")
 	write(t, filepath.Join(left, "left.go"), "package left\nfunc Left() {}\n")
 	write(t, filepath.Join(right, "go.mod"), "module example.com/right\n\ngo 1.26\n")
@@ -80,8 +81,8 @@ func TestRefreshReportsAreCanonicalAndFailureReturnsNoSuccessSet(t *testing.T) {
 
 func TestRepositoryResolvesHTTPAcrossIndexes(t *testing.T) {
 	ctx := context.Background()
-	clientRoot := t.TempDir()
-	serverRoot := t.TempDir()
+	clientRoot := testtemp.Dir(t)
+	serverRoot := testtemp.Dir(t)
 	write(t, filepath.Join(clientRoot, "go.mod"), "module example.com/client\n\ngo 1.26\n\nrequire example.com/server v0.0.0\n")
 	write(t, filepath.Join(clientRoot, "client.go"), `package client
 import "net/http"
@@ -181,7 +182,7 @@ func Routes() { router := chi.NewRouter(); router.Get("/charge", Handler) }
 		t.Fatalf("expected a federated dependency edge: %#v", dependency.Edges)
 	}
 
-	cache, err := embeddingcache.Open(ctx, filepath.Join(t.TempDir(), "embeddings.sqlite"))
+	cache, err := embeddingcache.Open(ctx, filepath.Join(testtemp.Dir(t), "embeddings.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,8 +206,8 @@ func Routes() { router := chi.NewRouter(); router.Get("/charge", Handler) }
 
 func TestOpenReadOnlyFederatesCompatibleIndexesWithoutWriteCapabilities(t *testing.T) {
 	ctx := context.Background()
-	clientRoot := t.TempDir()
-	serverRoot := t.TempDir()
+	clientRoot := testtemp.Dir(t)
+	serverRoot := testtemp.Dir(t)
 	write(t, filepath.Join(clientRoot, "go.mod"), "module example.com/client\n\ngo 1.26\n")
 	write(t, filepath.Join(clientRoot, "client.go"), `package client
 import "net/http"
@@ -255,7 +256,7 @@ func Routes() { router := chi.NewRouter(); router.Get("/charge", Handler) }
 
 func TestSemanticCacheDeduplicatesEqualDocumentsAcrossRepositories(t *testing.T) {
 	ctx := context.Background()
-	left, right := t.TempDir(), t.TempDir()
+	left, right := testtemp.Dir(t), testtemp.Dir(t)
 	for _, root := range []string{left, right} {
 		write(t, filepath.Join(root, "go.mod"), "module example.com/shared\n\ngo 1.26\n")
 		write(t, filepath.Join(root, "shared.go"), "package shared\nfunc Shared() {}\n")
@@ -266,7 +267,7 @@ func TestSemanticCacheDeduplicatesEqualDocumentsAcrossRepositories(t *testing.T)
 		t.Fatal(err)
 	}
 	defer func() { _ = repository.Close() }()
-	cache, err := embeddingcache.Open(ctx, filepath.Join(t.TempDir(), "embeddings.sqlite"))
+	cache, err := embeddingcache.Open(ctx, filepath.Join(testtemp.Dir(t), "embeddings.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,8 +305,8 @@ func TestSemanticCacheDeduplicatesEqualDocumentsAcrossRepositories(t *testing.T)
 
 func TestRepositoryProjectsCrossRepositoryTestCoverage(t *testing.T) {
 	ctx := context.Background()
-	testRoot := t.TempDir()
-	productionRoot := t.TempDir()
+	testRoot := testtemp.Dir(t)
+	productionRoot := testtemp.Dir(t)
 	write(t, filepath.Join(testRoot, "go.mod"), "module example.com/checkouttests\n\ngo 1.26\n\nrequire example.com/shop v0.0.0\n")
 	write(t, filepath.Join(testRoot, "checkout_test.go"), `package checkouttests
 import (
@@ -408,8 +409,8 @@ func write(t *testing.T, path, content string) {
 // the boundary and stay marked as federated.
 func TestRepositoryResolvesGodotCompositionAcrossIndexes(t *testing.T) {
 	ctx := context.Background()
-	gameRoot := t.TempDir()
-	sharedRoot := t.TempDir()
+	gameRoot := testtemp.Dir(t)
+	sharedRoot := testtemp.Dir(t)
 	if err := os.MkdirAll(filepath.Join(gameRoot, "scenes"), 0o755); err != nil {
 		t.Fatal(err)
 	}

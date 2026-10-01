@@ -16,6 +16,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	golangparser "github.com/cafecito-games/grafo/internal/parser/golang"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 type fakeSemanticLoader struct {
@@ -258,7 +259,7 @@ func Use(c *Client, body, response any) {
 }
 
 func TestPackageSemanticLoaderClassifiesOnlyProvenOutboundHTTPCalls(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/client\n\ngo 1.26\n")
 	content := []byte(`package client
 
@@ -561,7 +562,7 @@ func (http getter) Call() {
 }
 
 func TestPackageSemanticLoaderExtractsOutboundHTTPThroughWrappers(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/client\n\ngo 1.26\n")
 	content := []byte(`package client
 
@@ -1132,7 +1133,7 @@ func NotHTTP() {
 }
 
 func TestPackageSemanticLoaderBoundsHTTPExecution(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/bounded\n\ngo 1.26\n")
 	var body strings.Builder
 	body.WriteString("package bounded\nimport \"net/http\"\nfunc Call(flags []bool) {\nmethod := http.MethodGet\n")
@@ -1293,7 +1294,7 @@ func Guard(value any, recover func() any) { panic(value); _ = recover() }
 }
 
 func TestPackageSemanticLoaderResolvesTypedCalls(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26\n")
 	content := []byte(`package sample
 import "reflect"
@@ -1354,7 +1355,7 @@ func invoke(r Runner, w *Worker, left Left, right Right) {
 }
 
 func TestPackageSemanticLoaderResolvesInternalAndExternalTestCalls(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26\n")
 	writeFile(t, filepath.Join(root, "sample.go"), "package sample\nfunc Produce() {}\n")
 	tests := map[string]string{
@@ -1399,7 +1400,7 @@ func TestExternal(t *testing.T) { sample.Produce() }
 }
 
 func TestPackageSemanticLoaderExcludesInactiveBuildTaggedFile(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/buildtag\n\ngo 1.26\n")
 	writeFile(t, filepath.Join(root, "active.go"), "package buildtag\nfunc Active() {}\n")
 	content := []byte("//go:build grafo_never_enabled\n\npackage buildtag\nfunc Excluded() {}\n")
@@ -1416,7 +1417,7 @@ func TestPackageSemanticLoaderExcludesInactiveBuildTaggedFile(t *testing.T) {
 }
 
 func TestPackageSemanticLoaderDoesNotResolveOrDownloadMissingModule(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	modulePath := filepath.Join(root, "go.mod")
 	moduleContent := "module example.com/missing-test\n\ngo 1.26\n"
 	writeFile(t, modulePath, moduleContent)
@@ -1444,7 +1445,7 @@ func TestPackageSemanticLoaderDoesNotResolveOrDownloadMissingModule(t *testing.T
 }
 
 func TestPackageSemanticLoaderUsesWorkspaceModuleImportPath(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.work"), "go 1.26\n\nuse ./service\n")
 	writeFile(t, filepath.Join(root, "service", "go.mod"), "module example.com/workspace/service\n\ngo 1.26\n")
 	content := []byte("package service\nfunc helper() {}\nfunc Run() { helper() }\n")
@@ -1460,7 +1461,7 @@ func TestPackageSemanticLoaderUsesWorkspaceModuleImportPath(t *testing.T) {
 }
 
 func TestPackageSemanticLoaderLoadsSiblingModulesWithoutWorkspace(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	modules := []struct {
 		directory string
 		module    string
@@ -1507,7 +1508,7 @@ func TestPackageSemanticLoaderLoadsSiblingModulesWithoutWorkspace(t *testing.T) 
 }
 
 func TestPackageSemanticLoaderIsolatesBrokenSiblingModule(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "healthy", "go.mod"), "module example.com/healthy\n\ngo 1.26\n")
 	healthy := []byte("package healthy\nfunc helper() {}\nfunc Run() { helper() }\n")
 	writeFile(t, filepath.Join(root, "healthy", "healthy.go"), string(healthy))
@@ -1545,7 +1546,7 @@ func TestPackageSemanticLoaderIsolatesBrokenSiblingModule(t *testing.T) {
 }
 
 func TestPackageSemanticLoaderTreatsWorkspaceAsAuthoritativeSubset(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.work"), "go 1.26\n\nuse ./listed\n")
 	writeFile(t, filepath.Join(root, "listed", "go.mod"), "module example.com/listed\n\ngo 1.26\n")
 	writeFile(t, filepath.Join(root, "listed", "listed.go"), "package listed\n")
@@ -1604,7 +1605,7 @@ func TestPackageSemanticLoaderExcludesIgnoredVendoredAndSymlinkedModules(t *test
 		{
 			name: "symlink escaped",
 			prepare: func(t *testing.T, root string) (string, []byte) {
-				external := t.TempDir()
+				external := testtemp.Dir(t)
 				content := []byte("package escaped\nfunc helper() {}\nfunc Run() { helper() }\n")
 				writeFile(t, filepath.Join(external, "go.mod"), "module example.com/escaped\n\ngo 1.26\n")
 				writeFile(t, filepath.Join(external, "escaped.go"), string(content))
@@ -1617,7 +1618,7 @@ func TestPackageSemanticLoaderExcludesIgnoredVendoredAndSymlinkedModules(t *test
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
+			root := testtemp.Dir(t)
 			path, content := test.prepare(t, root)
 			result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
 				Root: root, Path: path, Content: content, Repository: "excluded", RepoID: "repo",
@@ -1635,7 +1636,7 @@ func TestPackageSemanticLoaderExcludesIgnoredVendoredAndSymlinkedModules(t *test
 }
 
 func TestSemanticKeyTracksNestedModulePlanChanges(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	parser := golangparser.New()
 	first, err := parser.SemanticKey(context.Background(), parserapi.Input{Root: root})
 	if err != nil {
@@ -1667,7 +1668,7 @@ func TestSemanticKeyTracksNestedModulePlanChanges(t *testing.T) {
 }
 
 func TestSemanticKeyTracksWorkspaceVendorManifestChanges(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.work"), "go 1.26\n\nuse ./service\n")
 	writeFile(t, filepath.Join(root, "service", "go.mod"), "module example.com/service\n\ngo 1.26\n")
 	manifest := filepath.Join(root, "vendor", "modules.txt")
@@ -1689,7 +1690,7 @@ func TestSemanticKeyTracksWorkspaceVendorManifestChanges(t *testing.T) {
 }
 
 func TestSemanticModuleDiscoveryHonorsCancellation(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/canceled\n\ngo 1.26\n")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -1733,7 +1734,7 @@ func TestPackageSemanticLoaderFallsBackForUnloadedGoFiles(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
+			root := testtemp.Dir(t)
 			test.prepareRoot(t, root)
 			writeFile(t, filepath.Join(root, filepath.FromSlash(test.path)), test.content)
 			result, err := golangparser.New().Parse(context.Background(), parserapi.Input{
@@ -1751,7 +1752,7 @@ func TestPackageSemanticLoaderFallsBackForUnloadedGoFiles(t *testing.T) {
 }
 
 func TestSemanticKeySkipsSpecialGoEntries(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/special\n\ngo 1.26\n")
 	if err := os.Symlink(filepath.Join(root, "does-not-exist"), filepath.Join(root, "dangling.go")); err != nil {
 		t.Fatal(err)
@@ -1763,7 +1764,7 @@ func TestSemanticKeySkipsSpecialGoEntries(t *testing.T) {
 }
 
 func TestParserSuppressesOnlyCorroboratedProtobufGeneratedGo(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "buf.gen.yaml"), `version: v2
 managed:
   enabled: true
@@ -2196,7 +2197,7 @@ func TestParserSuppressesProtocolUseFromConfiguredGeneratedOutputWithDriftedHead
 }
 
 func TestParserRejectsAmbiguousProtocolBinding(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/app\n\ngo 1.26\n")
 	for _, side := range []string{"left", "right"} {
 		writeFile(t, filepath.Join(root, side, "buf.yaml"), "version: v2\nmodules:\n  - path: proto\n")
@@ -2264,7 +2265,7 @@ func Read(value *generated.Envelope) string { return value.GetValue() }
 
 func protobufUsageFixture(t *testing.T) string {
 	t.Helper()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.mod"), `module example.com/app
 
 go 1.26
@@ -2348,7 +2349,7 @@ func assertProtocolFact(t *testing.T, facts []graph.Fact, fromID string, kind gr
 }
 
 func TestPackageSemanticLoaderRetainsProvenFactsForBrokenPackage(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/broken\n\ngo 1.26\n")
 	content := []byte("package broken\nfunc helper() {}\nfunc run(value any) { defer helper(); panic(value); _ = recover(); missing() }\n")
 	writeFile(t, filepath.Join(root, "broken.go"), string(content))
@@ -2368,7 +2369,7 @@ func TestPackageSemanticLoaderRetainsProvenFactsForBrokenPackage(t *testing.T) {
 }
 
 func TestPackageSemanticLoaderExtractsFailureAndCleanupFlow(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/failures\n\ngo 1.26\n")
 	content := []byte(`package failures
 import (
@@ -2504,7 +2505,7 @@ func Guard(value any, cleaner Cleaner) {
 }
 
 func TestSyntaxFailureFallbackSeesPackageShadowingAcrossFiles(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "shadow.go"), "package sample\nvar panic = func(any) {}\n")
 	content := []byte("package sample\nfunc Guard(value any) { panic(value) }\n")
 	writeFile(t, filepath.Join(root, "guard.go"), string(content))
@@ -2519,7 +2520,7 @@ func TestSyntaxFailureFallbackSeesPackageShadowingAcrossFiles(t *testing.T) {
 }
 
 func TestFailureIdentityUsesPackageObjectsNotAliasesOrSimpleNames(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/identity\n\ngo 1.26\n")
 	writeFile(t, filepath.Join(root, "left", "left.go"), "package left\ntype Problem struct{}\nfunc (*Problem) Error() string { return \"left\" }\n")
 	writeFile(t, filepath.Join(root, "right", "right.go"), "package right\ntype Problem struct{}\nfunc (*Problem) Error() string { return \"right\" }\n")
@@ -2546,7 +2547,7 @@ func Right() error { return &r.Problem{} }
 }
 
 func TestPackageSemanticLoaderExtractsTypedServeMuxPatterns(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/mux\n\ngo 1.26\n")
 	content := []byte(`package mux
 
@@ -2710,7 +2711,7 @@ func routes(dynamic string, unresolved http.Handler) {
 }
 
 func TestPackageSemanticLoaderComposesChiRoutesAndMiddleware(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.mod"), `module example.com/app
 
 go 1.26
@@ -2966,7 +2967,7 @@ func NotARouter() { unrelated{}.Get("/invented", login) }
 }
 
 func TestPackageSemanticLoaderKeepsProvenHTTPAndChiEvidenceWithUnrelatedErrors(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.mod"), `module example.com/partial
 
 go 1.26
@@ -3246,8 +3247,8 @@ func assertNoFailureTarget(t *testing.T, facts []graph.Fact, kind graph.EdgeKind
 }
 
 func TestWorkspaceSemanticEvidenceTracksExternalInputs(t *testing.T) {
-	root := t.TempDir()
-	externalRoot := t.TempDir()
+	root := testtemp.Dir(t)
+	externalRoot := testtemp.Dir(t)
 	external := filepath.Join(externalRoot, "go.work")
 	if err := os.WriteFile(external, []byte("go 1.26\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -3504,7 +3505,7 @@ func Join(parts ...string) string { return strings.Join(parts, "/") }
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			root := t.TempDir()
+			root := testtemp.Dir(t)
 			for path, content := range baseline {
 				writeFile(t, filepath.Join(root, path), content)
 			}
@@ -3531,7 +3532,7 @@ func Join(parts ...string) string { return strings.Join(parts, "/") }
 // TestSemanticKeyScopesBodyEditsToOnePackage proves the per-file refinement
 // invalidates the package that owns a rewritten body, and only that package.
 func TestSemanticKeyScopesBodyEditsToOnePackage(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/service\n\ngo 1.26\n")
 	writeFile(t, filepath.Join(root, "api", "routes.go"), "package api\n\nfunc Routes() { Helper() }\n")
 	writeFile(t, filepath.Join(root, "api", "helpers.go"), "package api\n\nfunc Helper() {}\n")
@@ -3569,7 +3570,7 @@ func TestSemanticKeyScopesBodyEditsToOnePackage(t *testing.T) {
 }
 
 func TestSemanticKeyReusesCallerWorkspaceKey(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/service\n\ngo 1.26\n")
 	writeFile(t, filepath.Join(root, "api", "routes.go"), "package api\n\nfunc Routes() {}\n")
 	parser := golangparser.New()
@@ -3617,7 +3618,7 @@ func NewPoint() C.struct_Point { return C.struct_Point{} }
 		{name: "preamble unchanged", after: cgoSource("int x;"), changed: false},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			root := t.TempDir()
+			root := testtemp.Dir(t)
 			writeFile(t, filepath.Join(root, "go.mod"), "module example.com/service\n\ngo 1.26\n")
 			writeFile(t, filepath.Join(root, "api", "api.go"), cgoSource("int x;"))
 			parser := golangparser.New()
@@ -3641,7 +3642,7 @@ func NewPoint() C.struct_Point { return C.struct_Point{} }
 // TestPackageScopeKeyRecoversFromAnUnreadableDirectory proves the unreadable
 // sentinel is not a stable stand-in for real contents.
 func TestPackageScopeKeyRecoversFromAnUnreadableDirectory(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/service\n\ngo 1.26\n")
 	writeFile(t, filepath.Join(root, "api", "api.go"), "package api\n\nfunc Routes() {}\n")
 	parser := golangparser.New()

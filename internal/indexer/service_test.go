@@ -31,6 +31,7 @@ import (
 	typescriptparser "github.com/cafecito-games/grafo/internal/parser/typescript"
 	"github.com/cafecito-games/grafo/internal/query"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 type deletingParser struct{}
@@ -82,7 +83,7 @@ func (legacyVerbEndpointParser) Parse(_ context.Context, input parserapi.Input) 
 
 func TestServiceHTTPAuthorityResolutionConvergesIncrementalAndClean(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "go.mod"), "module example.com/service\n\ngo 1.26\n")
 	enableIndexerChi(t, root)
 	writeHTTPFixture := func(call string) {
@@ -205,7 +206,7 @@ func assertIndexedRequestResolution(t *testing.T, ctx context.Context, repositor
 
 func TestServiceIncrementallyRemovesLegacyVerbOnlyEndpoint(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "go.mod"), "module example.com/client\n\ngo 1.26\n")
 	source := "package client\nfunc post(string, any) {}\nfunc Run() { post(\"/v1/characters\", nil) }\n"
 	write(t, filepath.Join(root, "client.go"), source)
@@ -250,7 +251,7 @@ func TestServiceIncrementallyRemovesLegacyVerbOnlyEndpoint(t *testing.T) {
 
 func TestServiceSemanticRebuildRemovesLegacyHeaderRequest(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "go.mod"), "module example.com/client\n\ngo 1.26\n")
 	source := []byte(`package client
 import "net/http"
@@ -321,7 +322,7 @@ func Run(request *http.Request) {
 
 func TestServiceNormalizesProducerBeforePersistence(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "forged.forge"), "untrusted parser output")
 	project, err := indexer.DiscoverProject(ctx, root)
 	if err != nil {
@@ -369,7 +370,7 @@ func TestServiceNormalizesProducerBeforePersistence(t *testing.T) {
 
 func TestServiceLinksDocumentationSectionsToCode(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "README.md"), "# Runtime flow\nThe function `Serve` delegates to class `Checkout` through endpoint `GET /orders`.\nSee [the implementation](server.ts).\n")
 	write(t, filepath.Join(root, "server.ts"), "export class Checkout {}\nexport function Serve() {}\nconst app = express();\napp.get(\"/orders\", Serve);\n")
 
@@ -409,7 +410,7 @@ func TestServiceLinksDocumentationSectionsToCode(t *testing.T) {
 
 func TestServiceReconcilesTypeScriptBindingsAfterBarrelAndConfigEdits(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	if err := os.MkdirAll(filepath.Join(root, "src"), 0o755); err != nil {
 		t.Fatal(err)
@@ -481,7 +482,7 @@ export function execute() { const service = new Service(); service.run(); }
 
 func TestServiceReconcilesTypeScriptFetchMethodsAndTopology(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "server.ts"), `
 function health() {}
 function createOrder() {}
@@ -593,7 +594,7 @@ func assertTypeScriptFetchTopology(t *testing.T, ctx context.Context, repository
 
 func TestServiceIndexesOnlyChangedFiles(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26\n")
 	write(t, filepath.Join(root, "main.go"), "package main\nfunc main() { helper() }\nfunc helper() {}\n")
 	write(t, filepath.Join(root, "worker.py"), "def run():\n    return True\n")
@@ -644,7 +645,7 @@ func TestServiceIndexesOnlyChangedFiles(t *testing.T) {
 
 func TestServiceReindexesGoDependentsWhenTypeEvidenceChanges(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	if err := os.MkdirAll(filepath.Join(root, "contract"), 0o755); err != nil {
 		t.Fatal(err)
@@ -706,7 +707,7 @@ func TestServiceReindexesGoDependentsWhenTypeEvidenceChanges(t *testing.T) {
 
 func TestServiceFailureFlowEditsConvergeWithCleanRebuild(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "go.mod"), "module example.com/failureedit\n\ngo 1.26\n")
 	write(t, filepath.Join(root, "producer.go"), `package failureedit
 import "errors"
@@ -771,7 +772,7 @@ func Run() error {
 
 func TestServiceSurfacesTrackedSymlinksWithoutFollowingThem(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	write(t, filepath.Join(root, "main.go"), "package sample\nfunc Value() int { return 1 }\n")
 	if err := os.Symlink("main.go", filepath.Join(root, "alias.go")); err != nil {
@@ -803,7 +804,7 @@ func TestServiceSurfacesTrackedSymlinksWithoutFollowingThem(t *testing.T) {
 
 func TestServiceIndexesAndLinksGodotProjectSources(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "project.godot"), "config_version=5\n\n[application]\nrun/main_scene=\"res://scenes/main.tscn\"\n")
 	write(t, filepath.Join(root, "settings.gd"), "class_name Settings\nfunc main_scene():\n\treturn ProjectSettings.get_setting(\"application/run/main_scene\")\nfunc bind_button():\n\treturn %StartButton\nfunc lookup_button():\n\treturn get_node(\"Main/StartButton\")\n")
 	if err := os.MkdirAll(filepath.Join(root, "scenes"), 0o755); err != nil {
@@ -855,7 +856,7 @@ func TestServiceIndexesAndLinksGodotProjectSources(t *testing.T) {
 
 func TestServiceReindexesSQLWhenDialectConfigurationChanges(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "schema.sql"), "CREATE TABLE events (id bigint PRIMARY KEY);\n")
 
 	project, err := indexer.DiscoverProject(ctx, root)
@@ -907,7 +908,7 @@ func TestServiceReindexesSQLWhenDialectConfigurationChanges(t *testing.T) {
 
 func TestServiceReconcilesProtobufBindingSchemaAndConfigurationChanges(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "buf.gen.yaml"), `version: v2
 managed:
   enabled: true
@@ -1068,7 +1069,7 @@ func assertBindingQualifiedContains(t *testing.T, ctx context.Context, repositor
 
 func TestServiceTracksGitDirtyPathsAcrossRestore(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	write(t, filepath.Join(root, "main.go"), "package sample\nfunc Value() int { return 1 }\n")
 	runGit(t, root, "add", "main.go")
@@ -1111,7 +1112,7 @@ func TestServiceTracksGitDirtyPathsAcrossRestore(t *testing.T) {
 
 func TestServicePropagatesGitConfigurationChanges(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	write(t, filepath.Join(root, "schema.sql"), "CREATE TABLE events (id bigint PRIMARY KEY);\n")
 	runGit(t, root, "add", "schema.sql")
@@ -1142,7 +1143,7 @@ func TestServicePropagatesGitConfigurationChanges(t *testing.T) {
 
 func TestServiceResumesSemanticRebuildWithoutReplacingCompletedFiles(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "main.go"), "package sample\nfunc Value() int { return 1 }\n")
 	project, err := indexer.DiscoverProject(ctx, root)
 	if err != nil {
@@ -1172,7 +1173,7 @@ func TestServiceResumesSemanticRebuildWithoutReplacingCompletedFiles(t *testing.
 
 func TestServiceIndexesExplicitComponentsWithExactEligibleMembership(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	for _, directory := range []string{"client", "client-old", "web/ui", "apps/server", "node_modules/client"} {
 		if err := os.MkdirAll(filepath.Join(root, directory), 0o755); err != nil {
 			t.Fatal(err)
@@ -1242,7 +1243,7 @@ func TestServiceIndexesExplicitComponentsWithExactEligibleMembership(t *testing.
 
 func TestServiceReconcilesComponentConfigurationWithoutReparsingSources(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if err := os.MkdirAll(filepath.Join(root, "app"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1295,7 +1296,7 @@ func TestServiceReconcilesComponentConfigurationWithoutReparsingSources(t *testi
 
 func TestServiceRejectsInvalidComponentEditBeforeMutation(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if err := os.MkdirAll(filepath.Join(root, "app"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1338,7 +1339,7 @@ func TestServiceRejectsInvalidComponentEditBeforeMutation(t *testing.T) {
 
 func TestServiceReconcilesGDScriptHTTPRequestConfigurationAndRejectsInvalidEditBeforeMutation(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	write(t, filepath.Join(root, "project.godot"), "config_version=5\n")
 	write(t, filepath.Join(root, "client.gd"), `extends Node
@@ -1425,7 +1426,7 @@ func send(api: AuthAPI) -> void:
 
 func TestServiceReconcilesConfiguredGDScriptEventEffectsAndPreservesInvalidEdit(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	write(t, filepath.Join(root, "project.godot"), "config_version=5\n")
 	write(t, filepath.Join(root, "source.gd"), `class_name Source extends Node
@@ -1547,7 +1548,7 @@ func assertEventConsumption(t *testing.T, ctx context.Context, repository graph.
 
 func TestServiceReconcilesFirstClassTestsAcrossConfigInheritanceAndRenameEdits(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	write(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26\n")
 	write(t, filepath.Join(root, "run.go"), "package sample\nfunc Run() {}\n")
@@ -1671,7 +1672,7 @@ func assertHTTPRequestSet(t *testing.T, ctx context.Context, repository graph.To
 
 func TestServiceIndexesServeMuxRoutesForAuthorityAwareTopology(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "go.mod"), "module example.com/uzir\n\ngo 1.26\n")
 	write(t, filepath.Join(root, "routes.go"), `package uzir
 import "net/http"
@@ -1768,7 +1769,7 @@ func Call() {
 
 func TestServiceDoesNotPersistMembershipForFileLostAfterDiscovery(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if err := os.MkdirAll(filepath.Join(root, "app"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -1843,7 +1844,7 @@ func assertOutgoingQualifiedSet(t *testing.T, ctx context.Context, repository gr
 // resulting graph still equals a forced clean rebuild.
 func TestServiceScopesGoBodyEditToItsPackage(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "go.mod"), "module example.com/service\n\ngo 1.26\n")
 	// Routes calls a helper in a sibling file, so the outbound request the
 	// helper performs is attributed to Routes in routes.go. A body-only edit to
@@ -1940,7 +1941,7 @@ func assertRequestedRoute(t *testing.T, ctx context.Context, repository *sqlite.
 // package extracts, so every Go file is reparsed.
 func TestServiceReparsesEveryGoFileForCrossPackageDeclarations(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "go.mod"), "module example.com/service\n\ngo 1.26\n")
 	write(t, filepath.Join(root, "api", "api.go"), `package api
 
@@ -2061,7 +2062,7 @@ func assertNoOutgoingTarget(t *testing.T, ctx context.Context, repository graph.
 // to exactly the clean-rebuild result.
 func TestServiceModelsGodotCompositionAcrossFiles(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeGodotProject(t, root, "res://scripts/game.gd")
 
 	project, err := indexer.DiscoverProject(ctx, root)
@@ -2162,7 +2163,7 @@ func TestServiceModelsGodotCompositionAcrossFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rebuiltRoot := t.TempDir()
+	rebuiltRoot := testtemp.Dir(t)
 	writeGodotProject(t, rebuiltRoot, "res://scripts/other.gd")
 	rebuiltProject, err := indexer.DiscoverProject(ctx, rebuiltRoot)
 	if err != nil {
@@ -2240,7 +2241,7 @@ func assertComposition(t *testing.T, relations []query.GodotRelation, qualified 
 // node as a variable is replaced, not joined, by the new vocabulary.
 func TestServiceRebuildReplacesLegacyGodotRepresentations(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeGodotProject(t, root, "res://scripts/game.gd")
 	project, err := indexer.DiscoverProject(ctx, root)
 	if err != nil {
@@ -2305,7 +2306,7 @@ func assertNodeKinds(t *testing.T, repository graph.ReadRepository, qualified st
 // independently addressable instead of colliding.
 func TestServiceScopesGodotProjectsNestedInOneRepository(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	for _, project := range []string{"client", "tools/probe"} {
 		write(t, mkdirFor(t, root, project+"/project.godot"),
 			"config_version=5\n\n[autoload]\nGame=\"*res://scripts/game.gd\"\n")
@@ -2401,7 +2402,7 @@ func mkdirFor(t *testing.T, root, name string) string {
 // path resolves it on the next incremental run.
 func TestServiceKeepsContradictedGodotUIDsUnresolved(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, mkdirFor(t, root, "project.godot"), "config_version=5\n")
 	write(t, mkdirFor(t, root, "scenes/a.tscn"),
 		"[gd_scene format=3 uid=\"uid://shared\"]\n\n[node name=\"A\" type=\"Node\"]\n")
@@ -2489,7 +2490,7 @@ func TestServiceKeepsContradictedGodotUIDsUnresolved(t *testing.T) {
 
 func TestServiceBoundsGodotAliasesToGitMembership(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	write(t, filepath.Join(root, ".gitignore"), ".worktrees/\nignored/\n")
 	write(t, mkdirFor(t, root, "project.godot"), "config_version=5\n")
@@ -2587,7 +2588,7 @@ func TestServiceBoundsGodotAliasesToGitMembership(t *testing.T) {
 // changes, even though those scripts are untouched and unstaged.
 func TestServiceReparsesScriptsWhenAutoloadEnablementChangesUnderGit(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	write(t, mkdirFor(t, root, "project.godot"),
 		"config_version=5\n\n[autoload]\nGame=\"*res://scripts/game.gd\"\n")
@@ -2646,7 +2647,7 @@ func TestServiceReparsesScriptsWhenAutoloadEnablementChangesUnderGit(t *testing.
 // equal what a clean rebuild of the same tree produces.
 func TestServiceReconcilesGodotInteractionsAfterProjectEdits(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, mkdirFor(t, root, "project.godot"),
 		"config_version=5\n\n[input]\njump={\"deadzone\": 0.5, \"events\": []}\n")
 	write(t, mkdirFor(t, root, "scenes/arena.tscn"),
@@ -2691,7 +2692,7 @@ func TestServiceReconcilesGodotInteractionsAfterProjectEdits(t *testing.T) {
 
 func TestServiceProducerProvenanceConvergesAcrossForcedAndCleanIndexing(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, mkdirFor(t, root, "project.godot"),
 		"config_version=5\n\n[input]\njump={\"deadzone\": 0.5, \"events\": []}\n\n[global_group]\nenemies=\"Hostile\"\n")
 	write(t, mkdirFor(t, root, "scenes/arena.tscn"),
@@ -2711,7 +2712,7 @@ func TestServiceProducerProvenanceConvergesAcrossForcedAndCleanIndexing(t *testi
 		t.Fatalf("forced producer snapshot differs:\nwant=%v\ngot=%v", want, got)
 	}
 
-	cleanRoot := t.TempDir()
+	cleanRoot := testtemp.Dir(t)
 	if err := copyTree(t, root, cleanRoot); err != nil {
 		t.Fatal(err)
 	}
@@ -2747,7 +2748,7 @@ func godotProducerSnapshot(t *testing.T, ctx context.Context, repository graph.R
 
 func TestServiceReconcilesCrossFileSignalHandlers(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, mkdirFor(t, root, "backend.gd"), "class_name Backend extends Node\nsignal sign_in_success\n")
 	write(t, mkdirFor(t, root, "other.gd"), "class_name Other extends Node\nsignal ready\n")
 	write(t, mkdirFor(t, root, "kit.gd"), `class_name Kit extends Node
@@ -2903,7 +2904,7 @@ func assertGodotInteraction(t *testing.T, ctx context.Context, repository graph.
 // preserve for the interaction vocabulary to be trustworthy.
 func assertCleanRebuildMatches(t *testing.T, ctx context.Context, root string, incremental graph.Repository) {
 	t.Helper()
-	clean := t.TempDir()
+	clean := testtemp.Dir(t)
 	if err := copyTree(t, root, clean); err != nil {
 		t.Fatal(err)
 	}

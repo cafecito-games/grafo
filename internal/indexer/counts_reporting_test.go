@@ -12,6 +12,7 @@ import (
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	markdownparser "github.com/cafecito-games/grafo/internal/parser/markdown"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 type failingCountsRepository struct {
@@ -27,7 +28,7 @@ func (f failingCountsRepository) Counts(ctx context.Context) (graph.Counts, erro
 // while the indexing run itself still succeeds because the graph is durable.
 func TestCountsFailureLeavesIndexRunSuccessful(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "README.md"), "# Sample\n")
 
 	project, err := indexer.DiscoverProject(ctx, root)

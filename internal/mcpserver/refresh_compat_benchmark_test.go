@@ -19,6 +19,7 @@ import (
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	parserdefaults "github.com/cafecito-games/grafo/internal/parser/defaults"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -81,7 +82,7 @@ func TestMCPUnconditionalRefreshCorpusSamples(t *testing.T) {
 // the implementation head to retain a same-fixture unconditional comparison.
 func BenchmarkMCPUnconditionalRefreshCompat(b *testing.B) {
 	ctx := context.Background()
-	root := b.TempDir()
+	root := testtemp.Dir(b)
 	compatGit(b, root, "init", "-b", "main")
 	if err := os.WriteFile(filepath.Join(root, "sample.snap"), []byte("first"), 0o644); err != nil {
 		b.Fatal(err)
@@ -250,7 +251,7 @@ func compatExactNode(tb testing.TB, ctx context.Context, client *mcp.ClientSessi
 
 func compatPrepareCorpus(tb testing.TB, source string) string {
 	tb.Helper()
-	root := tb.TempDir()
+	root := testtemp.Dir(tb)
 	err := filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr

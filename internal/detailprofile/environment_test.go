@@ -7,10 +7,12 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestInspectCgroupLimitsFallsBackToV1(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeEnvironmentFile(t, filepath.Join(root, "cpu", "cpu.cfs_quota_us"), "800000\n")
 	writeEnvironmentFile(t, filepath.Join(root, "cpu", "cpu.cfs_period_us"), "100000\n")
 	writeEnvironmentFile(t, filepath.Join(root, "memory", "memory.limit_in_bytes"), "21474836480\n")
@@ -38,7 +40,7 @@ func TestInspectCgroupLimitsV2(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
+			root := testtemp.Dir(t)
 			writeEnvironmentFile(t, filepath.Join(root, "cpu.max"), test.cpu+"\n")
 			writeEnvironmentFile(t, filepath.Join(root, "memory.max"), test.memory+"\n")
 
@@ -54,7 +56,7 @@ func TestInspectCgroupLimitsV2(t *testing.T) {
 }
 
 func TestInspectCgroupLimitsRejectsPartialV2Provenance(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeEnvironmentFile(t, filepath.Join(root, "cpu.max"), "800000 100000\n")
 
 	_, err := inspectCgroupLimits(root)
@@ -64,7 +66,7 @@ func TestInspectCgroupLimitsRejectsPartialV2Provenance(t *testing.T) {
 }
 
 func TestInspectCgroupLimitsRejectsPartialV1Provenance(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeEnvironmentFile(t, filepath.Join(root, "cpu", "cpu.cfs_quota_us"), "800000\n")
 	writeEnvironmentFile(t, filepath.Join(root, "cpu", "cpu.cfs_period_us"), "100000\n")
 
@@ -75,7 +77,7 @@ func TestInspectCgroupLimitsRejectsPartialV1Provenance(t *testing.T) {
 }
 
 func TestInspectCgroupLimitsDoesNotHideAlternateV1CPUController(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if err := os.MkdirAll(filepath.Join(root, "cpu"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +91,7 @@ func TestInspectCgroupLimitsDoesNotHideAlternateV1CPUController(t *testing.T) {
 }
 
 func TestInspectCgroupLimitsFallsBackToHostWhenCgroupIsAbsent(t *testing.T) {
-	limits, err := inspectCgroupLimits(t.TempDir())
+	limits, err := inspectCgroupLimits(testtemp.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/indexer"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestCalculateStorageMetricsChecksArithmeticAndPercent(t *testing.T) {
@@ -30,7 +31,7 @@ func TestCalculateStorageMetricsChecksArithmeticAndPercent(t *testing.T) {
 
 func TestCompactShrinksFreelistAndPreservesMetadataCountsAndSettings(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "compact.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "compact.sqlite")
 	repository := openMaintenanceFixture(t, path)
 	defer func() { _ = repository.Close() }()
 	if err := repository.SetMeta(ctx, "opaque_future_key", "opaque-value"); err != nil {
@@ -93,7 +94,7 @@ func TestCompactShrinksFreelistAndPreservesMetadataCountsAndSettings(t *testing.
 
 func TestCompactRefusesPendingReconciliationAndCancellation(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "pending.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "pending.sqlite")
 	repository := openMaintenanceFixture(t, path)
 	defer func() { _ = repository.Close() }()
 	if _, err := repository.db.ExecContext(ctx, "INSERT INTO dirty_owners(owner_file) VALUES ('pending.go')"); err != nil {
@@ -111,7 +112,7 @@ func TestCompactRefusesPendingReconciliationAndCancellation(t *testing.T) {
 
 func TestStrictCheckpointRejectsAnIncompleteBusyCheckpoint(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "busy.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "busy.sqlite")
 	repository := openMaintenanceFixture(t, path)
 	defer func() { _ = repository.Close() }()
 	reader, err := sql.Open("sqlite", readOnlyDSN(path))
@@ -138,7 +139,7 @@ func TestStrictCheckpointRejectsAnIncompleteBusyCheckpoint(t *testing.T) {
 
 func TestCompactCheckpointFailurePreservesIntegrityAndEvidence(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "busy-compact.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "busy-compact.sqlite")
 	repository := openMaintenanceFixture(t, path)
 	if err := repository.SetMeta(ctx, "opaque_future_key", "preserved"); err != nil {
 		t.Fatal(err)
@@ -205,14 +206,14 @@ func TestCompactCheckpointFailurePreservesIntegrityAndEvidence(t *testing.T) {
 
 func TestOpenMaintenanceDoesNotCreateOrMigrate(t *testing.T) {
 	ctx := context.Background()
-	missing := filepath.Join(t.TempDir(), "missing.sqlite")
+	missing := filepath.Join(testtemp.Dir(t), "missing.sqlite")
 	if _, err := OpenMaintenance(ctx, missing); err == nil {
 		t.Fatal("maintenance opener created a missing index")
 	}
 	if _, err := os.Stat(missing); !os.IsNotExist(err) {
 		t.Fatalf("missing index was created: %v", err)
 	}
-	bare := filepath.Join(t.TempDir(), "bare.sqlite")
+	bare := filepath.Join(testtemp.Dir(t), "bare.sqlite")
 	if err := os.WriteFile(bare, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +227,7 @@ func TestOpenMaintenanceDoesNotCreateOrMigrate(t *testing.T) {
 
 func TestOpenMaintenanceUsesNormalWritableSettings(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "settings.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "settings.sqlite")
 	repository := openMaintenanceFixture(t, path)
 	if err := repository.Close(); err != nil {
 		t.Fatal(err)
@@ -248,7 +249,7 @@ func TestOpenMaintenanceUsesNormalWritableSettings(t *testing.T) {
 
 func TestOpenMaintenanceRefusesNonWALWithoutChangingJournalMode(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "delete-mode.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "delete-mode.sqlite")
 	repository := openMaintenanceFixture(t, path)
 	if err := repository.Close(); err != nil {
 		t.Fatal(err)

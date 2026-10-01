@@ -12,11 +12,12 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestRelationEdgesBoundsEachRelationAndHydratesCounterparts(t *testing.T) {
 	ctx := context.Background()
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +87,7 @@ func TestRelationEdgesBoundsEachRelationAndHydratesCounterparts(t *testing.T) {
 
 func TestRelationEdgesFailsClosed(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "graph.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "graph.sqlite")
 	repository, err := sqlite.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -175,7 +176,7 @@ func TestRelationEdgesFailsClosed(t *testing.T) {
 
 func TestListNodesByKindEnumeratesExactKinds(t *testing.T) {
 	ctx := context.Background()
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +286,7 @@ func TestListNodesByKindEnumeratesExactKinds(t *testing.T) {
 
 func TestListNodesByKindFiltersSegmentPathsBeforeLimit(t *testing.T) {
 	ctx := context.Background()
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +319,7 @@ func TestListNodesByKindFiltersSegmentPathsBeforeLimit(t *testing.T) {
 
 func TestCanonicalMessagesFiltersBeforeOrderingAndBounds(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "graph.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "graph.sqlite")
 	repository, err := sqlite.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -405,7 +406,7 @@ func TestCanonicalMessagesFiltersBeforeOrderingAndBounds(t *testing.T) {
 
 func TestNameMatchingUsesUnicodeLowercase(t *testing.T) {
 	ctx := context.Background()
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

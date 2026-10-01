@@ -13,10 +13,11 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	typescriptparser "github.com/cafecito-games/grafo/internal/parser/typescript"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestParserCatalogCacheSupportsConcurrentParses(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "a.ts", `export function a() {}`)
 	writeFile(t, root, "b.ts", `import { a } from "./a"; export function b() { a() }`)
 	parser := typescriptparser.New()
@@ -49,7 +50,7 @@ func TestParserCatalogCacheSupportsConcurrentParses(t *testing.T) {
 }
 
 func TestParserResolvesModuleBindingsAndReceiverCalls(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "src/service.ts", `
 export interface Runner { run(): void }
 export class Service { static create() { return new Service() } run() {} }
@@ -124,7 +125,7 @@ function use(runner: Runner) {
 }
 
 func TestParserKeepsAmbiguousBarrelAndDynamicReceiversUnresolved(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "src/a.ts", `export function duplicate() {}`)
 	writeFile(t, root, "src/b.ts", `export function duplicate() {}`)
 	writeFile(t, root, "src/barrel.ts", `export * from "./a"; export * from "./b"; export * from "./cycle";`)
@@ -147,7 +148,7 @@ function use(value: any, union: A | B) { duplicate(); value.run(); union.run(); 
 }
 
 func TestParserDiagnosesInvalidConfigAndStillResolvesRelativeModules(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "tsconfig.json", `{"compilerOptions": nope}`)
 	writeFile(t, root, "src/service.ts", `export function invoke() {}`)
 	caller := `import { invoke } from "./service"; invoke();`
@@ -163,7 +164,7 @@ func TestParserDiagnosesInvalidConfigAndStillResolvesRelativeModules(t *testing.
 }
 
 func TestParserResolvesInheritedPathsFromDeclaringConfig(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "tsconfig.base.json", `{"compilerOptions":{"paths":{"@app/*":["src/*"]}}}`)
 	writeFile(t, root, "packages/client/tsconfig.json", `{"extends":"../../tsconfig.base.json"}`)
 	writeFile(t, root, "src/service.ts", `export function invoke() {}`)
@@ -181,7 +182,7 @@ func TestParserResolvesInheritedPathsFromDeclaringConfig(t *testing.T) {
 }
 
 func TestParserKeepsCollidingPhysicalModulesDistinctAndCallsUnresolved(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "src/service.ts", `export class Service { run() {} }`)
 	writeFile(t, root, "src/service.d.ts", `export declare class Service { run(): void }`)
 	caller := `import { Service } from "./service"; new Service().run();`
@@ -200,7 +201,7 @@ func TestParserKeepsCollidingPhysicalModulesDistinctAndCallsUnresolved(t *testin
 }
 
 func TestParserToleratesSemanticInputRaces(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "service.ts", `export function oldName() {}`)
 	writeFile(t, root, "caller.ts", `import { oldName } from "./service"; oldName();`)
 	parser := typescriptparser.New()
@@ -230,7 +231,7 @@ func TestParserToleratesSemanticInputRaces(t *testing.T) {
 }
 
 func TestParserSkipsTrackedResolutionInputsThatDisappear(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "deleted.ts", `export function gone() {}`)
 	if err := os.Symlink("missing-target.ts", filepath.Join(root, "broken.ts")); err != nil {
 		t.Fatal(err)
@@ -261,7 +262,7 @@ func TestParserSkipsTrackedResolutionInputsThatDisappear(t *testing.T) {
 }
 
 func TestParserAttributesEachExportToItsStatement(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "a.ts", `export function one() {}`)
 	writeFile(t, root, "b.ts", `export function two() {}`)
 	content := []byte("export { one } from \"./a\";\nexport { two } from \"./b\";")
@@ -277,7 +278,7 @@ func TestParserAttributesEachExportToItsStatement(t *testing.T) {
 }
 
 func TestParserExportsValuesAndAnonymousDefaultClass(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	values := []byte("export const answer = 42;\nconst config = {}; export default config;")
 	writeFile(t, root, "values.ts", string(values))
 	result, err := typescriptparser.New().Parse(context.Background(), parserapi.Input{
@@ -833,7 +834,7 @@ func TestWorkspaceSemanticKeyTracksOnlyResolutionSurface(t *testing.T) {
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			root := t.TempDir()
+			root := testtemp.Dir(t)
 			for path, content := range baseline {
 				writeFile(t, root, path, content)
 			}
@@ -861,7 +862,7 @@ func TestWorkspaceSemanticKeyTracksOnlyResolutionSurface(t *testing.T) {
 // that has no package or compiler manifest at all, so the key rests entirely on
 // the scanned module surface.
 func TestWorkspaceSemanticKeyIgnoresBodyEditsWithoutManifests(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "only.ts", "export function run() { return 1; }\n")
 	parser := typescriptparser.New()
 	input := parserapi.Input{Root: root, RepoID: "repo:sample"}

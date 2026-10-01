@@ -5,10 +5,12 @@ package detailprofile
 import (
 	"strings"
 	"testing"
+
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestInspectFilesystemDescribesOutputDirectory(t *testing.T) {
-	identity, err := inspectFilesystem(t.TempDir())
+	identity, err := inspectFilesystem(testtemp.Dir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

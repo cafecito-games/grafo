@@ -5,10 +5,12 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestLockIsExclusiveAndReleasable(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "nested", "guard.lock")
+	path := filepath.Join(testtemp.Dir(t), "nested", "guard.lock")
 	unlock, err := Lock(path, time.Second)
 	if err != nil {
 		t.Fatalf("Lock: %v", err)
@@ -29,7 +31,7 @@ func TestLockIsExclusiveAndReleasable(t *testing.T) {
 }
 
 func TestTryIndexLockDoesNotWaitAndLeavesAnchor(t *testing.T) {
-	indexPath := filepath.Join(t.TempDir(), "indexes", "branch.sqlite")
+	indexPath := filepath.Join(testtemp.Dir(t), "indexes", "branch.sqlite")
 	first, acquired, err := TryIndexLock(indexPath)
 	if err != nil || !acquired {
 		t.Fatalf("first TryIndexLock = acquired %t, err %v", acquired, err)
@@ -46,7 +48,7 @@ func TestTryIndexLockDoesNotWaitAndLeavesAnchor(t *testing.T) {
 }
 
 func TestPortableLockUsesTransientSentinelAndPermanentAnchor(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "portable.lock")
+	path := filepath.Join(testtemp.Dir(t), "portable.lock")
 	first, acquired, err := tryPortableLock(path)
 	if err != nil || !acquired {
 		t.Fatalf("first portable lock = acquired %t, err %v", acquired, err)
@@ -85,7 +87,7 @@ func TestMutationFailsClosedWhenRegistryIsLocked(t *testing.T) {
 	}
 	defer func() { _ = unlock() }()
 	store.wait = 20 * time.Millisecond
-	if _, _, err := store.Add(t.TempDir(), Settings{}); err == nil {
+	if _, _, err := store.Add(testtemp.Dir(t), Settings{}); err == nil {
 		t.Fatal("expected Add to fail closed while the registry is locked")
 	}
 }

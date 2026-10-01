@@ -6,11 +6,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestRunProducesRawSamplesMediansAndCorrectnessComparison(t *testing.T) {
 	repository := fixtureRepository(t)
-	output := filepath.Join(t.TempDir(), "comparison")
+	output := filepath.Join(testtemp.Dir(t), "comparison")
 	report, err := Run(context.Background(), Options{Repository: repository, Output: output, Samples: 1, GeneratedRows: 20})
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +36,7 @@ func TestRunProducesRawSamplesMediansAndCorrectnessComparison(t *testing.T) {
 
 func fixtureRepository(t *testing.T) string {
 	t.Helper()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	files := map[string]string{
 		"go.mod":        "module example.com/storagefixture\n\ngo 1.26\n",

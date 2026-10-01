@@ -10,6 +10,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/migrations"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 	"github.com/pressly/goose/v3"
 )
 
@@ -54,7 +55,7 @@ func countRows(t *testing.T, path, query string) int64 {
 
 func TestMigrationInternsPathsAndDerivesEdgeEvidence(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "denormalized.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "denormalized.sqlite")
 	openDenormalizedIndex(t, path, `
 INSERT INTO nodes(id, kind, name, qualified_name, path, line, owner_file) VALUES
     ('caller', 'function', 'Caller', 'legacy.Caller', 'legacy.go', 2, 'legacy.go'),
@@ -110,7 +111,7 @@ func TestMigrationFailsClosedOnEdgeEvidenceThatCannotBeDerived(t *testing.T) {
     VALUES ('divergent-edge', 'legacy-fact', 'caller', 'target', 'calls', 'gdscript', 'legacy.go', 5, 7, 5, '{}')`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "divergent.sqlite")
+			path := filepath.Join(testtemp.Dir(t), "divergent.sqlite")
 			openDenormalizedIndex(t, path, `
 INSERT INTO facts(id, from_id, kind, producer, target_id, path, line, column_no, end_line, properties, owner_file)
     VALUES ('legacy-fact', 'caller', 'calls', 'go', 'target', 'legacy.go', 5, 7, 5, '{}', 'legacy.go');
@@ -148,7 +149,7 @@ INSERT INTO facts(id, from_id, kind, producer, target_id, path, line, column_no,
 
 func TestEnqueueFailsClosedOnAFactWithoutAnInternedOwnerPath(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "graph.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "graph.sqlite")
 	repository, err := sqlite.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -193,7 +194,7 @@ func TestEnqueueFailsClosedOnAFactWithoutAnInternedOwnerPath(t *testing.T) {
 
 func TestInternedPathsKeepALocationThatDiffersFromItsOwnerFile(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "graph.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "graph.sqlite")
 	repository, err := sqlite.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -250,7 +251,7 @@ WHERE facts.id = 'workspace-fact'`).Scan(&location, &owner); err != nil {
 
 func TestRemoveFilesPrunesInternedPaths(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "graph.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "graph.sqlite")
 	repository, err := sqlite.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -335,7 +336,7 @@ func TestRemoveFilesPrunesInternedPaths(t *testing.T) {
 
 func TestReconciliationSweepsPathsLeftUnreferencedByAnOwnerReplacement(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "graph.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "graph.sqlite")
 	repository, err := sqlite.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -387,7 +388,7 @@ func TestReconciliationSweepsPathsLeftUnreferencedByAnOwnerReplacement(t *testin
 // a later rebuild cannot silently remove one a query plan depends on.
 func TestRebuiltTablesKeepEveryIndexEarlierMigrationsCreated(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "graph.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "graph.sqlite")
 	repository, err := sqlite.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -411,7 +412,7 @@ func TestRebuiltTablesKeepEveryIndexEarlierMigrationsCreated(t *testing.T) {
 
 func TestMigrationDownRestoresTheDenormalizedShapeWithItsEvidence(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "graph.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "graph.sqlite")
 	repository, err := sqlite.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)

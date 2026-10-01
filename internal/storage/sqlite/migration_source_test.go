@@ -8,12 +8,13 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/migrations"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 	"github.com/pressly/goose/v3"
 )
 
 func TestRepositoryMigratesLegacyExactSourceFacts(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "legacy.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "legacy.sqlite")
 	database, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)

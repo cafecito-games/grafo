@@ -11,6 +11,7 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/cli"
 	"github.com/cafecito-games/grafo/internal/query"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestCatalogCommandsReportUsageAndOrphans(t *testing.T) {
@@ -186,7 +187,7 @@ func TestCatalogRefusesAMixedFreshnessFederation(t *testing.T) {
 
 func catalogFixture(t *testing.T) string {
 	t.Helper()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "grafo.yaml"), "sql:\n  default_dialect: sqlite\n")
 	write(t, filepath.Join(root, "schema.sql"), `CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT);
 CREATE VIEW order_summary AS SELECT customer FROM orders;

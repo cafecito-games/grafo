@@ -10,18 +10,19 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestRepositoryMatchesSQLiteResolutionAndQueries(t *testing.T) {
 	ctx := context.Background()
 	for _, engine := range []Engine{EngineBolt, EnginePebble} {
 		t.Run(string(engine), func(t *testing.T) {
-			control, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "control.sqlite"))
+			control, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "control.sqlite"))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer func() { _ = control.Close() }()
-			candidate, err := Open(ctx, engine, filepath.Join(t.TempDir(), "candidate"), Options{ReconciliationBatchSize: 2})
+			candidate, err := Open(ctx, engine, filepath.Join(testtemp.Dir(t), "candidate"), Options{ReconciliationBatchSize: 2})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -52,12 +53,12 @@ func TestRepositoryDirectTestEdgesMatchSQLite(t *testing.T) {
 	ctx := context.Background()
 	for _, engine := range []Engine{EngineBolt, EnginePebble} {
 		t.Run(string(engine), func(t *testing.T) {
-			control, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "control.sqlite"))
+			control, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "control.sqlite"))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer func() { _ = control.Close() }()
-			candidate, err := Open(ctx, engine, filepath.Join(t.TempDir(), "candidate"), Options{})
+			candidate, err := Open(ctx, engine, filepath.Join(testtemp.Dir(t), "candidate"), Options{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -100,12 +101,12 @@ func TestRepositoryExplicitTargetKindMatchesSQLite(t *testing.T) {
 	ctx := context.Background()
 	for _, engine := range []Engine{EngineBolt, EnginePebble} {
 		t.Run(string(engine), func(t *testing.T) {
-			control, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "control.sqlite"))
+			control, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "control.sqlite"))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer func() { _ = control.Close() }()
-			candidate, err := Open(ctx, engine, filepath.Join(t.TempDir(), "candidate"), Options{})
+			candidate, err := Open(ctx, engine, filepath.Join(testtemp.Dir(t), "candidate"), Options{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -134,12 +135,12 @@ func TestRepositoryKindlessGodotResolutionMatchesSQLite(t *testing.T) {
 	ctx := context.Background()
 	for _, engine := range []Engine{EngineBolt, EnginePebble} {
 		t.Run(string(engine), func(t *testing.T) {
-			control, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "control.sqlite"))
+			control, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "control.sqlite"))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer func() { _ = control.Close() }()
-			candidate, err := Open(ctx, engine, filepath.Join(t.TempDir(), "candidate"), Options{})
+			candidate, err := Open(ctx, engine, filepath.Join(testtemp.Dir(t), "candidate"), Options{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -168,12 +169,12 @@ func TestRepositorySearchAndMatchMirrorSQLiteTextSemantics(t *testing.T) {
 	ctx := context.Background()
 	for _, engine := range []Engine{EngineBolt, EnginePebble} {
 		t.Run(string(engine), func(t *testing.T) {
-			control, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "control.sqlite"))
+			control, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "control.sqlite"))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer func() { _ = control.Close() }()
-			candidate, err := Open(ctx, engine, filepath.Join(t.TempDir(), "candidate"), Options{})
+			candidate, err := Open(ctx, engine, filepath.Join(testtemp.Dir(t), "candidate"), Options{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -222,7 +223,7 @@ func TestRepositoryRestartResumesCommittedReconciliationBatches(t *testing.T) {
 	ctx := context.Background()
 	for _, engine := range []Engine{EngineBolt, EnginePebble} {
 		t.Run(string(engine), func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "candidate")
+			path := filepath.Join(testtemp.Dir(t), "candidate")
 			repository, err := Open(ctx, engine, path, Options{ReconciliationBatchSize: 1})
 			if err != nil {
 				t.Fatal(err)
@@ -265,7 +266,7 @@ func TestRepositoryPreservesProducerAcrossRestartAndReplacement(t *testing.T) {
 	ctx := context.Background()
 	for _, engine := range []Engine{EngineBolt, EnginePebble} {
 		t.Run(string(engine), func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "candidate")
+			path := filepath.Join(testtemp.Dir(t), "candidate")
 			repository, err := Open(ctx, engine, path, Options{})
 			if err != nil {
 				t.Fatal(err)
@@ -353,7 +354,7 @@ func TestRepositoryReplacementIsAtomicOnCanceledContext(t *testing.T) {
 	ctx := context.Background()
 	for _, engine := range []Engine{EngineBolt, EnginePebble} {
 		t.Run(string(engine), func(t *testing.T) {
-			repository, err := Open(ctx, engine, filepath.Join(t.TempDir(), "candidate"), Options{})
+			repository, err := Open(ctx, engine, filepath.Join(testtemp.Dir(t), "candidate"), Options{})
 			if err != nil {
 				t.Fatal(err)
 			}

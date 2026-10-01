@@ -14,6 +14,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/indexer"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	parserdefaults "github.com/cafecito-games/grafo/internal/parser/defaults"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -159,7 +160,7 @@ func BenchmarkMCPFreshnessSession(b *testing.B) {
 
 func prepareBenchmarkCorpus(tb testing.TB, source string) string {
 	tb.Helper()
-	root := tb.TempDir()
+	root := testtemp.Dir(tb)
 	err := filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -339,7 +340,7 @@ func (f *mcpBenchmarkFixture) close() {
 
 func coordinatorProbeTB(tb testing.TB, content string) indexer.FreshnessProbe {
 	tb.Helper()
-	root := tb.TempDir()
+	root := testtemp.Dir(tb)
 	coordinatorGitTB(tb, root, "init", "-b", "main")
 	if err := os.WriteFile(filepath.Join(root, "sample.snap"), []byte(content), 0o644); err != nil {
 		tb.Fatal(err)
