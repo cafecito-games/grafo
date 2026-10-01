@@ -272,6 +272,15 @@ from any branch or federated repository share that row, while current graph
 candidates remain the sole authority for search results. Stale cache rows are
 safe reusable or evictable data and never create candidates.
 
+Reusable-code queries are bounded in time, not in honesty. One query embeds
+missing documents in deterministic cache-key order until its backfill share of
+the budget expires, ranks exactly the candidates that have vectors, and resolves
+one-hop context until the budget expires. Whatever it could not finish is
+reported as `status`, `coverage`, `notes`, and `next_action` rather than silently
+truncated, and insufficient coverage is reported as a warming cache instead of a
+ranking that the index cannot support. Ordering is unchanged from the unbounded
+path, so a fully embedded index answers exactly as before.
+
 Cosine similarity may rank candidates for `find_reusable_code`, but it never
 creates an edge or determines a path. Each selected node is resolved by stable
 ID and returned with a one-hop traversal from the graph repository. Similarity

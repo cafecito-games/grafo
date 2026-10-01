@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
@@ -33,11 +34,13 @@ func TestServerListsAndCallsGraphTools(t *testing.T) {
 	}
 
 	var refreshes atomic.Int32
+	var reusableRequests []semantic.SearchRequest
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	serverSession, err := mcpserver.New(repository, indexer.Project{Name: "sample", Branch: "main"}).
 		WithRefresh(func(context.Context) error { refreshes.Add(1); return nil }).
-		WithReusable(func(_ context.Context, text string, _ int) (semantic.SearchResult, error) {
-			return semantic.SearchResult{Query: text, Model: "test"}, nil
+		WithReusable(func(_ context.Context, request semantic.SearchRequest) (semantic.SearchResult, error) {
+			reusableRequests = append(reusableRequests, request)
+			return semantic.SearchResult{Query: request.Query, Model: "test", Status: semantic.StatusComplete}, nil
 		}).
 		WithSource(func(_ context.Context, _ string, _ graph.NodeKind, _, _ int) (sourcecontext.Excerpt, error) {
 			return sourcecontext.Excerpt{Path: "checkout.go", StartLine: 1, EndLine: 2, Content: "func Checkout() {}"}, nil
@@ -82,7 +85,8 @@ func TestServerListsAndCallsGraphTools(t *testing.T) {
 		t.Fatalf("expected one pre-query refresh, got %d", refreshes.Load())
 	}
 	reusable, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
-		Name: "find_reusable_code", Arguments: map[string]any{"query": "charge a card"},
+		Name: "find_reusable_code", Arguments: map[string]any{"query": "charge a card",
+			"budget_seconds": 7, "languages": []any{"go"}, "path_prefixes": []any{"internal"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -96,6 +100,11 @@ func TestServerListsAndCallsGraphTools(t *testing.T) {
 	}
 	if refreshes.Load() != 2 {
 		t.Fatalf("expected refresh before every tool call, got %d", refreshes.Load())
+	}
+	if len(reusableRequests) != 1 || reusableRequests[0].Budget != 7*time.Second ||
+		len(reusableRequests[0].Languages) != 1 || reusableRequests[0].Languages[0] != "go" ||
+		len(reusableRequests[0].PathPrefixes) != 1 || reusableRequests[0].PathPrefixes[0] != "internal" {
+		t.Fatalf("optional reusable parameters were not forwarded: %#v", reusableRequests)
 	}
 	source, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name: "get_source", Arguments: map[string]any{"selector": "sample.Checkout"},
