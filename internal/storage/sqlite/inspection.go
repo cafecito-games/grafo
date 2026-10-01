@@ -183,6 +183,13 @@ func openExistingIndex(ctx context.Context, path, mode string) (*sql.DB, error) 
 		return nil, fmt.Errorf("open index database: %w", err)
 	}
 	db.SetMaxOpenConns(1)
+	// Lock policy before anything that can block. A writable inspection opens
+	// against an index another grafo process may be refreshing, and the ping
+	// below is the first statement that can meet that writer's lock.
+	if _, err := db.ExecContext(ctx, "PRAGMA busy_timeout=5000"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("configure index database busy timeout: %w", err)
+	}
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("open index database: %w", err)

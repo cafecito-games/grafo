@@ -96,8 +96,20 @@ func Open(ctx context.Context, path string) (*Repository, error) {
 	return repository, nil
 }
 
+// writableConnectionPragmas configures a writable connection. busy_timeout is
+// deliberately first: it is pure connection-local lock policy that cannot
+// block, while journal_mode=WAL needs the database lock and therefore fails
+// immediately with SQLITE_BUSY_RECOVERY when another writer holds it and the
+// timeout is still SQLite's default of zero.
+var writableConnectionPragmas = []string{
+	"PRAGMA busy_timeout=5000",
+	"PRAGMA journal_mode=WAL",
+	"PRAGMA synchronous=NORMAL",
+	"PRAGMA wal_autocheckpoint=1000",
+}
+
 func configureWritableConnection(ctx context.Context, db *sql.DB) error {
-	for _, pragma := range []string{"PRAGMA journal_mode=WAL", "PRAGMA synchronous=NORMAL", "PRAGMA busy_timeout=5000", "PRAGMA wal_autocheckpoint=1000"} {
+	for _, pragma := range writableConnectionPragmas {
 		if _, err := db.ExecContext(ctx, pragma); err != nil {
 			return fmt.Errorf("configure SQLite: %w", err)
 		}
