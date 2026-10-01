@@ -114,6 +114,22 @@ repository-declared call-effect adapters. The
 durable graph schema does not change: configured calls project through the
 existing event and HTTP vocabularies and retain their ordinary call evidence.
 
+Migration 00010 removes stored duplication from the two largest tables without
+changing any query result. Repository-relative paths and the indexer's synthetic
+workspace owner key are interned once in a `paths` table, and a fact references
+its location and its owner by integer key. A fact's location file and its owner
+file are interned separately rather than collapsed: workspace facts are owned by
+the synthetic key while their location points at the project configuration file.
+Edges keep only what reconciliation can resolve differently from the originating
+fact - the resolved endpoints, the relation kind, and the properties - and join
+their producer and location back through `fact_id`. The write path resolves each
+path key once per index run; keys assigned inside a transaction become shared
+only after it commits, and removing a file prunes the interned rows it orphaned.
+An edge whose originating fact or interned path row is missing is reported as
+corruption rather than served with an empty location, and migrating an index
+whose edge evidence cannot be derived from its fact fails closed and requires a
+rebuild.
+
 Graph schema version 12 migrates branch indexes away from the legacy
 node-addressed JSON embedding table. Those vectors are reproducible and are not
 copied into the user cache, so one semantic sync may be required after upgrade.

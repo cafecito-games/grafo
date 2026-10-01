@@ -114,9 +114,20 @@ func TestRelationEdgesFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = database.Close() }()
+	if _, err = database.ExecContext(ctx,
+		`INSERT OR IGNORE INTO paths(path) VALUES ('synthetic.go')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.ExecContext(ctx, `INSERT INTO facts
+        (id, from_id, kind, target_id, path_id, line, column_no, end_line, properties, owner_path_id)
+        VALUES ('synthetic-fact', 'missing-node', 'reads', 'subject',
+                (SELECT id FROM paths WHERE path = 'synthetic.go'), 1, 1, 1, '{}',
+                (SELECT id FROM paths WHERE path = 'synthetic.go'))`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = database.ExecContext(ctx, `INSERT INTO edges
-        (id, fact_id, from_id, to_id, kind, path, line, column_no, end_line, properties)
-        VALUES ('missing-edge', 'missing-fact', 'missing-node', 'subject', 'reads', '', 0, 0, 0, '{}')`); err != nil {
+        (id, fact_id, from_id, to_id, kind, properties)
+        VALUES ('missing-edge', 'synthetic-fact', 'missing-node', 'subject', 'reads', '{}')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repository.RelationEdges(ctx, graph.RelationEdgeQuery{SubjectID: "subject",
@@ -132,13 +143,33 @@ func TestRelationEdgesFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err = database.ExecContext(ctx, `INSERT INTO edges
-        (id, fact_id, from_id, to_id, kind, path, line, column_no, end_line, properties)
-        VALUES ('bad-edge', 'bad-fact', 'bad-node', 'subject', 'reads', '', 0, 0, 0, '{}')`); err != nil {
+        (id, fact_id, from_id, to_id, kind, properties)
+        VALUES ('bad-edge', 'synthetic-fact', 'bad-node', 'subject', 'reads', '{}')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repository.RelationEdges(ctx, graph.RelationEdgeQuery{SubjectID: "subject",
 		Direction: graph.IncomingRelations, Relations: []graph.EdgeKind{graph.EdgeReads}, Limit: 1}); err == nil {
 		t.Fatal("malformed counterpart properties were silently accepted")
+	}
+	if _, err = database.ExecContext(ctx, `DELETE FROM edges WHERE id = 'bad-edge'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = database.ExecContext(ctx, `DELETE FROM nodes WHERE id = 'bad-node'`); err != nil {
+		t.Fatal(err)
+	}
+	// An edge whose originating fact is gone can no longer supply a location.
+	// Reporting an empty one would hand the caller evidence pointing nowhere.
+	if _, err = database.ExecContext(ctx, `INSERT INTO edges
+        (id, fact_id, from_id, to_id, kind, properties)
+        VALUES ('orphan-edge', 'deleted-fact', 'writer', 'subject', 'reads', '{}')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.RelationEdges(ctx, graph.RelationEdgeQuery{SubjectID: "subject",
+		Direction: graph.IncomingRelations, Relations: []graph.EdgeKind{graph.EdgeReads}, Limit: 1}); err == nil {
+		t.Fatal("edge without an originating fact was silently served")
+	}
+	if _, err := repository.EdgesTo(ctx, "subject"); err == nil {
+		t.Fatal("adjacency read served an edge without an originating fact")
 	}
 }
 

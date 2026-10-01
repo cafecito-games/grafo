@@ -69,6 +69,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.countNodesByKindStmt, err = db.PrepareContext(ctx, countNodesByKind); err != nil {
 		return nil, fmt.Errorf("error preparing query CountNodesByKind: %w", err)
 	}
+	if q.countPathsStmt, err = db.PrepareContext(ctx, countPaths); err != nil {
+		return nil, fmt.Errorf("error preparing query CountPaths: %w", err)
+	}
 	if q.deleteAllEdgesStmt, err = db.PrepareContext(ctx, deleteAllEdges); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteAllEdges: %w", err)
 	}
@@ -96,6 +99,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.deleteOrphanExternalNodesStmt, err = db.PrepareContext(ctx, deleteOrphanExternalNodes); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteOrphanExternalNodes: %w", err)
 	}
+	if q.deleteUnreferencedPathsStmt, err = db.PrepareContext(ctx, deleteUnreferencedPaths); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteUnreferencedPaths: %w", err)
+	}
 	if q.enqueueDirtyFactsStmt, err = db.PrepareContext(ctx, enqueueDirtyFacts); err != nil {
 		return nil, fmt.Errorf("error preparing query EnqueueDirtyFacts: %w", err)
 	}
@@ -113,6 +119,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.insertEdgeStmt, err = db.PrepareContext(ctx, insertEdge); err != nil {
 		return nil, fmt.Errorf("error preparing query InsertEdge: %w", err)
+	}
+	if q.internPathStmt, err = db.PrepareContext(ctx, internPath); err != nil {
+		return nil, fmt.Errorf("error preparing query InternPath: %w", err)
 	}
 	if q.listCanonicalMessagesStmt, err = db.PrepareContext(ctx, listCanonicalMessages); err != nil {
 		return nil, fmt.Errorf("error preparing query ListCanonicalMessages: %w", err)
@@ -281,6 +290,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing countNodesByKindStmt: %w", cerr)
 		}
 	}
+	if q.countPathsStmt != nil {
+		if cerr := q.countPathsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing countPathsStmt: %w", cerr)
+		}
+	}
 	if q.deleteAllEdgesStmt != nil {
 		if cerr := q.deleteAllEdgesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteAllEdgesStmt: %w", cerr)
@@ -326,6 +340,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing deleteOrphanExternalNodesStmt: %w", cerr)
 		}
 	}
+	if q.deleteUnreferencedPathsStmt != nil {
+		if cerr := q.deleteUnreferencedPathsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteUnreferencedPathsStmt: %w", cerr)
+		}
+	}
 	if q.enqueueDirtyFactsStmt != nil {
 		if cerr := q.enqueueDirtyFactsStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing enqueueDirtyFactsStmt: %w", cerr)
@@ -354,6 +373,11 @@ func (q *Queries) Close() error {
 	if q.insertEdgeStmt != nil {
 		if cerr := q.insertEdgeStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing insertEdgeStmt: %w", cerr)
+		}
+	}
+	if q.internPathStmt != nil {
+		if cerr := q.internPathStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing internPathStmt: %w", cerr)
 		}
 	}
 	if q.listCanonicalMessagesStmt != nil {
@@ -555,6 +579,7 @@ type Queries struct {
 	countNodeMatchesBySubstringStmt     *sql.Stmt
 	countNodesStmt                      *sql.Stmt
 	countNodesByKindStmt                *sql.Stmt
+	countPathsStmt                      *sql.Stmt
 	deleteAllEdgesStmt                  *sql.Stmt
 	deleteDirtyFactBatchStmt            *sql.Stmt
 	deleteEdgesByDirtyFactBatchStmt     *sql.Stmt
@@ -564,12 +589,14 @@ type Queries struct {
 	deleteFileStmt                      *sql.Stmt
 	deleteNodesByOwnerStmt              *sql.Stmt
 	deleteOrphanExternalNodesStmt       *sql.Stmt
+	deleteUnreferencedPathsStmt         *sql.Stmt
 	enqueueDirtyFactsStmt               *sql.Stmt
 	findNodesExactStmt                  *sql.Stmt
 	findNodesExactKindStmt              *sql.Stmt
 	getMetaStmt                         *sql.Stmt
 	getNodeStmt                         *sql.Stmt
 	insertEdgeStmt                      *sql.Stmt
+	internPathStmt                      *sql.Stmt
 	listCanonicalMessagesStmt           *sql.Stmt
 	listDirtyFactBatchStmt              *sql.Stmt
 	listEdgesFromStmt                   *sql.Stmt
@@ -620,6 +647,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		countNodeMatchesBySubstringStmt:     q.countNodeMatchesBySubstringStmt,
 		countNodesStmt:                      q.countNodesStmt,
 		countNodesByKindStmt:                q.countNodesByKindStmt,
+		countPathsStmt:                      q.countPathsStmt,
 		deleteAllEdgesStmt:                  q.deleteAllEdgesStmt,
 		deleteDirtyFactBatchStmt:            q.deleteDirtyFactBatchStmt,
 		deleteEdgesByDirtyFactBatchStmt:     q.deleteEdgesByDirtyFactBatchStmt,
@@ -629,12 +657,14 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		deleteFileStmt:                      q.deleteFileStmt,
 		deleteNodesByOwnerStmt:              q.deleteNodesByOwnerStmt,
 		deleteOrphanExternalNodesStmt:       q.deleteOrphanExternalNodesStmt,
+		deleteUnreferencedPathsStmt:         q.deleteUnreferencedPathsStmt,
 		enqueueDirtyFactsStmt:               q.enqueueDirtyFactsStmt,
 		findNodesExactStmt:                  q.findNodesExactStmt,
 		findNodesExactKindStmt:              q.findNodesExactKindStmt,
 		getMetaStmt:                         q.getMetaStmt,
 		getNodeStmt:                         q.getNodeStmt,
 		insertEdgeStmt:                      q.insertEdgeStmt,
+		internPathStmt:                      q.internPathStmt,
 		listCanonicalMessagesStmt:           q.listCanonicalMessagesStmt,
 		listDirtyFactBatchStmt:              q.listDirtyFactBatchStmt,
 		listEdgesFromStmt:                   q.listEdgesFromStmt,

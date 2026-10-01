@@ -1,3 +1,11 @@
+-- An edge stores only what reconciliation can resolve differently from its
+-- originating fact: the resolved endpoints, the relation kind (a structural
+-- test edge is derived from a calls or references fact), and the properties
+-- (destination evidence and test-coverage evidence are added per edge). Its
+-- producer and location are the fact's, so they are joined back instead of
+-- stored twice. origin_resolved lets the adapter fail closed on an index whose
+-- edge has lost its fact or interned path rather than report an empty location.
+
 -- name: DeleteAllEdges :exec
 DELETE FROM edges;
 
@@ -11,18 +19,38 @@ WHERE fact_id IN (
 );
 
 -- name: DeleteEdgesByOwnerFacts :exec
-DELETE FROM edges WHERE fact_id IN (SELECT id FROM facts WHERE owner_file = ?);
+DELETE FROM edges WHERE fact_id IN (
+    SELECT id FROM facts WHERE owner_path_id = (SELECT id FROM paths WHERE path = ?)
+);
 
 -- name: InsertEdge :exec
-INSERT INTO edges(
-    id, fact_id, from_id, to_id, kind, producer, path, line, column_no, end_line, properties
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO edges(id, fact_id, from_id, to_id, kind, properties) VALUES (?, ?, ?, ?, ?, ?);
 
 -- name: ListEdgesFrom :many
-SELECT * FROM edges WHERE from_id = ? ORDER BY kind, to_id, id;
+SELECT edges.id, edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.properties,
+       COALESCE(facts.producer, '') AS producer,
+       COALESCE(origin_paths.path, '') AS path,
+       COALESCE(facts.line, 0) AS line,
+       COALESCE(facts.column_no, 0) AS column_no,
+       COALESCE(facts.end_line, 0) AS end_line,
+       CASE WHEN facts.id IS NULL OR origin_paths.id IS NULL THEN 0 ELSE 1 END AS origin_resolved
+FROM edges
+LEFT JOIN facts ON facts.id = edges.fact_id
+LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id
+WHERE edges.from_id = ? ORDER BY edges.kind, edges.to_id, edges.id;
 
 -- name: ListEdgesTo :many
-SELECT * FROM edges WHERE to_id = ? ORDER BY kind, from_id, id;
+SELECT edges.id, edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.properties,
+       COALESCE(facts.producer, '') AS producer,
+       COALESCE(origin_paths.path, '') AS path,
+       COALESCE(facts.line, 0) AS line,
+       COALESCE(facts.column_no, 0) AS column_no,
+       COALESCE(facts.end_line, 0) AS end_line,
+       CASE WHEN facts.id IS NULL OR origin_paths.id IS NULL THEN 0 ELSE 1 END AS origin_resolved
+FROM edges
+LEFT JOIN facts ON facts.id = edges.fact_id
+LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id
+WHERE edges.to_id = ? ORDER BY edges.kind, edges.from_id, edges.id;
 
 -- name: ListIncomingRelationEdges :many
 SELECT
@@ -31,12 +59,13 @@ SELECT
     edges.from_id AS edge_from_id,
     edges.to_id AS edge_to_id,
     edges.kind AS edge_kind,
-    edges.producer AS edge_producer,
-    edges.path AS edge_path,
-    edges.line AS edge_line,
-    edges.column_no AS edge_column_no,
-    edges.end_line AS edge_end_line,
+    COALESCE(facts.producer, '') AS edge_producer,
+    COALESCE(origin_paths.path, '') AS edge_path,
+    COALESCE(facts.line, 0) AS edge_line,
+    COALESCE(facts.column_no, 0) AS edge_column_no,
+    COALESCE(facts.end_line, 0) AS edge_end_line,
     edges.properties AS edge_properties,
+    CASE WHEN facts.id IS NULL OR origin_paths.id IS NULL THEN 0 ELSE 1 END AS edge_origin_resolved,
     COALESCE(nodes.id, '') AS counterpart_id,
     COALESCE(nodes.kind, '') AS counterpart_kind,
     COALESCE(nodes.name, '') AS counterpart_name,
@@ -51,6 +80,8 @@ SELECT
     COALESCE(nodes.external, 0) AS counterpart_external
 FROM edges INDEXED BY edges_to
 LEFT JOIN nodes ON nodes.id = edges.from_id
+LEFT JOIN facts ON facts.id = edges.fact_id
+LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id
 WHERE edges.to_id = @subject_id AND edges.kind = @relation
 ORDER BY edges.from_id, edges.id
 LIMIT @max_results;
@@ -62,12 +93,13 @@ SELECT
     edges.from_id AS edge_from_id,
     edges.to_id AS edge_to_id,
     edges.kind AS edge_kind,
-    edges.producer AS edge_producer,
-    edges.path AS edge_path,
-    edges.line AS edge_line,
-    edges.column_no AS edge_column_no,
-    edges.end_line AS edge_end_line,
+    COALESCE(facts.producer, '') AS edge_producer,
+    COALESCE(origin_paths.path, '') AS edge_path,
+    COALESCE(facts.line, 0) AS edge_line,
+    COALESCE(facts.column_no, 0) AS edge_column_no,
+    COALESCE(facts.end_line, 0) AS edge_end_line,
     edges.properties AS edge_properties,
+    CASE WHEN facts.id IS NULL OR origin_paths.id IS NULL THEN 0 ELSE 1 END AS edge_origin_resolved,
     COALESCE(nodes.id, '') AS counterpart_id,
     COALESCE(nodes.kind, '') AS counterpart_kind,
     COALESCE(nodes.name, '') AS counterpart_name,
@@ -82,14 +114,24 @@ SELECT
     COALESCE(nodes.external, 0) AS counterpart_external
 FROM edges INDEXED BY edges_from
 LEFT JOIN nodes ON nodes.id = edges.to_id
+LEFT JOIN facts ON facts.id = edges.fact_id
+LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id
 WHERE edges.from_id = @subject_id AND edges.kind = @relation
 ORDER BY edges.to_id, edges.id
 LIMIT @max_results;
 
 -- name: ListExternalEdgesMatching :many
-SELECT edges.*
+SELECT edges.id, edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.properties,
+       COALESCE(facts.producer, '') AS producer,
+       COALESCE(origin_paths.path, '') AS path,
+       COALESCE(facts.line, 0) AS line,
+       COALESCE(facts.column_no, 0) AS column_no,
+       COALESCE(facts.end_line, 0) AS end_line,
+       CASE WHEN facts.id IS NULL OR origin_paths.id IS NULL THEN 0 ELSE 1 END AS origin_resolved
 FROM edges
 JOIN nodes ON nodes.id = edges.to_id
+LEFT JOIN facts ON facts.id = edges.fact_id
+LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id
 WHERE nodes.external = 1
   AND (
       nodes.qualified_name = @qualified_name
@@ -106,12 +148,13 @@ SELECT
     edges.from_id AS edge_from_id,
     edges.to_id AS edge_to_id,
     edges.kind AS edge_kind,
-    edges.producer AS edge_producer,
-    edges.path AS edge_path,
-    edges.line AS edge_line,
-    edges.column_no AS edge_column_no,
-    edges.end_line AS edge_end_line,
+    COALESCE(origin.producer, '') AS edge_producer,
+    COALESCE(origin_paths.path, '') AS edge_path,
+    COALESCE(origin.line, 0) AS edge_line,
+    COALESCE(origin.column_no, 0) AS edge_column_no,
+    COALESCE(origin.end_line, 0) AS edge_end_line,
     edges.properties AS edge_properties,
+    CASE WHEN origin.id IS NULL OR origin_paths.id IS NULL THEN 0 ELSE 1 END AS edge_origin_resolved,
     source.id AS source_id,
     source.kind AS source_kind,
     source.name AS source_name,
@@ -139,6 +182,8 @@ SELECT
 FROM edges
 JOIN nodes AS source ON source.id = edges.from_id
 JOIN nodes AS target ON target.id = edges.to_id
+LEFT JOIN facts AS origin ON origin.id = edges.fact_id
+LEFT JOIN paths AS origin_paths ON origin_paths.id = origin.path_id
 WHERE edges.kind = 'requests'
   AND target.external = 1
   AND edges.id > @after_id

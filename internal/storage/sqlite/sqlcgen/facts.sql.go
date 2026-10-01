@@ -21,22 +21,27 @@ func (q *Queries) CountFacts(ctx context.Context) (int64, error) {
 }
 
 const deleteFactsByOwner = `-- name: DeleteFactsByOwner :exec
-DELETE FROM facts WHERE owner_file = ?
+DELETE FROM facts WHERE owner_path_id = (SELECT id FROM paths WHERE path = ?)
 `
 
-func (q *Queries) DeleteFactsByOwner(ctx context.Context, ownerFile string) error {
-	_, err := q.exec(ctx, q.deleteFactsByOwnerStmt, deleteFactsByOwner, ownerFile)
+func (q *Queries) DeleteFactsByOwner(ctx context.Context, path string) error {
+	_, err := q.exec(ctx, q.deleteFactsByOwnerStmt, deleteFactsByOwner, path)
 	return err
 }
 
 const listDirtyFactBatch = `-- name: ListDirtyFactBatch :many
 SELECT facts.id, facts.from_id, facts.source, facts.source_kind, facts.kind, facts.producer,
-       facts.target_id, facts.target, facts.target_kind, facts.path, facts.line,
-       facts.column_no, facts.end_line, facts.properties, facts.owner_file,
+       facts.target_id, facts.target, facts.target_kind,
+       COALESCE(location_paths.path, '') AS path, facts.line,
+       facts.column_no, facts.end_line, facts.properties,
+       COALESCE(owner_paths.path, '') AS owner_file,
+       CASE WHEN location_paths.id IS NULL OR owner_paths.id IS NULL THEN 0 ELSE 1 END AS paths_resolved,
        CASE WHEN facts.from_id = '' OR source_node.id IS NOT NULL THEN 1 ELSE 0 END AS source_exists,
        CASE WHEN facts.target_id = '' OR target_node.id IS NOT NULL THEN 1 ELSE 0 END AS target_exists
 FROM dirty_facts INDEXED BY dirty_facts_order
 CROSS JOIN facts
+LEFT JOIN paths AS location_paths ON location_paths.id = facts.path_id
+LEFT JOIN paths AS owner_paths ON owner_paths.id = facts.owner_path_id
 LEFT JOIN nodes AS source_node ON source_node.id = facts.from_id AND source_node.external = 0
 LEFT JOIN nodes AS target_node ON target_node.id = facts.target_id
 WHERE facts.id = dirty_facts.fact_id
@@ -45,23 +50,24 @@ LIMIT ?
 `
 
 type ListDirtyFactBatchRow struct {
-	ID           string `json:"id"`
-	FromID       string `json:"from_id"`
-	Source       string `json:"source"`
-	SourceKind   string `json:"source_kind"`
-	Kind         string `json:"kind"`
-	Producer     string `json:"producer"`
-	TargetID     string `json:"target_id"`
-	Target       string `json:"target"`
-	TargetKind   string `json:"target_kind"`
-	Path         string `json:"path"`
-	Line         int64  `json:"line"`
-	ColumnNo     int64  `json:"column_no"`
-	EndLine      int64  `json:"end_line"`
-	Properties   string `json:"properties"`
-	OwnerFile    string `json:"owner_file"`
-	SourceExists int64  `json:"source_exists"`
-	TargetExists int64  `json:"target_exists"`
+	ID            string `json:"id"`
+	FromID        string `json:"from_id"`
+	Source        string `json:"source"`
+	SourceKind    string `json:"source_kind"`
+	Kind          string `json:"kind"`
+	Producer      string `json:"producer"`
+	TargetID      string `json:"target_id"`
+	Target        string `json:"target"`
+	TargetKind    string `json:"target_kind"`
+	Path          string `json:"path"`
+	Line          int64  `json:"line"`
+	ColumnNo      int64  `json:"column_no"`
+	EndLine       int64  `json:"end_line"`
+	Properties    string `json:"properties"`
+	OwnerFile     string `json:"owner_file"`
+	PathsResolved int64  `json:"paths_resolved"`
+	SourceExists  int64  `json:"source_exists"`
+	TargetExists  int64  `json:"target_exists"`
 }
 
 func (q *Queries) ListDirtyFactBatch(ctx context.Context, limit int64) ([]ListDirtyFactBatchRow, error) {
@@ -89,6 +95,7 @@ func (q *Queries) ListDirtyFactBatch(ctx context.Context, limit int64) ([]ListDi
 			&i.EndLine,
 			&i.Properties,
 			&i.OwnerFile,
+			&i.PathsResolved,
 			&i.SourceExists,
 			&i.TargetExists,
 		); err != nil {
@@ -108,7 +115,7 @@ func (q *Queries) ListDirtyFactBatch(ctx context.Context, limit int64) ([]ListDi
 const upsertFact = `-- name: UpsertFact :exec
 INSERT INTO facts(
     id, from_id, source, source_kind, kind, producer, target_id, target, target_kind,
-    path, line, column_no, end_line, properties, owner_file
+    path_id, line, column_no, end_line, properties, owner_path_id
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     from_id = excluded.from_id,
@@ -119,30 +126,30 @@ ON CONFLICT(id) DO UPDATE SET
     target_id = excluded.target_id,
     target = excluded.target,
     target_kind = excluded.target_kind,
-    path = excluded.path,
+    path_id = excluded.path_id,
     line = excluded.line,
     column_no = excluded.column_no,
     end_line = excluded.end_line,
     properties = excluded.properties,
-    owner_file = excluded.owner_file
+    owner_path_id = excluded.owner_path_id
 `
 
 type UpsertFactParams struct {
-	ID         string `json:"id"`
-	FromID     string `json:"from_id"`
-	Source     string `json:"source"`
-	SourceKind string `json:"source_kind"`
-	Kind       string `json:"kind"`
-	Producer   string `json:"producer"`
-	TargetID   string `json:"target_id"`
-	Target     string `json:"target"`
-	TargetKind string `json:"target_kind"`
-	Path       string `json:"path"`
-	Line       int64  `json:"line"`
-	ColumnNo   int64  `json:"column_no"`
-	EndLine    int64  `json:"end_line"`
-	Properties string `json:"properties"`
-	OwnerFile  string `json:"owner_file"`
+	ID          string `json:"id"`
+	FromID      string `json:"from_id"`
+	Source      string `json:"source"`
+	SourceKind  string `json:"source_kind"`
+	Kind        string `json:"kind"`
+	Producer    string `json:"producer"`
+	TargetID    string `json:"target_id"`
+	Target      string `json:"target"`
+	TargetKind  string `json:"target_kind"`
+	PathID      int64  `json:"path_id"`
+	Line        int64  `json:"line"`
+	ColumnNo    int64  `json:"column_no"`
+	EndLine     int64  `json:"end_line"`
+	Properties  string `json:"properties"`
+	OwnerPathID int64  `json:"owner_path_id"`
 }
 
 func (q *Queries) UpsertFact(ctx context.Context, arg UpsertFactParams) error {
@@ -156,12 +163,12 @@ func (q *Queries) UpsertFact(ctx context.Context, arg UpsertFactParams) error {
 		arg.TargetID,
 		arg.Target,
 		arg.TargetKind,
-		arg.Path,
+		arg.PathID,
 		arg.Line,
 		arg.ColumnNo,
 		arg.EndLine,
 		arg.Properties,
-		arg.OwnerFile,
+		arg.OwnerPathID,
 	)
 	return err
 }

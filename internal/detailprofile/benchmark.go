@@ -441,7 +441,12 @@ func capabilityFingerprints(ctx context.Context, path string) (map[Capability]st
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	rows, err = db.QueryContext(ctx, `SELECT id, fact_id, from_id, to_id, kind, producer, path, line, column_no, end_line, properties FROM edges ORDER BY id`)
+	rows, err = db.QueryContext(ctx, `SELECT edges.id, edges.fact_id, edges.from_id, edges.to_id, edges.kind, facts.producer,
+	paths.path, facts.line, facts.column_no, facts.end_line, edges.properties
+FROM edges
+JOIN facts ON facts.id = edges.fact_id
+JOIN paths ON paths.id = facts.path_id
+ORDER BY edges.id`)
 	if err != nil {
 		return nil, err
 	}

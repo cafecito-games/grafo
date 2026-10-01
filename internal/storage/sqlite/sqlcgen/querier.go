@@ -24,26 +24,36 @@ type Querier interface {
 	CountNodeMatchesBySubstring(ctx context.Context, arg CountNodeMatchesBySubstringParams) (CountNodeMatchesBySubstringRow, error)
 	CountNodes(ctx context.Context) (int64, error)
 	CountNodesByKind(ctx context.Context) ([]CountNodesByKindRow, error)
+	CountPaths(ctx context.Context) (int64, error)
+	// An edge stores only what reconciliation can resolve differently from its
+	// originating fact: the resolved endpoints, the relation kind (a structural
+	// test edge is derived from a calls or references fact), and the properties
+	// (destination evidence and test-coverage evidence are added per edge). Its
+	// producer and location are the fact's, so they are joined back instead of
+	// stored twice. origin_resolved lets the adapter fail closed on an index whose
+	// edge has lost its fact or interned path rather than report an empty location.
 	DeleteAllEdges(ctx context.Context) error
 	DeleteDirtyFactBatch(ctx context.Context, limit int64) error
 	DeleteEdgesByDirtyFactBatch(ctx context.Context, limit int64) error
-	DeleteEdgesByOwnerFacts(ctx context.Context, ownerFile string) error
+	DeleteEdgesByOwnerFacts(ctx context.Context, path string) error
 	DeleteExternalNodes(ctx context.Context) error
-	DeleteFactsByOwner(ctx context.Context, ownerFile string) error
+	DeleteFactsByOwner(ctx context.Context, path string) error
 	DeleteFile(ctx context.Context, path string) error
 	DeleteNodesByOwner(ctx context.Context, ownerFile string) error
 	DeleteOrphanExternalNodes(ctx context.Context) error
+	DeleteUnreferencedPaths(ctx context.Context) error
 	EnqueueDirtyFacts(ctx context.Context) error
 	FindNodesExact(ctx context.Context, target string) ([]FindNodesExactRow, error)
 	FindNodesExactKind(ctx context.Context, arg FindNodesExactKindParams) ([]FindNodesExactKindRow, error)
 	GetMeta(ctx context.Context, key string) (string, error)
 	GetNode(ctx context.Context, id string) (Node, error)
 	InsertEdge(ctx context.Context, arg InsertEdgeParams) error
+	InternPath(ctx context.Context, path string) (int64, error)
 	ListCanonicalMessages(ctx context.Context, arg ListCanonicalMessagesParams) ([]Node, error)
 	ListDirtyFactBatch(ctx context.Context, limit int64) ([]ListDirtyFactBatchRow, error)
-	ListEdgesFrom(ctx context.Context, fromID string) ([]Edge, error)
-	ListEdgesTo(ctx context.Context, toID string) ([]Edge, error)
-	ListExternalEdgesMatching(ctx context.Context, arg ListExternalEdgesMatchingParams) ([]Edge, error)
+	ListEdgesFrom(ctx context.Context, fromID string) ([]ListEdgesFromRow, error)
+	ListEdgesTo(ctx context.Context, toID string) ([]ListEdgesToRow, error)
+	ListExternalEdgesMatching(ctx context.Context, arg ListExternalEdgesMatchingParams) ([]ListExternalEdgesMatchingRow, error)
 	ListExternalNodesMatching(ctx context.Context, arg ListExternalNodesMatchingParams) ([]Node, error)
 	ListExternalRequestEdges(ctx context.Context, arg ListExternalRequestEdgesParams) ([]ListExternalRequestEdgesRow, error)
 	ListFiles(ctx context.Context) ([]File, error)

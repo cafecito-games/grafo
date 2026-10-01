@@ -28,30 +28,25 @@ type Edge struct {
 	FromID     string `json:"from_id"`
 	ToID       string `json:"to_id"`
 	Kind       string `json:"kind"`
-	Path       string `json:"path"`
-	Line       int64  `json:"line"`
-	ColumnNo   int64  `json:"column_no"`
-	EndLine    int64  `json:"end_line"`
 	Properties string `json:"properties"`
-	Producer   string `json:"producer"`
 }
 
 type Fact struct {
-	ID         string `json:"id"`
-	FromID     string `json:"from_id"`
-	Kind       string `json:"kind"`
-	TargetID   string `json:"target_id"`
-	Target     string `json:"target"`
-	TargetKind string `json:"target_kind"`
-	Path       string `json:"path"`
-	Line       int64  `json:"line"`
-	ColumnNo   int64  `json:"column_no"`
-	EndLine    int64  `json:"end_line"`
-	Properties string `json:"properties"`
-	OwnerFile  string `json:"owner_file"`
-	Source     string `json:"source"`
-	SourceKind string `json:"source_kind"`
-	Producer   string `json:"producer"`
+	ID          string `json:"id"`
+	FromID      string `json:"from_id"`
+	Source      string `json:"source"`
+	SourceKind  string `json:"source_kind"`
+	Kind        string `json:"kind"`
+	Producer    string `json:"producer"`
+	TargetID    string `json:"target_id"`
+	Target      string `json:"target"`
+	TargetKind  string `json:"target_kind"`
+	PathID      int64  `json:"path_id"`
+	Line        int64  `json:"line"`
+	ColumnNo    int64  `json:"column_no"`
+	EndLine     int64  `json:"end_line"`
+	Properties  string `json:"properties"`
+	OwnerPathID int64  `json:"owner_path_id"`
 }
 
 type File struct {
@@ -83,6 +78,11 @@ type Node struct {
 	External            int64  `json:"external"`
 	NameFolded          string `json:"name_folded"`
 	QualifiedNameFolded string `json:"qualified_name_folded"`
+}
+
+type Path struct {
+	ID   int64  `json:"id"`
+	Path string `json:"path"`
 }
 
 type ReconciliationCleanup struct {
