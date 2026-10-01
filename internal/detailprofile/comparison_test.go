@@ -84,6 +84,61 @@ func TestCapabilityFingerprintsAttributeTypedExternalNodesToProducingEdges(t *te
 	}
 }
 
+// An edge derives its producer and location from its originating fact, so a
+// fingerprint built by joining the two silently shortens its edge set when a
+// fact or interned path row is missing. Comparing two profiles that describe
+// different edge sets is worse than refusing, so the join proves its row count.
+func TestCapabilityFingerprintsRefuseAnEdgeWithoutItsOriginatingFact(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "graph.db")
+	repository, err := sqlite.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed := graph.ParseResult{
+		Nodes: []graph.Node{{ID: "n:caller", Kind: graph.KindFunction, Name: "Caller",
+			QualifiedName: "app.Caller", Location: graph.Location{Path: "app.go", Line: 1},
+			OwnerFile: "app.go"}},
+		Facts: []graph.Fact{{ID: "f:call", FromID: "n:caller", Kind: graph.EdgeCalls,
+			TargetID: "n:caller", Producer: "go",
+			Location: graph.Location{Path: "app.go", Line: 2}, OwnerFile: "app.go"}},
+	}
+	if err := repository.ReplaceFile(ctx, graph.FileRecord{Path: "app.go", Hash: "hash",
+		Language: "go", IndexedAt: graph.NowUTC()}, parsed); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := capabilityFingerprints(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+
+	database, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		"DELETE FROM facts WHERE id = 'f:call'",
+		"UPDATE facts SET path_id = 9999",
+	} {
+		if _, err := database.ExecContext(ctx, statement); err != nil {
+			_ = database.Close()
+			t.Fatal(err)
+		}
+		if _, err := capabilityFingerprints(ctx, path); err == nil {
+			_ = database.Close()
+			t.Fatalf("fingerprint accepted a shortened edge set after %q", statement)
+		}
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func comparableReport() BenchmarkReport {
 	fingerprints := map[Capability]string{}
 	for _, capability := range capabilities {
