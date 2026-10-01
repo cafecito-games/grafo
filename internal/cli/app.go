@@ -2842,6 +2842,14 @@ cost a scan of every node, fact, and edge regardless of what changed, so
 rather than reporting zero totals. 'grafo status' always reports the full counts
 summary.
 
+'grafo index' renders phase progress on stderr so stdout stays machine-readable;
+'--progress auto' is silent unless stderr is a terminal. An interrupted index
+reports the phase timings it had already measured on stdout and exits nonzero, so
+a cancelled run still explains where its time went. The human form is labelled
+'interrupted index of'; the '--json' form is a partial report, distinguished only
+by the exit status, because an interrupted run never reaches the counts query and
+so reports 'counts_collected' false even under '--counts'.
+
 'grafo indexes list' inventories the physical database, WAL, and SHM footprint
 of every branch index for one repository. 'indexes prune' requires a retention
 selector and either '--dry-run' or '--yes'; the current index and any index whose

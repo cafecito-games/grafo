@@ -8,7 +8,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -332,18 +334,10 @@ func TestIndexProgressOffMatchesTheUnflaggedRun(t *testing.T) {
 	if flaggedErr.Len() != 0 || plainErr.Len() != 0 {
 		t.Fatalf("progress leaked: flagged=%q plain=%q", flaggedErr.String(), plainErr.String())
 	}
-	normalize := func(text string) string {
-		lines := strings.Split(text, "\n")
-		for index, line := range lines {
-			if cut := strings.LastIndex(line, "·"); strings.HasSuffix(line, "ms") && cut >= 0 {
-				lines[index] = line[:cut]
-			}
-			if strings.HasPrefix(line, "edge reconciliation:") {
-				lines[index] = "edge reconciliation:"
-			}
-		}
-		return strings.Join(lines, "\n")
-	}
+	// Durations are the one part of the report that legitimately differs
+	// between two runs of the same fixture.
+	measured := regexp.MustCompile(`[0-9]+ms`)
+	normalize := func(text string) string { return measured.ReplaceAllString(text, "Nms") }
 	if normalize(flagged.String()) != normalize(plain.String()) {
 		t.Fatalf("--progress=off changed output:\n%q\n%q", flagged.String(), plain.String())
 	}
@@ -362,44 +356,82 @@ func TestIndexProgressWriteFailureStillCompletesTheIndex(t *testing.T) {
 	}
 }
 
+// cancelingWriter interrupts the run as soon as progress proves the marked
+// phase is under way, so an interruption test measures real phase durations
+// instead of cancelling before any work has been done.
+type cancelingWriter struct {
+	mutex  sync.Mutex
+	buffer bytes.Buffer
+	marker string
+	cancel context.CancelFunc
+	fired  bool
+}
+
+func (writer *cancelingWriter) Write(data []byte) (int, error) {
+	writer.mutex.Lock()
+	defer writer.mutex.Unlock()
+	written, err := writer.buffer.Write(data)
+	if !writer.fired && strings.Contains(string(data), writer.marker) {
+		writer.fired = true
+		writer.cancel()
+	}
+	return written, err
+}
+
+func (writer *cancelingWriter) String() string {
+	writer.mutex.Lock()
+	defer writer.mutex.Unlock()
+	return writer.buffer.String()
+}
+
+func (writer *cancelingWriter) interrupted() bool {
+	writer.mutex.Lock()
+	defer writer.mutex.Unlock()
+	return writer.fired
+}
+
 func TestCanceledIndexReportsAccumulatedPhasesAndFails(t *testing.T) {
 	root := indexableRepository(t)
-	project, err := indexer.DiscoverProject(context.Background(), root)
-	if err != nil {
-		t.Fatal(err)
+	runInterrupted := func(t *testing.T, arguments ...string) (string, *cancelingWriter) {
+		t.Helper()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		stderr := &cancelingWriter{marker: "parse: progress", cancel: cancel}
+		var stdout bytes.Buffer
+		app := New(&stdout, stderr)
+		app.stderrIsTerminal = func(io.Writer) bool { return false }
+		code := app.Run(ctx, append([]string{"index", "--progress=human", "--force", "--counts"}, arguments...))
+		if !stderr.interrupted() {
+			t.Fatalf("progress never reached the parse phase: %q", stderr.String())
+		}
+		if code != 1 {
+			t.Fatalf("interrupted index exited %d: stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+		}
+		return stdout.String(), stderr
 	}
-	repository, err := sqlite.Open(context.Background(), project.IndexPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = repository.Close() }()
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
 
-	var stdout, stderr bytes.Buffer
-	app := New(&stdout, &stderr)
-	app.stderrIsTerminal = func(io.Writer) bool { return false }
-	args := parsedArguments{command: "index", flags: map[string]bool{"json": true}, values: map[string]string{}}
-	if runErr := app.runIndex(ctx, project, repository, progressOff, args); runErr == nil {
-		t.Fatal("canceled index reported success")
-	}
+	stdout, stderr := runInterrupted(t, "--json", root)
 	var report indexer.Report
-	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
-		t.Fatalf("canceled run did not emit one JSON report: %v\n%q", err, stdout.String())
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("interrupted run did not emit one JSON report: %v\n%q", err, stdout)
 	}
-	if report.Phases.TotalNS <= 0 {
-		t.Fatalf("canceled report lost its phase timings: %#v", report.Phases)
+	if report.Phases.ReadHashNS <= 0 || report.Phases.ParseNS <= 0 || report.Phases.TotalNS <= 0 {
+		t.Fatalf("interrupted report lost the phase timings it had measured: %#v", report.Phases)
+	}
+	// --counts is requested, so a completed run would report collected counts;
+	// an interrupted one never reaches the counts query.
+	if report.CountsCollected {
+		t.Fatalf("interrupted report claims complete counts: %#v", report)
+	}
+	if strings.Contains(stderr.String(), "grafo:") {
+		t.Fatalf("human progress was duplicated by a plain error: %q", stderr.String())
 	}
 
-	stdout.Reset()
-	app = New(&stdout, &stderr)
-	app.stderrIsTerminal = func(io.Writer) bool { return false }
-	humanArgs := parsedArguments{command: "index", flags: map[string]bool{}, values: map[string]string{}}
-	if runErr := app.runIndex(ctx, project, repository, progressOff, humanArgs); runErr == nil {
-		t.Fatal("canceled index reported success")
-	}
-	if !strings.Contains(stdout.String(), "interrupted index") || !strings.Contains(stdout.String(), "parse") {
-		t.Fatalf("human phase block missing: %q", stdout.String())
+	stdout, _ = runInterrupted(t, root)
+	for _, want := range []string{"interrupted index of sample", "read+hash", "parse", "persistence"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("human phase block is missing %q: %q", want, stdout)
+		}
 	}
 }
 
