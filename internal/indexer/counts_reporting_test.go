@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -52,5 +53,17 @@ func TestCountsFailureLeavesIndexRunSuccessful(t *testing.T) {
 	}
 	if len(report.Updated) != 1 {
 		t.Fatalf("indexing results lost on count failure: %#v", report.Updated)
+	}
+	// Without a diagnostic a storage failure is indistinguishable from a summary
+	// the caller never requested.
+	reported := false
+	for _, diagnostic := range report.Diagnostics {
+		if strings.Contains(diagnostic.Message, "collect graph counts") &&
+			strings.Contains(diagnostic.Message, "count query failed") {
+			reported = true
+		}
+	}
+	if !reported {
+		t.Fatalf("count failure left no diagnostic: %#v", report.Diagnostics)
 	}
 }

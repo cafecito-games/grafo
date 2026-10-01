@@ -148,12 +148,16 @@ size rather than with what changed, so it is opt-in:
 ```sh
 grafo index .                    # change report only
 grafo index . --counts           # also collect the full-graph counts summary
+grafo watch . --counts           # same opt-in for the watch report
 grafo status                     # always reports the full counts summary
 ```
 
 Without `--counts` the report states that counts were not collected, and the
 JSON report sets `counts_collected` to false and omits `counts` entirely rather
-than reporting zero totals as real values.
+than reporting zero totals as real values. If counts were requested but a count
+query failed, the run still succeeds, the report says the summary is unavailable
+rather than not requested, and the cause is reported as a run diagnostic. The
+background service never requests counts, because it never reports them.
 
 ### Background indexing and diagnostics
 

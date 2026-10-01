@@ -499,9 +499,14 @@ func executeScenarioRun(ctx context.Context, engine string, scenario ScenarioRep
 		return nil
 	}
 	indexed, runErr := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{Boundary: wrappedHook})
-	if runErr != nil {
-		if counts, countErr := repository.Counts(context.WithoutCancel(ctx)); countErr == nil {
-			indexed.Counts = counts
+	if !indexed.CountsCollected {
+		// Scenario comparisons read graph totals, so a summary the run did not
+		// collect is recounted directly instead of compared as zeros.
+		counts, countErr := repository.Counts(context.WithoutCancel(ctx))
+		if countErr == nil {
+			indexed.Counts, indexed.CountsCollected = counts, true
+		} else if runErr == nil {
+			runErr = fmt.Errorf("collect graph counts for scenario %s: %w", scenario.Name, countErr)
 		}
 	}
 	closeErr := repository.Close()

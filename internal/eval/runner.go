@@ -246,8 +246,15 @@ func indexOnce(ctx context.Context, project indexer.Project, requireUnchanged bo
 	if closeErr != nil {
 		return report, closeErr
 	}
-	if requireUnchanged && (len(report.Updated) != 0 || len(report.Removed) != 0 || report.Unchanged != report.Counts.Files) {
-		return report, fmt.Errorf("unchanged refresh mutated index: updated=%v removed=%v unchanged=%d files=%d", report.Updated, report.Removed, report.Unchanged, report.Counts.Files)
+	if requireUnchanged {
+		// The comparison below reads indexed file totals, so an uncollected
+		// summary is reported rather than compared against zero.
+		if !report.CountsCollected {
+			return report, fmt.Errorf("unchanged refresh could not be verified: graph counts were not collected")
+		}
+		if len(report.Updated) != 0 || len(report.Removed) != 0 || report.Unchanged != report.Counts.Files {
+			return report, fmt.Errorf("unchanged refresh mutated index: updated=%v removed=%v unchanged=%d files=%d", report.Updated, report.Removed, report.Unchanged, report.Counts.Files)
+		}
 	}
 	return report, nil
 }

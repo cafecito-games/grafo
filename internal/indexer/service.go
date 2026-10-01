@@ -675,9 +675,14 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	if options.ReportDetail != ReportWithoutCounts {
 		// The graph is already durable, so a failed count query degrades the
 		// optional summary instead of failing the run. Partial totals are
-		// discarded so a caller never reads them as real values.
+		// discarded so a caller never reads them as real values, and the cause
+		// is reported so a storage failure is never mistaken for a summary the
+		// caller simply did not request.
 		if counts, countsErr := s.repository.Counts(ctx); countsErr == nil {
 			report.Counts, report.CountsCollected = counts, true
+		} else {
+			report.Diagnostics = append(report.Diagnostics, graph.Diagnostic{
+				Path: project.Root, Level: "warning", Message: "collect graph counts: " + countsErr.Error()})
 		}
 	}
 	report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
