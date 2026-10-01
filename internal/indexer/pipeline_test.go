@@ -272,6 +272,98 @@ func runPipelineObservation(t *testing.T, workers int) pipelineObservation {
 	return observation
 }
 
+// runSelectedPassObservation drives a git-managed corpus so the second pass
+// takes the incremental path, where change detection excludes most paths before
+// any filesystem access. That branch is applied on the writer and decides
+// membership, so it has to keep its order across worker counts like every other
+// outcome. The non-git harness above cannot reach it, because change detection
+// needs a commit to compare against.
+func runSelectedPassObservation(t *testing.T, workers int) pipelineObservation {
+	t.Helper()
+	ctx := context.Background()
+	root := t.TempDir()
+	runGit(t, root, "init", "-b", "main")
+	writePipelineCorpus(t, root)
+	runGit(t, root, "add", "-A")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid",
+		"commit", "-m", "fixture")
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project.ID = "repo:pipeline"
+	project.Name = "corpus"
+	repository := newRecordingRepository()
+	service := indexer.NewService(repository, pipelineRegistry())
+	observation := pipelineObservation{}
+	for pass := range 2 {
+		if pass == 1 {
+			write(t, filepath.Join(root, "helper.go"), "package main\n\n// Helper does more work.\nfunc Helper() { Other() }\n")
+		}
+		run := pipelineRun{}
+		options := indexer.Options{ParseWorkers: workers, MaxFileSize: pipelineMaxFileSize,
+			ProgressObserver: func(event indexer.ProgressEvent) error {
+				if event.Phase == indexer.ProgressReadHash || event.Phase == indexer.ProgressParse ||
+					event.Phase == indexer.ProgressPersistence {
+					run.Progress = append(run.Progress,
+						fmt.Sprintf("%s/%s/%d", event.Phase, event.State, event.Completed))
+				}
+				return nil
+			}}
+		report, err := service.Run(ctx, project, options)
+		if err != nil {
+			t.Fatalf("workers=%d pass=%d: %v", workers, pass, err)
+		}
+		run.Updated = report.Updated
+		run.Unchanged = report.Unchanged
+		run.Removed = report.Removed
+		run.Skipped = report.Skipped
+		run.Checked = report.Checked
+		run.ScopedOut = report.ScopedOut
+		run.Diagnostics = report.Diagnostics
+		observation.Runs = append(observation.Runs, run)
+	}
+	observation.Calls = repository.calls()
+	// The second pass must really have taken the incremental path: it persisted
+	// only the edited file, and it excluded the rest before reading them, which
+	// is what leaves Checked far below the corpus size.
+	second := observation.Runs[1]
+	// The edited file and its Go semantic dependents are reindexed; everything
+	// else must have been excluded before being read.
+	if !slices.Contains(second.Updated, "helper.go") {
+		t.Fatalf("workers=%d selected pass did not reindex the edited file: %v", workers, second.Updated)
+	}
+	if len(second.Updated) > 6 {
+		t.Fatalf("workers=%d selected pass reindexed too much to be incremental: %v", workers, second.Updated)
+	}
+	if second.Checked >= 15 {
+		t.Fatalf("workers=%d selected pass read the whole corpus (checked=%d), so no path was excluded",
+			workers, second.Checked)
+	}
+	if second.Unchanged < 10 {
+		t.Fatalf("workers=%d selected pass excluded only %d paths", workers, second.Unchanged)
+	}
+	return observation
+}
+
+func TestServiceParseWorkerCountsProduceIdenticalSelectedPasses(t *testing.T) {
+	var baseline []byte
+	for _, workers := range []int{1, 2, runtime.NumCPU() + 2} {
+		encoded, err := json.Marshal(runSelectedPassObservation(t, workers))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if baseline == nil {
+			baseline = encoded
+			continue
+		}
+		if string(encoded) != string(baseline) {
+			t.Fatalf("workers=%d diverged from the sequential incremental run:\nsequential=%s\nconcurrent=%s",
+				workers, baseline, encoded)
+		}
+	}
+}
+
 // vanishingTransform removes the file it is handed after that file has been read
 // and parsed, which leaves the writer's pre-persist existence check as the only
 // thing that can keep it out of the graph. Deleting the path being transformed
