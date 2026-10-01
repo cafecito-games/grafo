@@ -103,6 +103,7 @@ ALTER TABLE edges_derived RENAME TO edges;
 CREATE INDEX edges_from ON edges(from_id, kind, to_id);
 CREATE INDEX edges_to ON edges(to_id, kind, from_id);
 CREATE INDEX edges_fact ON edges(fact_id);
+CREATE INDEX edges_kind ON edges(kind);
 
 -- +goose Down
 CREATE TABLE edges_denormalized (
@@ -135,6 +136,7 @@ ALTER TABLE edges_denormalized RENAME TO edges;
 CREATE INDEX edges_from ON edges(from_id, kind, to_id);
 CREATE INDEX edges_to ON edges(to_id, kind, from_id);
 CREATE INDEX edges_fact ON edges(fact_id);
+CREATE INDEX edges_kind ON edges(kind);
 
 CREATE TABLE facts_denormalized (
     id TEXT PRIMARY KEY,

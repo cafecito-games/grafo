@@ -381,3 +381,30 @@ func TestReconciliationSweepsPathsLeftUnreferencedByAnOwnerReplacement(t *testin
 		t.Fatalf("surviving edges = %#v", edges)
 	}
 }
+
+// Rebuilding a table drops every index an earlier migration created on it.
+// This locks the index set both rebuilt tables must still carry afterwards, so
+// a later rebuild cannot silently remove one a query plan depends on.
+func TestRebuiltTablesKeepEveryIndexEarlierMigrationsCreated(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "graph.sqlite")
+	repository, err := sqlite.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for table, want := range map[string][]string{
+		"edges": {"edges_fact", "edges_from", "edges_kind", "edges_to"},
+		"facts": {"facts_from_id", "facts_owner", "facts_path", "facts_source",
+			"facts_target", "facts_target_id"},
+	} {
+		for _, index := range want {
+			if countRows(t, path, "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'index'"+
+				" AND tbl_name = '"+table+"' AND name = '"+index+"'") != 1 {
+				t.Fatalf("table %q is missing index %q", table, index)
+			}
+		}
+	}
+}
