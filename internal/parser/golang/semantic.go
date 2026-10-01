@@ -196,6 +196,10 @@ type SemanticLoadMetrics struct {
 type cachedWorkspace struct {
 	key   string
 	views map[string]SemanticView
+	// scopes records each loaded package directory's scope key at load time.
+	// The workspace key deliberately excludes function bodies, so a cached
+	// view is only reusable while its own package is also unchanged.
+	scopes map[string]string
 }
 
 // PackageLoader is the production go/packages adapter. A single load at a time
@@ -268,7 +272,7 @@ func (l *PackageLoader) Load(ctx context.Context, input parserapi.Input) (Semant
 		return SemanticView{}, loadErr
 	}
 	l.mu.Lock()
-	l.cache[root] = cachedWorkspace{key: key, views: views}
+	l.cache[root] = cachedWorkspace{key: key, views: views, scopes: packageScopeKeys(root, views)}
 	l.mu.Unlock()
 	if view, ok := views[path]; ok {
 		return cloneSemanticView(view), nil
@@ -278,17 +282,42 @@ func (l *PackageLoader) Load(ctx context.Context, input parserapi.Input) (Semant
 
 func (l *PackageLoader) cached(root, key, path string) (SemanticView, bool) {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	entry, ok := l.cache[root]
+	l.mu.Unlock()
 	if !ok || entry.key != key {
 		return SemanticView{}, false
 	}
-	l.cacheHits.Add(1)
 	view, exists := entry.views[path]
 	if !exists {
-		view = unloadedSemanticView(root, path, buildContextString(root))
+		// A path the workspace load produced no package for has no
+		// body-dependent evidence, so the synthesized view stays valid.
+		l.cacheHits.Add(1)
+		return cloneSemanticView(unloadedSemanticView(root, path, buildContextString(root))), true
 	}
+	scope, err := packageScopeKey(root, path)
+	if err != nil || entry.scopes[goPackageDirectory(path)] != scope {
+		return SemanticView{}, false
+	}
+	l.cacheHits.Add(1)
 	return cloneSemanticView(view), true
+}
+
+// packageScopeKeys records the scope key of every package directory the load
+// produced a view for.
+func packageScopeKeys(root string, views map[string]SemanticView) map[string]string {
+	scopes := make(map[string]string, len(views))
+	for path := range views {
+		directory := goPackageDirectory(path)
+		if _, recorded := scopes[directory]; recorded {
+			continue
+		}
+		key, err := packageScopeKey(root, path)
+		if err != nil {
+			continue
+		}
+		scopes[directory] = key
+	}
+	return scopes
 }
 
 func unloadedSemanticView(root, path, buildContext string) SemanticView {
@@ -1256,10 +1285,16 @@ func relativeSourcePath(root, filename string) (string, bool) {
 	return filepath.ToSlash(relative), true
 }
 
+// semanticWorkspaceKey fingerprints the repository-wide Go facts that change
+// how an otherwise untouched Go file extracts: the build context, every module
+// and vendor manifest that selects the load plan, and the declaration surface
+// of every Go source file. Function bodies are deliberately excluded because
+// the statement-level analyzers only ever walk the package they belong to;
+// their blast radius is the package scope key instead.
 func semanticWorkspaceKey(ctx context.Context, root string) (string, string, error) {
 	buildContext := buildContextString(root)
-	digest := sha256.New()
-	_, _ = digest.Write([]byte(buildContext))
+	digest := newSemanticDigest(goSemanticSurfaceVersion)
+	digest.writeField(buildContext)
 	paths, err := semanticRepositoryPaths(ctx, root)
 	if err != nil {
 		return "", "", err
@@ -1272,10 +1307,14 @@ func semanticWorkspaceKey(ctx context.Context, root string) (string, string, err
 		if err != nil {
 			continue
 		}
-		_, _ = digest.Write([]byte(relative))
-		_, _ = digest.Write([]byte{0})
-		_, _ = digest.Write(content)
-		_, _ = digest.Write([]byte{0})
+		digest.writeField(relative)
+		if !isGoSourcePath(relative) {
+			// Manifests select the module graph and load mode for every
+			// package, so they remain fingerprinted in full.
+			digest.writeBytes(content)
+			continue
+		}
+		digest.writeField(declarationSurfaceDigest(relative, content))
 	}
 	// Vendor trees are not application modules, but their manifest controls
 	// the load mode and exact dependency graph for each eligible module.
@@ -1288,10 +1327,8 @@ func semanticWorkspaceKey(ctx context.Context, root string) (string, string, err
 		if readErr != nil {
 			continue
 		}
-		_, _ = digest.Write([]byte(vendorManifest))
-		_, _ = digest.Write([]byte{0})
-		_, _ = digest.Write(content)
-		_, _ = digest.Write([]byte{0})
+		digest.writeField(vendorManifest)
+		digest.writeBytes(content)
 	}
 	workspace := discoverGoWorkspace(root)
 	if workspace != "" && workspace != "off" {
@@ -1304,13 +1341,59 @@ func semanticWorkspaceKey(ctx context.Context, root string) (string, string, err
 			if readErr != nil {
 				continue
 			}
-			_, _ = digest.Write([]byte(filepath.Clean(path)))
-			_, _ = digest.Write([]byte{0})
-			_, _ = digest.Write(content)
-			_, _ = digest.Write([]byte{0})
+			digest.writeField(filepath.Clean(path))
+			digest.writeBytes(content)
 		}
 	}
-	return hex.EncodeToString(digest.Sum(nil)), buildContext, nil
+	return digest.sum(), buildContext, nil
+}
+
+// declarationSurfaceDigest returns a stable digest of a Go file's declaration
+// surface. A file that does not parse has no trustworthy surface, so its full
+// contents are fingerprinted instead; that is conservative and never skips a
+// file whose extraction could change.
+func declarationSurfaceDigest(path string, content []byte) string {
+	contentKey := sha256.Sum256(content)
+	if cached, ok := loadDeclarationSurface(contentKey); ok {
+		return cached
+	}
+	surface, err := goDeclarationSurface(path, content)
+	digest := newSemanticDigest(goSemanticSurfaceVersion)
+	if err != nil {
+		digest.writeField("unparsed")
+		digest.writeBytes(content)
+	} else {
+		digest.writeField("surface")
+		digest.writeBytes(surface)
+	}
+	result := digest.sum()
+	storeDeclarationSurface(contentKey, result)
+	return result
+}
+
+// declarationSurfaceLimit bounds the in-process surface cache. The cache only
+// avoids reparsing identical bytes, so discarding it is always safe.
+const declarationSurfaceLimit = 1 << 16
+
+var (
+	declarationSurfaceMu    sync.Mutex
+	declarationSurfaceCache = map[[sha256.Size]byte]string{}
+)
+
+func loadDeclarationSurface(key [sha256.Size]byte) (string, bool) {
+	declarationSurfaceMu.Lock()
+	defer declarationSurfaceMu.Unlock()
+	value, ok := declarationSurfaceCache[key]
+	return value, ok
+}
+
+func storeDeclarationSurface(key [sha256.Size]byte, value string) {
+	declarationSurfaceMu.Lock()
+	defer declarationSurfaceMu.Unlock()
+	if len(declarationSurfaceCache) >= declarationSurfaceLimit {
+		declarationSurfaceCache = map[[sha256.Size]byte]string{}
+	}
+	declarationSurfaceCache[key] = value
 }
 
 func semanticWorkspaceEvidenceKey(root string) (string, error) {

@@ -33,6 +33,11 @@ type Parser interface {
 // SemanticKeyer lets a parser add repository-level configuration to a file's
 // incremental cache key. Parsers that do not depend on such configuration do
 // not need to implement it.
+//
+// A parser that also implements WorkspaceSemanticKeyer refines that shared key
+// here with the scope-local facts that change how this one file extracts.
+// Callers pass the already computed workspace key as Input.SemanticKey so the
+// repository-wide part is never recomputed per file.
 type SemanticKeyer interface {
 	SemanticKey(context.Context, Input) (string, error)
 }

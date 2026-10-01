@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -3015,14 +3016,61 @@ func Send(client *http.Client) {
 	}
 }
 
-func TestChiHelperEditInvalidatesEveryGoPackageView(t *testing.T) {
-	parser := golangparser.New()
-	got := parser.SemanticAffectedPaths(
-		[]string{"routes.go", "helpers.go", "nested/child.go", "README.md"},
-		[]string{"helpers.go"},
-	)
-	if !reflect.DeepEqual(got, []string{"routes.go", "helpers.go", "nested/child.go"}) {
-		t.Fatalf("affected paths = %v, want every Go package view", got)
+func TestSemanticAffectedPathsScopesGoSourceEditsToTheirPackage(t *testing.T) {
+	all := []string{"routes.go", "helpers.go", "nested/child.go", "go.mod", "README.md", "api/service.proto"}
+	for _, testCase := range []struct {
+		name    string
+		changed []string
+		want    []string
+	}{
+		{
+			name:    "package sibling edit",
+			changed: []string{"helpers.go"},
+			want:    []string{"routes.go", "helpers.go"},
+		},
+		{
+			name:    "edit in another package",
+			changed: []string{"nested/child.go"},
+			want:    []string{"nested/child.go"},
+		},
+		{
+			name:    "edits in several packages",
+			changed: []string{"helpers.go", "nested/child.go"},
+			want:    []string{"routes.go", "helpers.go", "nested/child.go"},
+		},
+		{
+			name:    "module manifest edit",
+			changed: []string{"go.mod"},
+			want:    []string{"routes.go", "helpers.go", "nested/child.go"},
+		},
+		{
+			name:    "vendor manifest edit",
+			changed: []string{"vendor/modules.txt"},
+			want:    []string{"routes.go", "helpers.go", "nested/child.go"},
+		},
+		{
+			name:    "protobuf binding edit",
+			changed: []string{"api/service.proto"},
+			want:    []string{"routes.go", "helpers.go", "nested/child.go"},
+		},
+		{
+			name:    "unrelated edit",
+			changed: []string{"README.md"},
+			want:    nil,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := golangparser.New().SemanticAffectedPaths(all, testCase.changed)
+			if len(got) == 0 && len(testCase.want) == 0 {
+				return
+			}
+			sort.Strings(got)
+			want := append([]string(nil), testCase.want...)
+			sort.Strings(want)
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("affected paths = %v, want %v", got, want)
+			}
+		})
 	}
 }
 
@@ -3236,5 +3284,287 @@ func TestWorkspaceSemanticEvidenceTracksExternalInputs(t *testing.T) {
 	}
 	if third == fourth {
 		t.Fatal("Go build environment did not change workspace evidence")
+	}
+}
+
+// TestWorkspaceSemanticKeyTracksOnlyRepositoryWideFacts pins the contract that
+// the workspace key changes exactly when an edit can change how an otherwise
+// untouched Go file in another package extracts.
+func TestWorkspaceSemanticKeyTracksOnlyRepositoryWideFacts(t *testing.T) {
+	baseline := map[string]string{
+		"go.mod": "module example.com/service\n\ngo 1.26\n",
+		"api/api.go": `package api
+
+import "strings"
+
+type Store interface {
+	Get(id string) (string, error)
+}
+
+const Prefix = "/v1"
+
+func Join(parts ...string) string { return strings.Join(parts, "/") }
+`,
+		"store/store.go": `package store
+
+type Memory struct{}
+
+func (Memory) Get(id string) (string, error) { return id, nil }
+`,
+	}
+	for _, testCase := range []struct {
+		name    string
+		mutate  map[string]string
+		changed bool
+	}{
+		{
+			name: "function body rewritten",
+			mutate: map[string]string{"api/api.go": `package api
+
+import "strings"
+
+type Store interface {
+	Get(id string) (string, error)
+}
+
+const Prefix = "/v1"
+
+func Join(parts ...string) string {
+	joined := strings.Join(parts, "/")
+	return joined
+}
+`},
+			changed: false,
+		},
+		{
+			name: "exported signature changed",
+			mutate: map[string]string{"api/api.go": `package api
+
+import "strings"
+
+type Store interface {
+	Get(id string) (string, error)
+}
+
+const Prefix = "/v1"
+
+func Join(separator string, parts ...string) string { return strings.Join(parts, separator) }
+`},
+			changed: true,
+		},
+		{
+			name: "exported constant value changed",
+			mutate: map[string]string{"api/api.go": `package api
+
+import "strings"
+
+type Store interface {
+	Get(id string) (string, error)
+}
+
+const Prefix = "/v2"
+
+func Join(parts ...string) string { return strings.Join(parts, "/") }
+`},
+			changed: true,
+		},
+		{
+			name: "interface method set changed",
+			mutate: map[string]string{"api/api.go": `package api
+
+import "strings"
+
+type Store interface {
+	Get(id string) (string, error)
+	Put(id string) error
+}
+
+const Prefix = "/v1"
+
+func Join(parts ...string) string { return strings.Join(parts, "/") }
+`},
+			changed: true,
+		},
+		{
+			name: "import removed",
+			mutate: map[string]string{"api/api.go": `package api
+
+type Store interface {
+	Get(id string) (string, error)
+}
+
+const Prefix = "/v1"
+
+func Join(parts ...string) string { return parts[0] }
+`},
+			changed: true,
+		},
+		{
+			name: "new exported symbol added",
+			mutate: map[string]string{"api/api.go": `package api
+
+import "strings"
+
+type Store interface {
+	Get(id string) (string, error)
+}
+
+const Prefix = "/v1"
+
+func Join(parts ...string) string { return strings.Join(parts, "/") }
+
+func Split(value string) []string { return strings.Split(value, "/") }
+`},
+			changed: true,
+		},
+		{
+			name: "build constraint added",
+			mutate: map[string]string{"store/store.go": `//go:build linux
+
+package store
+
+type Memory struct{}
+
+func (Memory) Get(id string) (string, error) { return id, nil }
+`},
+			changed: true,
+		},
+		{
+			name: "documentation comment appended",
+			mutate: map[string]string{"store/store.go": `package store
+
+type Memory struct{}
+
+func (Memory) Get(id string) (string, error) { return id, nil }
+
+// Memory is an in-memory store.
+`},
+			changed: false,
+		},
+		{
+			name: "generate directive appended",
+			mutate: map[string]string{"store/store.go": `package store
+
+type Memory struct{}
+
+func (Memory) Get(id string) (string, error) { return id, nil }
+
+//go:generate stringer -type=Memory
+`},
+			changed: true,
+		},
+		{
+			name:    "module manifest changed",
+			mutate:  map[string]string{"go.mod": "module example.com/service\n\ngo 1.25\n"},
+			changed: true,
+		},
+		{
+			name:    "module checksums changed",
+			mutate:  map[string]string{"go.sum": "example.com/dependency v1.0.0 h1:abc=\n"},
+			changed: true,
+		},
+		{
+			name:    "vendor manifest changed",
+			mutate:  map[string]string{"vendor/modules.txt": "# example.com/dependency v1.0.0\n"},
+			changed: true,
+		},
+		{
+			name:    "new package added",
+			mutate:  map[string]string{"extra/extra.go": "package extra\n"},
+			changed: true,
+		},
+		{
+			name:    "source stops parsing",
+			mutate:  map[string]string{"store/store.go": "package store\n\nfunc (Memory) Get(\n"},
+			changed: true,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			root := t.TempDir()
+			for path, content := range baseline {
+				writeFile(t, filepath.Join(root, path), content)
+			}
+			parser := golangparser.New()
+			input := parserapi.Input{Root: root, Repository: "sample", RepoID: "repo:sample"}
+			before, err := parser.WorkspaceSemanticKey(context.Background(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for path, content := range testCase.mutate {
+				writeFile(t, filepath.Join(root, path), content)
+			}
+			after, err := parser.WorkspaceSemanticKey(context.Background(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if changed := before != after; changed != testCase.changed {
+				t.Fatalf("workspace key changed = %t, want %t", changed, testCase.changed)
+			}
+		})
+	}
+}
+
+// TestSemanticKeyScopesBodyEditsToOnePackage proves the per-file refinement
+// invalidates the package that owns a rewritten body, and only that package.
+func TestSemanticKeyScopesBodyEditsToOnePackage(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/service\n\ngo 1.26\n")
+	writeFile(t, filepath.Join(root, "api", "routes.go"), "package api\n\nfunc Routes() { Helper() }\n")
+	writeFile(t, filepath.Join(root, "api", "helpers.go"), "package api\n\nfunc Helper() {}\n")
+	writeFile(t, filepath.Join(root, "store", "store.go"), "package store\n\nfunc Open() {}\n")
+
+	parser := golangparser.New()
+	paths := []string{"api/routes.go", "api/helpers.go", "store/store.go"}
+	keyFor := func(path string) string {
+		t.Helper()
+		key, err := parser.SemanticKey(context.Background(), parserapi.Input{Root: root, Path: path})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return key
+	}
+	before := map[string]string{}
+	for _, path := range paths {
+		before[path] = keyFor(path)
+	}
+	if before["api/routes.go"] != before["api/helpers.go"] {
+		t.Fatal("files of one package must share one semantic key")
+	}
+	if before["api/routes.go"] == before["store/store.go"] {
+		t.Fatal("files of different packages must not share one semantic key")
+	}
+
+	writeFile(t, filepath.Join(root, "api", "helpers.go"), "package api\n\nfunc Helper() { _ = 1 }\n")
+	for _, path := range paths {
+		changed := keyFor(path) != before[path]
+		want := strings.HasPrefix(path, "api/")
+		if changed != want {
+			t.Fatalf("%s key changed = %t, want %t", path, changed, want)
+		}
+	}
+}
+
+func TestSemanticKeyReusesCallerWorkspaceKey(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/service\n\ngo 1.26\n")
+	writeFile(t, filepath.Join(root, "api", "routes.go"), "package api\n\nfunc Routes() {}\n")
+	parser := golangparser.New()
+	workspaceKey, err := parser.WorkspaceSemanticKey(context.Background(), parserapi.Input{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refined, err := parser.SemanticKey(context.Background(), parserapi.Input{Root: root, Path: "api/routes.go", SemanticKey: workspaceKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(refined, workspaceKey+":") {
+		t.Fatalf("refined key %q does not extend the supplied workspace key %q", refined, workspaceKey)
+	}
+	computed, err := parser.SemanticKey(context.Background(), parserapi.Input{Root: root, Path: "api/routes.go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if computed != refined {
+		t.Fatalf("refined key = %q with a supplied workspace key, %q without", refined, computed)
 	}
 }
