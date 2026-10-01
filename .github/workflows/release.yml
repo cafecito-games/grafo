@@ -24,8 +24,9 @@ env:
 jobs:
   verify:
     name: Verify
-    # Some packages only build on Linux, so the gate stays where CI runs it
-    # rather than on the macOS release runner.
+    # The gate runs on the same platform as CI so a release is verified against
+    # the environment pull requests were checked in, not the macOS runner the
+    # cross-compiling release job needs.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
