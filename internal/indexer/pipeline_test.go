@@ -1,0 +1,428 @@
+package indexer_test
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/indexer"
+	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	configparser "github.com/cafecito-games/grafo/internal/parser/config"
+	gdscriptparser "github.com/cafecito-games/grafo/internal/parser/gdscript"
+	godotparser "github.com/cafecito-games/grafo/internal/parser/godot"
+	golangparser "github.com/cafecito-games/grafo/internal/parser/golang"
+	markdownparser "github.com/cafecito-games/grafo/internal/parser/markdown"
+	protobufparser "github.com/cafecito-games/grafo/internal/parser/protobuf"
+	pythonparser "github.com/cafecito-games/grafo/internal/parser/python"
+	sqlparser "github.com/cafecito-games/grafo/internal/parser/sql"
+	postgresparser "github.com/cafecito-games/grafo/internal/parser/sql/postgres"
+	typescriptparser "github.com/cafecito-games/grafo/internal/parser/typescript"
+)
+
+// recordingRepository captures the exact durable call sequence an indexing run
+// produces. It replaces SQLite in determinism tests so a comparison cannot be
+// weakened by storage-side ordering or by per-run timestamps.
+type recordingRepository struct {
+	mu      sync.Mutex
+	meta    map[string]string
+	files   map[string]graph.FileRecord
+	entries []repositoryCall
+}
+
+type repositoryCall struct {
+	Call     string             `json:"call"`
+	Path     string             `json:"path,omitempty"`
+	Owner    string             `json:"owner,omitempty"`
+	Hash     string             `json:"hash,omitempty"`
+	Language string             `json:"language,omitempty"`
+	Size     int64              `json:"size,omitempty"`
+	Paths    []string           `json:"paths,omitempty"`
+	Nodes    []string           `json:"nodes,omitempty"`
+	Facts    []string           `json:"facts,omitempty"`
+	Messages []graph.Diagnostic `json:"messages,omitempty"`
+}
+
+func newRecordingRepository() *recordingRepository {
+	return &recordingRepository{meta: map[string]string{}, files: map[string]graph.FileRecord{}}
+}
+
+func (r *recordingRepository) Meta(_ context.Context, key string) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.meta[key], nil
+}
+
+func (r *recordingRepository) SetMeta(_ context.Context, key, value string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.meta[key] = value
+	return nil
+}
+
+func (r *recordingRepository) Files(context.Context) (map[string]graph.FileRecord, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := make(map[string]graph.FileRecord, len(r.files))
+	for path, record := range r.files {
+		result[path] = record
+	}
+	return result, nil
+}
+
+func (r *recordingRepository) ReplaceFile(_ context.Context, record graph.FileRecord, parsed graph.ParseResult) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.files[record.Path] = record
+	r.entries = append(r.entries, repositoryCall{Call: "replace_file", Path: record.Path, Hash: record.Hash,
+		Language: record.Language, Size: record.Size, Nodes: nodeIdentities(parsed), Facts: factIdentities(parsed),
+		Messages: parsed.Diagnostics})
+	return nil
+}
+
+func (r *recordingRepository) ReplaceOwner(_ context.Context, owner string, parsed graph.ParseResult) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.entries = append(r.entries, repositoryCall{Call: "replace_owner", Owner: owner,
+		Nodes: nodeIdentities(parsed), Facts: factIdentities(parsed), Messages: parsed.Diagnostics})
+	return nil
+}
+
+func (r *recordingRepository) RemoveFiles(_ context.Context, paths []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, path := range paths {
+		delete(r.files, path)
+	}
+	r.entries = append(r.entries, repositoryCall{Call: "remove_files", Paths: paths})
+	return nil
+}
+
+func (r *recordingRepository) Reconcile(context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.entries = append(r.entries, repositoryCall{Call: "reconcile"})
+	return nil
+}
+
+func (r *recordingRepository) Counts(context.Context) (graph.Counts, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return graph.Counts{Files: len(r.files)}, nil
+}
+
+func (r *recordingRepository) calls() []repositoryCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]repositoryCall(nil), r.entries...)
+}
+
+func nodeIdentities(parsed graph.ParseResult) []string {
+	result := make([]string, 0, len(parsed.Nodes))
+	for _, node := range parsed.Nodes {
+		result = append(result, fmt.Sprintf("%s|%s|%s|%s:%d:%d", node.ID, node.Kind, node.QualifiedName,
+			node.Location.Path, node.Location.Line, node.Location.Column))
+	}
+	return result
+}
+
+func factIdentities(parsed graph.ParseResult) []string {
+	result := make([]string, 0, len(parsed.Facts))
+	for _, fact := range parsed.Facts {
+		result = append(result, fmt.Sprintf("%s|%s|%s|%s|%s|%s:%d:%d", fact.ID, fact.FromID, fact.Kind,
+			fact.TargetID, fact.Producer, fact.Location.Path, fact.Location.Line, fact.Location.Column))
+	}
+	return result
+}
+
+// pipelineObservation is everything about one indexing run that the issue
+// requires to stay identical across worker counts.
+type pipelineObservation struct {
+	Updated     []string           `json:"updated"`
+	Unchanged   int                `json:"unchanged"`
+	Removed     []string           `json:"removed"`
+	Skipped     []string           `json:"skipped"`
+	Checked     int                `json:"checked"`
+	ScopedOut   int                `json:"scoped_out"`
+	Diagnostics []graph.Diagnostic `json:"diagnostics"`
+	Boundaries  []indexer.Boundary `json:"boundaries"`
+	Progress    []string           `json:"progress"`
+	Calls       []repositoryCall   `json:"calls"`
+}
+
+func writePipelineCorpus(t testing.TB, root string) {
+	t.Helper()
+	write(t, filepath.Join(root, "go.mod"), "module example.com/corpus\n\ngo 1.26\n")
+	write(t, filepath.Join(root, "main.go"), "package main\n\nfunc main() { Helper(); Other() }\n")
+	write(t, filepath.Join(root, "helper.go"), "package main\n\n// Helper does work.\nfunc Helper() {}\n")
+	write(t, filepath.Join(root, "other.go"), "package main\n\nfunc Other() { Helper() }\n")
+	write(t, filepath.Join(root, "worker.py"), "def run():\n    return helper()\n\n\ndef helper():\n    return 1\n")
+	write(t, filepath.Join(root, "queue.py"), "class Queue:\n    def push(self, value):\n        return value\n")
+	write(t, filepath.Join(root, "client.ts"), "import { shape } from './shape'\nexport function call() { return shape() }\n")
+	write(t, filepath.Join(root, "shape.ts"), "export function shape() { return 1 }\n")
+	write(t, filepath.Join(root, "barrel.ts"), "export * from './shape'\n")
+	write(t, filepath.Join(root, "project.godot"), "config_version=5\n\n[application]\n\nconfig/name=\"corpus\"\n")
+	write(t, filepath.Join(root, "player.gd"), "class_name Player\n\nfunc run() -> void:\n\tstep()\n\nfunc step() -> void:\n\tpass\n")
+	write(t, filepath.Join(root, "enemy.gd"), "class_name Enemy\n\nfunc tick() -> void:\n\tpass\n")
+	write(t, filepath.Join(root, "world.tscn"), "[gd_scene format=3]\n\n[node name=\"World\" type=\"Node2D\"]\n")
+	write(t, filepath.Join(root, "schema.sql"), "CREATE TABLE events (id bigint PRIMARY KEY, name text);\n")
+	write(t, filepath.Join(root, "reports.sql"), "CREATE VIEW recent AS SELECT id FROM events;\n")
+	write(t, filepath.Join(root, "service.proto"), "syntax = \"proto3\";\npackage corpus;\nmessage Ping { string id = 1; }\n")
+	write(t, filepath.Join(root, "README.md"), "# Corpus\n\n## Usage\n\nSee `main.go`.\n")
+	write(t, filepath.Join(root, ".env"), "API_URL=http://localhost:8080\n")
+}
+
+func pipelineRegistry() *parserapi.Registry {
+	return parserapi.NewRegistry(gdscriptparser.New(), godotparser.New(), golangparser.New(),
+		pythonparser.New(), typescriptparser.New(), sqlparser.New(postgresparser.New()),
+		protobufparser.New(), markdownparser.New(), configparser.New())
+}
+
+func runPipelineObservation(t *testing.T, workers int) pipelineObservation {
+	t.Helper()
+	ctx := context.Background()
+	root := t.TempDir()
+	writePipelineCorpus(t, root)
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The temporary root differs per run, so neutralize the only identity that
+	// leaks it into node and fact IDs.
+	project.ID = "repo:pipeline"
+	project.Name = "corpus"
+	repository := newRecordingRepository()
+	observation := pipelineObservation{}
+	options := indexer.Options{
+		ParseWorkers: workers,
+		Boundary: func(boundary indexer.Boundary) error {
+			observation.Boundaries = append(observation.Boundaries, boundary)
+			return nil
+		},
+		ProgressObserver: func(event indexer.ProgressEvent) error {
+			if event.Phase == indexer.ProgressReadHash || event.Phase == indexer.ProgressParse ||
+				event.Phase == indexer.ProgressPersistence {
+				observation.Progress = append(observation.Progress,
+					fmt.Sprintf("%s/%s/%d", event.Phase, event.State, event.Completed))
+			}
+			return nil
+		},
+	}
+	report, err := indexer.NewService(repository, pipelineRegistry()).Run(ctx, project, options)
+	if err != nil {
+		t.Fatalf("workers=%d: %v", workers, err)
+	}
+	observation.Updated = report.Updated
+	observation.Unchanged = report.Unchanged
+	observation.Removed = report.Removed
+	observation.Skipped = report.Skipped
+	observation.Checked = report.Checked
+	observation.ScopedOut = report.ScopedOut
+	observation.Diagnostics = report.Diagnostics
+	observation.Calls = repository.calls()
+	// A thin corpus would let a reordering slip through, so require the whole
+	// fixture tree to have been indexed.
+	if len(observation.Updated) < 15 {
+		t.Fatalf("workers=%d indexed only %v", workers, observation.Updated)
+	}
+	return observation
+}
+
+func TestServiceParseWorkerCountsProduceIdenticalRuns(t *testing.T) {
+	counts := []int{1, 2, runtime.NumCPU() + 2}
+	var baseline []byte
+	for _, workers := range counts {
+		observation := runPipelineObservation(t, workers)
+		encoded, err := json.Marshal(observation)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if baseline == nil {
+			baseline = encoded
+			continue
+		}
+		if string(encoded) != string(baseline) {
+			t.Fatalf("workers=%d diverged from the sequential run:\nsequential=%s\nconcurrent=%s",
+				workers, baseline, encoded)
+		}
+	}
+}
+
+func TestServiceParseWorkerCountDefaultsToBoundedPool(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	writePipelineCorpus(t, root)
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project.ID = "repo:pipeline"
+	repository := newRecordingRepository()
+	var observed int
+	registry := parserapi.NewRegistry(newCountingParser(&observed), configparser.New())
+	if _, err := indexer.NewService(repository, registry).Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if observed < 2 {
+		t.Fatalf("default worker count never overlapped parses: peak concurrency %d", observed)
+	}
+	if observed > runtime.NumCPU() {
+		t.Fatalf("default worker count exceeded the available cores: peak concurrency %d", observed)
+	}
+}
+
+// countingParser blocks until a second parse joins it, which proves that the
+// default configuration actually overlaps parses, then records the peak.
+type countingParser struct {
+	mu          sync.Mutex
+	active      int
+	peak        *int
+	release     chan struct{}
+	releaseOnce sync.Once
+}
+
+func newCountingParser(peak *int) *countingParser {
+	return &countingParser{peak: peak, release: make(chan struct{})}
+}
+
+func (*countingParser) Language() string { return "go" }
+func (*countingParser) Supports(path string) bool {
+	return strings.HasSuffix(path, ".go") || strings.HasSuffix(path, ".py") ||
+		strings.HasSuffix(path, ".ts") || strings.HasSuffix(path, ".gd") ||
+		strings.HasSuffix(path, ".sql") || strings.HasSuffix(path, ".md")
+}
+
+func (p *countingParser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseResult, error) {
+	p.mu.Lock()
+	p.active++
+	if p.active > *p.peak {
+		*p.peak = p.active
+	}
+	reached := p.active >= 2
+	p.mu.Unlock()
+	if reached {
+		p.releaseOnce.Do(func() { close(p.release) })
+	} else {
+		select {
+		case <-p.release:
+		case <-ctx.Done():
+		}
+	}
+	p.mu.Lock()
+	p.active--
+	p.mu.Unlock()
+	return parserapi.NewBuilder(input, "go").Finish(), nil
+}
+
+// failingTransform fails one known path so the run's failure can be pinned to
+// that path regardless of how far the read-ahead progressed.
+type failingTransform struct{ path string }
+
+func (failingTransform) SemanticKey() string { return "failing-transform-v1" }
+
+func (f failingTransform) Transform(_ context.Context, input parserapi.Input, parsed graph.ParseResult) (graph.ParseResult, error) {
+	if input.Path == f.path {
+		return graph.ParseResult{}, errors.New("synthetic transform failure")
+	}
+	return parsed, nil
+}
+
+func TestServiceParseStagePropagatesTransformFailure(t *testing.T) {
+	for _, workers := range []int{1, 4} {
+		ctx := context.Background()
+		root := t.TempDir()
+		writePipelineCorpus(t, root)
+		project, err := indexer.DiscoverProject(ctx, root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		repository := newRecordingRepository()
+		_, err = indexer.NewService(repository, pipelineRegistry()).Run(ctx, project,
+			indexer.Options{ParseWorkers: workers, ResultTransform: failingTransform{path: "worker.py"}})
+		if err == nil {
+			t.Fatalf("workers=%d: expected the transform failure to fail the run", workers)
+		}
+		if !strings.Contains(err.Error(), "transform parsed evidence for worker.py") {
+			t.Fatalf("workers=%d: unexpected error %v", workers, err)
+		}
+		for _, call := range repository.calls() {
+			if call.Call == "replace_file" && call.Path > "worker.py" {
+				t.Fatalf("workers=%d: persisted %s after the failing path", workers, call.Path)
+			}
+		}
+	}
+}
+
+func TestServiceParseStageStopsOnCancellation(t *testing.T) {
+	for _, workers := range []int{1, 4} {
+		ctx, cancel := context.WithCancel(context.Background())
+		root := t.TempDir()
+		writePipelineCorpus(t, root)
+		project, err := indexer.DiscoverProject(ctx, root)
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		repository := newRecordingRepository()
+		options := indexer.Options{ParseWorkers: workers, Boundary: func(indexer.Boundary) error {
+			cancel()
+			return context.Canceled
+		}}
+		_, err = indexer.NewService(repository, pipelineRegistry()).Run(ctx, project, options)
+		cancel()
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("workers=%d: expected cancellation, got %v", workers, err)
+		}
+		calls := repository.calls()
+		persisted := 0
+		for _, call := range calls {
+			if call.Call == "replace_file" {
+				persisted++
+			}
+		}
+		if persisted != 1 {
+			t.Fatalf("workers=%d: cancellation persisted %d files, want 1", workers, persisted)
+		}
+		// The pending-scope marker must survive so the next run rebuilds rather
+		// than trusting a partially mutated catalog.
+		pending, err := repository.Meta(ctx, "index_scope_pending")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pending == "" {
+			t.Fatalf("workers=%d: cancellation left no pending scope marker", workers)
+		}
+	}
+}
+
+func TestServiceParseStageDropsFileRemovedBeforePersistence(t *testing.T) {
+	for _, workers := range []int{1, 4} {
+		ctx := context.Background()
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, "app"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		write(t, filepath.Join(root, "app", "a.race"), "a")
+		write(t, filepath.Join(root, "app", "b.race"), "b")
+		project, err := indexer.DiscoverProject(ctx, root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		repository := newRecordingRepository()
+		report, err := indexer.NewService(repository, parserapi.NewRegistry(deletingParser{})).
+			Run(ctx, project, indexer.Options{ParseWorkers: workers})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(report.Updated) != 1 || report.Updated[0] != "app/a.race" {
+			t.Fatalf("workers=%d: persisted a file lost before the writer reached it: %v", workers, report.Updated)
+		}
+	}
+}

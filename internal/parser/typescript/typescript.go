@@ -20,6 +20,9 @@ import (
 )
 
 type Parser struct {
+	// buildMu serializes module catalog construction so concurrent parses in one
+	// indexing run share a single repository scan.
+	buildMu       sync.Mutex
 	cacheMu       sync.Mutex
 	cacheRoot     string
 	cacheKey      string
@@ -228,15 +231,17 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 }
 
 func (p *Parser) catalogFor(ctx context.Context, input parserapi.Input) (*moduleCatalog, error) {
-	if input.SemanticKey != "" {
-		p.cacheMu.Lock()
-		if p.cacheCatalog != nil && p.cacheRoot == input.Root && p.cacheKey == input.SemanticKey {
-			catalog := p.cacheCatalog.clone()
-			p.cacheMu.Unlock()
-			p.cacheHits.Add(1)
-			return catalog, nil
-		}
-		p.cacheMu.Unlock()
+	if catalog := p.cachedCatalog(input); catalog != nil {
+		return catalog, nil
+	}
+	// Building the catalog scans the whole repository, so concurrent parses
+	// serialize here and probe the cache again once the gate is theirs. Without
+	// the gate every parser that started before the first build finished would
+	// rescan the same tree.
+	p.buildMu.Lock()
+	defer p.buildMu.Unlock()
+	if catalog := p.cachedCatalog(input); catalog != nil {
+		return catalog, nil
 	}
 	catalog, err := buildModuleCatalog(ctx, input)
 	if err != nil {
@@ -249,6 +254,22 @@ func (p *Parser) catalogFor(ctx context.Context, input parserapi.Input) (*module
 		result.diagnostics = append(result.diagnostics, "TypeScript resolution inputs changed during parsing; rebuilt the module catalog")
 	}
 	return result, nil
+}
+
+// cachedCatalog returns a private copy of the cached catalog when it was built
+// for this root and semantic key. An empty semantic key means the caller has no
+// stable key for the run, so nothing may be reused.
+func (p *Parser) cachedCatalog(input parserapi.Input) *moduleCatalog {
+	if input.SemanticKey == "" {
+		return nil
+	}
+	p.cacheMu.Lock()
+	defer p.cacheMu.Unlock()
+	if p.cacheCatalog == nil || p.cacheRoot != input.Root || p.cacheKey != input.SemanticKey {
+		return nil
+	}
+	p.cacheHits.Add(1)
+	return p.cacheCatalog.clone()
 }
 
 func (p *Parser) storeCatalog(root string, catalog *moduleCatalog) {

@@ -35,6 +35,12 @@ type Options struct {
 	Boundary         BoundaryHook
 	ProgressObserver ProgressObserver
 	ReportDetail     ReportDetail
+	// ParseWorkers bounds the goroutines that read, hash, and parse files ahead
+	// of the single ordered writer. Zero selects a CPU-derived default; one runs
+	// the stage inline on the writer goroutine and reproduces the sequential
+	// pipeline exactly. Persistence is single-writer and path-ordered at every
+	// worker count, so the indexed graph never depends on this value.
+	ParseWorkers int
 	// ResultTransform is a benchmark/test-only interception point after parsing
 	// and before any durable mutation. Production CLI, MCP, watch, and service
 	// composition leave it nil. Its semantic key participates in each file hash
@@ -78,6 +84,11 @@ type Boundary struct {
 
 type BoundaryHook func(Boundary) error
 
+// PhaseDurations reports time attributed to each indexing phase. Every field is
+// the sum of the per-unit durations measured inside that phase, not a wall-clock
+// span of the run. ReadHashNS and ParseNS therefore aggregate work performed on
+// several goroutines and can exceed TotalNS when more than one parse worker is
+// active; TotalNS alone is wall clock.
 type PhaseDurations struct {
 	GitProbeNS       int64 `json:"git_probe_ns"`
 	MembershipNS     int64 `json:"membership_ns"`
@@ -400,124 +411,85 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	if err := progress.emit(ProgressPersistence, ProgressStarted, "files", 0, 0, ""); err != nil {
 		return report, err
 	}
-	for _, path := range paths {
-		if selected != nil && !selected[path] {
-			current[path] = true
+	stage := &fileStage{project: project, options: options, parsers: s.parsers, paths: paths,
+		selected: selected, known: known, workspaceSemanticKeys: workspaceSemanticKeys}
+	// The writer owns every durable mutation and every piece of run state, so
+	// report slices, progress counters, and boundary callbacks stay in the
+	// original path order regardless of how many workers prepared the files.
+	applyOutcome := func(outcome fileOutcome) error {
+		// Discovery, reading, and parsing all precede persistence, so a file can
+		// disappear in between: a parser side effect, or an external edit during
+		// the run. Re-checking existence on the writer, immediately before the
+		// only mutation point, keeps a vanished file out of the graph and out of
+		// membership at every worker count rather than leaving the outcome to how
+		// far the read-ahead had progressed.
+		if outcome.kind == outcomeParsed {
+			if _, err := os.Stat(filepath.Join(project.Root, filepath.FromSlash(outcome.path))); err != nil {
+				outcome = fileOutcome{path: outcome.path, kind: outcomeUnreadable,
+					diagnostic: graph.Diagnostic{Path: outcome.path, Level: "warning", Message: err.Error()}}
+			}
+		}
+		switch outcome.kind {
+		case outcomeUnselected:
+			current[outcome.path] = true
 			report.Unchanged++
-			continue
+			return nil
+		case outcomeUnreadable:
+			report.Diagnostics = append(report.Diagnostics, outcome.diagnostic)
+			return nil
+		case outcomeTooLarge:
+			report.Phases.ReadHashNS += outcome.readHashNS
+			report.Skipped = append(report.Skipped, outcome.path)
+			return nil
 		}
-		absolute := filepath.Join(project.Root, filepath.FromSlash(path))
-		readStarted := time.Now()
-		info, err := os.Stat(absolute)
-		if err != nil {
-			report.Diagnostics = append(report.Diagnostics, graph.Diagnostic{Path: path, Level: "warning", Message: err.Error()})
-			continue
-		}
-		if info.Size() > options.MaxFileSize {
-			report.Phases.ReadHashNS += time.Since(readStarted).Nanoseconds()
-			report.Skipped = append(report.Skipped, path)
-			continue
-		}
-		content, err := os.ReadFile(absolute)
-		if err != nil {
-			report.Diagnostics = append(report.Diagnostics, graph.Diagnostic{Path: path, Level: "warning", Message: err.Error()})
-			continue
-		}
+		// Every remaining kind read the file, which is exactly what the
+		// read/hash counter reports, so a path that later failed the run still
+		// lands in the same report slots it would have landed in sequentially.
 		report.Checked++
 		if err := progress.emit(ProgressReadHash, ProgressProgress, "files", report.Checked, 0, ""); err != nil {
-			return report, err
+			return err
 		}
-		current[path] = true
-		languageParser, ok := s.parsers.For(path)
-		if !ok {
-			continue
+		current[outcome.path] = true
+		switch outcome.kind {
+		case outcomeFailed:
+			return outcome.err
+		case outcomeUnsupported:
+			return nil
 		}
-		input := parserapi.Input{Root: project.Root, Path: path, Content: content,
-			SourcePaths: paths, Repository: project.Name, RepoID: project.ID, GoModule: project.GoModule}
-		digest := sha256.New()
-		_, _ = digest.Write(content)
-		_, _ = digest.Write([]byte{0})
-		_, _ = digest.Write([]byte(SemanticIndexVersion))
-		if options.ResultTransform != nil {
-			_, _ = digest.Write([]byte{0})
-			_, _ = digest.Write([]byte(options.ResultTransform.SemanticKey()))
-		}
-		if _, ok := languageParser.(parserapi.WorkspaceSemanticKeyer); ok {
-			semanticKey := workspaceSemanticKeys[languageParser.Language()]
-			_, _ = digest.Write([]byte{0})
-			_, _ = digest.Write([]byte(semanticKey))
-			input.SemanticKey = semanticKey
-		}
-		// A workspace keyer may also refine its shared key per file. The
-		// refinement enters the content hash only: Input.SemanticKey stays the
-		// repository-wide key so parser-side workspace caches keep one entry.
-		if keyer, ok := languageParser.(parserapi.SemanticKeyer); ok {
-			semanticKey, keyErr := keyer.SemanticKey(ctx, input)
-			if keyErr != nil {
-				return report, fmt.Errorf("load parser configuration for %s: %w", path, keyErr)
-			}
-			_, _ = digest.Write([]byte{0})
-			_, _ = digest.Write([]byte(semanticKey))
-			if input.SemanticKey == "" {
-				input.SemanticKey = semanticKey
-			}
-		}
-		hash := hex.EncodeToString(digest.Sum(nil))
-		report.Phases.ReadHashNS += time.Since(readStarted).Nanoseconds()
-		previous, exists := known[path]
-		if exists && previous.Hash == hash && !options.Force {
+		report.Phases.ReadHashNS += outcome.readHashNS
+		if outcome.kind == outcomeUnchanged {
 			report.Unchanged++
-			continue
+			return nil
 		}
-		parseStarted := time.Now()
-		parsed, parseErr := languageParser.Parse(ctx, input)
-		report.Phases.ParseNS += time.Since(parseStarted).Nanoseconds()
-		if parseErr != nil {
-			parsed.Diagnostics = append(parsed.Diagnostics, graph.Diagnostic{Path: path, Level: "error", Message: parseErr.Error()})
-		}
-		if options.ResultTransform != nil {
-			transformStarted := time.Now()
-			parsed, err = options.ResultTransform.Transform(ctx, input, parsed)
-			report.Phases.ParseNS += time.Since(transformStarted).Nanoseconds()
-			if err != nil {
-				return report, fmt.Errorf("transform parsed evidence for %s: %w", path, err)
-			}
-		}
+		report.Phases.ParseNS += outcome.parseNS
 		if err := progress.emit(ProgressParse, ProgressProgress, "files", len(report.Updated)+1, 0, ""); err != nil {
-			return report, err
+			return err
 		}
-		// The selected parser is the producer authority. Parser-returned facts are
-		// otherwise untrusted and cannot claim another extractor's identity.
-		for index := range parsed.Facts {
-			parsed.Facts[index].Producer = languageParser.Language()
-		}
-		fileID := graph.NodeID(graph.KindFile, project.ID+":"+path)
-		parsed.Facts = append(parsed.Facts, graph.Fact{
-			ID:     graph.FactID(path, project.ID, graph.EdgeContains, fileID, 1, 0),
-			FromID: project.ID, Kind: graph.EdgeContains, Producer: graph.ProducerIndexer, TargetID: fileID,
-			Location: graph.Location{Path: path, Line: 1, Column: 1}, OwnerFile: path,
-		})
-		record := graph.FileRecord{Path: path, Hash: hash, Language: languageParser.Language(),
-			Size: info.Size(), ModifiedNS: info.ModTime().UnixNano(), IndexedAt: graph.NowUTC()}
+		record := outcome.record
+		record.IndexedAt = graph.NowUTC()
 		persistenceStarted := time.Now()
 		if err := markScopeMutation(); err != nil {
-			return report, err
+			return err
 		}
-		if err := s.repository.ReplaceFile(ctx, record, parsed); err != nil {
-			return report, fmt.Errorf("store %s: %w", path, err)
+		if err := s.repository.ReplaceFile(ctx, record, outcome.parsed); err != nil {
+			return fmt.Errorf("store %s: %w", outcome.path, err)
 		}
 		graphDirtied = true
 		report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
-		report.Updated = append(report.Updated, path)
+		report.Updated = append(report.Updated, outcome.path)
 		if err := progress.emit(ProgressPersistence, ProgressProgress, "files", len(report.Updated), 0, ""); err != nil {
-			return report, err
+			return err
 		}
-		report.Diagnostics = append(report.Diagnostics, parsed.Diagnostics...)
+		report.Diagnostics = append(report.Diagnostics, outcome.parsed.Diagnostics...)
 		if options.Boundary != nil {
-			if err := options.Boundary(Boundary{Kind: BoundaryFilePersisted, Path: path, Completed: len(report.Updated)}); err != nil {
-				return report, fmt.Errorf("file persistence boundary %s: %w", path, err)
+			if err := options.Boundary(Boundary{Kind: BoundaryFilePersisted, Path: outcome.path, Completed: len(report.Updated)}); err != nil {
+				return fmt.Errorf("file persistence boundary %s: %w", outcome.path, err)
 			}
 		}
+		return nil
+	}
+	if err := stage.run(ctx, resolveParseWorkers(options.ParseWorkers), applyOutcome); err != nil {
+		return report, err
 	}
 	if err := progress.emit(ProgressReadHash, ProgressCompleted, "files", report.Checked, 0, ""); err != nil {
 		return report, err
