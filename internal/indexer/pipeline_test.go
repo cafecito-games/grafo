@@ -261,6 +261,14 @@ func runPipelineObservation(t *testing.T, workers int) pipelineObservation {
 		t.Fatalf("workers=%d incremental pass was not a no-op: updated=%v unchanged=%d",
 			workers, observation.Runs[1].Updated, observation.Runs[1].Unchanged)
 	}
+	// Unchanged also counts paths an incremental pass excludes before any file
+	// access, so require the second pass to have read and hashed the corpus.
+	// Otherwise a change that let it skip the stage would weaken this comparison
+	// to a cold pass without failing it.
+	if observation.Runs[1].Checked < 15 {
+		t.Fatalf("workers=%d incremental pass skipped the read/hash stage: checked=%d",
+			workers, observation.Runs[1].Checked)
+	}
 	return observation
 }
 

@@ -46,8 +46,10 @@ func resolveParseWorkers(requested int) int {
 type fileOutcomeKind int
 
 const (
-	// The zero value is reserved and deliberately unnamed: a closed hand-off slot
-	// yields it, so it must never match a kind the writer acts on.
+	// The zero value is reserved and deliberately unnamed. A closed hand-off slot
+	// yields it, and the writer never acts on one because run's receive protocol
+	// stops on the closed slot rather than passing its value on; the kind itself
+	// carries no protection.
 	_ fileOutcomeKind = iota
 	// outcomeUnselected means an incremental pass excluded the path before any
 	// filesystem access.
