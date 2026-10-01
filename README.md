@@ -138,6 +138,23 @@ each tool call it compares an opaque source-freshness token; only changed
 projects reopen a short-lived writer and refresh before a new generation is
 published. Non-Git projects conservatively retain a full refresh per call.
 
+### Index reporting cost
+
+`grafo index` reports what the run changed: updated, unchanged, removed, and
+skipped files plus reconciliation timing. The full-graph counts summary is a
+separate scan of every node, fact, and edge whose cost grows with total graph
+size rather than with what changed, so it is opt-in:
+
+```sh
+grafo index .                    # change report only
+grafo index . --counts           # also collect the full-graph counts summary
+grafo status                     # always reports the full counts summary
+```
+
+Without `--counts` the report states that counts were not collected, and the
+JSON report sets `counts_collected` to false and omits `counts` entirely rather
+than reporting zero totals as real values.
+
 ### Background indexing and diagnostics
 
 `grafo watch` keeps one repository current while a terminal stays open. For

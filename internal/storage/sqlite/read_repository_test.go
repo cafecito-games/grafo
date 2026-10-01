@@ -95,6 +95,10 @@ func TestOpenReadOnlyRejectsIncompatibleMetadataWithoutMutation(t *testing.T) {
 	}
 	olderSemantic := strconv.Itoa(semanticVersion - 1)
 	newerSemantic := strconv.Itoa(semanticVersion + 1)
+	latestMigration, err := migrations.LatestVersion()
+	if err != nil {
+		t.Fatalf("resolve latest migration: %v", err)
+	}
 	for _, test := range []struct {
 		name   string
 		mutate func(context.Context, *sql.DB) error
@@ -108,8 +112,10 @@ func TestOpenReadOnlyRejectsIncompatibleMetadataWithoutMutation(t *testing.T) {
 		{name: "malformed semantic", mutate: setMetaRaw("semantic_index_version", "next"), want: `semantic_index_version "next" is malformed`},
 		{name: "older semantic", mutate: setMetaRaw("semantic_index_version", olderSemantic), want: fmt.Sprintf("semantic_index_version is %q, want %q", olderSemantic, indexer.SemanticIndexVersion)},
 		{name: "newer semantic", mutate: setMetaRaw("semantic_index_version", newerSemantic), want: fmt.Sprintf("semantic_index_version is %q, want %q", newerSemantic, indexer.SemanticIndexVersion)},
-		{name: "older migration", mutate: setLatestMigration(7), want: "storage migration is 7"},
-		{name: "newer migration", mutate: setLatestMigration(9), want: "storage migration is 9"},
+		{name: "older migration", mutate: setLatestMigration(latestMigration - 1),
+			want: fmt.Sprintf("storage migration is %d", latestMigration-1)},
+		{name: "newer migration", mutate: setLatestMigration(latestMigration + 1),
+			want: fmt.Sprintf("storage migration is %d", latestMigration+1)},
 		{name: "rolled back migration", mutate: execRaw("UPDATE goose_db_version SET is_applied = 0 WHERE id = (SELECT MAX(id) FROM goose_db_version)"), want: "applied=false"},
 		{name: "missing required table", mutate: execRaw("DROP TABLE edges"), want: `required table "edges" is missing`},
 	} {

@@ -673,13 +673,14 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		}
 	}
 	if options.ReportDetail != ReportWithoutCounts {
-		report.Counts, err = s.repository.Counts(ctx)
-		report.CountsCollected = err == nil
+		// The graph is already durable, so a failed count query degrades the
+		// optional summary instead of failing the run. Partial totals are
+		// discarded so a caller never reads them as real values.
+		if counts, countsErr := s.repository.Counts(ctx); countsErr == nil {
+			report.Counts, report.CountsCollected = counts, true
+		}
 	}
 	report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
-	if err != nil {
-		return report, err
-	}
 	if err := progress.emit(ProgressPersistence, ProgressCompleted, "files", len(report.Updated), 0, ""); err != nil {
 		return report, err
 	}
