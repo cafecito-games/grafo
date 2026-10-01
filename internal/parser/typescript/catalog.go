@@ -84,14 +84,16 @@ type moduleCatalog struct {
 	packages    []packageInfo
 	diagnostics []string
 	// digest fingerprints only the cross-file resolution surface: module
-	// identity, local declarations, exports, and the full contents of the
+	// identity, the local declarations another module can resolve through,
+	// class and interface members, exports, and the full contents of the
 	// package and compiler manifests. It deliberately excludes statement
-	// bodies, which cannot change how another module resolves.
+	// bodies and body-level declarations, which cannot change how another
+	// module resolves.
 	digest string
 }
 
 // resolutionSurfaceVersion tags the encoding of the resolution surface digest.
-const resolutionSurfaceVersion = "typescript-resolution-surface-v1"
+const resolutionSurfaceVersion = "typescript-resolution-surface-v2"
 
 func (c *moduleCatalog) clone() *moduleCatalog {
 	copyCatalog := *c
@@ -192,9 +194,18 @@ func buildModuleCatalog(ctx context.Context, input parserapi.Input) (*moduleCata
 func writeModuleSurface(digest surfaceDigest, info *moduleInfo) {
 	digest.writeField(info.name)
 	digest.writeField("locals")
-	for _, name := range sortedKeys(info.locals) {
+	for _, name := range resolutionLocalNames(info) {
 		digest.writeField(name)
-		writeSymbolSurface(digest, info.locals[name])
+		symbol, declared := info.locals[name]
+		if !declared {
+			// An exported name with no matching declaration resolves to an
+			// explicit diagnostic rather than a symbol, so the absence is part
+			// of the surface and must change the digest when it is filled in.
+			digest.writeField("undeclared")
+			continue
+		}
+		digest.writeField("declared")
+		writeSymbolSurface(digest, symbol)
 	}
 	digest.writeField("methods")
 	for _, owner := range sortedKeys(info.methods) {
@@ -216,6 +227,52 @@ func writeModuleSurface(digest surfaceDigest, info *moduleInfo) {
 	for _, reference := range info.stars {
 		writeExportSurface(digest, reference)
 	}
+}
+
+// resolutionLocalNames returns the sorted local names of a module that another
+// module can resolve through, which is a strict subset of the flat symbol table
+// scanModule builds.
+//
+// moduleInfo.locals is keyed by bare identifier and collected at any depth, so
+// it also contains declarations made inside function bodies. Only two paths ever
+// read another module's locals:
+//
+//   - resolveExport looks up locals[ref.local] for the names a module's exports
+//     name, so every exported local name belongs to the surface. The lookup
+//     reads the finished map, so a body-level declaration that shadows an
+//     exported name is captured as the value under that name rather than as a
+//     separate entry; narrowing by name therefore preserves shadowing exactly.
+//   - resolveMember scans every module's locals for a qualified match and then
+//     requires methods[localName][member], and member reaches methods through a
+//     qualified name directly. Only classes and interfaces get a methods entry,
+//     so every name that owns one belongs to the surface too.
+//
+// Every other local is read only through the extractor's own module
+// (e.info.locals), which is scanned from that file's bytes and is therefore
+// already covered by the file's own content hash.
+//
+// A non-function variable's qualified name still embeds its declaration line, so
+// an edit that moves an exported variable does change the surface. That is not
+// conservatism: the variable's node identity changes with it, so an importer's
+// export edge genuinely points somewhere new and must be reparsed.
+func resolutionLocalNames(info *moduleInfo) []string {
+	names := make(map[string]bool, len(info.exports)+len(info.methods))
+	for _, refs := range info.exports {
+		for _, ref := range refs {
+			if ref.local != "" {
+				names[ref.local] = true
+			}
+		}
+	}
+	for owner := range info.methods {
+		names[owner] = true
+	}
+	result := make([]string, 0, len(names))
+	for name := range names {
+		result = append(result, name)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func writeSymbolSurface(digest surfaceDigest, symbol symbolRef) {

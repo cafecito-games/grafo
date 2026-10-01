@@ -187,8 +187,12 @@ type SemanticView struct {
 }
 
 type SemanticLoadMetrics struct {
-	Loads          int64
-	CacheHits      int64
+	Loads     int64
+	CacheHits int64
+	// PersistedHits counts workspace entries adopted from the cross-process view
+	// cache, and PersistedSaves the entries written to it.
+	PersistedHits  int64
+	PersistedSaves int64
 	PeakConcurrent int64
 	LastDurationMS int64
 }
@@ -211,6 +215,8 @@ type PackageLoader struct {
 
 	loads          atomic.Int64
 	cacheHits      atomic.Int64
+	persistedHits  atomic.Int64
+	persistedSaves atomic.Int64
 	active         atomic.Int64
 	peakConcurrent atomic.Int64
 	lastDurationMS atomic.Int64
@@ -225,6 +231,7 @@ func NewPackageLoader() *PackageLoader {
 func (l *PackageLoader) Metrics() SemanticLoadMetrics {
 	return SemanticLoadMetrics{
 		Loads: l.loads.Load(), CacheHits: l.cacheHits.Load(),
+		PersistedHits: l.persistedHits.Load(), PersistedSaves: l.persistedSaves.Load(),
 		PeakConcurrent: l.peakConcurrent.Load(), LastDurationMS: l.lastDurationMS.Load(),
 	}
 }
@@ -259,6 +266,17 @@ func (l *PackageLoader) Load(ctx context.Context, input parserapi.Input) (Semant
 	if view, ok := l.cached(root, key, path); ok {
 		return view, nil
 	}
+	// Every grafo index is a fresh process, so without this the first Go file of
+	// a run always pays a full packages.Load even when nothing that could change
+	// the derived evidence has changed. The entry is adopted into the in-process
+	// cache and then revalidated through cached(), which still checks this path's
+	// package scope key against disk.
+	if l.adoptPersisted(root, key, buildContext) {
+		if view, ok := l.cached(root, key, path); ok {
+			l.persistedHits.Add(1)
+			return view, nil
+		}
+	}
 
 	started := time.Now()
 	active := l.active.Add(1)
@@ -271,13 +289,45 @@ func (l *PackageLoader) Load(ctx context.Context, input parserapi.Input) (Semant
 	if loadErr != nil {
 		return SemanticView{}, loadErr
 	}
+	entry := cachedWorkspace{key: key, views: views, scopes: packageScopeKeys(root, views)}
 	l.mu.Lock()
-	l.cache[root] = cachedWorkspace{key: key, views: views, scopes: packageScopeKeys(root, views)}
+	l.cache[root] = entry
 	l.mu.Unlock()
+	// A cache that cannot be written is not an indexing failure: the run has the
+	// views it needs and the next one recomputes them.
+	if err := storeSemanticViewCache(root, buildContext, entry); err == nil {
+		l.persistedSaves.Add(1)
+	}
 	if view, ok := views[path]; ok {
 		return cloneSemanticView(view), nil
 	}
 	return unloadedSemanticView(root, path, buildContext), nil
+}
+
+// adoptPersisted installs the cross-process entry for root when it is reusable,
+// reporting whether the in-process cache now holds it. It must be called while
+// the package load gate is held, so one process never adopts over views another
+// goroutine just derived.
+func (l *PackageLoader) adoptPersisted(root, key, buildContext string) bool {
+	l.mu.Lock()
+	existing, held := l.cache[root]
+	l.mu.Unlock()
+	if held && existing.key == key {
+		// Already adopted or derived in this process; re-reading the file would
+		// only cost a decode of views the caller is about to reject anyway.
+		return true
+	}
+	entry, err := loadSemanticViewCache(root, key, buildContext)
+	if err != nil {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if current, ok := l.cache[root]; ok && current.key == key {
+		return true
+	}
+	l.cache[root] = entry
+	return true
 }
 
 func (l *PackageLoader) cached(root, key, path string) (SemanticView, bool) {
@@ -1012,6 +1062,10 @@ func semanticRepositoryPaths(ctx context.Context, root string) ([]string, error)
 	return paths, err
 }
 
+// semanticPathIgnored reports whether path is outside the repository's own
+// sources. It answers graph membership only: a vendored or otherwise excluded
+// .go file can still be resolution evidence, which goSemanticSourcePaths adds
+// back for the workspace semantic key.
 func semanticPathIgnored(path string) bool {
 	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
 		switch part {
@@ -1294,9 +1348,14 @@ func relativeSourcePath(root, filename string) (string, bool) {
 // semanticWorkspaceKey fingerprints the repository-wide Go facts that change
 // how an otherwise untouched Go file extracts: the build context, every module
 // and vendor manifest that selects the load plan, and the declaration surface
-// of every Go source file. Function bodies are deliberately excluded because
-// the statement-level analyzers only ever walk the package they belong to;
-// their blast radius is the package scope key instead.
+// of every Go source file the toolchain compiles. Function bodies are
+// deliberately excluded because the statement-level analyzers only ever walk the
+// package they belong to; their blast radius is the package scope key instead.
+//
+// "Every Go source file the toolchain compiles" is wider than the repository's
+// graph sources: it includes git-ignored siblings of a package and, for a module
+// that vendors, the vendor tree. See goSemanticSourcePaths for why resolution
+// evidence and graph membership are different questions.
 func semanticWorkspaceKey(ctx context.Context, root string) (string, string, error) {
 	buildContext := buildContextString(root)
 	digest := newSemanticDigest(goSemanticSurfaceVersion)
@@ -1305,8 +1364,11 @@ func semanticWorkspaceKey(ctx context.Context, root string) (string, string, err
 	if err != nil {
 		return "", "", err
 	}
+	// Manifests select the module graph and load mode for every package, so they
+	// remain fingerprinted in full, and only tracked manifests select anything.
+	digest.writeField("manifests")
 	for _, relative := range paths {
-		if !isGoSemanticInput(relative) {
+		if !isGoManifestInput(relative) {
 			continue
 		}
 		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
@@ -1314,12 +1376,31 @@ func semanticWorkspaceKey(ctx context.Context, root string) (string, string, err
 			continue
 		}
 		digest.writeField(relative)
-		if !isGoSourcePath(relative) {
-			// Manifests select the module graph and load mode for every
-			// package, so they remain fingerprinted in full.
-			digest.writeBytes(content)
+		digest.writeBytes(content)
+	}
+	// The declaration surface is taken from the set go/packages compiles, not
+	// from the git-visible snapshot: a git-ignored sibling and a vendored
+	// dependency both decide how repository code type-checks.
+	sources, err := goSemanticSourcePaths(ctx, root, paths)
+	if err != nil {
+		return "", "", err
+	}
+	digest.writeField("unreadable")
+	for _, condition := range sources.Unreadable {
+		digest.writeField(condition)
+	}
+	digest.writeField("sources")
+	for _, relative := range sources.Paths {
+		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
+		if err != nil {
+			// A file listed on disk but unreadable now has no provable surface.
+			// Recording the condition keeps it out of the silent-staleness class:
+			// the key changes, and changes again when the file comes back.
+			digest.writeField(relative)
+			digest.writeField("unreadable:" + err.Error())
 			continue
 		}
+		digest.writeField(relative)
 		digest.writeField(declarationSurfaceDigest(relative, content))
 	}
 	// Vendor trees are not application modules, but their manifest controls

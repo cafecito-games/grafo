@@ -681,20 +681,64 @@ the highest package-local callsite, which may live in a sibling file.
 `SemanticAffectedPaths` follows the same split: a manifest or binding change
 selects every Go file, while a source edit selects its own package.
 
+"Every Go source file" is the set `go/packages` compiles, not the set Grafo
+indexes, and the two are deliberately different questions. Vendored and
+git-ignored `.go` files are **not** graph sources: they are dependency or
+generated code no repository has agreed to own, and indexing them would publish
+nodes nobody wrote. They **are** resolution evidence: `go/packages` reads every
+`.go` file in a package directory regardless of Git status, and compiles against
+`vendor/` whenever a module vendors, so their exported declarations decide how
+repository code type-checks and therefore how it extracts. `goSemanticSourcePaths`
+widens the git-visible membership snapshot accordingly — it lists every directory
+that owns a tracked `.go` file, and walks the vendor tree of every module root
+that has one — and feeds that set to the workspace key only. Nothing it adds
+becomes a graph node, and the cost stays bounded to Go package directories and
+vendor trees. Conflating the two questions is what previously let a hand-patched
+vendored signature, or a generated-but-uncommitted sibling, change how every
+importer extracts while no key moved and no file was reparsed.
+
+Derived Go semantic views also outlive the process that computed them. Every
+`grafo index` is a fresh process, so without a cross-process cache any run that
+parsed one Go file paid a full `packages.Load` of the owning module with
+`NeedTypes | NeedDeps | NeedSyntax | NeedTypesInfo` and `Tests: true`. The views
+are already compact — they retain no `go/ast` or `go/types` objects — so
+`internal/parser/golang/semantic_cache.go` persists one workspace entry per root
+under `.grafo/cache`, and reuse is fail-closed on all of: the encoding version,
+the semantic-index version, the workspace key, the build context, a digest over
+the payload bytes, a successful decode, and a non-empty view set. A payload that
+decodes to no views is rejected rather than served, because empty views silently
+drop every cross-file edge and look like a repository with nothing to resolve.
+Per-package staleness is unchanged: an adopted entry is still revalidated against
+each path's package scope key, so an edited package re-derives its evidence.
+
 TypeScript needs no per-file refinement, because a module's extraction depends
 only on its own content plus the catalog's cross-module resolution surface. The
-workspace key is the catalog digest over module identity, local declarations,
-exports, and the package and compiler manifests in full. The catalog's symbol
-table is flat per module, so a declaration introduced anywhere in a module stays
-part of that surface; only statement-level edits are excluded. The content being
-parsed is always the authority for its own module's symbols, so a reused catalog
-can never override them.
+workspace key is the catalog digest over module identity, class and interface
+members, exports and star exports, the package and compiler manifests in full,
+and the local declarations another module can actually resolve through. The
+catalog's symbol table is flat per module and collected at any depth, so it also
+holds declarations made inside function bodies; only two paths ever read another
+module's locals, and `resolutionLocalNames` digests exactly their reachable set:
+the names a module's exports resolve through, and the names that own a methods
+entry, because `resolveMember` scans every module's classes. Narrowing by *name*
+rather than by declaration site is what makes this sound in the presence of
+shadowing — the digest reads the finished map, so a body-level declaration that
+takes over an exported name moves the key and the importer's resolved target
+together. Everything else is read only through the extractor's own module, which
+its own content hash already covers. A non-function variable's qualified name
+still embeds its declaration line, so moving an exported variable does change the
+surface; that is not conservatism, because the variable's node identity moves with
+it. The content being parsed is always the authority for its own module's
+symbols, so a reused catalog can never override them.
 
 Every narrowing here fails closed. An unparseable Go file, an unscannable
 TypeScript module, and an unreadable input are fingerprinted by their full
 contents instead of a derived surface; a cgo file keeps every comment outside a
-function body, because its preamble declares the C types cgo projects into Go; and the `go/packages`
-view cache revalidates each cached package against its scope key before reuse.
+function body, because its preamble declares the C types cgo projects into Go; the `go/packages`
+view cache revalidates each cached package against its scope key before reuse,
+whether that cache is in process or on disk; and a package directory that cannot
+be listed records the exact condition in the key rather than silently narrowing
+it.
 The scope key is always computed from the bytes on disk rather than from a size
 and modification time, because an invalidation key that a sibling edit can slip
 past leaves a stale graph.

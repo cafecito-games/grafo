@@ -233,8 +233,16 @@ func initializeFixtureGit(ctx context.Context, root, caseID, repositoryID string
 	return nil
 }
 
+// openIndexRepository constructs the writable repository for one corpus
+// indexing run. It is a variable so tests in this package can wrap the real
+// SQLite repository and inject storage failures that the harness must surface;
+// production always resolves to sqlite.Open.
+var openIndexRepository = func(ctx context.Context, path string) (graph.Repository, error) {
+	return sqlite.Open(ctx, path)
+}
+
 func indexOnce(ctx context.Context, project indexer.Project, requireUnchanged bool) (indexer.Report, error) {
-	repository, err := sqlite.Open(ctx, project.IndexPath)
+	repository, err := openIndexRepository(ctx, project.IndexPath)
 	if err != nil {
 		return indexer.Report{}, err
 	}

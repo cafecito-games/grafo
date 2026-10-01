@@ -785,11 +785,50 @@ func TestWorkspaceSemanticKeyTracksOnlyResolutionSurface(t *testing.T) {
 			changed: false,
 		},
 		{
-			// The catalog's symbol table is flat per module, so a declaration
-			// introduced anywhere in a module can shadow an exported name.
-			// Narrowing past that would risk resolving an importer wrongly.
+			// A declaration made inside a function body is not reachable from
+			// any other module: nothing resolves through it, so it is outside
+			// the resolution surface.
 			name:    "body declaration added",
 			mutate:  map[string]string{"src/service.ts": "export function run(value: string) { const copy = value; return copy; }\nexport class Store { get(id: string) { return id; } }\n"},
+			changed: false,
+		},
+		{
+			name:    "body declaration removed",
+			mutate:  map[string]string{"src/service.ts": "export function run(value: string) { return value; }\nexport class Store { get(id: string) { const local = id; return local; } }\n"},
+			changed: false,
+		},
+		{
+			// A body-level declaration that reuses an exported name but loses
+			// the flat symbol table's last-write-wins race leaves the entry
+			// importers resolve through untouched.
+			name:    "body declaration loses a shadowing race",
+			mutate:  map[string]string{"src/service.ts": "export function run(value: string) { const Store = value; return Store; }\nexport class Store { get(id: string) { return id; } }\n"},
+			changed: false,
+		},
+		{
+			// Reordering top-level declarations cannot change what an importer
+			// resolves: neither a class nor a function qualified name carries a
+			// position.
+			name:    "declaration order changed",
+			mutate:  map[string]string{"src/service.ts": "export class Store { get(id: string) { return id; } }\nexport function run(value: string) { return value; }\n"},
+			changed: false,
+		},
+		{
+			// A class declared inside a function body still owns a methods
+			// entry, and resolveMember scans every module's classes, so it
+			// stays inside the surface.
+			name:    "body class added",
+			mutate:  map[string]string{"src/service.ts": "export function run(value: string) { class Local { get() { return value; } } return new Local(); }\nexport class Store { get(id: string) { return id; } }\n"},
+			changed: true,
+		},
+		{
+			name:    "star export added",
+			mutate:  map[string]string{"src/caller.ts": "import { run } from \"./service\";\nexport * from \"./service\";\nexport function call() { return run(\"a\"); }\n"},
+			changed: true,
+		},
+		{
+			name:    "exported declaration removed",
+			mutate:  map[string]string{"src/service.ts": "export function run(value: string) { return value; }\n"},
 			changed: true,
 		},
 		{
@@ -902,4 +941,72 @@ func TestSemanticAffectedPathsScopesTypeScriptEditsToManifests(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestWorkspaceSemanticKeyTracksShadowedExportedNames proves the narrowing in
+// resolutionLocalNames preserves shadowing. moduleInfo.locals is a flat map keyed
+// by bare identifier, so a body-level declaration can take over the entry an
+// exported name resolves through. Digesting only the export-reachable names is
+// sound because it reads the finished map: when the shadow wins, both the key and
+// the importer's resolved target move together.
+func TestWorkspaceSemanticKeyTracksShadowedExportedNames(t *testing.T) {
+	const unshadowed = "export class Store { get(id: string) { return id; } }\nexport function run(value: string) { return value; }\n"
+	const shadowed = "export class Store { get(id: string) { return id; } }\nexport function run(value: string) { const Store = value; return Store; }\n"
+	const importer = "export { Store } from \"./service\";\n"
+
+	root := testtemp.Dir(t)
+	writeFile(t, root, "src/service.ts", unshadowed)
+	writeFile(t, root, "src/importer.ts", importer)
+	parser := typescriptparser.New()
+	input := parserapi.Input{Root: root, Repository: "sample", RepoID: "repo:sample"}
+
+	beforeKey, err := parser.WorkspaceSemanticKey(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeTargets := reexportTargets(t, parser, root, importer, beforeKey)
+
+	writeFile(t, root, "src/service.ts", shadowed)
+	afterKey, err := parser.WorkspaceSemanticKey(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if beforeKey == afterKey {
+		t.Fatal("a body-level declaration that shadows an exported name left the workspace key unchanged")
+	}
+	afterTargets := reexportTargets(t, parser, root, importer, afterKey)
+	if slices.Equal(beforeTargets, afterTargets) {
+		t.Fatalf("shadowing did not change what the importer resolves: %v", afterTargets)
+	}
+	// The shadow is a variable declarator, whose qualified name carries its
+	// declaration line; the unshadowed class never does. Pinning both proves the
+	// key tracks the resolved symbol rather than merely some edit having happened.
+	if !slices.Contains(beforeTargets, "src/service.Store") {
+		t.Fatalf("importer did not resolve to the exported class: %v", beforeTargets)
+	}
+	for _, target := range afterTargets {
+		if target == "src/service.Store" {
+			t.Fatalf("importer still resolves to the shadowed class: %v", afterTargets)
+		}
+	}
+}
+
+// reexportTargets returns the sorted targets of the re-export edges one module
+// emits, which is exactly what a change in another module's resolution surface
+// can move.
+func reexportTargets(t *testing.T, parser *typescriptparser.Parser, root, content, key string) []string {
+	t.Helper()
+	result, err := parser.Parse(context.Background(), parserapi.Input{Root: root, Path: "src/importer.ts",
+		Content: []byte(content), Repository: "sample", RepoID: "repo:sample", SemanticKey: key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var targets []string
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeExports && fact.Target != "" {
+			targets = append(targets, fact.Target)
+		}
+	}
+	slices.Sort(targets)
+	return targets
 }

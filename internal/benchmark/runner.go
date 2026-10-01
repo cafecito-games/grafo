@@ -197,7 +197,11 @@ func storageSuffix(engine string) string {
 	return ".pebble"
 }
 
-func openRepository(ctx context.Context, engine, path string) (graph.Repository, error) {
+// openRepository constructs the writable repository for one scenario run. It is
+// a variable so tests in this package can wrap the real repository and inject
+// storage failures the harness must surface; production always resolves to the
+// engine adapters below.
+var openRepository = func(ctx context.Context, engine, path string) (graph.Repository, error) {
 	switch engine {
 	case "sqlite":
 		return sqlite.Open(ctx, path)
