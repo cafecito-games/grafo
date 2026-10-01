@@ -371,6 +371,10 @@ func (a *App) index(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
+	mode, err := parseProgressMode(args.values["progress"])
+	if err != nil {
+		return err
+	}
 	project, err := indexer.DiscoverProject(ctx, root)
 	if err != nil {
 		return err
@@ -387,6 +391,14 @@ func (a *App) index(ctx context.Context, args parsedArguments) error {
 		return err
 	}
 	defer func() { _ = repository.Close() }()
+	return a.runIndex(ctx, project, repository, mode, args)
+}
+
+// runIndex indexes one discovered project, rendering progress on stderr so the
+// report on stdout stays machine-readable, and reporting the phase timings a
+// cancelled run already measured instead of discarding them.
+func (a *App) runIndex(ctx context.Context, project indexer.Project, repository graph.IndexRepository,
+	mode progressMode, args parsedArguments) error {
 	maxSize, err := int64Option(args, "max-file-size", 5<<20)
 	if err != nil {
 		return err
@@ -398,13 +410,42 @@ func (a *App) index(ctx context.Context, args parsedArguments) error {
 	if args.flags["counts"] {
 		detail = indexer.ReportComplete
 	}
-	report, err := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{
+	renderer := newProgressRenderer(a.stderr, mode, a.stderrIsTerminal(a.stderr), a.progressDelay)
+	report, runErr := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{
 		Force: args.flags["force"], MaxFileSize: maxSize, ReportDetail: detail,
+		ProgressObserver: nonFatalObserver(renderer.Observer()),
 	})
-	if err != nil {
-		return err
+	_ = renderer.Close()
+	if runErr != nil {
+		if runCanceled(ctx, runErr) {
+			a.printInterruptedIndexReport(report, args.flags["json"])
+		}
+		if renderer.terminalRendered() {
+			return &progressRenderedError{runErr}
+		}
+		return runErr
 	}
 	return a.printIndexReport(report, args.flags["json"], args.flags["counts"])
+}
+
+// nonFatalObserver keeps index progress strictly non-load-bearing. The indexer
+// propagates observer errors into the run, so a closed pipe or a full disk on
+// stderr would otherwise fail an index whose graph is already complete.
+func nonFatalObserver(observer indexer.ProgressObserver) indexer.ProgressObserver {
+	if observer == nil {
+		return nil
+	}
+	return func(event indexer.ProgressEvent) error {
+		_ = observer(event)
+		return nil
+	}
+}
+
+// runCanceled reports whether a failed run was interrupted rather than broken.
+// ctx is consulted too because an interrupted dependency can surface a wrapped
+// error that no longer unwraps to a context cause.
+func runCanceled(ctx context.Context, err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil
 }
 
 func (a *App) indexes(ctx context.Context, args parsedArguments) error {
@@ -691,7 +732,7 @@ func (a *App) status(ctx context.Context, args parsedArguments) error {
 				sensitivePaths = append(sensitivePaths, splitList(raw)...)
 			}
 			message := indexer.ProgressErrorMessage(err, sensitivePaths...)
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+			if runCanceled(ctx, err) {
 				state = indexer.ProgressCanceled
 			}
 			observeErr := renderer.Observe(indexer.ProgressEvent{
@@ -2500,6 +2541,31 @@ func (a *App) printIndexReport(report indexer.Report, asJSON, countsRequested bo
 	return nil
 }
 
+// printInterruptedIndexReport reports what an interrupted run had already
+// measured. A cold index on a large repository runs for minutes, so a CI
+// timeout or a Ctrl-C used to discard the only phase attribution that explains
+// where the time went.
+func (a *App) printInterruptedIndexReport(report indexer.Report, asJSON bool) {
+	if asJSON {
+		_ = writeJSON(a.stdout, report)
+		return
+	}
+	phases := report.Phases
+	a.printf("interrupted index of %s · branch %s · %dms\n", report.Project.Name, report.Project.Branch, report.ElapsedMS)
+	a.printf("git probe %s · membership %s · change probe %s · discovery %s\n",
+		formatPhaseDuration(phases.GitProbeNS), formatPhaseDuration(phases.MembershipNS),
+		formatPhaseDuration(phases.ChangeProbeNS), formatPhaseDuration(phases.DiscoveryNS))
+	a.printf("read+hash %s · parse %s · persistence %s · reconciliation %s\n",
+		formatPhaseDuration(phases.ReadHashNS), formatPhaseDuration(phases.ParseNS),
+		formatPhaseDuration(phases.PersistenceNS), formatPhaseDuration(phases.ReconciliationNS))
+	a.printf("%d updated · %d unchanged · %d removed · %d file contents checked\n",
+		len(report.Updated), report.Unchanged, len(report.Removed), report.Checked)
+}
+
+func formatPhaseDuration(nanoseconds int64) string {
+	return fmt.Sprintf("%dms", time.Duration(nanoseconds).Milliseconds())
+}
+
 func (a *App) printNodes(nodes []graph.Node) {
 	for _, node := range nodes {
 		a.printf("%-12s  %-48s  %-24s  %s\n", node.Kind, node.QualifiedName, formatLocation(node.Location), node.ID)
@@ -2551,6 +2617,11 @@ var valueOptions = map[string]bool{
 	"package": true, "message": true, "oneof": true, "status": true,
 	"progress": true, "older-than": true, "max-bytes": true, "keep": true,
 }
+
+// progressCommands bounds the globally parsed --progress option to the
+// commands that render it, so every other command still rejects the flag
+// before opening a repository.
+var progressCommands = map[string]bool{"index": true, "status": true, "counts": true}
 
 // pathPrefixCommands is the adapter boundary for the one globally parsed
 // option that is intentionally available to only a bounded command set. Keep
@@ -2604,10 +2675,10 @@ func parseArguments(arguments []string) (parsedArguments, error) {
 			result.values[name] = value
 		}
 	}
-	if result.values["progress"] != "" && result.command != "status" && result.command != "counts" {
-		return result, fmt.Errorf("--progress is only supported by status and counts")
+	if result.values["progress"] != "" && !progressCommands[result.command] {
+		return result, fmt.Errorf("--progress is only supported by index, status, and counts")
 	}
-	if result.command == "status" || result.command == "counts" {
+	if progressCommands[result.command] {
 		if _, err := parseProgressMode(result.values["progress"]); err != nil {
 			return result, err
 		}
@@ -2695,7 +2766,7 @@ Usage:
                  [--mcp-only] [--hooks] [--refresh]
   grafo uninstall [client...] [--client a,b] [--all] [--dry-run] [--json]
   grafo guidance [--repo path] [--hook pre-search|pre-edit]
-  grafo index [path] [--force] [--counts] [--json]
+  grafo index [path] [--force] [--counts] [--json] [--progress auto|human|json|off]
   grafo indexes list [path] [--json]
   grafo indexes prune [path] [--older-than duration] [--keep n] [--dry-run] [--yes] [--json]
   grafo indexes compact [path] [--dry-run] [--yes] [--json]

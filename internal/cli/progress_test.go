@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -232,5 +234,183 @@ func TestStatusProgressErrorsArePathFreeAndHumanErrorsAreNotDuplicated(t *testin
 	code = New(&stdout, &stderr).Run(ctx, []string{"status", "--progress=human", root})
 	if code != 1 || stdout.Len() != 0 || strings.Count(strings.TrimSpace(stderr.String()), "\n") != 0 || strings.Contains(stderr.String(), "grafo:") {
 		t.Fatalf("human cancellation duplicated terminal error: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+// indexableRepository writes an unindexed fixture under a fixed basename so
+// two runs produce reports that differ only in their measured durations.
+func indexableRepository(t *testing.T) string {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "sample")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, content string) {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("go.mod", "module sample\n\ngo 1.26\n")
+	write("charge.go", "package sample\n\n// Charge settles a payment.\nfunc Charge() error { return nil }\n")
+	write("checkout.go", "package sample\n\nfunc Checkout() error {\n\treturn Charge()\n}\n")
+	return root
+}
+
+func TestIndexProgressModesKeepStdoutMachineReadable(t *testing.T) {
+	tests := []struct {
+		name         string
+		mode         string
+		terminal     bool
+		delay        time.Duration
+		wantProgress bool
+		jsonProgress bool
+	}{
+		{name: "auto pipe stays quiet", mode: "auto", terminal: false, delay: 0},
+		{name: "fast auto terminal stays quiet", mode: "auto", terminal: true, delay: time.Hour},
+		{name: "slow auto terminal reports", mode: "auto", terminal: true, delay: 0, wantProgress: true},
+		{name: "human reports", mode: "human", wantProgress: true},
+		{name: "json reports ndjson", mode: "json", wantProgress: true, jsonProgress: true},
+		{name: "off stays quiet", mode: "off"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := indexableRepository(t)
+			var stdout, stderr bytes.Buffer
+			app := New(&stdout, &stderr)
+			app.stderrIsTerminal = func(io.Writer) bool { return test.terminal }
+			app.progressDelay = test.delay
+			code := app.Run(context.Background(), []string{"index", "--progress", test.mode, "--json", root})
+			if code != 0 {
+				t.Fatalf("index exited %d: %s", code, stderr.String())
+			}
+			var report indexer.Report
+			if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+				t.Fatalf("stdout is not one JSON document: %v\n%s", err, stdout.String())
+			}
+			if len(report.Updated) == 0 {
+				t.Fatalf("report indexed nothing: %#v", report)
+			}
+			if got := stderr.Len() > 0; got != test.wantProgress {
+				t.Fatalf("progress=%v want %v: %q", got, test.wantProgress, stderr.String())
+			}
+			if test.wantProgress && !test.jsonProgress &&
+				!strings.Contains(stderr.String(), string(indexer.ProgressParse)) {
+				t.Fatalf("human progress never named the parse phase: %q", stderr.String())
+			}
+			if test.jsonProgress {
+				phases := map[indexer.ProgressPhase]bool{}
+				for _, line := range strings.Split(strings.TrimSpace(stderr.String()), "\n") {
+					var event indexer.ProgressEvent
+					if err := json.Unmarshal([]byte(line), &event); err != nil || event.Schema != indexer.ProgressSchemaV1 {
+						t.Fatalf("invalid NDJSON progress %q: %#v %v", line, event, err)
+					}
+					phases[event.Phase] = true
+				}
+				for _, phase := range []indexer.ProgressPhase{indexer.ProgressParse, indexer.ProgressPersistence, indexer.ProgressComplete} {
+					if !phases[phase] {
+						t.Fatalf("progress never reported %s: %q", phase, stderr.String())
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestIndexProgressOffMatchesTheUnflaggedRun(t *testing.T) {
+	var flagged, flaggedErr bytes.Buffer
+	app := New(&flagged, &flaggedErr)
+	app.stderrIsTerminal = func(io.Writer) bool { return false }
+	if code := app.Run(context.Background(), []string{"index", "--progress=off", indexableRepository(t)}); code != 0 {
+		t.Fatalf("flagged index exited: %s", flaggedErr.String())
+	}
+	var plain, plainErr bytes.Buffer
+	app = New(&plain, &plainErr)
+	app.stderrIsTerminal = func(io.Writer) bool { return false }
+	if code := app.Run(context.Background(), []string{"index", indexableRepository(t)}); code != 0 {
+		t.Fatalf("plain index exited: %s", plainErr.String())
+	}
+	if flaggedErr.Len() != 0 || plainErr.Len() != 0 {
+		t.Fatalf("progress leaked: flagged=%q plain=%q", flaggedErr.String(), plainErr.String())
+	}
+	normalize := func(text string) string {
+		lines := strings.Split(text, "\n")
+		for index, line := range lines {
+			if cut := strings.LastIndex(line, "·"); strings.HasSuffix(line, "ms") && cut >= 0 {
+				lines[index] = line[:cut]
+			}
+			if strings.HasPrefix(line, "edge reconciliation:") {
+				lines[index] = "edge reconciliation:"
+			}
+		}
+		return strings.Join(lines, "\n")
+	}
+	if normalize(flagged.String()) != normalize(plain.String()) {
+		t.Fatalf("--progress=off changed output:\n%q\n%q", flagged.String(), plain.String())
+	}
+}
+
+func TestIndexProgressWriteFailureStillCompletesTheIndex(t *testing.T) {
+	root := indexableRepository(t)
+	var stdout bytes.Buffer
+	app := New(&stdout, failWriter{err: errors.New("stderr failed")})
+	if code := app.Run(context.Background(), []string{"index", "--progress=human", "--json", root}); code != 0 {
+		t.Fatalf("renderer failure failed the index: code=%d stdout=%q", code, stdout.String())
+	}
+	var report indexer.Report
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil || len(report.Updated) == 0 {
+		t.Fatalf("report=%#v err=%v stdout=%q", report, err, stdout.String())
+	}
+}
+
+func TestCanceledIndexReportsAccumulatedPhasesAndFails(t *testing.T) {
+	root := indexableRepository(t)
+	project, err := indexer.DiscoverProject(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(context.Background(), project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var stdout, stderr bytes.Buffer
+	app := New(&stdout, &stderr)
+	app.stderrIsTerminal = func(io.Writer) bool { return false }
+	args := parsedArguments{command: "index", flags: map[string]bool{"json": true}, values: map[string]string{}}
+	if runErr := app.runIndex(ctx, project, repository, progressOff, args); runErr == nil {
+		t.Fatal("canceled index reported success")
+	}
+	var report indexer.Report
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("canceled run did not emit one JSON report: %v\n%q", err, stdout.String())
+	}
+	if report.Phases.TotalNS <= 0 {
+		t.Fatalf("canceled report lost its phase timings: %#v", report.Phases)
+	}
+
+	stdout.Reset()
+	app = New(&stdout, &stderr)
+	app.stderrIsTerminal = func(io.Writer) bool { return false }
+	humanArgs := parsedArguments{command: "index", flags: map[string]bool{}, values: map[string]string{}}
+	if runErr := app.runIndex(ctx, project, repository, progressOff, humanArgs); runErr == nil {
+		t.Fatal("canceled index reported success")
+	}
+	if !strings.Contains(stdout.String(), "interrupted index") || !strings.Contains(stdout.String(), "parse") {
+		t.Fatalf("human phase block missing: %q", stdout.String())
+	}
+}
+
+func TestIndexAcceptsProgressOptionAndRejectsUnknownMode(t *testing.T) {
+	args, err := parseArguments([]string{"index", "--progress=json", "/repo"})
+	if err != nil || args.values["progress"] != "json" {
+		t.Fatalf("parse index --progress = %#v, %v", args, err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := New(&stdout, &stderr).Run(context.Background(), []string{"index", "--progress", "wat", t.TempDir()})
+	if code != 2 || !strings.Contains(stderr.String(), "--progress must be one of") {
+		t.Fatalf("invalid progress: code=%d stderr=%q", code, stderr.String())
 	}
 }
