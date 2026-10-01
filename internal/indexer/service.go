@@ -673,13 +673,22 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		}
 	}
 	if options.ReportDetail != ReportWithoutCounts {
-		report.Counts, err = s.repository.Counts(ctx)
-		report.CountsCollected = err == nil
+		// The graph is already durable, so a failed count query degrades the
+		// optional summary instead of failing the run. Partial totals are
+		// discarded so a caller never reads them as real values, and the cause
+		// is reported so a storage failure is never mistaken for a summary the
+		// caller simply did not request.
+		if counts, countsErr := s.repository.Counts(ctx); countsErr == nil {
+			report.Counts, report.CountsCollected = counts, true
+		} else {
+			// Diagnostics carry repository-relative paths, and this condition is
+			// graph-wide rather than owned by one file, so it is attributed to the
+			// repository root itself.
+			report.Diagnostics = append(report.Diagnostics, graph.Diagnostic{
+				Path: ".", Level: "warning", Message: "collect graph counts: " + countsErr.Error()})
+		}
 	}
 	report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
-	if err != nil {
-		return report, err
-	}
 	if err := progress.emit(ProgressPersistence, ProgressCompleted, "files", len(report.Updated), 0, ""); err != nil {
 		return report, err
 	}

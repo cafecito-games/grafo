@@ -391,13 +391,20 @@ func (a *App) index(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
+	// Full-graph counts are pure reporting work whose cost scales with total
+	// graph size rather than with what changed, so the interactive index command
+	// collects them only when the invocation asked for the summary.
+	detail := indexer.ReportWithoutCounts
+	if args.flags["counts"] {
+		detail = indexer.ReportComplete
+	}
 	report, err := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{
-		Force: args.flags["force"], MaxFileSize: maxSize,
+		Force: args.flags["force"], MaxFileSize: maxSize, ReportDetail: detail,
 	})
 	if err != nil {
 		return err
 	}
-	return a.printIndexReport(report, args.flags["json"])
+	return a.printIndexReport(report, args.flags["json"], args.flags["counts"])
 }
 
 func (a *App) indexes(ctx context.Context, args parsedArguments) error {
@@ -592,7 +599,12 @@ func (a *App) watch(ctx context.Context, args parsedArguments) error {
 		if err != nil {
 			return err
 		}
-		report, runErr := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{})
+		detail := indexer.ReportWithoutCounts
+		if args.flags["counts"] {
+			detail = indexer.ReportComplete
+		}
+		report, runErr := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project,
+			indexer.Options{ReportDetail: detail})
 		closeErr := repository.Close()
 		if runErr != nil {
 			return runErr
@@ -601,7 +613,7 @@ func (a *App) watch(ctx context.Context, args parsedArguments) error {
 			return closeErr
 		}
 		if len(report.Updated) > 0 || len(report.Removed) > 0 || len(report.Diagnostics) > 0 {
-			return a.printIndexReport(report, args.flags["json"])
+			return a.printIndexReport(report, args.flags["json"], args.flags["counts"])
 		}
 		return nil
 	}
@@ -2459,7 +2471,7 @@ func requiresWritableRead(command string) bool {
 	return false
 }
 
-func (a *App) printIndexReport(report indexer.Report, asJSON bool) error {
+func (a *App) printIndexReport(report indexer.Report, asJSON, countsRequested bool) error {
 	if asJSON {
 		return writeJSON(a.stdout, report)
 	}
@@ -2471,8 +2483,17 @@ func (a *App) printIndexReport(report indexer.Report, asJSON bool) error {
 	if report.Rebuild != "" {
 		a.printf("rebuild: %s\n", report.Rebuild)
 	}
-	a.printf("%d files · %d nodes · %d edges · %d unresolved · %dms\n",
-		report.Counts.Files, report.Counts.Nodes, report.Counts.Edges, report.Counts.External, report.ElapsedMS)
+	switch {
+	case report.CountsCollected:
+		a.printf("%d files · %d nodes · %d edges · %d unresolved · %dms\n",
+			report.Counts.Files, report.Counts.Nodes, report.Counts.Edges, report.Counts.External, report.ElapsedMS)
+	case countsRequested:
+		// The run itself succeeded, so the requested summary is reported as
+		// unavailable and the cause is carried by the run's diagnostics.
+		a.printf("%dms · full-graph counts unavailable (see diagnostics)\n", report.ElapsedMS)
+	default:
+		a.printf("%dms · full-graph counts not collected (add --counts)\n", report.ElapsedMS)
+	}
 	for _, diagnostic := range report.Diagnostics {
 		a.errorf("%s:%d: %s: %s\n", diagnostic.Path, diagnostic.Line, diagnostic.Level, diagnostic.Message)
 	}
@@ -2515,6 +2536,7 @@ var booleanOptions = map[string]bool{
 	"json": true, "force": true, "help": true, "source": true, "regex": true, "case-sensitive": true,
 	"list": true, "all": true, "dry-run": true, "mcp-only": true, "hooks": true, "refresh": true,
 	"repair": true, "once": true, "paused": true, "mermaid": true, "yes": true,
+	"counts": true,
 }
 var valueOptions = map[string]bool{
 	"repo": true, "repos": true, "depth": true, "direction": true, "relation": true,
@@ -2673,11 +2695,11 @@ Usage:
                  [--mcp-only] [--hooks] [--refresh]
   grafo uninstall [client...] [--client a,b] [--all] [--dry-run] [--json]
   grafo guidance [--repo path] [--hook pre-search|pre-edit]
-  grafo index [path] [--force] [--json]
+  grafo index [path] [--force] [--counts] [--json]
   grafo indexes list [path] [--json]
   grafo indexes prune [path] [--older-than duration] [--keep n] [--dry-run] [--yes] [--json]
   grafo indexes compact [path] [--dry-run] [--yes] [--json]
-  grafo watch [path] [--interval 1s]
+  grafo watch [path] [--interval 1s] [--counts] [--json]
   grafo service add [path] [--interval 10s] [--paused] [--json]
   grafo service remove [path]
   grafo service list [--json]
@@ -2742,6 +2764,12 @@ accept --kind to restrict resolution to one node kind, so a selector shared by a
 function and its own parameter resolves without guessing. Active branch indexes are
 refreshed incrementally before queries and never substituted across branches.
 Test reports are bounded structural call/reference evidence, not runtime coverage.
+
+'grafo index' and 'grafo watch' report what the run changed. Full-graph counts
+cost a scan of every node, fact, and edge regardless of what changed, so
+'--counts' requests them; without it the report says counts were not collected
+rather than reporting zero totals. 'grafo status' always reports the full counts
+summary.
 
 'grafo indexes list' inventories the physical database, WAL, and SHM footprint
 of every branch index for one repository. 'indexes prune' requires a retention

@@ -21,6 +21,7 @@ type fakeRunner struct {
 	forced  []bool
 	failFor map[string]error
 	report  indexer.Report
+	details []indexer.ReportDetail
 }
 
 func (f *fakeRunner) Index(_ context.Context, project indexer.Project, options indexer.Options) (indexer.Report, error) {
@@ -28,6 +29,7 @@ func (f *fakeRunner) Index(_ context.Context, project indexer.Project, options i
 	defer f.mutex.Unlock()
 	f.calls = append(f.calls, project)
 	f.forced = append(f.forced, options.Force)
+	f.details = append(f.details, options.ReportDetail)
 	if err, ok := f.failFor[project.Root]; ok {
 		return indexer.Report{}, err
 	}
@@ -416,5 +418,27 @@ func TestConcurrentHintsAndPassesAreRaceFree(t *testing.T) {
 	group.Wait()
 	if len(supervisor.Snapshot().Roots) != 3 {
 		t.Fatalf("expected three roots in the snapshot, got %#v", supervisor.Snapshot().Roots)
+	}
+}
+
+// TestSupervisorNeverRequestsFullGraphCounts keeps the always-on supervisor off
+// the full-graph count queries: it never reports graph totals, and their cost
+// scales with total graph size rather than with what each pass changed.
+func TestSupervisorNeverRequestsFullGraphCounts(t *testing.T) {
+	runner := &fakeRunner{}
+	supervisor, store := newTestSupervisor(t, runner, func(_ context.Context, root string) (indexer.Project, error) {
+		return fakeProject(root, "main"), nil
+	})
+	root := t.TempDir()
+	if _, _, err := store.Add(root, Settings{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := supervisor.Once(context.Background()); err != nil {
+		t.Fatalf("Once: %v", err)
+	}
+	runner.mutex.Lock()
+	defer runner.mutex.Unlock()
+	if len(runner.details) != 1 || runner.details[0] != indexer.ReportWithoutCounts {
+		t.Fatalf("supervisor report detail = %#v, want only %q", runner.details, indexer.ReportWithoutCounts)
 	}
 }

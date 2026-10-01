@@ -357,7 +357,9 @@ func (s *Supervisor) reconcileRoot(ctx context.Context, entry Root) {
 		return
 	}
 	s.mutex.Lock()
-	options := indexer.Options{Force: s.full[entry.Root]}
+	// The supervisor never reports graph totals, so it skips the full-graph
+	// count queries whose cost scales with total graph size.
+	options := indexer.Options{Force: s.full[entry.Root], ReportDetail: indexer.ReportWithoutCounts}
 	delete(s.full, entry.Root)
 	s.mutex.Unlock()
 	report, err := s.options.Runner.Index(ctx, project, options)
