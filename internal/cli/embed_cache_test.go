@@ -12,11 +12,12 @@ import (
 
 	embeddingcache "github.com/cafecito-games/grafo/internal/embedding/cache"
 	"github.com/cafecito-games/grafo/internal/semantic"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestEmbedCacheStatusAndPruneJSON(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "embeddings.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "embeddings.sqlite")
 	t.Setenv(embeddingcache.EnvPath, path)
 	store, err := embeddingcache.Open(ctx, path)
 	if err != nil {
@@ -93,7 +94,7 @@ func TestEmbedCacheStatusAndPruneJSON(t *testing.T) {
 }
 
 func TestEmbedCachePruneValidatesBeforeOpeningWritableCache(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "missing", "embeddings.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "missing", "embeddings.sqlite")
 	t.Setenv(embeddingcache.EnvPath, path)
 	var stdout, stderr bytes.Buffer
 	code := New(&stdout, &stderr).Run(context.Background(), []string{"embed-cache", "prune", "--older-than", "yesterday", "--yes"})
@@ -107,7 +108,7 @@ func TestEmbedCachePruneValidatesBeforeOpeningWritableCache(t *testing.T) {
 
 func TestEmbedCacheRejectsUnsupportedOptionsBeforePruning(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "embeddings.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "embeddings.sqlite")
 	t.Setenv(embeddingcache.EnvPath, path)
 	var stdout, stderr bytes.Buffer
 	code := New(&stdout, &stderr).Run(ctx, []string{"embed-cache", "status", "--keep", "1"})
@@ -151,7 +152,7 @@ func TestEmbedCacheRejectsUnsupportedOptionsBeforePruning(t *testing.T) {
 }
 
 func TestEmbedCacheStatusDoesNotCreateMissingCache(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "typo", "embeddings.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "typo", "embeddings.sqlite")
 	t.Setenv(embeddingcache.EnvPath, path)
 	var stdout, stderr bytes.Buffer
 	code := New(&stdout, &stderr).Run(context.Background(), []string{"embed-cache", "status"})

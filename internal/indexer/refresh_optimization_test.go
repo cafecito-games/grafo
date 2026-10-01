@@ -14,6 +14,7 @@ import (
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	markdownparser "github.com/cafecito-games/grafo/internal/parser/markdown"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 type indexRepositorySpy struct {
@@ -56,7 +57,7 @@ func (s *indexRepositorySpy) ReconciliationPending(ctx context.Context) (bool, e
 
 func TestServiceProvenUnchangedRefreshSkipsGraphWritesAndCounts(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	write(t, filepath.Join(root, "README.md"), "# Sample\n")
 	runGit(t, root, "add", "README.md")
@@ -127,7 +128,7 @@ func (r *noStatusRepository) Reconcile(ctx context.Context) error {
 
 func TestServiceRepositoryWithoutCleanProofReconciles(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "README.md"), "# Sample\n")
 	project, err := indexer.DiscoverProject(ctx, root)
 	if err != nil {
@@ -153,7 +154,7 @@ func TestServiceRepositoryWithoutCleanProofReconciles(t *testing.T) {
 
 func TestServiceCorruptPriorGitEvidenceFailsClosedAndRepairs(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	write(t, filepath.Join(root, "README.md"), "# Sample\n")
 	runGit(t, root, "add", "README.md")
@@ -195,7 +196,7 @@ func TestServiceCorruptPriorGitEvidenceFailsClosedAndRepairs(t *testing.T) {
 
 func TestServiceRejectsRemoteIdentityChangeBeforeMutation(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	runGit(t, root, "remote", "add", "origin", "git@example.invalid:team/first.git")
 	write(t, filepath.Join(root, "README.md"), "# Sample\n")
@@ -248,7 +249,7 @@ func TestServiceRejectsRemoteIdentityChangeBeforeMutation(t *testing.T) {
 
 func TestServiceTrackedTypechangeUsesSafeSymlinkDiscovery(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	write(t, filepath.Join(root, "README.md"), "# In repository\n")
 	runGit(t, root, "add", "README.md")
@@ -267,7 +268,7 @@ func TestServiceTrackedTypechangeUsesSafeSymlinkDiscovery(t *testing.T) {
 	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
 		t.Fatal(err)
 	}
-	external := filepath.Join(t.TempDir(), "outside.md")
+	external := filepath.Join(testtemp.Dir(t), "outside.md")
 	write(t, external, "# Outside secret\n")
 	if err := os.Remove(filepath.Join(root, "README.md")); err != nil {
 		t.Fatal(err)
@@ -289,7 +290,7 @@ func TestServiceTrackedTypechangeUsesSafeSymlinkDiscovery(t *testing.T) {
 
 func TestServiceGitSnapshotConvergesAcrossMembershipAndHeadChanges(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	write(t, filepath.Join(root, "first.md"), "# First\n")
 	write(t, filepath.Join(root, "second.md"), "# Second\n")
@@ -358,7 +359,7 @@ func TestServiceGitSnapshotConvergesAcrossMembershipAndHeadChanges(t *testing.T)
 
 func TestServiceMissingWorkspaceDigestUsesSafePathOnce(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("# Sample\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

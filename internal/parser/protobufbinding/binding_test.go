@@ -10,6 +10,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	"github.com/cafecito-games/grafo/internal/parser/protobufbinding"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestParserProjectsSupportedGoAndGDScriptBindings(t *testing.T) {
@@ -173,7 +174,7 @@ func TestParserRejectsMalformedAndUnsupportedGenerationConfiguration(t *testing.
 
 func fixture(t *testing.T, config string) string {
 	t.Helper()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write(t, root, "buf.yaml", "version: v2\nmodules:\n  - path: proto\nlint:\n  use: [STANDARD]\n")
 	write(t, root, "buf.gen.yaml", config)
 	write(t, root, "proto/acme/v1/envelope.proto", `syntax = "proto3";

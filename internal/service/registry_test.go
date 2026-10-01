@@ -5,12 +5,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestAddCanonicalizesAndIsIdempotent(t *testing.T) {
 	env := isolatedEnvironment(t)
 	store := NewStore(env)
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	first, added, err := store.Add(root, Settings{})
 	if err != nil || !added {
 		t.Fatalf("Add(%q) = %v, added %v", root, err, added)

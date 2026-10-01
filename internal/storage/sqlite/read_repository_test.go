@@ -19,12 +19,13 @@ import (
 	"github.com/cafecito-games/grafo/internal/indexer"
 	"github.com/cafecito-games/grafo/internal/semantic"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/migrations"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 	"github.com/pressly/goose/v3"
 )
 
 func TestOpenReadOnlyRequiresExistingCompatibleDatabaseAndEscapesPath(t *testing.T) {
 	ctx := context.Background()
-	missing := filepath.Join(t.TempDir(), "missing", "graph.sqlite")
+	missing := filepath.Join(testtemp.Dir(t), "missing", "graph.sqlite")
 	if _, err := OpenReadOnly(ctx, missing); err == nil || !strings.Contains(err.Error(), "run 'grafo index") {
 		t.Fatalf("missing index error = %v, want actionable index instruction", err)
 	}
@@ -32,7 +33,7 @@ func TestOpenReadOnlyRequiresExistingCompatibleDatabaseAndEscapesPath(t *testing
 		t.Fatalf("read-only open created parent directory: %v", err)
 	}
 
-	directory := t.TempDir()
+	directory := testtemp.Dir(t)
 	seedPath := filepath.Join(directory, "seed.sqlite")
 	path := filepath.Join(directory, "graph ?#%.sqlite")
 	writable, err := Open(ctx, seedPath)
@@ -120,7 +121,7 @@ func TestOpenReadOnlyRejectsIncompatibleMetadataWithoutMutation(t *testing.T) {
 		{name: "missing required table", mutate: execRaw("DROP TABLE edges"), want: `required table "edges" is missing`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "graph.sqlite")
+			path := filepath.Join(testtemp.Dir(t), "graph.sqlite")
 			seedCompatibleDatabase(t, path)
 			database, err := sql.Open("sqlite", path)
 			if err != nil {
@@ -148,7 +149,7 @@ func TestOpenReadOnlyRejectsIncompatibleMetadataWithoutMutation(t *testing.T) {
 }
 
 func TestOpenReadOnlyRejectsCorruptDatabaseAndHonorsCancellation(t *testing.T) {
-	corrupt := filepath.Join(t.TempDir(), "corrupt.sqlite")
+	corrupt := filepath.Join(testtemp.Dir(t), "corrupt.sqlite")
 	if err := os.WriteFile(corrupt, []byte("not a sqlite database"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +160,7 @@ func TestOpenReadOnlyRejectsCorruptDatabaseAndHonorsCancellation(t *testing.T) {
 		t.Fatalf("corrupt database error = %v", err)
 	}
 
-	path := filepath.Join(t.TempDir(), "graph.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "graph.sqlite")
 	seedCompatibleDatabase(t, path)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -172,7 +173,7 @@ func TestOpenReadOnlyRejectsCorruptDatabaseAndHonorsCancellation(t *testing.T) {
 }
 
 func TestOpenReadOnlyIsIdempotentAndWorksOnReadOnlyFilesystem(t *testing.T) {
-	directory := t.TempDir()
+	directory := testtemp.Dir(t)
 	path := filepath.Join(directory, "graph.sqlite")
 	seedCompatibleDatabase(t, path)
 	if err := os.Chmod(path, 0o444); err != nil {
@@ -198,7 +199,7 @@ func TestOpenReadOnlyIsIdempotentAndWorksOnReadOnlyFilesystem(t *testing.T) {
 
 func TestOpenReadOnlyObservesCommittedWALUpdates(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "graph.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "graph.sqlite")
 	writable, err := Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -228,7 +229,7 @@ func TestOpenReadOnlyObservesCommittedWALUpdates(t *testing.T) {
 
 func TestReadOnlyAndWritableQueriesAreByteEquivalent(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "graph.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "graph.sqlite")
 	writable, err := Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -271,7 +272,7 @@ func TestReadOnlyAndWritableQueriesAreByteEquivalent(t *testing.T) {
 }
 
 func TestOpenReadOnlyConcurrentOpenQueryCloseDoesNotLeak(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "graph.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "graph.sqlite")
 	seedCompatibleDatabase(t, path)
 	const workers = 24
 	var wait sync.WaitGroup
@@ -304,7 +305,7 @@ func TestOpenReadOnlyConcurrentOpenQueryCloseDoesNotLeak(t *testing.T) {
 }
 
 func TestOpenReadOnlyBusyValidationHonorsContext(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "graph.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "graph.sqlite")
 	seedCompatibleDatabase(t, path)
 	locker, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -405,7 +406,7 @@ func querySnapshot(t *testing.T, repository readSurface, callerID string) []byte
 
 func TestWritableOpenDropsLegacyEmbeddingsWithoutChangingStructuralCounts(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "graph.sqlite")
+	path := filepath.Join(testtemp.Dir(t), "graph.sqlite")
 	database, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)

@@ -6,11 +6,12 @@ import (
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestReconciliationQueueSurvivesRepositoryRestart(t *testing.T) {
 	ctx := context.Background()
-	databasePath := filepath.Join(t.TempDir(), "graph.sqlite")
+	databasePath := filepath.Join(testtemp.Dir(t), "graph.sqlite")
 	repository, err := Open(ctx, databasePath)
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +63,7 @@ func TestReconciliationQueueSurvivesRepositoryRestart(t *testing.T) {
 
 func TestCompletedReconciliationClearsCleanupMarker(t *testing.T) {
 	ctx := context.Background()
-	repository, err := Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

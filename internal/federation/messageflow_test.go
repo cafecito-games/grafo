@@ -9,11 +9,12 @@ import (
 	"github.com/cafecito-games/grafo/internal/federation"
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/query"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestMessageFlowRetainsFederatedRepositoryAndComponentEvidence(t *testing.T) {
 	ctx := context.Background()
-	workspace := t.TempDir()
+	workspace := testtemp.Dir(t)
 	schemaRoot, clientRoot, gammaRoot := filepath.Join(workspace, "schema"), filepath.Join(workspace, "client"), filepath.Join(workspace, "gamma")
 	for _, root := range []string{schemaRoot, clientRoot, gammaRoot} {
 		if err := os.MkdirAll(root, 0o755); err != nil {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 // edgeKindHistogramSQL mirrors the CountEdgesByKind query in
@@ -20,7 +21,7 @@ const edgeKindHistogramSQL = "SELECT kind, COUNT(*) AS count FROM edges GROUP BY
 
 func TestEdgeKindHistogramStreamsAnIndexInsteadOfSorting(t *testing.T) {
 	ctx := context.Background()
-	databasePath := filepath.Join(t.TempDir(), "graph.sqlite")
+	databasePath := filepath.Join(testtemp.Dir(t), "graph.sqlite")
 	repository := histogramRepository(t, ctx, databasePath)
 	if err := repository.Close(); err != nil {
 		t.Fatal(err)
@@ -59,7 +60,7 @@ func TestEdgeKindHistogramStreamsAnIndexInsteadOfSorting(t *testing.T) {
 
 func TestCountsMatchAuthoritativeRecount(t *testing.T) {
 	ctx := context.Background()
-	databasePath := filepath.Join(t.TempDir(), "graph.sqlite")
+	databasePath := filepath.Join(testtemp.Dir(t), "graph.sqlite")
 	repository := histogramRepository(t, ctx, databasePath)
 	counts, err := repository.Counts(ctx)
 	if err != nil {

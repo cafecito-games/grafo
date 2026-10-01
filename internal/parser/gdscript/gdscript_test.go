@@ -11,6 +11,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	gdscriptparser "github.com/cafecito-games/grafo/internal/parser/gdscript"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestParserClassifiesOnlyStructurallyBackedGodotTests(t *testing.T) {
@@ -89,7 +90,7 @@ class InnerSpec extends GutTest:
 }
 
 func TestConfiguredGodotTestBasesAreValidatedAndSemantic(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "grafo.yaml", "tests:\n  gdscript_bases: [SpecBase]\n")
 	input := parserapi.Input{Root: root, Path: "tests/spec.gd", Content: []byte("extends SpecBase\nfunc test_custom():\n\tpass\n"),
 		Repository: "sample", RepoID: "repo"}
@@ -187,7 +188,7 @@ func take_damage(amount: int) -> int:
 }
 
 func TestParserExtractsTypedAndConfiguredHTTPRequests(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "grafo.yaml", `http:
   request_apis:
     - language: gdscript
@@ -264,7 +265,7 @@ func TestLegacyAndAdapterHTTPConfigurationShareOneProjection(t *testing.T) {
 	content := []byte("extends Node\nfunc send(auth: AuthAPI):\n\tauth.fetch(HTTPClient.METHOD_PATCH, \"/profiles/me?full=true\")\n")
 	parse := func(configuration string) graph.Fact {
 		t.Helper()
-		root := t.TempDir()
+		root := testtemp.Dir(t)
 		writeFile(t, root, "grafo.yaml", configuration)
 		result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
 			Root: root, Path: "client.gd", Content: content, Repository: "sample", RepoID: "repo:sample",
@@ -368,7 +369,7 @@ func send() -> void:
 }
 
 func TestParserDiagnosesRejectedConfiguredIdentityAndUnsupportedKnownFormat(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "grafo.yaml", `http:
   request_apis:
     - language: gdscript
@@ -411,7 +412,7 @@ func send() -> void:
 }
 
 func TestAdapterSemanticKeyAndDependencyTrackOnlyAdapterConfiguration(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "grafo.yaml", "components:\n  - name: client\n    roots: [client]\n")
 	parser := gdscriptparser.New()
 	input := parserapi.Input{Root: root, Path: "client/main.gd", Content: []byte("extends Node\n")}
@@ -442,7 +443,7 @@ func TestAdapterSemanticKeyAndDependencyTrackOnlyAdapterConfiguration(t *testing
 }
 
 func TestParserExtractsENetTransportEvidence(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, ".gitignore", "generated/\n")
 	writeFile(t, root, "buf.yaml", "version: v2\nmodules:\n  - path: proto\n")
 	writeFile(t, root, "buf.gen.yaml", `version: v2
@@ -750,7 +751,7 @@ func gdTransportFactSignature(result graph.ParseResult, fromID string) string {
 }
 
 func TestParserSuppressesCorroboratedTrackedGDScriptBinding(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "buf.gen.yaml", `version: v2
 plugins:
   - local: protoc-gen-gdscript
@@ -777,7 +778,7 @@ func reset() -> void:
 }
 
 func TestParserExtractsCanonicalProtobufUsageWithoutGeneratedBindings(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, ".gitignore", "generated/\n")
 	writeFile(t, root, "buf.yaml", "version: v2\nmodules:\n  - path: proto\n")
 	writeFile(t, root, "buf.gen.yaml", `version: v2
@@ -1064,7 +1065,7 @@ func invalid_static_accessors() -> void:
 }
 
 func TestParserInfersForwardFieldThroughGeneratedBase(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "buf.gen.yaml", "version: v2\nplugins:\n  - local: protoc-gen-gdscript\n    out: generated\n")
 	writeFile(t, root, "envelope.proto", "syntax = \"proto3\"; package acme.v1; message Envelope { string text = 1; }\n")
 	content := []byte(`class_name Forward extends AcmeV1EnvelopeEnvelope
@@ -1086,7 +1087,7 @@ var cached = from_bytes(PackedByteArray())
 }
 
 func TestParserRejectsShadowedGeneratedBaseForForwardField(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "buf.gen.yaml", "version: v2\nplugins:\n  - local: protoc-gen-gdscript\n    out: generated\n")
 	writeFile(t, root, "envelope.proto", "syntax = \"proto3\"; package acme.v1; message Envelope { string text = 1; }\n")
 	content := []byte(`class_name Shadow extends AcmeV1EnvelopeEnvelope
@@ -1115,7 +1116,7 @@ var cached = from_bytes(PackedByteArray())
 }
 
 func TestParserInfersForwardFieldThroughInnerGeneratedBase(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "buf.gen.yaml", "version: v2\nplugins:\n  - local: protoc-gen-gdscript\n    out: generated\n")
 	writeFile(t, root, "envelope.proto", "syntax = \"proto3\"; package acme.v1; message Envelope { string text = 1; }\n")
 	content := []byte(`class_name Multi extends Mid
@@ -1140,7 +1141,7 @@ var cached = from_bytes(PackedByteArray())
 }
 
 func TestParserRejectsAmbiguousProtobufGDScriptBindings(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "buf.yaml", "version: v2\nmodules:\n  - path: proto\n")
 	writeFile(t, root, "buf.gen.yaml", "version: v2\nplugins:\n  - local: protoc-gen-gdscript\n    out: generated\n")
 	writeFile(t, root, "proto/one/envelope.proto", "syntax = \"proto3\"; package acme.v1; message Envelope { string text = 1; }\n")
@@ -1171,7 +1172,7 @@ func TestParserRejectsAmbiguousProtobufGDScriptBindings(t *testing.T) {
 }
 
 func TestParserSuppressesProtocolUseInConfiguredGDScriptOutputWithRejectedHeader(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "buf.gen.yaml", "version: v2\nplugins:\n  - local: protoc-gen-gdscript\n    out: generated\n")
 	writeFile(t, root, "schema.proto", "syntax = \"proto3\"; message Message { string value = 1; }\n")
 	content := []byte("class_name SchemaMessage\n# Generated by an unsupported tool\nfunc use(value: SchemaMessage) -> void:\n\tvalue.set_value(\"generated implementation\")\n")
@@ -1402,7 +1403,7 @@ func TestParserDeclaresScriptModuleForResourceIdentity(t *testing.T) {
 }
 
 func TestParserResolvesAutoloadUsesFromProjectDeclarations(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "client/project.godot", `config_version=5
 
 [autoload]
@@ -1448,7 +1449,7 @@ func ready() -> void:
 }
 
 func TestParserKeepsProjectOwnershipInsideSourceMembership(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "project.godot", "[autoload]\nRoot=\"*res://scripts/root.gd\"\n")
 	writeFile(t, root, "nested/project.godot", "[autoload]\nNested=\"*res://scripts/nested.gd\"\n")
 	input := parserapi.Input{
@@ -1519,7 +1520,7 @@ func findFactWithTarget(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, t
 // the script side: a preload that traverses out of its own project must not
 // resolve into a sibling project.
 func TestParserKeepsProjectEscapingPreloadsUnresolved(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "client/project.godot", "config_version=5\n")
 	writeFile(t, root, "tools/probe/project.godot", "config_version=5\n")
 
@@ -1548,7 +1549,7 @@ func TestParserKeepsProjectEscapingPreloadsUnresolved(t *testing.T) {
 // action, a computed name resolves nothing, and a literal argument that is not an
 // action name on an Input call is no longer mistaken for one.
 func TestParserLinksLiteralInputActionUses(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "client/project.godot", "config_version=5\n\n[input]\njump={\"deadzone\": 0.5, \"events\": []}\n")
 	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
 		Root: root, Path: "client/scripts/hud.gd", Repository: "sample", RepoID: "repo:sample",
@@ -1619,7 +1620,7 @@ func is_action_bar_visible() -> bool:
 // form, a dispatch records its method as evidence without inventing a handler, and
 // a computed group name resolves nothing.
 func TestParserLinksLiteralGroupOperations(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "client/project.godot", "config_version=5\n\n[global_group]\nenemies=\"Hostile\"\n")
 	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
 		Root: root, Path: "client/scripts/spawner.gd", Repository: "sample", RepoID: "repo:sample",
@@ -1765,7 +1766,7 @@ func on_ready_changed(_value: bool) -> void:
 }
 
 func TestParserProjectsConfiguredCallEffectsAndPreservesCalls(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "grafo.yaml", `adapters:
   - match: {language: gdscript, symbol: Signals.wire}
     effects:
@@ -1865,7 +1866,7 @@ func on_round_started(_value: int) -> void:
 }
 
 func TestParserConfiguredCallEffectsFailClosed(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "grafo.yaml", `adapters:
   - match: {language: gdscript, symbol: Signals.wire}
     effects:
@@ -1906,7 +1907,7 @@ func run():
 }
 
 func TestConfiguredEffectRetainsOrdinaryCallAcrossBuiltinEarlyReturn(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "grafo.yaml", `adapters:
   - match: {language: gdscript, symbol: Assets.load}
     effects:
@@ -2103,7 +2104,7 @@ func _on_unknown() -> void:
 // is_action_pressed, and neither the bare nor the self-qualified call to it
 // involves a Godot input API, so neither may produce a typed action edge.
 func TestParserKeepsLocallyDeclaredActionMethodsOutOfTheVocabulary(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "client/project.godot", "config_version=5\n\n[input]\njump={\"deadzone\": 0.5, \"events\": []}\n")
 	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
 		Root: root, Path: "client/scripts/pane.gd", Repository: "sample", RepoID: "repo:sample",
@@ -2147,7 +2148,7 @@ func add_to_group(_name: String) -> bool:
 // action-query methods. is_action is an InputEvent method rather than an Input or
 // InputMap one, so requiring an Input receiver discarded correct code.
 func TestParserResolvesActionQueriesOnInputEventReceivers(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "client/project.godot", "config_version=5\n")
 	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
 		Root: root, Path: "client/scripts/input.gd", Repository: "sample", RepoID: "repo:sample",
@@ -2225,7 +2226,7 @@ func _on_sign_in() -> void:
 // recall - a deliberate decision this test exists to keep from being quietly
 // tightened later.
 func TestParserRefusesActionQueriesOnKnownNonInputReceivers(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	writeFile(t, root, "client/project.godot", "config_version=5\n")
 	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
 		Root: root, Path: "client/scripts/pad.gd", Repository: "sample", RepoID: "repo:sample",

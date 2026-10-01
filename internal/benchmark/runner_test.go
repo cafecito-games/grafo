@@ -11,21 +11,22 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestRunRejectsInvalidInputBeforeCreatingOutput(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "file")
+	file := filepath.Join(testtemp.Dir(t), "file")
 	if err := os.WriteFile(file, []byte("not a repository"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for name, repository := range map[string]string{
 		"absent":        "",
-		"missing":       filepath.Join(t.TempDir(), "missing"),
+		"missing":       filepath.Join(testtemp.Dir(t), "missing"),
 		"not_directory": file,
-		"not_git":       t.TempDir(),
+		"not_git":       testtemp.Dir(t),
 	} {
 		t.Run(name, func(t *testing.T) {
-			output := filepath.Join(t.TempDir(), "output")
+			output := filepath.Join(testtemp.Dir(t), "output")
 			_, err := Run(context.Background(), Options{Repository: repository, Output: output})
 			if err == nil {
 				t.Fatal("expected invalid repository error")
@@ -39,7 +40,7 @@ func TestRunRejectsInvalidInputBeforeCreatingOutput(t *testing.T) {
 
 func TestRunRejectsOutputInsideSourceBeforeCreatingArtifacts(t *testing.T) {
 	repository := fixtureRepository(t)
-	alias := filepath.Join(t.TempDir(), "corpus-alias")
+	alias := filepath.Join(testtemp.Dir(t), "corpus-alias")
 	if err := os.Symlink(repository, alias); err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +89,7 @@ func TestRunRejectsDefaultTemporaryOutputInsideSource(t *testing.T) {
 }
 
 func TestRestoreTrackedFilePreservesExecutableMode(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "tool.py")
+	path := filepath.Join(testtemp.Dir(t), "tool.py")
 	if err := restoreTrackedFile(path, []byte("print('ok')\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +103,7 @@ func TestRestoreTrackedFilePreservesExecutableMode(t *testing.T) {
 }
 
 func TestRunRestoresExecutableMutationTarget(t *testing.T) {
-	repository := t.TempDir()
+	repository := testtemp.Dir(t)
 	runTestGit(t, repository, "init", "-b", "main")
 	target := filepath.Join(repository, "tool.py")
 	if err := os.WriteFile(target, []byte("#!/usr/bin/env python3\nprint('ok')\n"), 0o644); err != nil {
@@ -115,7 +116,7 @@ func TestRunRestoresExecutableMutationTarget(t *testing.T) {
 	runTestGit(t, repository, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "executable fixture")
 	before := sourceState(t, repository)
 
-	report, err := Run(context.Background(), Options{Repository: repository, Output: filepath.Join(t.TempDir(), "benchmark")})
+	report, err := Run(context.Background(), Options{Repository: repository, Output: filepath.Join(testtemp.Dir(t), "benchmark")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +129,7 @@ func TestRunRestoresExecutableMutationTarget(t *testing.T) {
 }
 
 func TestLoadBaselineRejectsIncompatibleVersions(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "baseline.json")
+	path := filepath.Join(testtemp.Dir(t), "baseline.json")
 	if err := os.WriteFile(path, []byte(`{"schema_version":999,"semantic_index_version":"old","graph_schema_version":1}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +139,7 @@ func TestLoadBaselineRejectsIncompatibleVersions(t *testing.T) {
 }
 
 func TestLoadBaselineRejectsFailedReport(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "baseline.json")
+	path := filepath.Join(testtemp.Dir(t), "baseline.json")
 	report := Report{SchemaVersion: ReportSchemaVersion, SemanticIndexVersion: indexer.SemanticIndexVersion,
 		GraphSchemaVersion: graph.SchemaVersion, Status: StatusFailed}
 	content, err := json.Marshal(report)
@@ -163,7 +164,7 @@ func TestBuildProvenanceIdentifiesGrafoCheckout(t *testing.T) {
 func TestRunExercisesIncrementalScenariosWithoutChangingSource(t *testing.T) {
 	repository := fixtureRepository(t)
 	before := sourceState(t, repository)
-	output := filepath.Join(t.TempDir(), "benchmark")
+	output := filepath.Join(testtemp.Dir(t), "benchmark")
 
 	report, err := Run(context.Background(), Options{Repository: repository, Output: output})
 	if err != nil {
@@ -278,7 +279,7 @@ func TestRunExercisesCandidateStorageEngines(t *testing.T) {
 			repository := fixtureRepository(t)
 			report, err := Run(context.Background(), Options{
 				Repository: repository,
-				Output:     filepath.Join(t.TempDir(), "benchmark"),
+				Output:     filepath.Join(testtemp.Dir(t), "benchmark"),
 				Engine:     engine,
 			})
 			if err != nil {
@@ -301,7 +302,7 @@ func TestRunExercisesCandidateStorageEngines(t *testing.T) {
 
 func fixtureRepository(t *testing.T) string {
 	t.Helper()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runTestGit(t, root, "init", "-b", "main")
 	files := map[string]string{
 		".gitignore":          "secret.env\n",

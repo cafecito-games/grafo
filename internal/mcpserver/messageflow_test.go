@@ -9,11 +9,12 @@ import (
 	"github.com/cafecito-games/grafo/internal/indexer"
 	"github.com/cafecito-games/grafo/internal/mcpserver"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestServerExposesScalarBatchAndCoverageMessageTools(t *testing.T) {
 	ctx := context.Background()
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

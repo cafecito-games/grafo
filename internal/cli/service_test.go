@@ -11,6 +11,7 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/indexer"
 	"github.com/cafecito-games/grafo/internal/service"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 // isolateConfiguration points every configuration lookup at throwaway
@@ -18,11 +19,11 @@ import (
 // real client configuration or probe installed clients.
 func isolateConfiguration(t *testing.T) string {
 	t.Helper()
-	home := t.TempDir()
+	home := testtemp.Dir(t)
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
-	t.Setenv("PATH", t.TempDir())
+	t.Setenv("PATH", testtemp.Dir(t))
 	return home
 }
 
@@ -56,7 +57,7 @@ func TestParseArgumentsAcceptsServiceAndDoctorOptions(t *testing.T) {
 
 func TestServiceRegistryCommandsRoundTrip(t *testing.T) {
 	isolateConfiguration(t)
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if status, output := runCLI(t, "service", "add", root); status != 0 || !strings.Contains(output, "registered") {
 		t.Fatalf("service add = %d %q", status, output)
 	}
@@ -80,7 +81,7 @@ func TestServiceRegistryCommandsRoundTrip(t *testing.T) {
 
 func TestServiceRunOnceIndexesRegisteredRootsAndLogsThem(t *testing.T) {
 	isolateConfiguration(t)
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "app.go"), []byte("package app\n\nfunc Run() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +116,7 @@ func TestServiceRunOnceIndexesRegisteredRootsAndLogsThem(t *testing.T) {
 
 func TestDoctorIsReadOnlyUntilRepairIsRequested(t *testing.T) {
 	isolateConfiguration(t)
-	root := filepath.Join(t.TempDir(), "repository")
+	root := filepath.Join(testtemp.Dir(t), "repository")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +158,7 @@ func TestDoctorJSONCarriesItsFormatMarker(t *testing.T) {
 
 func TestUninstallCLIRefusesFileBackedTargetOutsideUserRoots(t *testing.T) {
 	home := isolateConfiguration(t)
-	outside := t.TempDir()
+	outside := testtemp.Dir(t)
 	if err := os.Symlink(outside, filepath.Join(home, ".cursor")); err != nil {
 		t.Fatal(err)
 	}

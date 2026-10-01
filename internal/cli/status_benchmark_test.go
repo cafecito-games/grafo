@@ -7,13 +7,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 // BenchmarkWarmStatus is deliberately compatible with the issue's base
 // revision. Copy this unchanged file into either checkout and use one timed
 // invocation per process sample (-benchtime=1x -count=30).
 func BenchmarkWarmStatus(b *testing.B) {
-	root := b.TempDir()
+	root := testtemp.Dir(b)
 	for name, content := range map[string]string{
 		"go.mod":    "module benchmark.example/status\n\ngo 1.26\n",
 		"status.go": "package status\nfunc Ready() bool { return true }\n",

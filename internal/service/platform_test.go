@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/agentinstall"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 // recordingEnvironment is the real filesystem with a recorded, fake process
@@ -386,14 +387,14 @@ func TestGeneratedDefinitionsSurviveAwkwardPaths(t *testing.T) {
 	for _, goos := range []string{"linux", "darwin"} {
 		t.Run(goos, func(t *testing.T) {
 			env := newRecordingEnvironment(t, goos)
-			binary := filepath.Join(t.TempDir(), "grafo tools", "grafo")
+			binary := filepath.Join(testtemp.Dir(t), "grafo tools", "grafo")
 			if err := os.MkdirAll(filepath.Dir(binary), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.WriteFile(binary, []byte("#!/bin/sh\n"), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			stateDir := filepath.Join(t.TempDir(), "state dir 100%")
+			stateDir := filepath.Join(testtemp.Dir(t), "state dir 100%")
 			actions, err := Install(context.Background(), env, binary, stateDir, false)
 			if err != nil {
 				t.Fatalf("Install: %v", err)

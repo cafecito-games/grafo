@@ -7,11 +7,12 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestRepositoryResolvesAndInvalidatesNamedSources(t *testing.T) {
 	ctx := context.Background()
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +83,7 @@ func TestRepositoryResolvesAndInvalidatesNamedSources(t *testing.T) {
 
 func TestRepositoryKeepsIndependentUnresolvedEndpointsExplicit(t *testing.T) {
 	ctx := context.Background()
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +115,7 @@ func TestRepositoryKeepsIndependentUnresolvedEndpointsExplicit(t *testing.T) {
 
 func TestRepositoryReconcilesExactAndKindlessNamedSources(t *testing.T) {
 	ctx := context.Background()
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +198,7 @@ func TestRepositoryReconcilesExactAndKindlessNamedSources(t *testing.T) {
 
 func TestRepositoryRejectsInvalidSourcesBeforeReplacingOwner(t *testing.T) {
 	ctx := context.Background()
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

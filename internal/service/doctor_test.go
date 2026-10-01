@@ -11,6 +11,7 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/agentinstall"
 	"github.com/cafecito-games/grafo/internal/indexer"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 // doctorOptions builds options with the agent seams stubbed, so a diagnosis
@@ -33,7 +34,7 @@ func doctorOptions(binary string) DoctorOptions {
 // installedBinary creates a file that stands in for an installed grafo binary.
 func installedBinary(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "grafo")
+	path := filepath.Join(testtemp.Dir(t), "grafo")
 	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +66,7 @@ func findingFor(diagnosis Diagnosis, area, target string) (Finding, bool) {
 func TestDoctorReportsHealthyRootWithoutRepairing(t *testing.T) {
 	env := newRecordingEnvironment(t, "linux")
 	store := NewStore(env)
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if _, _, err := store.Add(root, Settings{}); err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +114,7 @@ func TestDoctorReportsHealthyRootWithoutRepairing(t *testing.T) {
 func TestDoctorPrunesMissingRootOnlyWithRepair(t *testing.T) {
 	env := newRecordingEnvironment(t, "linux")
 	store := NewStore(env)
-	root := filepath.Join(t.TempDir(), "repository")
+	root := filepath.Join(testtemp.Dir(t), "repository")
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +164,7 @@ func TestDoctorPrunesMissingRootOnlyWithRepair(t *testing.T) {
 func TestDoctorNeverPrunesAnOverlappingRoot(t *testing.T) {
 	env := newRecordingEnvironment(t, "linux")
 	store := NewStore(env)
-	parent := t.TempDir()
+	parent := testtemp.Dir(t)
 	child := filepath.Join(parent, "nested")
 	if err := os.MkdirAll(child, 0o755); err != nil {
 		t.Fatal(err)
@@ -374,7 +375,7 @@ func TestDoctorIgnoresAServiceReceiptRecordedForAnotherPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Give the diagnosis a registered root so the service is worth reporting.
-	if _, _, err := NewStore(env).Add(t.TempDir(), Settings{}); err != nil {
+	if _, _, err := NewStore(env).Add(testtemp.Dir(t), Settings{}); err != nil {
 		t.Fatal(err)
 	}
 	options := doctorOptions(installedBinary(t))
@@ -417,7 +418,7 @@ func TestDoctorDetectsADefinitionWhoseExecutableExtendsTheCurrentBinary(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	directory := t.TempDir()
+	directory := testtemp.Dir(t)
 	current := filepath.Join(directory, "grafo")
 	extended := filepath.Join(directory, "grafo-next")
 	for _, path := range []string{current, extended} {
@@ -468,7 +469,7 @@ func TestDoctorRefusesToRepairFromAnEphemeralBinary(t *testing.T) {
 	}
 	// A receipt that covers the resolved path makes the missing definition
 	// repairable in principle, so only the binary rule can stop it.
-	generated, err := PlatformFor("linux").Definition(filepath.Join(t.TempDir(), "grafo"), "/state")
+	generated, err := PlatformFor("linux").Definition(filepath.Join(testtemp.Dir(t), "grafo"), "/state")
 	if err != nil {
 		t.Fatal(err)
 	}

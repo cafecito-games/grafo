@@ -17,6 +17,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/indexer"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 type coordinatorParser struct{}
@@ -130,7 +131,7 @@ func TestProductionFreshnessCoordinatorPublishesQueryOnlyGenerations(t *testing.
 }
 
 func TestProductionFreshnessCoordinatorUsesConservativeNonGitFallback(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "sample.snap"), []byte("one"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -565,7 +566,7 @@ func (r *blockingSearchRepository) SearchNodes(ctx context.Context, query string
 
 func coordinatorProbe(t *testing.T, content string) indexer.FreshnessProbe {
 	t.Helper()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	coordinatorGit(t, root, "init", "-b", "main")
 	if err := os.WriteFile(filepath.Join(root, "sample.snap"), []byte(content), 0o644); err != nil {
 		t.Fatal(err)
@@ -603,7 +604,7 @@ func testGenerationOpener(t *testing.T, opens *atomic.Int32) func(context.Contex
 	t.Helper()
 	return func(ctx context.Context, _ []indexer.FreshnessProbe) (graph.ReadRepository, func() error, error) {
 		opens.Add(1)
-		repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "generation.sqlite"))
+		repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "generation.sqlite"))
 		if err != nil {
 			return nil, nil, err
 		}

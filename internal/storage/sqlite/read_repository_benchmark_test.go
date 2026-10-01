@@ -8,6 +8,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
 	"github.com/cafecito-games/grafo/internal/query"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func BenchmarkRepositoryOpenAndExactNode(b *testing.B) {
@@ -108,7 +109,7 @@ func BenchmarkReadOnlyRepresentativeQueries(b *testing.B) {
 func benchmarkReadDatabase(b *testing.B) (string, []string) {
 	b.Helper()
 	ctx := context.Background()
-	path := filepath.Join(b.TempDir(), "graph.sqlite")
+	path := filepath.Join(testtemp.Dir(b), "graph.sqlite")
 	repository, err := Open(ctx, path)
 	if err != nil {
 		b.Fatal(err)

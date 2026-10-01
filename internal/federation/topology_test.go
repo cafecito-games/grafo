@@ -11,11 +11,12 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/httpmodel"
 	"github.com/cafecito-games/grafo/internal/query"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestTopologyKeepsFederatedHTTPAmbiguityAndEventLinksExplicit(t *testing.T) {
 	ctx := context.Background()
-	workspace := t.TempDir()
+	workspace := testtemp.Dir(t)
 	roots := map[string]string{}
 	for _, name := range []string{"client", "payments-a", "payments-b", "consumer"} {
 		root := filepath.Join(workspace, name)

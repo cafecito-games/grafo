@@ -12,11 +12,12 @@ import (
 	"github.com/cafecito-games/grafo/internal/indexer"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestBenchmarkTransformSwitchesProfilesAndConverges(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "app.profile"), []byte("fixture"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +25,7 @@ func TestBenchmarkTransformSwitchesProfilesAndConverges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.db"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

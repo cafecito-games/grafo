@@ -12,6 +12,7 @@ import (
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	golangparser "github.com/cafecito-games/grafo/internal/parser/golang"
 	"github.com/cafecito-games/grafo/internal/parser/typescript"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 type freshnessParser struct{ semantic *string }
@@ -70,7 +71,7 @@ func (p scopedFreshnessParser) WorkspaceSemanticKey(_ context.Context, input par
 func (scopedFreshnessParser) SemanticDependencies() []string { return []string{"project.godot"} }
 
 func TestFreshnessHonorsConfiguredIndexScope(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	for path, content := range map[string]string{
 		"grafo.yaml":             "index:\n  exclude:\n    - excluded/**\n",
@@ -110,7 +111,7 @@ func TestFreshnessHonorsConfiguredIndexScope(t *testing.T) {
 }
 
 func TestFreshnessIgnoresProjectsOutsideGitMembership(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("ignored/\n.godot/\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -160,7 +161,7 @@ func TestFreshnessIgnoresProjectsOutsideGitMembership(t *testing.T) {
 
 func TestFreshnessProbeDetectsSamePathSameSizeAndSemanticChanges(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	path := filepath.Join(root, "sample.snap")
 	if err := os.WriteFile(path, []byte("first"), 0o644); err != nil {
@@ -238,7 +239,7 @@ func TestFreshnessProbeDetectsSamePathSameSizeAndSemanticChanges(t *testing.T) {
 }
 
 func TestFreshnessProbeFallsBackForNonGitAndHonorsCancellation(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	registry := parserapi.NewRegistry(freshnessParser{})
 	probe, err := indexer.ProbeFreshness(context.Background(), root, registry, indexer.FreshnessOptions{})
 	if err != nil {
@@ -256,7 +257,7 @@ func TestFreshnessProbeFallsBackForNonGitAndHonorsCancellation(t *testing.T) {
 }
 
 func TestFreshnessReprobeCachesKeysOnlyWhileExternalEvidenceAndGitInputsMatch(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	if err := os.WriteFile(filepath.Join(root, "sample.snap"), []byte("first"), 0o644); err != nil {
 		t.Fatal(err)
@@ -316,7 +317,7 @@ func TestFreshnessReprobeCachesKeysOnlyWhileExternalEvidenceAndGitInputsMatch(t 
 
 func TestFreshnessProbeRejectsOversizedDirtyInput(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	path := filepath.Join(root, "sample.snap")
 	if err := os.WriteFile(path, []byte("small"), 0o644); err != nil {
@@ -338,7 +339,7 @@ func TestFreshnessProbeRejectsOversizedDirtyInput(t *testing.T) {
 }
 
 func TestFreshnessReprobeHashesRepeatedTypeScriptSemanticInput(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	if err := os.WriteFile(filepath.Join(root, "sample.ts"), []byte("export const value = 1\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -393,7 +394,7 @@ func TestFreshnessReprobeHashesRepeatedTypeScriptSemanticInput(t *testing.T) {
 func TestFreshnessReprobeDetectsIgnoredVendorSemanticInputs(t *testing.T) {
 	for _, vendorPath := range []string{"vendor", "cmd/vendor"} {
 		t.Run(vendorPath, func(t *testing.T) {
-			root := t.TempDir()
+			root := testtemp.Dir(t)
 			runGit(t, root, "init", "-b", "main")
 			files := map[string]string{
 				".gitignore": "vendor/\n",
@@ -441,7 +442,7 @@ func TestFreshnessReprobeDetectsIgnoredVendorSemanticInputs(t *testing.T) {
 }
 
 func TestFreshnessReprobeIgnoresRootModulesTxtInVendorNamedCheckout(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "vendor")
+	root := filepath.Join(testtemp.Dir(t), "vendor")
 	if err := os.Mkdir(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -481,7 +482,7 @@ func TestFreshnessReprobeIgnoresRootModulesTxtInVendorNamedCheckout(t *testing.T
 
 func TestFreshnessProbeTracksBranchCommitStatusAndRemoteIdentity(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	path := filepath.Join(root, "sample.snap")
 	if err := os.WriteFile(path, []byte("first"), 0o644); err != nil {
@@ -544,7 +545,7 @@ func TestFreshnessProbeTracksBranchCommitStatusAndRemoteIdentity(t *testing.T) {
 
 func TestFreshnessProbeIgnoresUnrelatedAndTracksRenameAndSymlinkStates(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	if err := os.WriteFile(filepath.Join(root, "sample.snap"), []byte("first"), 0o644); err != nil {
 		t.Fatal(err)

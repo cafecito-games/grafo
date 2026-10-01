@@ -8,11 +8,12 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/httpmodel"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestRequestResolutionHonorsAuthorityAndIsolatesCacheEntries(t *testing.T) {
 	ctx := context.Background()
-	repository, err := Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +56,7 @@ func TestRequestResolutionHonorsAuthorityAndIsolatesCacheEntries(t *testing.T) {
 
 func TestRequestResolutionPersistsAmbiguity(t *testing.T) {
 	ctx := context.Background()
-	repository, err := Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +85,7 @@ func TestRequestResolutionPersistsAmbiguity(t *testing.T) {
 
 func TestRequestResolutionRanksExactMethodOverANYAndExcludesHost(t *testing.T) {
 	ctx := context.Background()
-	repository, err := Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +140,7 @@ func TestRequestResolutionRanksExactMethodOverANYAndExcludesHost(t *testing.T) {
 
 func TestRequestResolutionPreservesCaseSensitiveMethods(t *testing.T) {
 	ctx := context.Background()
-	repository, err := Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +193,7 @@ func assertResolvedTarget(t *testing.T, ctx context.Context, repository *Reposit
 
 func TestRequestResolutionReconcilesLegacyUnsafeLocalEdge(t *testing.T) {
 	ctx := context.Background()
-	repository, err := Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +236,7 @@ func TestRequestResolutionReconcilesLegacyUnsafeLocalEdge(t *testing.T) {
 
 func TestRequestResolutionRejectsInvalidExactTargets(t *testing.T) {
 	ctx := context.Background()
-	repository, err := Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +278,7 @@ func TestRequestResolutionRejectsInvalidExactTargets(t *testing.T) {
 
 func TestExternalRequestEdgesPagesHydratedBoundaries(t *testing.T) {
 	ctx := context.Background()
-	repository, err := Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

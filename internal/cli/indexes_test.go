@@ -12,6 +12,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/indexer"
 	branchindexes "github.com/cafecito-games/grafo/internal/indexes"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestIndexesOptionsAndUsageFailBeforeRepositoryAccess(t *testing.T) {
@@ -23,7 +24,7 @@ func TestIndexesOptionsAndUsageFailBeforeRepositoryAccess(t *testing.T) {
 		t.Fatalf("parsed arguments = %#v", args)
 	}
 
-	missing := filepath.Join(t.TempDir(), "missing")
+	missing := filepath.Join(testtemp.Dir(t), "missing")
 	for _, test := range []struct {
 		arguments []string
 		message   string
@@ -45,7 +46,7 @@ func TestIndexesOptionsAndUsageFailBeforeRepositoryAccess(t *testing.T) {
 }
 
 func TestIndexesListAndPruneTextJSONParity(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if code := run(t, "index", root); code != 0 {
 		t.Fatalf("index exited with %d", code)
 	}

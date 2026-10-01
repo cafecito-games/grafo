@@ -5,10 +5,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestLoggerRedactsControlCharactersAndRecordsOnlyMetadata(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "logs", "service.log")
+	path := filepath.Join(testtemp.Dir(t), "logs", "service.log")
 	logger, err := OpenLogger(path)
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +46,7 @@ func TestLoggerRedactsControlCharactersAndRecordsOnlyMetadata(t *testing.T) {
 }
 
 func TestLoggerRotatesWithinItsBound(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "service.log")
+	path := filepath.Join(testtemp.Dir(t), "service.log")
 	logger, err := OpenLogger(path)
 	if err != nil {
 		t.Fatal(err)
@@ -70,7 +72,7 @@ func TestLoggerRotatesWithinItsBound(t *testing.T) {
 }
 
 func TestTailLogTreatsAMissingLogAsEmpty(t *testing.T) {
-	lines, err := TailLog(filepath.Join(t.TempDir(), "absent.log"), 10)
+	lines, err := TailLog(filepath.Join(testtemp.Dir(t), "absent.log"), 10)
 	if err != nil {
 		t.Fatalf("TailLog: %v", err)
 	}

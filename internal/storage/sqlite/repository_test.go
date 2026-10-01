@@ -9,11 +9,12 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestRepositoryMigratesAndReconcilesFacts(t *testing.T) {
 	ctx := context.Background()
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +71,7 @@ func TestRepositoryMigratesAndReconcilesFacts(t *testing.T) {
 
 func TestRepositoryPreservesProducerAcrossRestartResolutionAndReplacement(t *testing.T) {
 	ctx := context.Background()
-	databasePath := filepath.Join(t.TempDir(), "graph.sqlite")
+	databasePath := filepath.Join(testtemp.Dir(t), "graph.sqlite")
 	repository, err := sqlite.Open(ctx, databasePath)
 	if err != nil {
 		t.Fatal(err)
@@ -153,7 +154,7 @@ func assertSQLiteProducerEdge(t *testing.T, ctx context.Context, repository *sql
 
 func TestRepositoryReconcilesMoreThanOneBatchAndTruncatesWAL(t *testing.T) {
 	ctx := context.Background()
-	databasePath := filepath.Join(t.TempDir(), "graph.sqlite")
+	databasePath := filepath.Join(testtemp.Dir(t), "graph.sqlite")
 	repository, err := sqlite.Open(ctx, databasePath)
 	if err != nil {
 		t.Fatal(err)
@@ -201,7 +202,7 @@ func TestRepositoryReconcilesMoreThanOneBatchAndTruncatesWAL(t *testing.T) {
 
 func TestRepositoryRestrictsSQLAccessToDataResources(t *testing.T) {
 	ctx := context.Background()
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +240,7 @@ func TestRepositoryRestrictsSQLAccessToDataResources(t *testing.T) {
 
 func TestRepositoryKeepsAmbiguousSymbolicTargetsUnresolved(t *testing.T) {
 	ctx := context.Background()
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +289,7 @@ func TestRepositoryKeepsAmbiguousSymbolicTargetsUnresolved(t *testing.T) {
 // listed first, and the optional kind filter is applied by the query.
 func TestMatchNodesReportsCompleteTotals(t *testing.T) {
 	ctx := context.Background()
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +367,7 @@ func TestMatchNodesReportsCompleteTotals(t *testing.T) {
 // weaker substring level.
 func TestMatchNodesScopesExternalNodesAsFallback(t *testing.T) {
 	ctx := context.Background()
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

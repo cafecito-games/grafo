@@ -15,6 +15,7 @@ import (
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	"github.com/cafecito-games/grafo/internal/query"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestClaimedQueriesAreFullEquivalentOnMixedLanguageCrossFileFixture(t *testing.T) {
@@ -40,7 +41,7 @@ func TestClaimedCrossFileCallsRemainEquivalentAcrossFederatedIndexes(t *testing.
 func profileQuerySuite(t *testing.T, profile detailprofile.Profile) map[string]string {
 	t.Helper()
 	ctx := context.Background()
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.db"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +133,7 @@ func profileQuerySuite(t *testing.T, profile detailprofile.Profile) map[string]s
 func federatedCallQuery(t *testing.T, profile detailprofile.Profile) string {
 	t.Helper()
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	sources := mixedLanguageFixture()[:2]
 	projects := make([]indexer.Project, 0, len(sources))
 	projector := mustProjector(t, detailprofile.Options{Profile: profile})

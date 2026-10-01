@@ -12,6 +12,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/semantic"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 type fakeEmbedder struct {
@@ -65,7 +66,7 @@ func (e *fakeEmbedder) Embed(_ context.Context, inputs []string) ([][]float32, e
 
 func TestServiceIncrementallySyncsAndReturnsGraphContext(t *testing.T) {
 	ctx := context.Background()
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +88,7 @@ func TestServiceIncrementallySyncsAndReturnsGraphContext(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cache, err := embeddingcache.Open(ctx, filepath.Join(t.TempDir(), "embeddings.sqlite"))
+	cache, err := embeddingcache.Open(ctx, filepath.Join(testtemp.Dir(t), "embeddings.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +145,7 @@ func TestServiceIncrementallySyncsAndReturnsGraphContext(t *testing.T) {
 
 func TestSyncDeduplicatesDocumentsAndForceReplacesUniqueKeys(t *testing.T) {
 	ctx := context.Background()
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +162,7 @@ func TestSyncDeduplicatesDocumentsAndForceReplacesUniqueKeys(t *testing.T) {
 	if err := repository.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
-	cache, err := embeddingcache.Open(ctx, filepath.Join(t.TempDir(), "embeddings.sqlite"))
+	cache, err := embeddingcache.Open(ctx, filepath.Join(testtemp.Dir(t), "embeddings.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +206,7 @@ func TestSyncRejectsProviderBatchFailuresWithoutPartialCommit(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
-			repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+			repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -220,7 +221,7 @@ func TestSyncRejectsProviderBatchFailuresWithoutPartialCommit(t *testing.T) {
 			if err := repository.Reconcile(ctx); err != nil {
 				t.Fatal(err)
 			}
-			cache, err := embeddingcache.Open(ctx, filepath.Join(t.TempDir(), "embeddings.sqlite"))
+			cache, err := embeddingcache.Open(ctx, filepath.Join(testtemp.Dir(t), "embeddings.sqlite"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -243,7 +244,7 @@ func TestSyncRejectsProviderBatchFailuresWithoutPartialCommit(t *testing.T) {
 
 func TestDimensionDriftRequiresForceForCurrentKeys(t *testing.T) {
 	ctx := context.Background()
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +253,7 @@ func TestDimensionDriftRequiresForceForCurrentKeys(t *testing.T) {
 	if err := repository.ReplaceOwner(ctx, "one.go", graph.ParseResult{Nodes: []graph.Node{first}}); err != nil {
 		t.Fatal(err)
 	}
-	cache, err := embeddingcache.Open(ctx, filepath.Join(t.TempDir(), "embeddings.sqlite"))
+	cache, err := embeddingcache.Open(ctx, filepath.Join(testtemp.Dir(t), "embeddings.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +281,7 @@ func TestDimensionDriftRequiresForceForCurrentKeys(t *testing.T) {
 
 func TestForceSyncRecoversAfterPriorBatchLeavesMixedDimensions(t *testing.T) {
 	ctx := context.Background()
-	repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "graph.sqlite"))
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +293,7 @@ func TestForceSyncRecoversAfterPriorBatchLeavesMixedDimensions(t *testing.T) {
 	if err := repository.ReplaceOwner(ctx, "fixture.go", graph.ParseResult{Nodes: nodes}); err != nil {
 		t.Fatal(err)
 	}
-	cache, err := embeddingcache.Open(ctx, filepath.Join(t.TempDir(), "embeddings.sqlite"))
+	cache, err := embeddingcache.Open(ctx, filepath.Join(testtemp.Dir(t), "embeddings.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}

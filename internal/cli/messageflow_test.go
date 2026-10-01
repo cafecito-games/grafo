@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/query"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestMessageFlowCommandsShareStructuredCoverageSemantics(t *testing.T) {
@@ -46,7 +47,7 @@ func copyMessageFlowFixture(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	destination := t.TempDir()
+	destination := testtemp.Dir(t)
 	if err := filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr

@@ -9,6 +9,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/httpmodel"
 	"github.com/cafecito-games/grafo/internal/indexer"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 type countingHTTPRepository struct {
@@ -93,7 +94,7 @@ func (r *countingHTTPRepository) ExternalRequestEdges(ctx context.Context, after
 
 func TestHTTPProjectionLoadsEachMemberSnapshotOnce(t *testing.T) {
 	ctx := context.Background()
-	dir := t.TempDir()
+	dir := testtemp.Dir(t)
 	client := openHTTPProjectionMember(t, ctx, filepath.Join(dir, "client.sqlite"), filepath.Join(dir, "client"))
 	server := openHTTPProjectionMember(t, ctx, filepath.Join(dir, "server.sqlite"), filepath.Join(dir, "server"))
 

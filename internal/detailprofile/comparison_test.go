@@ -9,6 +9,7 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestCompareBenchmarkRequiresCleanFrozenSameMachineProvenance(t *testing.T) {
@@ -43,7 +44,7 @@ func TestCompareBenchmarkRequiresCleanFrozenSameMachineProvenance(t *testing.T) 
 
 func TestCapabilityFingerprintsAttributeTypedExternalNodesToProducingEdges(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "graph.db")
+	path := filepath.Join(testtemp.Dir(t), "graph.db")
 	repository, err := sqlite.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +134,7 @@ func TestCapabilityFingerprintsRefuseAnEdgeWithoutItsOriginatingFact(t *testing.
 func fingerprintableIndex(t *testing.T) string {
 	t.Helper()
 	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "graph.db")
+	path := filepath.Join(testtemp.Dir(t), "graph.db")
 	repository, err := sqlite.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)

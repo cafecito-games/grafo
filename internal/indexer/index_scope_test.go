@@ -16,11 +16,12 @@ import (
 	configparser "github.com/cafecito-games/grafo/internal/parser/config"
 	pythonparser "github.com/cafecito-games/grafo/internal/parser/python"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestServiceScopeNarrowingAndBroadeningConvergeWithoutChangingHead(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	for _, relative := range []string{"app/main.py", "internal/eval/testdata/fixture.py"} {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, relative)), 0o755); err != nil {
 			t.Fatal(err)
@@ -149,7 +150,7 @@ func TestServiceScopeNarrowingAndBroadeningConvergeWithoutChangingHead(t *testin
 
 func TestServiceInterruptedRemovalThenScopeRevertRediscoversMissingFiles(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	for _, relative := range []string{"app/main.py", "fixtures/sample.py"} {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, relative)), 0o755); err != nil {
 			t.Fatal(err)
@@ -240,7 +241,7 @@ func TestServiceInterruptedRemovalThenScopeRevertRediscoversMissingFiles(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	fresh, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), "fresh.db"))
+	fresh, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "fresh.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +265,7 @@ func TestServiceInterruptedRemovalThenScopeRevertRediscoversMissingFiles(t *test
 
 func TestServiceScopeIncludeCannotReenableUnsafeOrUnsupportedFiles(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	for _, relative := range []string{"safe.py", "vendor/hidden.py", "node_modules/hidden.py"} {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, relative)), 0o755); err != nil {
 			t.Fatal(err)

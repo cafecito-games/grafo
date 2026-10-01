@@ -10,6 +10,7 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/semantic"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestOpenReadUsesCapabilitySafeRepositoryAfterRefresh(t *testing.T) {
@@ -210,7 +211,7 @@ func TestInstallTargetsMergesPositionalsAndFlag(t *testing.T) {
 // indexedRepository writes a tiny Go module, indexes it, and returns its root.
 func indexedRepository(t *testing.T) string {
 	t.Helper()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write := func(name, content string) {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
 			t.Fatal(err)
@@ -293,7 +294,7 @@ func TestFailureFlowReportsTypedEscapes(t *testing.T) {
 }
 
 func TestTestCoverageCommandsExposeStructuralEvidence(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	write := func(name, content string) {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
 			t.Fatal(err)
@@ -418,7 +419,7 @@ func TestGuidancePrintsCanonicalTextAndIndexStatus(t *testing.T) {
 }
 
 func TestGuidanceReportsMissingIndex(t *testing.T) {
-	stdout, _, code := output(t, "guidance", "--repo", t.TempDir())
+	stdout, _, code := output(t, "guidance", "--repo", testtemp.Dir(t))
 	if code != 0 {
 		t.Fatalf("guidance exited with %d", code)
 	}
@@ -431,7 +432,7 @@ func TestGuidanceHooksAlwaysSucceed(t *testing.T) {
 	// Advisory hooks must fail open: even an unindexed or unknown path, and an
 	// unknown phase, exit 0 with usable context.
 	for _, phase := range []string{"pre-search", "pre-edit", "unknown-phase"} {
-		stdout, _, code := output(t, "guidance", "--hook", phase, "--repo", filepath.Join(t.TempDir(), "missing"))
+		stdout, _, code := output(t, "guidance", "--hook", phase, "--repo", filepath.Join(testtemp.Dir(t), "missing"))
 		if code != 0 {
 			t.Fatalf("hook %q exited with %d", phase, code)
 		}
@@ -497,7 +498,7 @@ func TestShowReportsAmbiguityAndHonorsKind(t *testing.T) {
 // name extends it, and the selector must name the table rather than reporting them
 // as rivals. The column stays reachable by kind and by qualified name.
 func TestShowPrefersTableOverItsOwnColumn(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	// The statement is valid in both dialects, so name the dialect explicitly
 	// rather than letting the router report ambiguous syntax.
 	if err := os.WriteFile(filepath.Join(root, "grafo.yaml"),
@@ -544,7 +545,7 @@ func TestShowPrefersTableOverItsOwnColumn(t *testing.T) {
 // can reference by name, so the selector must be ambiguous rather than silently
 // resolving to the parent.
 func TestShowReportsAmbiguousSceneNodeHierarchy(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if err := os.MkdirAll(filepath.Join(root, "scenes"), 0o755); err != nil {
 		t.Fatal(err)
 	}

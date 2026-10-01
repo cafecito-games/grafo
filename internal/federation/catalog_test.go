@@ -12,6 +12,7 @@ import (
 	parserdefaults "github.com/cafecito-games/grafo/internal/parser/defaults"
 	"github.com/cafecito-games/grafo/internal/query"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 var _ graph.CatalogRepository = (*federation.Repository)(nil)
@@ -19,7 +20,7 @@ var _ graph.CanonicalMessageRepository = (*federation.Repository)(nil)
 
 func TestFederatedCanonicalMessagesPreserveRepositoryQualifiedCollisions(t *testing.T) {
 	ctx := context.Background()
-	workspace := t.TempDir()
+	workspace := testtemp.Dir(t)
 	roots := []string{filepath.Join(workspace, "alpha"), filepath.Join(workspace, "beta")}
 	for _, root := range roots {
 		if err := os.MkdirAll(root, 0o755); err != nil {
@@ -79,7 +80,7 @@ func TestFederatedCanonicalMessagesPreserveRepositoryQualifiedCollisions(t *test
 
 func TestCatalogSharesOneContractAcrossRepositories(t *testing.T) {
 	ctx := context.Background()
-	workspace := t.TempDir()
+	workspace := testtemp.Dir(t)
 	producerRoot := filepath.Join(workspace, "producer")
 	consumerRoot := filepath.Join(workspace, "consumer")
 	for _, root := range []string{producerRoot, consumerRoot} {
@@ -196,7 +197,7 @@ type Bus interface{ Subscribe(string) }
 
 func TestFederatedRelationEdgesProjectThenApplyGlobalBounds(t *testing.T) {
 	ctx := context.Background()
-	workspace := t.TempDir()
+	workspace := testtemp.Dir(t)
 	producerRoot := filepath.Join(workspace, "producer")
 	consumerRoot := filepath.Join(workspace, "consumer")
 	for _, root := range []string{producerRoot, consumerRoot} {
@@ -281,7 +282,7 @@ func TestFederatedRelationEdgesProjectThenApplyGlobalBounds(t *testing.T) {
 
 func TestFederatedGodotInteractionsPreserveAndEnforceProducer(t *testing.T) {
 	ctx := context.Background()
-	workspace := t.TempDir()
+	workspace := testtemp.Dir(t)
 	declarationsRoot := filepath.Join(workspace, "declarations")
 	clientRoot := filepath.Join(workspace, "client")
 	for _, root := range []string{declarationsRoot, clientRoot} {

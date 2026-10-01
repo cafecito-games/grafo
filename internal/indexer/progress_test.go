@@ -14,6 +14,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/indexer"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 type progressParser struct{}
@@ -29,7 +30,7 @@ func (progressParser) Parse(_ context.Context, input parserapi.Input) (graph.Par
 
 func TestServiceProgressObserverIsOrderedAndObservational(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "sample.progress"), []byte("safe source bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +40,7 @@ func TestServiceProgressObserverIsOrderedAndObservational(t *testing.T) {
 	}
 	registry := parserapi.NewRegistry(progressParser{})
 	open := func(name string) *sqlite.Repository {
-		repository, err := sqlite.Open(ctx, filepath.Join(t.TempDir(), name+".db"))
+		repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), name+".db"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -132,7 +133,7 @@ func TestServiceProgressObserverIsOrderedAndObservational(t *testing.T) {
 
 func TestServiceProgressObserverFailureIsTerminalAndFailClosed(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "sample.progress"), []byte("work"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +169,7 @@ func TestServiceProgressObserverFailureIsTerminalAndFailClosed(t *testing.T) {
 
 func TestServiceProgressCancellationIsTerminalAndRetryable(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "sample.progress"), []byte("work"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +204,7 @@ func TestServiceProgressCancellationIsTerminalAndRetryable(t *testing.T) {
 
 func TestServiceTerminalProgressRedactsRepositoryPaths(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	path := filepath.Join(root, "sample.progress")
 	if err := os.WriteFile(path, []byte("work"), 0o644); err != nil {
 		t.Fatal(err)
@@ -241,7 +242,7 @@ func TestServiceTerminalProgressRedactsRepositoryPaths(t *testing.T) {
 }
 
 func TestProgressErrorMessageIsActionableBoundedAndPathFree(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	nested := filepath.Join(root, "nested", "file.go")
 	message := indexer.ProgressErrorMessage(errors.New("open "+nested+": permission denied\n"+strings.Repeat("界", 600)), root)
 	if strings.Contains(message, root) || strings.ContainsAny(message, "\r\n") {
@@ -268,7 +269,7 @@ func TestProgressErrorMessageDoesNotReplaceShortRelativeProseOrItsPlaceholder(t 
 
 func TestServiceReportCapturesPendingReconciliationAtStart(t *testing.T) {
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "sample.progress"), []byte("work"), 0o644); err != nil {
 		t.Fatal(err)
 	}

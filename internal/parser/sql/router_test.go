@@ -13,6 +13,7 @@ import (
 	sqlparser "github.com/cafecito-games/grafo/internal/parser/sql"
 	postgresparser "github.com/cafecito-games/grafo/internal/parser/sql/postgres"
 	sqliteparser "github.com/cafecito-games/grafo/internal/parser/sql/sqlite"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 type fakeDialect struct {
@@ -51,7 +52,7 @@ func TestRouterSupportsCommonAndDialectExtensions(t *testing.T) {
 }
 
 func TestRouterSelectionPrecedence(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	config := `sql:
   default_dialect: sqlite
   paths:
@@ -167,7 +168,7 @@ func TestRouterRequiresConfigurationForPortableSQL(t *testing.T) {
 }
 
 func TestRouterRejectsUnavailableConfiguredDialect(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "grafo.yaml"), []byte("sql:\n  default_dialect: sqlite\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

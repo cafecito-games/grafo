@@ -9,10 +9,11 @@ import (
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/indexer"
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 func TestDiscoverProjectUsesSeparateIndexPerBranch(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("sample\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -41,7 +42,7 @@ func TestDiscoverProjectUsesSeparateIndexPerBranch(t *testing.T) {
 }
 
 func TestDiscoverProjectPreservesDetachedHeadAndRejectsRemoteIdentityChange(t *testing.T) {
-	root := t.TempDir()
+	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("sample\n"), 0o644); err != nil {
 		t.Fatal(err)
