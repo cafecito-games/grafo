@@ -66,6 +66,11 @@ tasks:
       - task: vet
       - task: build
 
+  release:snapshot:
+    desc: Build an unpublished GoReleaser snapshot of every release artifact
+    cmds:
+      - goreleaser release --snapshot --clean
+
   bench:corpus:
     desc: Run the opt-in production indexing corpus benchmark
     cmds:

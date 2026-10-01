@@ -32,7 +32,7 @@ import (
 	"github.com/mattn/go-isatty"
 )
 
-const Version = version.Value
+var Version = version.Value
 
 // foregroundIndexLockWait bounds how long a foreground index waits for a
 // background service pass on the same branch index to finish.

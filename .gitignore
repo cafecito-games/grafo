@@ -5,3 +5,6 @@
 *.out
 .DS_Store
 .worktrees/
+
+# GoReleaser build output
+dist/
