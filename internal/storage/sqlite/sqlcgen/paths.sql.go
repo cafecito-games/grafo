@@ -9,6 +9,22 @@ import (
 	"context"
 )
 
+const confirmPathKey = `-- name: ConfirmPathKey :one
+SELECT EXISTS (SELECT 1 FROM paths WHERE id = ? AND path = ?)
+`
+
+type ConfirmPathKeyParams struct {
+	ID   int64  `json:"id"`
+	Path string `json:"path"`
+}
+
+func (q *Queries) ConfirmPathKey(ctx context.Context, arg ConfirmPathKeyParams) (bool, error) {
+	row := q.queryRow(ctx, q.confirmPathKeyStmt, confirmPathKey, arg.ID, arg.Path)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const countPaths = `-- name: CountPaths :one
 SELECT COUNT(*) FROM paths
 `

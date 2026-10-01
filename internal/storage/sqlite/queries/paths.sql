@@ -1,3 +1,6 @@
+-- name: ConfirmPathKey :one
+SELECT EXISTS (SELECT 1 FROM paths WHERE id = ? AND path = ?);
+
 -- name: InternPath :one
 INSERT INTO paths(path) VALUES (?)
 ON CONFLICT(path) DO UPDATE SET path = excluded.path

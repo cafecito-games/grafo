@@ -312,10 +312,17 @@ func (r *Repository) ReconcileWithStats(ctx context.Context, observer graph.Reco
 		if err := q.DeleteOrphanExternalNodes(ctx); err != nil {
 			return err
 		}
+		// Replacing an owner can leave an interned path row referenced by
+		// nothing. Sweeping once per converged pass is driven by the small
+		// paths table, so it stays proportional to the indexed file set.
+		if err := q.DeleteUnreferencedPaths(ctx); err != nil {
+			return err
+		}
 		return q.ClearReconciliationCleanup(ctx)
 	}); err != nil {
 		return stats, fmt.Errorf("remove orphan external nodes: %w", err)
 	}
+	r.pathKeys.discard()
 	return stats, r.checkpoint(ctx, true)
 }
 

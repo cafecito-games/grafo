@@ -65,16 +65,31 @@ func (t *pathTransaction) key(ctx context.Context, q *sqlcgen.Queries, path stri
 	if key, ok := t.assigned[path]; ok {
 		return key, nil
 	}
-	if key, ok := t.interner.lookup(path); ok {
-		return key, nil
+	if cached, ok := t.interner.lookup(path); ok {
+		// Another writable connection on the same index file can have pruned
+		// the row this cache remembers. Confirming the key inside this
+		// transaction keeps a stale cache from attaching facts to a row that no
+		// longer exists, which no later re-index could repair.
+		confirmed, err := q.ConfirmPathKey(ctx, sqlcgen.ConfirmPathKeyParams{ID: cached, Path: path})
+		if err != nil {
+			return 0, fmt.Errorf("confirm interned path %q: %w", path, err)
+		}
+		if confirmed {
+			t.remember(path, cached)
+			return cached, nil
+		}
 	}
 	key, err := q.InternPath(ctx, path)
 	if err != nil {
 		return 0, fmt.Errorf("intern path %q: %w", path, err)
 	}
+	t.remember(path, key)
+	return key, nil
+}
+
+func (t *pathTransaction) remember(path string, key int64) {
 	if t.assigned == nil {
 		t.assigned = map[string]int64{}
 	}
 	t.assigned[path] = key
-	return key, nil
 }

@@ -123,7 +123,71 @@ INSERT INTO facts(id, from_id, kind, producer, target_id, path, line, column_no,
 			if !strings.Contains(err.Error(), "migrate graph database") {
 				t.Fatalf("unexpected migration failure: %v", err)
 			}
+			// A refused migration must leave nothing behind: neither a guard
+			// table nor a half-rebuilt facts or edges table.
+			for _, table := range []string{"paths", "edge_missing_fact_guard",
+				"edge_fact_divergence_guard", "facts_interned", "edges_derived"} {
+				if countRows(t, path,
+					"SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = '"+table+"'") != 0 {
+					t.Fatalf("refused migration left table %q behind", table)
+				}
+			}
+			for _, column := range []string{"path", "line", "column_no", "end_line", "producer"} {
+				if countRows(t, path,
+					"SELECT COUNT(*) FROM pragma_table_info('edges') WHERE name = '"+column+"'") != 1 {
+					t.Fatalf("refused migration lost the legacy edges column %q", column)
+				}
+			}
+			if countRows(t, path,
+				"SELECT COUNT(*) FROM pragma_table_info('facts') WHERE name = 'owner_file'") != 1 {
+				t.Fatal("refused migration lost the legacy facts.owner_file column")
+			}
 		})
+	}
+}
+
+func TestEnqueueFailsClosedOnAFactWithoutAnInternedOwnerPath(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "graph.sqlite")
+	repository, err := sqlite.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+
+	parsed := graph.ParseResult{
+		Nodes: []graph.Node{{ID: "node", Kind: graph.KindFunction, Name: "Fn", QualifiedName: "pkg.Fn",
+			Location: graph.Location{Path: "owned.go", Line: 1}, OwnerFile: "owned.go"}},
+		Facts: []graph.Fact{{ID: "fact", FromID: "node", Kind: graph.EdgeCalls, Producer: "go",
+			TargetID: "node", Location: graph.Location{Path: "owned.go", Line: 2}, OwnerFile: "owned.go"}},
+	}
+	record := graph.FileRecord{Path: "owned.go", Hash: "hash", Language: "go", Size: 1,
+		ModifiedNS: 1, IndexedAt: graph.NowUTC()}
+	if err := repository.ReplaceFile(ctx, record, parsed); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	database, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	// Point the fact at an owner path row that does not exist, then make the
+	// fact dirty through its target node so enqueueing has to reach it without
+	// resolving its owner by path.
+	if _, err := database.ExecContext(ctx,
+		"UPDATE facts SET owner_path_id = 9999 WHERE id = 'fact'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx,
+		"INSERT OR IGNORE INTO dirty_nodes(node_id) VALUES ('node')"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err == nil {
+		t.Fatal("reconciliation accepted a fact whose interned owner path is missing")
 	}
 }
 
@@ -266,5 +330,54 @@ func TestRemoveFilesPrunesInternedPaths(t *testing.T) {
 	if orphaned := countRows(t, path,
 		"SELECT COUNT(*) FROM facts WHERE path_id NOT IN (SELECT id FROM paths)"); orphaned != 0 {
 		t.Fatalf("facts referencing a pruned path row = %d", orphaned)
+	}
+}
+
+func TestReconciliationSweepsPathsLeftUnreferencedByAnOwnerReplacement(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "graph.sqlite")
+	repository, err := sqlite.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+
+	owned := graph.Node{ID: "node", Kind: graph.KindFunction, Name: "Fn", QualifiedName: "pkg.Fn",
+		Location: graph.Location{Path: "a.go", Line: 1}, OwnerFile: "a.go"}
+	withGenerated := graph.ParseResult{Nodes: []graph.Node{owned}, Facts: []graph.Fact{
+		{ID: "local", FromID: "node", Kind: graph.EdgeCalls, Producer: "go", TargetID: "node",
+			Location: graph.Location{Path: "a.go", Line: 2}, OwnerFile: "a.go"},
+		{ID: "generated", FromID: "node", Kind: graph.EdgeGeneratedFrom, Producer: "go", TargetID: "node",
+			Location: graph.Location{Path: "generated.go", Line: 9}, OwnerFile: "a.go"},
+	}}
+	if err := repository.ReplaceOwner(ctx, "a.go", withGenerated); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if interned := countRows(t, path, "SELECT COUNT(*) FROM paths WHERE path = 'generated.go'"); interned != 1 {
+		t.Fatalf("interned generated.go rows = %d, want 1", interned)
+	}
+
+	withoutGenerated := graph.ParseResult{Nodes: []graph.Node{owned}, Facts: withGenerated.Facts[:1]}
+	if err := repository.ReplaceOwner(ctx, "a.go", withoutGenerated); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if interned := countRows(t, path, "SELECT COUNT(*) FROM paths WHERE path = 'generated.go'"); interned != 0 {
+		t.Fatal("an owner replacement stranded an unreferenced interned path row")
+	}
+	if interned := countRows(t, path, "SELECT COUNT(*) FROM paths WHERE path = 'a.go'"); interned != 1 {
+		t.Fatal("the sweep removed a referenced interned path row")
+	}
+	edges, err := repository.EdgesFrom(ctx, "node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edges) != 1 || edges[0].Location.Path != "a.go" {
+		t.Fatalf("surviving edges = %#v", edges)
 	}
 }

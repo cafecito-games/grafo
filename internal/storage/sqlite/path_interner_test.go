@@ -86,3 +86,41 @@ func TestRolledBackTransactionDoesNotPublishInternedPathKeys(t *testing.T) {
 		t.Fatalf("re-interned paths = %v", rows)
 	}
 }
+
+func TestStaleCachedPathKeyIsConfirmedBeforeReuse(t *testing.T) {
+	ctx := context.Background()
+	repository := openTestRepository(t)
+
+	var original int64
+	if err := repository.inTransaction(ctx, func(q *sqlcgen.Queries, writer *batchWriter) error {
+		var err error
+		original, err = writer.pathKey(ctx, q, "pruned.go")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Another writable connection on the same index file can prune the row this
+	// cache remembers. Reusing the key would attach facts to a row that no
+	// longer exists, and no later re-index could repair that.
+	if _, err := repository.db.ExecContext(ctx, "DELETE FROM paths WHERE id = ?", original); err != nil {
+		t.Fatal(err)
+	}
+
+	var reused int64
+	if err := repository.inTransaction(ctx, func(q *sqlcgen.Queries, writer *batchWriter) error {
+		var err error
+		reused, err = writer.pathKey(ctx, q, "pruned.go")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var stored string
+	if err := repository.db.QueryRowContext(ctx,
+		"SELECT path FROM paths WHERE id = ?", reused).Scan(&stored); err != nil {
+		t.Fatalf("reused key %d has no interned row: %v", reused, err)
+	}
+	if stored != "pruned.go" {
+		t.Fatalf("reused key %d resolves to %q", reused, stored)
+	}
+}

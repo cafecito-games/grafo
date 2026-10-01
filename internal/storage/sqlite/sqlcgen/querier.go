@@ -13,6 +13,7 @@ type Querier interface {
 	ClearDirtyOwners(ctx context.Context) error
 	ClearDirtyTargets(ctx context.Context) error
 	ClearReconciliationCleanup(ctx context.Context) error
+	ConfirmPathKey(ctx context.Context, arg ConfirmPathKeyParams) (bool, error)
 	CountDirtyFacts(ctx context.Context) (int64, error)
 	CountEdges(ctx context.Context) (int64, error)
 	CountEdgesByKind(ctx context.Context) ([]CountEdgesByKindRow, error)

@@ -36,6 +36,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.clearReconciliationCleanupStmt, err = db.PrepareContext(ctx, clearReconciliationCleanup); err != nil {
 		return nil, fmt.Errorf("error preparing query ClearReconciliationCleanup: %w", err)
 	}
+	if q.confirmPathKeyStmt, err = db.PrepareContext(ctx, confirmPathKey); err != nil {
+		return nil, fmt.Errorf("error preparing query ConfirmPathKey: %w", err)
+	}
 	if q.countDirtyFactsStmt, err = db.PrepareContext(ctx, countDirtyFacts); err != nil {
 		return nil, fmt.Errorf("error preparing query CountDirtyFacts: %w", err)
 	}
@@ -233,6 +236,11 @@ func (q *Queries) Close() error {
 	if q.clearReconciliationCleanupStmt != nil {
 		if cerr := q.clearReconciliationCleanupStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing clearReconciliationCleanupStmt: %w", cerr)
+		}
+	}
+	if q.confirmPathKeyStmt != nil {
+		if cerr := q.confirmPathKeyStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing confirmPathKeyStmt: %w", cerr)
 		}
 	}
 	if q.countDirtyFactsStmt != nil {
@@ -568,6 +576,7 @@ type Queries struct {
 	clearDirtyOwnersStmt                *sql.Stmt
 	clearDirtyTargetsStmt               *sql.Stmt
 	clearReconciliationCleanupStmt      *sql.Stmt
+	confirmPathKeyStmt                  *sql.Stmt
 	countDirtyFactsStmt                 *sql.Stmt
 	countEdgesStmt                      *sql.Stmt
 	countEdgesByKindStmt                *sql.Stmt
@@ -636,6 +645,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		clearDirtyOwnersStmt:                q.clearDirtyOwnersStmt,
 		clearDirtyTargetsStmt:               q.clearDirtyTargetsStmt,
 		clearReconciliationCleanupStmt:      q.clearReconciliationCleanupStmt,
+		confirmPathKeyStmt:                  q.confirmPathKeyStmt,
 		countDirtyFactsStmt:                 q.countDirtyFactsStmt,
 		countEdgesStmt:                      q.countEdgesStmt,
 		countEdgesByKindStmt:                q.countEdgesByKindStmt,
