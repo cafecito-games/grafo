@@ -441,6 +441,21 @@ func capabilityFingerprints(ctx context.Context, path string) (map[Capability]st
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	// An edge derives its producer and location from its originating fact, so
+	// the join can only drop a row on an index whose fact or interned path is
+	// missing. Fingerprinting a silently shortened edge set would compare two
+	// profiles that never described the same graph.
+	var joinedEdges, storedEdges int64
+	if err := db.QueryRowContext(ctx, `SELECT
+    (SELECT COUNT(*) FROM edges JOIN facts ON facts.id = edges.fact_id
+         JOIN paths ON paths.id = facts.path_id),
+    (SELECT COUNT(*) FROM edges)`).Scan(&joinedEdges, &storedEdges); err != nil {
+		return nil, err
+	}
+	if joinedEdges != storedEdges {
+		return nil, fmt.Errorf("%d of %d edges have no originating fact or interned path; "+
+			"the index is corrupt and must be rebuilt", storedEdges-joinedEdges, storedEdges)
+	}
 	rows, err = db.QueryContext(ctx, `SELECT edges.id, edges.fact_id, edges.from_id, edges.to_id, edges.kind, facts.producer,
 	paths.path, facts.line, facts.column_no, facts.end_line, edges.properties
 FROM edges

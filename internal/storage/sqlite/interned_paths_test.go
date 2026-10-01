@@ -408,3 +408,77 @@ func TestRebuiltTablesKeepEveryIndexEarlierMigrationsCreated(t *testing.T) {
 		}
 	}
 }
+
+func TestMigrationDownRestoresTheDenormalizedShapeWithItsEvidence(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "graph.sqlite")
+	repository, err := sqlite.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed := graph.ParseResult{
+		Nodes: []graph.Node{{ID: "node", Kind: graph.KindFunction, Name: "Fn", QualifiedName: "pkg.Fn",
+			Location: graph.Location{Path: "a.go", Line: 1}, OwnerFile: "a.go"}},
+		Facts: []graph.Fact{{ID: "fact", FromID: "node", Kind: graph.EdgeCalls, Producer: "go",
+			TargetID: "node", Location: graph.Location{Path: "a.go", Line: 5, Column: 7, EndLine: 5},
+			Properties: map[string]string{"proof": "direct"}, OwnerFile: "a.go"}},
+	}
+	record := graph.FileRecord{Path: "a.go", Hash: "hash", Language: "go", Size: 1,
+		ModifiedNS: 1, IndexedAt: graph.NowUTC()}
+	if err := repository.ReplaceFile(ctx, record, parsed); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	database, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := goose.NewProvider(goose.DialectSQLite3, database, migrations.Files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := provider.DownTo(ctx, denormalizedSchemaVersion); err != nil {
+		t.Fatal(err)
+	}
+	var factPath, factOwner, edgePath, edgeProducer string
+	var edgeLine, edgeColumn, edgeEndLine int64
+	if err := database.QueryRowContext(ctx,
+		"SELECT path, owner_file FROM facts WHERE id = 'fact'").Scan(&factPath, &factOwner); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRowContext(ctx,
+		"SELECT path, producer, line, column_no, end_line FROM edges WHERE fact_id = 'fact'").
+		Scan(&edgePath, &edgeProducer, &edgeLine, &edgeColumn, &edgeEndLine); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if factPath != "a.go" || factOwner != "a.go" {
+		t.Fatalf("reverted fact path = %q, owner = %q", factPath, factOwner)
+	}
+	if edgePath != "a.go" || edgeProducer != "go" || edgeLine != 5 || edgeColumn != 7 || edgeEndLine != 5 {
+		t.Fatalf("reverted edge evidence = %q/%q/%d/%d/%d",
+			edgePath, edgeProducer, edgeLine, edgeColumn, edgeEndLine)
+	}
+	if countRows(t, path, "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'paths'") != 0 {
+		t.Fatal("reverting left the paths table behind")
+	}
+	for table, want := range map[string][]string{
+		"edges": {"edges_fact", "edges_from", "edges_kind", "edges_to"},
+		"facts": {"facts_from_id", "facts_owner", "facts_source", "facts_target", "facts_target_id"},
+	} {
+		for _, index := range want {
+			if countRows(t, path, "SELECT COUNT(*) FROM sqlite_schema WHERE type = 'index'"+
+				" AND tbl_name = '"+table+"' AND name = '"+index+"'") != 1 {
+				t.Fatalf("reverted table %q is missing index %q", table, index)
+			}
+		}
+	}
+}
