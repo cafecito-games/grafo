@@ -55,7 +55,36 @@ func (*Parser) Supports(path string) bool {
 	return strings.EqualFold(filepath.Ext(path), ".go")
 }
 
+// SemanticKey refines WorkspaceSemanticKey with the package-local facts that
+// change how this specific file extracts. Statement-level evidence is
+// attributed to the highest package-local callsite, which may live in a sibling
+// file of the same package, so every Go file shares one key per directory.
+// A caller that already holds the workspace key passes it as
+// Input.SemanticKey so the repository-wide digest is computed once per run.
 func (p *Parser) SemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
+	workspaceKey := input.SemanticKey
+	if workspaceKey == "" {
+		computed, err := p.WorkspaceSemanticKey(ctx, input)
+		if err != nil {
+			return "", err
+		}
+		workspaceKey = computed
+	}
+	if input.Root == "" || input.Path == "" || !isGoSourcePath(input.Path) {
+		return workspaceKey, nil
+	}
+	scopeKey, err := packageScopeKey(input.Root, input.Path)
+	if err != nil {
+		return "", err
+	}
+	return workspaceKey + ":" + scopeKey, nil
+}
+
+// WorkspaceSemanticKey fingerprints only the repository-wide Go facts that
+// change how an otherwise untouched Go file extracts: the build context, the
+// module and vendor manifests, the Protobuf binding registry, and the
+// declaration surface of every Go source file.
+func (p *Parser) WorkspaceSemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
 	bindingKey := ""
 	if p.bindings != nil {
 		key, err := p.bindings.SemanticKey(ctx, input)
@@ -71,10 +100,6 @@ func (p *Parser) SemanticKey(ctx context.Context, input parserapi.Input) (string
 	return key + bindingKey, err
 }
 
-func (p *Parser) WorkspaceSemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
-	return p.SemanticKey(ctx, input)
-}
-
 func (*Parser) WorkspaceSemanticEvidenceKey(_ context.Context, input parserapi.Input) (string, error) {
 	return semanticWorkspaceEvidenceKey(input.Root)
 }
@@ -83,20 +108,32 @@ func (*Parser) SemanticDependencies() []string { return semanticDependencies() }
 
 func (*Parser) IsSemanticInput(path string) bool { return isGoSemanticInput(path) }
 
+// SemanticAffectedPaths reparses the packages whose extracted evidence can
+// change. A module or vendor manifest, or a Protobuf binding input, changes the
+// load plan for the whole repository and stays conservative. A Go source edit is
+// package-scoped: the statement-level analyzers only walk their own package, and
+// anything that crosses a package boundary already changes the workspace
+// declaration surface and therefore every Go file's cache key.
 func (*Parser) SemanticAffectedPaths(allPaths, changedPaths []string) []string {
-	changed := false
+	wholeLanguage := false
+	directories := make(map[string]bool, len(changedPaths))
 	for _, path := range changedPaths {
-		if isGoSemanticInput(path) || protobufbinding.IsSemanticInput(path) {
-			changed = true
-			break
+		switch {
+		case isGoManifestInput(path) || protobufbinding.IsSemanticInput(path):
+			wholeLanguage = true
+		case isGoSourcePath(path):
+			directories[goPackageDirectory(path)] = true
 		}
 	}
-	if !changed {
+	if !wholeLanguage && len(directories) == 0 {
 		return nil
 	}
 	result := make([]string, 0, len(allPaths))
 	for _, path := range allPaths {
-		if strings.EqualFold(filepath.Ext(path), ".go") {
+		if !isGoSourcePath(path) {
+			continue
+		}
+		if wholeLanguage || directories[goPackageDirectory(path)] {
 			result = append(result, path)
 		}
 	}

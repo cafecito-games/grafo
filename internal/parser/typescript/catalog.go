@@ -7,13 +7,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
@@ -80,8 +83,15 @@ type moduleCatalog struct {
 	configs     map[string]compilerConfig
 	packages    []packageInfo
 	diagnostics []string
-	digest      string
+	// digest fingerprints only the cross-file resolution surface: module
+	// identity, local declarations, exports, and the full contents of the
+	// package and compiler manifests. It deliberately excludes statement
+	// bodies, which cannot change how another module resolves.
+	digest string
 }
+
+// resolutionSurfaceVersion tags the encoding of the resolution surface digest.
+const resolutionSurfaceVersion = "typescript-resolution-surface-v1"
 
 func (c *moduleCatalog) clone() *moduleCatalog {
 	copyCatalog := *c
@@ -125,33 +135,44 @@ func buildModuleCatalog(ctx context.Context, input parserapi.Input) (*moduleCata
 	if err != nil {
 		return nil, err
 	}
-	digest := sha256.New()
+	surface := newSurfaceDigest(resolutionSurfaceVersion)
 	for _, path := range paths {
 		catalog.tracked[path] = true
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		content, readErr := os.ReadFile(filepath.Join(catalog.root, filepath.FromSlash(path)))
+		surface.writeField(path)
+		body, readErr := os.ReadFile(filepath.Join(catalog.root, filepath.FromSlash(path)))
 		if readErr != nil {
 			catalog.diagnostics = append(catalog.diagnostics, fmt.Sprintf("read resolution input %s: %v", path, readErr))
+			surface.writeField("unreadable:" + readErr.Error())
 			continue
 		}
-		_, _ = digest.Write([]byte(path))
-		_, _ = digest.Write([]byte{0})
-		_, _ = digest.Write(content)
-		_, _ = digest.Write([]byte{0})
 		switch {
 		case isTypeScriptPath(path):
-			info, parseErr := scanModule(path, content)
+			info, parseErr := scanModuleCached(path, body)
 			if parseErr != nil {
 				catalog.diagnostics = append(catalog.diagnostics, fmt.Sprintf("scan module %s: %v", path, parseErr))
+				// An unscannable module has no provable surface, so its full
+				// contents stay part of the fingerprint.
+				surface.writeField("unscannable")
+				surface.writeBytes(body)
 				continue
 			}
 			catalog.modules[path] = info
 			catalog.moduleNames[info.name]++
 			catalog.modulePaths = append(catalog.modulePaths, path)
+			surface.writeField("module")
+			writeModuleSurface(surface, info)
 		case strings.EqualFold(filepath.Base(path), "package.json"):
-			catalog.loadPackage(path, content)
+			catalog.loadPackage(path, body)
+			surface.writeField("manifest")
+			surface.writeBytes(body)
+		default:
+			// Compiler configuration selects module resolution for every
+			// importer, so it is fingerprinted in full.
+			surface.writeField("configuration")
+			surface.writeBytes(body)
 		}
 	}
 	sort.Strings(catalog.modulePaths)
@@ -161,35 +182,90 @@ func buildModuleCatalog(ctx context.Context, input parserapi.Input) (*moduleCata
 		}
 		return catalog.packages[i].name < catalog.packages[j].name
 	})
-	catalog.digest = hex.EncodeToString(digest.Sum(nil))
+	catalog.digest = surface.sum()
 	return catalog, nil
 }
 
-func moduleCatalogDigest(ctx context.Context, root string) (string, error) {
-	if root == "" {
-		sum := sha256.Sum256(nil)
-		return hex.EncodeToString(sum[:]), nil
+// writeModuleSurface encodes the parts of a scanned module that another module
+// can resolve through. Ordering is canonical so an unchanged surface always
+// produces an unchanged digest.
+func writeModuleSurface(digest surfaceDigest, info *moduleInfo) {
+	digest.writeField(info.name)
+	digest.writeField("locals")
+	for _, name := range sortedKeys(info.locals) {
+		digest.writeField(name)
+		writeSymbolSurface(digest, info.locals[name])
 	}
-	paths, err := repositoryResolutionFiles(ctx, root)
-	if err != nil {
-		return "", err
-	}
-	digest := sha256.New()
-	for _, path := range paths {
-		if err := ctx.Err(); err != nil {
-			return "", err
+	digest.writeField("methods")
+	for _, owner := range sortedKeys(info.methods) {
+		digest.writeField(owner)
+		members := info.methods[owner]
+		for _, member := range sortedKeys(members) {
+			digest.writeField(member)
+			writeSymbolSurface(digest, members[member])
 		}
-		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
-		if err != nil {
-			continue
-		}
-		_, _ = digest.Write([]byte(path))
-		_, _ = digest.Write([]byte{0})
-		_, _ = digest.Write(content)
-		_, _ = digest.Write([]byte{0})
 	}
-	return hex.EncodeToString(digest.Sum(nil)), nil
+	digest.writeField("exports")
+	for _, name := range sortedKeys(info.exports) {
+		digest.writeField(name)
+		for _, reference := range info.exports[name] {
+			writeExportSurface(digest, reference)
+		}
+	}
+	digest.writeField("stars")
+	for _, reference := range info.stars {
+		writeExportSurface(digest, reference)
+	}
 }
+
+func writeSymbolSurface(digest surfaceDigest, symbol symbolRef) {
+	digest.writeField(symbol.qualified)
+	digest.writeField(string(symbol.kind))
+	digest.writeField(symbol.owner)
+}
+
+func writeExportSurface(digest surfaceDigest, reference exportRef) {
+	digest.writeField(reference.local)
+	digest.writeField(reference.specifier)
+	digest.writeField(reference.imported)
+	digest.writeField(strconv.FormatBool(reference.namespace))
+	digest.writeField(strconv.FormatBool(reference.typeOnly))
+}
+
+func sortedKeys[Value any](values map[string]Value) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// surfaceDigest accumulates length-delimited fields so no concatenation of
+// inputs can collide with a different field layout.
+type surfaceDigest struct {
+	hash hash.Hash
+}
+
+func newSurfaceDigest(version string) surfaceDigest {
+	digest := surfaceDigest{hash: sha256.New()}
+	digest.writeField(version)
+	return digest
+}
+
+func (d surfaceDigest) writeField(value string) { d.writeBytes([]byte(value)) }
+
+func (d surfaceDigest) writeBytes(value []byte) {
+	var length [8]byte
+	size := uint64(len(value))
+	for index := range length {
+		length[index] = byte(size >> (8 * (7 - index)))
+	}
+	_, _ = d.hash.Write(length[:])
+	_, _ = d.hash.Write(value)
+}
+
+func (d surfaceDigest) sum() string { return hex.EncodeToString(d.hash.Sum(nil)) }
 
 func repositoryResolutionFiles(ctx context.Context, root string) ([]string, error) {
 	command := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
@@ -262,6 +338,47 @@ func canonicalModuleName(path string) string {
 	}
 	path = strings.TrimSuffix(path, "/index")
 	return strings.TrimPrefix(path, "./")
+}
+
+// moduleScanLimit bounds the in-process scan cache. An entry retains a whole
+// module symbol table, and the cache is shared by every root a long-lived
+// process indexes, so the bound is about one large repository's worth rather
+// than the content-addressed ceiling. Overflowing it only costs a rescan: the
+// cache exists so the catalog built for the workspace key and the catalog built
+// for parsing do not scan the same bytes twice.
+const moduleScanLimit = 1 << 13
+
+type moduleScanKey struct {
+	path    string
+	content [sha256.Size]byte
+}
+
+var (
+	moduleScanMu    sync.Mutex
+	moduleScanCache = map[moduleScanKey]*moduleInfo{}
+)
+
+// scanModuleCached memoizes module scans by exact content. A scanned moduleInfo
+// is never mutated after it is built, so sharing one across catalogs is safe.
+func scanModuleCached(path string, content []byte) (*moduleInfo, error) {
+	key := moduleScanKey{path: path, content: sha256.Sum256(content)}
+	moduleScanMu.Lock()
+	cached, ok := moduleScanCache[key]
+	moduleScanMu.Unlock()
+	if ok {
+		return cached, nil
+	}
+	info, err := scanModule(path, content)
+	if err != nil {
+		return nil, err
+	}
+	moduleScanMu.Lock()
+	if len(moduleScanCache) >= moduleScanLimit {
+		moduleScanCache = map[moduleScanKey]*moduleInfo{}
+	}
+	moduleScanCache[key] = info
+	moduleScanMu.Unlock()
+	return info, nil
 }
 
 func scanModule(path string, content []byte) (*moduleInfo, error) {

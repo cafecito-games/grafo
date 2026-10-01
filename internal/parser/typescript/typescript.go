@@ -60,8 +60,26 @@ func (*Parser) Supports(path string) bool {
 	}
 }
 
+// WorkspaceSemanticKey fingerprints only the repository-wide TypeScript facts
+// that change how an otherwise untouched module extracts: the package and
+// compiler manifests in full, and the resolution surface - module identity,
+// local declarations, and exports - of every tracked module. A statement body
+// cannot change how another module resolves, so it is excluded.
 func (p *Parser) WorkspaceSemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
-	return moduleCatalogDigest(ctx, input.Root)
+	if input.Root == "" {
+		empty := newSurfaceDigest(resolutionSurfaceVersion)
+		return empty.sum(), nil
+	}
+	// The catalog is the single authority for the resolution surface, so the
+	// key is read from a real build rather than a parallel encoding that could
+	// drift from it. The scan cache makes the catalog that Parse builds cheap,
+	// and deliberately not storing this one keeps Parse's detection of inputs
+	// that change mid-run intact.
+	catalog, err := buildModuleCatalog(ctx, input)
+	if err != nil {
+		return "", err
+	}
+	return catalog.digest, nil
 }
 
 func (*Parser) WorkspaceSemanticEvidenceKey(context.Context, parserapi.Input) (string, error) {
@@ -70,10 +88,15 @@ func (*Parser) WorkspaceSemanticEvidenceKey(context.Context, parserapi.Input) (s
 
 func (*Parser) IsSemanticInput(path string) bool { return isTypeScriptSemanticInput(path) }
 
+// SemanticAffectedPaths reparses every TypeScript module when the package or
+// compiler manifests change, because those select module resolution repository
+// wide. A module edit is not expanded here: anything in it that another module
+// can resolve through already changes the workspace semantic key, and therefore
+// every module's incremental cache key.
 func (*Parser) SemanticAffectedPaths(allPaths, changedPaths []string) []string {
 	affected := false
 	for _, path := range changedPaths {
-		if isTypeScriptSemanticInput(path) {
+		if isTypeScriptSemanticInput(path) && !isTypeScriptPath(path) {
 			affected = true
 			break
 		}
@@ -180,15 +203,17 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 		b.Diagnostic(int(root.StartPosition().Row)+1, "warning", "TypeScript contains syntax errors; indexed the recoverable tree")
 	}
 	module := canonicalModuleName(input.Path)
-	info := catalog.moduleForPath(input.Path)
-	if info == nil {
-		info, err = scanModule(input.Path, input.Content)
-		if err != nil {
-			return b.Finish(), fmt.Errorf("scan current TypeScript module: %w", err)
-		}
-		catalog.modules[input.Path] = info
+	// The content being parsed is the authority for its own module's symbols.
+	// A reused catalog only proves the cross-module resolution surface of the
+	// other modules, so it can never override this file's own declarations.
+	info, err := scanModuleCached(input.Path, input.Content)
+	if err != nil {
+		return b.Finish(), fmt.Errorf("scan current TypeScript module: %w", err)
+	}
+	if catalog.moduleForPath(input.Path) == nil {
 		catalog.moduleNames[info.name]++
 	}
+	catalog.modules[input.Path] = info
 	moduleID := catalog.moduleID(info)
 	b.Declare(b.FileID(), graph.Node{ID: moduleID, Kind: graph.KindModule, Name: module,
 		QualifiedName: module, Location: graph.Location{Path: input.Path, Line: 1, Column: 1},

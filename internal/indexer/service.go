@@ -447,14 +447,20 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 			_, _ = digest.Write([]byte{0})
 			_, _ = digest.Write([]byte(semanticKey))
 			input.SemanticKey = semanticKey
-		} else if keyer, ok := languageParser.(parserapi.SemanticKeyer); ok {
+		}
+		// A workspace keyer may also refine its shared key per file. The
+		// refinement enters the content hash only: Input.SemanticKey stays the
+		// repository-wide key so parser-side workspace caches keep one entry.
+		if keyer, ok := languageParser.(parserapi.SemanticKeyer); ok {
 			semanticKey, keyErr := keyer.SemanticKey(ctx, input)
 			if keyErr != nil {
 				return report, fmt.Errorf("load parser configuration for %s: %w", path, keyErr)
 			}
 			_, _ = digest.Write([]byte{0})
 			_, _ = digest.Write([]byte(semanticKey))
-			input.SemanticKey = semanticKey
+			if input.SemanticKey == "" {
+				input.SemanticKey = semanticKey
+			}
 		}
 		hash := hex.EncodeToString(digest.Sum(nil))
 		report.Phases.ReadHashNS += time.Since(readStarted).Nanoseconds()

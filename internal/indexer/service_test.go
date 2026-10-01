@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -524,7 +525,9 @@ export function dynamicURL(url: string) { return fetch(url, { method: "POST" });
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(incremental.Updated) != 2 || incremental.Updated[0] != "client.ts" || incremental.Updated[1] != "server.ts" {
+	// A method literal inside a function body is not part of the module
+	// resolution surface, so the untouched server module keeps its evidence.
+	if len(incremental.Updated) != 1 || incremental.Updated[0] != "client.ts" {
 		t.Fatalf("incremental TypeScript report = %#v", incremental)
 	}
 	assertTypeScriptFetchTopology(t, ctx, repository, "PATCH")
@@ -1834,8 +1837,158 @@ func assertOutgoingQualifiedSet(t *testing.T, ctx context.Context, repository gr
 	}
 }
 
+// TestServiceScopesGoBodyEditToItsPackage proves the cost of a refresh is
+// proportional to the edit: a body-only change reparses the package that owns
+// it, including the sibling file its evidence is attributed to, and the
+// resulting graph still equals a forced clean rebuild.
+func TestServiceScopesGoBodyEditToItsPackage(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	write(t, filepath.Join(root, "go.mod"), "module example.com/service\n\ngo 1.26\n")
+	// Routes calls a helper in a sibling file, so the outbound request the
+	// helper performs is attributed to Routes in routes.go. A body-only edit to
+	// helpers.go therefore has to reparse routes.go as well.
+	write(t, filepath.Join(root, "api", "routes.go"), `package api
+
+func Routes() { fetch() }
+`)
+	helpers := func(route string) string {
+		return `package api
+
+import "net/http"
+
+func fetch() { _, _ = http.Get("https://example.com` + route + `") }
+`
+	}
+	write(t, filepath.Join(root, "api", "helpers.go"), helpers("/first"))
+	write(t, filepath.Join(root, "store", "store.go"), `package store
+
+func Open() string { return "store" }
+`)
+	write(t, filepath.Join(root, "worker", "worker.go"), `package worker
+
+func Work() string { return "worker" }
+`)
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(golangparser.New(), manifestparser.New()))
+	first, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Updated) != 5 {
+		t.Fatalf("initial Go report = %#v", first.Updated)
+	}
+	assertRequestedRoute(t, ctx, repository, "example.com/service/api.Routes", "/first")
+
+	write(t, filepath.Join(root, "api", "helpers.go"), helpers("/second"))
+	incremental, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"api/helpers.go", "api/routes.go"}
+	got := append([]string(nil), incremental.Updated...)
+	sort.Strings(got)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("body-only edit updated %v, want only the owning package %v", got, want)
+	}
+	assertRequestedRoute(t, ctx, repository, "example.com/service/api.Routes", "/second")
+	incrementalCounts := incremental.Counts
+
+	clean, err := service.Run(ctx, project, indexer.Options{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(incrementalCounts, clean.Counts) {
+		t.Fatalf("incremental Go reconciliation differs from clean rebuild:\n%#v\n%#v", incrementalCounts, clean.Counts)
+	}
+	assertRequestedRoute(t, ctx, repository, "example.com/service/api.Routes", "/second")
+}
+
+func assertRequestedRoute(t *testing.T, ctx context.Context, repository *sqlite.Repository, from, route string) {
+	t.Helper()
+	node, err := query.NewService(repository).Resolve(ctx, from)
+	if err != nil {
+		t.Fatalf("resolve %s: %v", from, err)
+	}
+	edges, err := repository.EdgesFrom(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := []string{}
+	for _, edge := range edges {
+		if edge.Kind != graph.EdgeRequests {
+			continue
+		}
+		routes = append(routes, edge.Properties["http_route"])
+		if edge.Properties["http_route"] == route {
+			return
+		}
+	}
+	t.Fatalf("%s requests %v, want %q", from, routes, route)
+}
+
+// TestServiceReparsesEveryGoFileForCrossPackageDeclarations keeps the fail
+// closed half of the contract: an exported declaration can change how any
+// package extracts, so every Go file is reparsed.
+func TestServiceReparsesEveryGoFileForCrossPackageDeclarations(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	write(t, filepath.Join(root, "go.mod"), "module example.com/service\n\ngo 1.26\n")
+	write(t, filepath.Join(root, "api", "api.go"), `package api
+
+type Store interface{ Get() string }
+`)
+	write(t, filepath.Join(root, "store", "store.go"), `package store
+
+type Memory struct{}
+
+func (Memory) Get() string { return "memory" }
+`)
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(golangparser.New(), manifestparser.New()))
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "api", "api.go"), `package api
+
+type Store interface {
+	Get() string
+	Put(value string) error
+}
+`)
+	incremental, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := append([]string(nil), incremental.Updated...)
+	sort.Strings(got)
+	want := []string{"api/api.go", "store/store.go"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("interface change updated %v, want every Go file %v", got, want)
+	}
+}
+
 func write(t testing.TB, path, content string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}

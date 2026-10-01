@@ -641,6 +641,45 @@ evaluation schema version 2 stores compact task-query goldens keyed by stable
 node and edge identities across initial, unchanged-incremental, and fresh
 database runs.
 
+## Incremental semantic keys
+
+A parser's workspace semantic key enters the content hash of every file of that
+language, so it decides how much a refresh reparses. The contract is narrow on
+purpose: a workspace key fingerprints only the repository-wide facts that change
+how an *otherwise untouched* file extracts, never the contents of the files
+themselves. The Godot parser is the reference — it digests the `project.godot`
+locations and the `uid://` alias table, not the scenes.
+
+Go splits the question in two. `WorkspaceSemanticKey` covers the build context,
+every module and vendor manifest, the Protobuf binding registry, and the
+*declaration surface* of every Go source file: the token stream with top-level
+function bodies and non-directive comments removed. That is what a file in
+another package can observe through `go/types`, interface matching, and
+constant folding. `SemanticKey` then refines the shared key per file with a
+digest of the package directory that owns it, because the statement-level
+analyzers (Chi, ServeMux, outbound HTTP, ENet transport) attribute evidence to
+the highest package-local callsite, which may live in a sibling file.
+`SemanticAffectedPaths` follows the same split: a manifest or binding change
+selects every Go file, while a source edit selects its own package.
+
+TypeScript needs no per-file refinement, because a module's extraction depends
+only on its own content plus the catalog's cross-module resolution surface. The
+workspace key is the catalog digest over module identity, local declarations,
+exports, and the package and compiler manifests in full. The catalog's symbol
+table is flat per module, so a declaration introduced anywhere in a module stays
+part of that surface; only statement-level edits are excluded. The content being
+parsed is always the authority for its own module's symbols, so a reused catalog
+can never override them.
+
+Every narrowing here fails closed. An unparseable Go file, an unscannable
+TypeScript module, and an unreadable input are fingerprinted by their full
+contents instead of a derived surface; a cgo file keeps every comment outside a
+function body, because its preamble declares the C types cgo projects into Go; and the `go/packages`
+view cache revalidates each cached package against its scope key before reuse.
+The scope key is always computed from the bytes on disk rather than from a size
+and modification time, because an invalidation key that a sibling edit can slip
+past leaves a stale graph.
+
 ## Persistence
 
 Each branch has a separate SQLite file under `.grafo/indexes`. The database is

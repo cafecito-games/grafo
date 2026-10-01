@@ -762,3 +762,143 @@ func writeFile(t *testing.T, root, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+// TestWorkspaceSemanticKeyTracksOnlyResolutionSurface pins the contract that
+// the workspace key changes exactly when an edit can change how an otherwise
+// untouched module resolves.
+func TestWorkspaceSemanticKeyTracksOnlyResolutionSurface(t *testing.T) {
+	baseline := map[string]string{
+		"package.json":   `{"name":"app","main":"src/index.ts"}`,
+		"tsconfig.json":  `{"compilerOptions":{"baseUrl":".","paths":{"@app/*":["src/*"]}}}`,
+		"src/service.ts": "export function run(value: string) { return value; }\nexport class Store { get(id: string) { return id; } }\n",
+		"src/caller.ts":  "import { run } from \"./service\";\nexport function call() { return run(\"a\"); }\n",
+	}
+	for _, testCase := range []struct {
+		name    string
+		mutate  map[string]string
+		changed bool
+	}{
+		{
+			name:    "function body rewritten",
+			mutate:  map[string]string{"src/service.ts": "export function run(value: string) { return value.trim(); }\nexport class Store { get(id: string) { return id; } }\n"},
+			changed: false,
+		},
+		{
+			// The catalog's symbol table is flat per module, so a declaration
+			// introduced anywhere in a module can shadow an exported name.
+			// Narrowing past that would risk resolving an importer wrongly.
+			name:    "body declaration added",
+			mutate:  map[string]string{"src/service.ts": "export function run(value: string) { const copy = value; return copy; }\nexport class Store { get(id: string) { return id; } }\n"},
+			changed: true,
+		},
+		{
+			name:    "method body rewritten",
+			mutate:  map[string]string{"src/service.ts": "export function run(value: string) { return value; }\nexport class Store { get(id: string) { return id.trim(); } }\n"},
+			changed: false,
+		},
+		{
+			name:    "exported symbol renamed",
+			mutate:  map[string]string{"src/service.ts": "export function execute(value: string) { return value; }\nexport class Store { get(id: string) { return id; } }\n"},
+			changed: true,
+		},
+		{
+			name:    "exported symbol added",
+			mutate:  map[string]string{"src/service.ts": "export function run(value: string) { return value; }\nexport function also() {}\nexport class Store { get(id: string) { return id; } }\n"},
+			changed: true,
+		},
+		{
+			name:    "class member added",
+			mutate:  map[string]string{"src/service.ts": "export function run(value: string) { return value; }\nexport class Store { get(id: string) { return id; } put(id: string) { return id; } }\n"},
+			changed: true,
+		},
+		{
+			name:    "re-export added",
+			mutate:  map[string]string{"src/caller.ts": "import { run } from \"./service\";\nexport { run };\nexport function call() { return run(\"a\"); }\n"},
+			changed: true,
+		},
+		{
+			name:    "compiler configuration changed",
+			mutate:  map[string]string{"tsconfig.json": `{"compilerOptions":{"baseUrl":".","paths":{"@app/*":["lib/*"]}}}`},
+			changed: true,
+		},
+		{
+			name:    "package manifest changed",
+			mutate:  map[string]string{"package.json": `{"name":"app","main":"src/service.ts"}`},
+			changed: true,
+		},
+		{
+			name:    "module added",
+			mutate:  map[string]string{"src/extra.ts": "export function extra() {}\n"},
+			changed: true,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			root := t.TempDir()
+			for path, content := range baseline {
+				writeFile(t, root, path, content)
+			}
+			parser := typescriptparser.New()
+			input := parserapi.Input{Root: root, Repository: "sample", RepoID: "repo:sample"}
+			before, err := parser.WorkspaceSemanticKey(context.Background(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for path, content := range testCase.mutate {
+				writeFile(t, root, path, content)
+			}
+			after, err := parser.WorkspaceSemanticKey(context.Background(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if changed := before != after; changed != testCase.changed {
+				t.Fatalf("workspace key changed = %t, want %t", changed, testCase.changed)
+			}
+		})
+	}
+}
+
+// TestWorkspaceSemanticKeyIgnoresBodyEditsWithoutManifests covers a repository
+// that has no package or compiler manifest at all, so the key rests entirely on
+// the scanned module surface.
+func TestWorkspaceSemanticKeyIgnoresBodyEditsWithoutManifests(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "only.ts", "export function run() { return 1; }\n")
+	parser := typescriptparser.New()
+	input := parserapi.Input{Root: root, RepoID: "repo:sample"}
+	before, err := parser.WorkspaceSemanticKey(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, root, "only.ts", "export function run() { return 2; }\n")
+	after, err := parser.WorkspaceSemanticKey(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before != after {
+		t.Fatal("a body-only edit changed the TypeScript workspace key")
+	}
+}
+
+func TestSemanticAffectedPathsScopesTypeScriptEditsToManifests(t *testing.T) {
+	all := []string{"src/a.ts", "src/b.tsx", "tsconfig.json", "package.json", "README.md"}
+	for _, testCase := range []struct {
+		name    string
+		changed []string
+		want    []string
+	}{
+		{name: "module edit", changed: []string{"src/a.ts"}, want: nil},
+		{name: "compiler configuration edit", changed: []string{"tsconfig.json"}, want: []string{"src/a.ts", "src/b.tsx"}},
+		{name: "package manifest edit", changed: []string{"package.json"}, want: []string{"src/a.ts", "src/b.tsx"}},
+		{name: "unrelated edit", changed: []string{"README.md"}, want: nil},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := typescriptparser.New().SemanticAffectedPaths(all, testCase.changed)
+			if len(got) == 0 && len(testCase.want) == 0 {
+				return
+			}
+			if !slices.Equal(got, testCase.want) {
+				t.Fatalf("affected paths = %v, want %v", got, testCase.want)
+			}
+		})
+	}
+}
