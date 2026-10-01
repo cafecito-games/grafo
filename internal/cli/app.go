@@ -35,8 +35,26 @@ import (
 var Version = version.Value
 
 // foregroundIndexLockWait bounds how long a foreground index waits for a
-// background service pass on the same branch index to finish.
-const foregroundIndexLockWait = 2 * time.Minute
+// background service pass on the same branch index to finish. It is a variable
+// so tests can observe contention without waiting out the production budget.
+var foregroundIndexLockWait = 2 * time.Minute
+
+// acquireIndexLock serializes one branch-index mutation behind the same lock
+// `grafo index`, `grafo watch` and the background supervisor take, and renders
+// contention as something the caller can act on. Without the translation a
+// waiter reports a lock-file path, or later a raw SQLITE_BUSY, for the ordinary
+// situation of another grafo process holding the index.
+func acquireIndexLock(indexPath string) (service.Unlock, error) {
+	unlock, err := service.IndexLock(indexPath, foregroundIndexLockWait)
+	if err != nil {
+		if errors.Is(err, service.ErrLockBusy) {
+			return nil, fmt.Errorf("another grafo process is refreshing this branch index; "+
+				"waited %s, retry once it finishes", foregroundIndexLockWait)
+		}
+		return nil, err
+	}
+	return unlock, nil
+}
 
 type App struct {
 	stdout           io.Writer
@@ -172,7 +190,17 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 	}
 	if runErr != nil {
 		var rendered *progressRenderedError
-		if !errors.As(runErr, &rendered) {
+		switch {
+		case errors.As(runErr, &rendered):
+			// The command already rendered its own failure on the terminal.
+		case runCanceled(ctx, runErr):
+			// A signalled run surfaces whatever the innermost dependency was
+			// doing when the context was cancelled, wrapped by every layer on
+			// the way out. Rendering that cause blames an embedding provider,
+			// an HTTP endpoint or the database for an interruption none of them
+			// caused, so the interruption is reported instead.
+			a.errorf("grafo: interrupted\n")
+		default:
 			a.fail(runErr)
 		}
 		var ambiguous *query.AmbiguousError
@@ -381,7 +409,7 @@ func (a *App) index(ctx context.Context, args parsedArguments) error {
 	}
 	// The same lock the background supervisor takes, so a foreground index and a
 	// service pass can never write one branch index concurrently.
-	unlock, err := service.IndexLock(project.IndexPath, foregroundIndexLockWait)
+	unlock, err := acquireIndexLock(project.IndexPath)
 	if err != nil {
 		return err
 	}
@@ -631,7 +659,7 @@ func (a *App) watch(ctx context.Context, args parsedArguments) error {
 		if err != nil {
 			return err
 		}
-		unlock, err := service.IndexLock(project.IndexPath, foregroundIndexLockWait)
+		unlock, err := acquireIndexLock(project.IndexPath)
 		if err != nil {
 			return err
 		}
@@ -810,8 +838,11 @@ func (a *App) mcp(ctx context.Context, args parsedArguments) error {
 		return err
 	}
 	service.WithSearch(searchService).WithSearchFactory(newSearchService)
-	service.WithReusableFactory(func(_ graph.ReadRepository, projects []indexer.Project) func(context.Context, string, int) (semantic.SearchResult, error) {
-		return func(searchContext context.Context, text string, limit int) (semantic.SearchResult, error) {
+	// The tool call must not block on a full embedding backfill: SearchWith
+	// bounds backfill, ranking, and graph resolution inside its budget and
+	// reports coverage, so a cold cache answers instead of timing out.
+	service.WithReusableFactory(func(_ graph.ReadRepository, projects []indexer.Project) mcpserver.ReusableSearch {
+		return func(searchContext context.Context, request semantic.SearchRequest) (semantic.SearchResult, error) {
 			repository, closeRepository, openErr := openReadOnlyProjects(searchContext, projects)
 			if openErr != nil {
 				return semantic.SearchResult{}, openErr
@@ -822,10 +853,7 @@ func (a *App) mcp(ctx context.Context, args parsedArguments) error {
 				return semantic.SearchResult{}, serviceErr
 			}
 			defer func() { _ = closeCache() }()
-			if _, syncErr := semanticService.Sync(searchContext); syncErr != nil {
-				return semantic.SearchResult{}, syncErr
-			}
-			return semanticService.Search(searchContext, text, limit)
+			return semanticService.SearchWith(searchContext, request)
 		}
 	})
 	return service.Run(ctx, Version)
@@ -865,10 +893,11 @@ func (a *App) embed(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return fmt.Errorf("usage: grafo embed [path] [--model name] [--ollama-url url] [--force]")
 	}
-	project, repository, err := openExisting(ctx, root)
+	project, repository, unlock, err := openExisting(ctx, root)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = unlock() }()
 	defer func() { _ = repository.Close() }()
 	service, closeCache, err := newSemanticService(ctx, repository, args)
 	if err != nil {
@@ -890,7 +919,7 @@ func (a *App) embed(ctx context.Context, args parsedArguments) error {
 
 func (a *App) reusable(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) == 0 {
-		return fmt.Errorf("usage: grafo reusable <description> [--repo path | --repos pathA,pathB] [--limit 5]")
+		return fmt.Errorf("usage: grafo reusable <description> [--repo path | --repos pathA,pathB] [--limit 5] [--budget 45s] [--language name] [--path-prefix dir]")
 	}
 	limit, err := intOption(args, "limit", 5)
 	if err != nil {
@@ -906,10 +935,13 @@ func (a *App) reusable(ctx context.Context, args parsedArguments) error {
 		return err
 	}
 	defer func() { _ = closeCache() }()
-	if _, err := service.Sync(ctx); err != nil {
+	budget, err := durationOption(args, "budget")
+	if err != nil {
 		return err
 	}
-	result, err := service.Search(ctx, strings.Join(args.positionals, " "), limit)
+	result, err := service.SearchWith(ctx, semantic.SearchRequest{Query: strings.Join(args.positionals, " "),
+		Limit: limit, Budget: budget, Languages: splitList(args.values["language"]),
+		PathPrefixes: splitList(args.values["path-prefix"])})
 	if err != nil {
 		return err
 	}
@@ -920,7 +952,30 @@ func (a *App) reusable(ctx context.Context, args parsedArguments) error {
 		a.printf("%.4f  %-12s  %-48s  %s · %d connected nodes\n",
 			match.Score, match.Node.Kind, match.Node.QualifiedName, formatLocation(match.Node.Location), len(match.Context.Nodes)-1)
 	}
+	if result.Status != semantic.StatusComplete {
+		a.printf("%s · %d/%d documents embedded · %dms\n", result.Status,
+			result.Coverage.Embedded, result.Coverage.Documents, result.Timings.TotalMilliseconds)
+		for _, note := range result.Notes {
+			a.printf("  %s\n", note)
+		}
+		if result.NextAction != "" {
+			a.printf("  next: %s\n", result.NextAction)
+		}
+	}
 	return nil
+}
+
+// durationOption reads an optional Go duration option such as --budget 30s.
+func durationOption(args parsedArguments, name string) (time.Duration, error) {
+	raw := strings.TrimSpace(args.values[name])
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("--%s expects a positive Go duration such as 30s", name)
+	}
+	return value, nil
 }
 
 func newSemanticService(ctx context.Context, repository graph.ReadRepository, args parsedArguments) (*semantic.Service, func() error, error) {
@@ -2384,25 +2439,37 @@ func parseNodeKinds(raw string) ([]graph.NodeKind, error) {
 	return result, nil
 }
 
-func openExisting(ctx context.Context, root string) (indexer.Project, graph.Repository, error) {
+// openExisting opens an existing branch index read-write and refreshes it. The
+// refresh is a real write, and migrations run inside sqlite.Open, so the index
+// lock is taken for the whole span: query commands used to race each other as
+// concurrent writers and fail on SQLITE_BUSY or a half-applied migration
+// instead of serializing. The returned unlock is released by the caller after
+// the repository is closed, never before.
+func openExisting(ctx context.Context, root string) (indexer.Project, graph.Repository, service.Unlock, error) {
 	project, err := indexer.DiscoverProject(ctx, root)
 	if err != nil {
-		return project, nil, err
+		return project, nil, nil, err
 	}
 	if _, err := os.Stat(project.IndexPath); errors.Is(err, os.ErrNotExist) {
-		return project, nil, fmt.Errorf("branch %q has no index; run 'grafo index %s'", project.Branch, project.Root)
+		return project, nil, nil, fmt.Errorf("branch %q has no index; run 'grafo index %s'", project.Branch, project.Root)
 	} else if err != nil {
-		return project, nil, err
+		return project, nil, nil, err
+	}
+	unlock, err := acquireIndexLock(project.IndexPath)
+	if err != nil {
+		return project, nil, nil, err
 	}
 	repository, err := sqlite.Open(ctx, project.IndexPath)
 	if err != nil {
-		return project, nil, err
+		_ = unlock()
+		return project, nil, nil, err
 	}
 	if _, err := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{ReportDetail: indexer.ReportWithoutCounts}); err != nil {
 		_ = repository.Close()
-		return project, nil, fmt.Errorf("refresh index: %w", err)
+		_ = unlock()
+		return project, nil, nil, fmt.Errorf("refresh index: %w", err)
 	}
-	return project, repository, nil
+	return project, repository, unlock, nil
 }
 
 func openRead(ctx context.Context, args parsedArguments) (graph.ReadRepository, []indexer.Project, func() error, error) {
@@ -2432,19 +2499,29 @@ func openRead(ctx context.Context, args parsedArguments) (graph.ReadRepository, 
 		}
 		return readRepository, projects, readRepository.Close, nil
 	}
-	project, repository, err := openExisting(ctx, repoPath(args))
+	project, repository, unlock, err := openExisting(ctx, repoPath(args))
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	if requiresWritableRead(args.command) {
-		return repository, []indexer.Project{project}, repository.Close, nil
+		return repository, []indexer.Project{project}, func() error {
+			return errors.Join(repository.Close(), unlock())
+		}, nil
 	}
 	if err := repository.Close(); err != nil {
+		_ = unlock()
 		return nil, nil, nil, fmt.Errorf("close refreshed index: %w", err)
 	}
+	// The read-only handle is opened while the lock still stands, so it can
+	// never observe the schema of a migration another process is mid-way
+	// through applying.
 	readRepository, err := sqlite.OpenReadOnly(ctx, project.IndexPath)
 	if err != nil {
+		_ = unlock()
 		return nil, nil, nil, err
+	}
+	if err := unlock(); err != nil {
+		return nil, nil, nil, errors.Join(err, readRepository.Close())
 	}
 	return readRepository, []indexer.Project{project}, readRepository.Close, nil
 }
@@ -2487,8 +2564,15 @@ func openStatusRead(ctx context.Context, args parsedArguments, observer indexer.
 	} else if err != nil {
 		return nil, nil, nil, nil, err
 	}
+	// Status refreshes the index exactly like every other query command, so it
+	// serializes behind the same lock instead of racing as a second writer.
+	unlock, err := acquireIndexLock(project.IndexPath)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
 	repository, err := sqlite.Open(ctx, project.IndexPath)
 	if err != nil {
+		_ = unlock()
 		return nil, nil, nil, nil, err
 	}
 	report, refreshErr := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{
@@ -2496,14 +2580,17 @@ func openStatusRead(ctx context.Context, args parsedArguments, observer indexer.
 	})
 	closeErr := repository.Close()
 	if refreshErr != nil {
-		return nil, nil, nil, nil, errors.Join(fmt.Errorf("refresh index: %w", refreshErr), closeErr)
+		return nil, nil, nil, nil, errors.Join(fmt.Errorf("refresh index: %w", refreshErr), closeErr, unlock())
 	}
 	if closeErr != nil {
-		return nil, nil, nil, nil, fmt.Errorf("close refreshed index: %w", closeErr)
+		return nil, nil, nil, nil, errors.Join(fmt.Errorf("close refreshed index: %w", closeErr), unlock())
 	}
 	readRepository, err := sqlite.OpenReadOnly(ctx, project.IndexPath)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, errors.Join(err, unlock())
+	}
+	if err := unlock(); err != nil {
+		return nil, nil, nil, nil, errors.Join(err, readRepository.Close())
 	}
 	return readRepository, []indexer.Project{project}, []indexer.Report{report}, readRepository.Close, nil
 }
@@ -2616,6 +2703,7 @@ var valueOptions = map[string]bool{
 	"filter": true, "method": true, "route": true, "event": true, "component": true,
 	"package": true, "message": true, "oneof": true, "status": true,
 	"progress": true, "older-than": true, "max-bytes": true, "keep": true,
+	"budget": true,
 }
 
 // progressCommands bounds the globally parsed --progress option to the
@@ -2636,6 +2724,7 @@ var pathPrefixCommands = map[string]bool{
 	"outbound-requests": true, "list-outbound-requests": true, "list_outbound_requests": true,
 	"service-topology": true, "get-service-topology": true, "get_service_topology": true,
 	"message-coverage": true, "list-message-coverage": true, "list_message_coverage": true,
+	"reusable": true, "find-reusable-code": true,
 }
 
 func parseArguments(arguments []string) (parsedArguments, error) {
@@ -2785,7 +2874,7 @@ Usage:
   grafo embed [path] [--model embeddinggemma] [--ollama-url http://localhost:11434] [--force]
   grafo embed-cache status [--json]
   grafo embed-cache prune [--model name] [--older-than duration] [--max-bytes n] [--dry-run] [--yes] [--json]
-  grafo reusable <description> [--repo path | --repos pathA,pathB] [--limit 5] [--json]
+  grafo reusable <description> [--repo path | --repos pathA,pathB] [--limit 5] [--budget 45s] [--language name] [--path-prefix dir] [--json]
   grafo find <text> [--limit 20] [--repo path | --repos pathA,pathB] [--json]
   grafo show <symbol-or-id> [--kind function] [--repo path | --repos pathA,pathB] [--json]
   grafo source <symbol-or-id> [--kind function] [--context-lines 2] [--max-lines 200] [--json]

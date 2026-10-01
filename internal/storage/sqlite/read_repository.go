@@ -158,8 +158,12 @@ func OpenReadOnly(ctx context.Context, path string) (*ReadRepository, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	// This is connection-local lock policy, not a database write pragma. Set it
-	// only after context-aware validation so a shorter open deadline wins.
+	// This is connection-local lock policy, not a database write pragma. Unlike
+	// the writable path it is deliberately set last: every statement before it
+	// runs through retrySQLiteBusy, which already waits out contention while
+	// honoring ctx, so a shorter open deadline wins instead of being swallowed
+	// by a driver-level busy wait. A query-only open never changes journal
+	// mode, so nothing here can hit SQLITE_BUSY_RECOVERY.
 	if _, err := db.ExecContext(ctx, "PRAGMA busy_timeout=5000"); err != nil {
 		_ = statements.Close()
 		_ = queries.Close()

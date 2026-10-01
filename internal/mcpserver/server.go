@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
@@ -21,8 +22,8 @@ type Service struct {
 	query           *query.Service
 	projects        []indexer.Project
 	refresh         func(context.Context) error
-	reusable        func(context.Context, string, int) (semantic.SearchResult, error)
-	reusableFactory func(graph.ReadRepository, []indexer.Project) func(context.Context, string, int) (semantic.SearchResult, error)
+	reusable        ReusableSearch
+	reusableFactory func(graph.ReadRepository, []indexer.Project) ReusableSearch
 	source          func(context.Context, string, graph.NodeKind, int, int) (sourcecontext.Excerpt, error)
 	search          *search.Service
 	catalog         *query.Catalog
@@ -68,14 +69,19 @@ func (s *Service) WithFreshness(coordinator *FreshnessCoordinator) *Service {
 	return s
 }
 
-func (s *Service) WithReusable(search func(context.Context, string, int) (semantic.SearchResult, error)) *Service {
+// ReusableSearch answers one bounded reusable-code query. The request carries
+// the optional time budget and candidate filters, so the transport never has
+// to choose between blocking and dropping them.
+type ReusableSearch func(context.Context, semantic.SearchRequest) (semantic.SearchResult, error)
+
+func (s *Service) WithReusable(search ReusableSearch) *Service {
 	s.reusable = search
 	return s
 }
 
 // WithReusableFactory keeps embedding work bound to the source generation
 // acquired for the tool call while retaining its separate writable lifecycle.
-func (s *Service) WithReusableFactory(factory func(graph.ReadRepository, []indexer.Project) func(context.Context, string, int) (semantic.SearchResult, error)) *Service {
+func (s *Service) WithReusableFactory(factory func(graph.ReadRepository, []indexer.Project) ReusableSearch) *Service {
 	s.reusableFactory = factory
 	s.reusable = factory(s.repository, s.projects)
 	return s
@@ -221,7 +227,7 @@ func (s *Service) Server(version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{Name: "get_index_status", Title: "Get index status", Description: "Return the active repository, branch, indexed commit, and graph counts.", Annotations: annotations}, s.getIndexStatus)
 	if s.reusable != nil {
 		semanticAnnotations := &mcp.ToolAnnotations{ReadOnlyHint: false, IdempotentHint: true, OpenWorldHint: boolPointer(true)}
-		mcp.AddTool(server, &mcp.Tool{Name: "find_reusable_code", Title: "Find reusable code", Description: "Use embeddings to select natural-language code candidates, then return deterministic one-hop graph context for each candidate. This may update the local vector cache and contact the configured embedding endpoint.", Annotations: semanticAnnotations}, s.findReusableCode)
+		mcp.AddTool(server, &mcp.Tool{Name: "find_reusable_code", Title: "Find reusable code", Description: "Use embeddings to select natural-language code candidates, then return deterministic one-hop graph context for each candidate. This may update the local vector cache and contact the configured embedding endpoint. The query runs inside a time budget: read status, coverage, and timings in the response, because a partial or warming answer ranks only the candidates whose embeddings were cached in time.", Annotations: semanticAnnotations}, s.findReusableCode)
 	}
 	return server
 }
@@ -1024,6 +1030,11 @@ type StatusInput struct{}
 type FindReusableCodeInput struct {
 	Query string `json:"query" jsonschema:"natural-language description of code to reuse"`
 	Limit int    `json:"limit,omitempty" jsonschema:"maximum candidates; defaults to 5"`
+	// Every field below is optional, so the historical two-field call is
+	// unchanged.
+	BudgetSeconds int      `json:"budget_seconds,omitempty" jsonschema:"time budget for the whole query; defaults to 45 and is capped at 240. An exhausted budget returns results marked partial instead of blocking"`
+	Languages     []string `json:"languages,omitempty" jsonschema:"restrict candidates to these node languages"`
+	PathPrefixes  []string `json:"path_prefixes,omitempty" jsonschema:"restrict candidates to repository-relative segment prefixes"`
 }
 
 func (s *Service) findReusableCode(ctx context.Context, _ *mcp.CallToolRequest, input FindReusableCodeInput) (*mcp.CallToolResult, semantic.SearchResult, error) {
@@ -1035,7 +1046,9 @@ func (s *Service) findReusableCode(ctx context.Context, _ *mcp.CallToolRequest, 
 	if strings.TrimSpace(input.Query) == "" {
 		return nil, semantic.SearchResult{}, fmt.Errorf("query is required")
 	}
-	result, err := s.reusable(ctx, input.Query, input.Limit)
+	result, err := s.reusable(ctx, semantic.SearchRequest{Query: input.Query, Limit: input.Limit,
+		Budget: time.Duration(input.BudgetSeconds) * time.Second, Languages: input.Languages,
+		PathPrefixes: input.PathPrefixes})
 	return nil, result, err
 }
 

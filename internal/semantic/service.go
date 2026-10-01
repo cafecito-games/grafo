@@ -66,10 +66,30 @@ type Match struct {
 	Context query.Traversal `json:"context"`
 }
 
+// SearchResult is one bounded reusable-code answer. Status, Partial, and
+// Coverage are the contract for honesty: a caller must never read Matches as
+// the complete ranking unless Status is StatusComplete.
 type SearchResult struct {
 	Query   string  `json:"query"`
 	Model   string  `json:"model"`
 	Matches []Match `json:"matches"`
+	// Status is complete, partial, or warming.
+	Status SearchStatus `json:"status,omitempty"`
+	// Partial is true whenever Status is not complete.
+	Partial bool `json:"partial,omitempty"`
+	// Coverage separates embedding-cache backfill progress from ranking and
+	// graph-resolution progress.
+	Coverage Coverage `json:"coverage,omitempty"`
+	// Timings reports per-phase durations in a fixed span order.
+	Timings Timings `json:"timings,omitempty"`
+	// Budget states the applied time bound and whether it ran out.
+	Budget BudgetReport `json:"budget,omitempty"`
+	// Filters echoes the normalized candidate filters.
+	Filters SearchFilters `json:"filters,omitempty"`
+	// Notes explain every deviation from a complete answer.
+	Notes []string `json:"notes,omitempty"`
+	// NextAction is the concrete remedy for a partial or warming answer.
+	NextAction string `json:"next_action,omitempty"`
 }
 
 type Service struct {
@@ -200,101 +220,6 @@ func (s *Service) Sync(ctx context.Context) (SyncReport, error) {
 		}
 	}
 	return report, nil
-}
-
-func (s *Service) Search(ctx context.Context, text string, limit int) (SearchResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.embedder == nil {
-		return SearchResult{}, errors.New("semantic embedder is required")
-	}
-	if s.cache == nil {
-		return SearchResult{}, errors.New("embedding cache is required")
-	}
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return SearchResult{}, errors.New("semantic query is required")
-	}
-	if limit <= 0 {
-		limit = 5
-	}
-	model := s.embedder.Model()
-	if strings.TrimSpace(model) == "" {
-		return SearchResult{}, errors.New("embedding model is required")
-	}
-	nodes, err := s.candidates.CandidateNodes(ctx)
-	if err != nil {
-		return SearchResult{}, fmt.Errorf("list semantic candidates: %w", err)
-	}
-	keys := make([]CacheKey, 0, len(nodes))
-	nodeKeys := make([]CacheKey, 0, len(nodes))
-	seen := make(map[CacheKey]struct{}, len(nodes))
-	for _, node := range nodes {
-		key := CacheKey{Model: model, DocumentVersion: DocumentVersion, ContentHash: contentHash(DocumentVersion + "\x00" + Document(node))}
-		nodeKeys = append(nodeKeys, key)
-		if _, exists := seen[key]; !exists {
-			seen[key] = struct{}{}
-			keys = append(keys, key)
-		}
-	}
-	sort.Slice(keys, func(i, j int) bool { return cacheKeyLess(keys[i], keys[j]) })
-	embeddings, err := s.cache.Load(ctx, keys)
-	if err != nil {
-		return SearchResult{}, fmt.Errorf("load embedding cache: %w", err)
-	}
-	for _, key := range keys {
-		if _, exists := embeddings[key]; !exists {
-			return SearchResult{}, fmt.Errorf("no embedding for current cache key %s; run semantic sync first", formatCacheKey(key))
-		}
-	}
-	vectors, err := s.embedder.Embed(ctx, []string{text})
-	if err != nil {
-		return SearchResult{}, fmt.Errorf("embed query: %w", err)
-	}
-	if len(vectors) != 1 {
-		return SearchResult{}, fmt.Errorf("embed query: provider returned %d vectors", len(vectors))
-	}
-	queryVector, err := normalized(vectors[0])
-	if err != nil {
-		return SearchResult{}, fmt.Errorf("embed query: %w", err)
-	}
-	if len(nodes) == 0 {
-		return SearchResult{}, fmt.Errorf("no embeddings for model %q; run semantic sync first", model)
-	}
-	type scoredNode struct {
-		node  graph.Node
-		score float64
-	}
-	scored := make([]scoredNode, 0, len(nodes))
-	for index, node := range nodes {
-		vector := embeddings[nodeKeys[index]]
-		if len(vector) != len(queryVector) {
-			return SearchResult{}, fmt.Errorf("embedding dimensions changed for model %q: stored %d, query %d", model, len(vector), len(queryVector))
-		}
-		scored = append(scored, scoredNode{node: node, score: dot(queryVector, vector)})
-	}
-	sort.Slice(scored, func(i, j int) bool {
-		if scored[i].score != scored[j].score {
-			return scored[i].score > scored[j].score
-		}
-		if scored[i].node.QualifiedName != scored[j].node.QualifiedName {
-			return scored[i].node.QualifiedName < scored[j].node.QualifiedName
-		}
-		return scored[i].node.ID < scored[j].node.ID
-	})
-	if len(scored) > limit {
-		scored = scored[:limit]
-	}
-	result := SearchResult{Query: text, Model: model, Matches: make([]Match, 0, len(scored))}
-	graphQuery := query.NewService(s.graph)
-	for _, candidate := range scored {
-		contextGraph, err := graphQuery.Neighborhood(ctx, candidate.node.ID, "", 1, query.Both, nil, 50)
-		if err != nil {
-			return SearchResult{}, fmt.Errorf("resolve context for %s: %w", candidate.node.QualifiedName, err)
-		}
-		result.Matches = append(result.Matches, Match{Node: candidate.node, Score: candidate.score, Context: contextGraph})
-	}
-	return result, nil
 }
 
 // Document creates stable, source-free semantic input from indexed metadata.

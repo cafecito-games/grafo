@@ -394,7 +394,14 @@ grafo reusable "validate and normalize an incoming payment request"
 
 `grafo embed` is incremental: only new or semantically changed symbol metadata
 is sent to the embedding provider. `grafo reusable` and the MCP
-`find_reusable_code` tool perform that sync automatically. Configure another
+`find_reusable_code` tool backfill missing vectors themselves, but only inside a
+time budget (45s by default, `--budget`/`budget_seconds`, capped at 240s). They
+never block on a full backfill of a large repository: the response carries
+`status` (`complete`, `partial`, or `warming`), `coverage` separating embedding
+backfill from ranking, per-phase `timings`, and a `next_action`. A `warming`
+answer means coverage is still too low to rank the index honestly — run
+`grafo embed` once to warm the cache, or narrow the query with `--language` /
+`--path-prefix` (`languages` / `path_prefixes` on the tool). Configure another
 Ollama-compatible location or model with `--ollama-url`, `--model`,
 `GRAFO_OLLAMA_URL`, and `GRAFO_EMBED_MODEL`. The defaults are
 `http://localhost:11434` and `embeddinggemma`. Use `grafo embed --force` after

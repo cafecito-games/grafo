@@ -15,6 +15,11 @@ type Unlock func() error
 // lockPoll bounds how often an unavailable lock is retried.
 var lockPoll = 20 * time.Millisecond
 
+// ErrLockBusy reports that a competing grafo process still held the lock when
+// the wait elapsed. It is ordinary contention rather than a broken lock, so
+// callers can match on it and render guidance in their own vocabulary.
+var ErrLockBusy = errors.New("locked by another grafo process")
+
 // Lock takes an exclusive advisory cross-process lock on path, creating the file
 // if it is missing, and waits up to wait for a competing holder to release it.
 //
@@ -37,7 +42,7 @@ func Lock(path string, wait time.Duration) (Unlock, error) {
 			return unlock, nil
 		}
 		if !time.Now().Before(deadline) {
-			return nil, fmt.Errorf("%s is locked by another grafo process", path)
+			return nil, fmt.Errorf("%s is %w", path, ErrLockBusy)
 		}
 		time.Sleep(lockPoll)
 	}
