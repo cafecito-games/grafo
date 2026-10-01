@@ -58,6 +58,9 @@ func TestCountsFailureLeavesIndexRunSuccessful(t *testing.T) {
 	// the caller never requested.
 	reported := false
 	for _, diagnostic := range report.Diagnostics {
+		if diagnostic.Path != "." || diagnostic.Level != "warning" {
+			continue
+		}
 		if strings.Contains(diagnostic.Message, "collect graph counts") &&
 			strings.Contains(diagnostic.Message, "count query failed") {
 			reported = true

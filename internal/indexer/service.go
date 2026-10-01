@@ -681,8 +681,11 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		if counts, countsErr := s.repository.Counts(ctx); countsErr == nil {
 			report.Counts, report.CountsCollected = counts, true
 		} else {
+			// Diagnostics carry repository-relative paths, and this condition is
+			// graph-wide rather than owned by one file, so it is attributed to the
+			// repository root itself.
 			report.Diagnostics = append(report.Diagnostics, graph.Diagnostic{
-				Path: project.Root, Level: "warning", Message: "collect graph counts: " + countsErr.Error()})
+				Path: ".", Level: "warning", Message: "collect graph counts: " + countsErr.Error()})
 		}
 	}
 	report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
