@@ -340,9 +340,13 @@ func canonicalModuleName(path string) string {
 	return strings.TrimPrefix(path, "./")
 }
 
-// moduleScanLimit bounds the in-process scan cache. The cache only avoids
-// rescanning identical bytes, so discarding it is always safe.
-const moduleScanLimit = 1 << 16
+// moduleScanLimit bounds the in-process scan cache. An entry retains a whole
+// module symbol table, and the cache is shared by every root a long-lived
+// process indexes, so the bound is about one large repository's worth rather
+// than the content-addressed ceiling. Overflowing it only costs a rescan: the
+// cache exists so the catalog built for the workspace key and the catalog built
+// for parsing do not scan the same bytes twice.
+const moduleScanLimit = 1 << 13
 
 type moduleScanKey struct {
 	path    string
