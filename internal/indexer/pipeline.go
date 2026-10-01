@@ -199,6 +199,9 @@ func (stage *fileStage) prepare(ctx context.Context, path string) fileOutcome {
 func (stage *fileStage) run(ctx context.Context, workers int, apply func(fileOutcome) error) error {
 	if workers <= 1 {
 		for _, path := range stage.paths {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if err := apply(stage.prepare(ctx, path)); err != nil {
 				return err
 			}
@@ -245,11 +248,13 @@ func (stage *fileStage) run(ctx context.Context, workers int, apply func(fileOut
 		}
 	}()
 	var applyErr error
+	handed := 0
 	for slot := range ordered {
 		outcome, ok := <-slot
 		if !ok {
 			break
 		}
+		handed++
 		if applyErr != nil {
 			continue
 		}
@@ -263,5 +268,17 @@ func (stage *fileStage) run(ctx context.Context, workers int, apply func(fileOut
 		<-slot
 	}
 	running.Wait()
-	return applyErr
+	if applyErr != nil {
+		return applyErr
+	}
+	if handed != len(stage.paths) {
+		// The dispatcher stopped early, which happens only when the caller's
+		// context was cancelled. Reporting it fails the run instead of letting
+		// truncated membership reach removal and digest publication.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return context.Canceled
+	}
+	return nil
 }

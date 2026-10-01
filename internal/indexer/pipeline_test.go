@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
@@ -256,6 +257,9 @@ func TestServiceParseWorkerCountsProduceIdenticalRuns(t *testing.T) {
 }
 
 func TestServiceParseWorkerCountDefaultsToBoundedPool(t *testing.T) {
+	if runtime.NumCPU() < 2 {
+		t.Skip("the derived worker count is one on a single-core machine, so parses cannot overlap")
+	}
 	ctx := context.Background()
 	root := t.TempDir()
 	writePipelineCorpus(t, root)
@@ -310,9 +314,12 @@ func (p *countingParser) Parse(ctx context.Context, input parserapi.Input) (grap
 	if reached {
 		p.releaseOnce.Do(func() { close(p.release) })
 	} else {
+		// The wait is bounded so a configuration that cannot overlap parses fails
+		// the assertion instead of hanging until the package test timeout.
 		select {
 		case <-p.release:
 		case <-ctx.Done():
+		case <-time.After(10 * time.Second):
 		}
 	}
 	p.mu.Lock()
@@ -355,6 +362,60 @@ func TestServiceParseStagePropagatesTransformFailure(t *testing.T) {
 		for _, call := range repository.calls() {
 			if call.Call == "replace_file" && call.Path > "worker.py" {
 				t.Fatalf("workers=%d: persisted %s after the failing path", workers, call.Path)
+			}
+		}
+	}
+}
+
+// cancelingParser cancels the run from inside the read/hash/parse stage, which
+// is the only way to reach the stage's own abort path rather than a writer error.
+type cancelingParser struct {
+	mu     sync.Mutex
+	cancel context.CancelFunc
+}
+
+func (*cancelingParser) Language() string { return "go" }
+func (*cancelingParser) Supports(path string) bool {
+	return strings.HasSuffix(path, ".go") || strings.HasSuffix(path, ".py") ||
+		strings.HasSuffix(path, ".ts") || strings.HasSuffix(path, ".gd") ||
+		strings.HasSuffix(path, ".sql") || strings.HasSuffix(path, ".md")
+}
+
+func (p *cancelingParser) Parse(_ context.Context, input parserapi.Input) (graph.ParseResult, error) {
+	p.mu.Lock()
+	cancel := p.cancel
+	p.cancel = nil
+	p.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	return parserapi.NewBuilder(input, "go").Finish(), nil
+}
+
+// A repository that ignores context cancellation must not let a cancelled run
+// report success, because the membership the stage collected is truncated and
+// would drive removal and digest publication.
+func TestServiceParseStageFailsCancelledRunWithoutRepositorySupport(t *testing.T) {
+	for _, workers := range []int{1, 4} {
+		ctx, cancel := context.WithCancel(context.Background())
+		root := t.TempDir()
+		writePipelineCorpus(t, root)
+		project, err := indexer.DiscoverProject(ctx, root)
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		repository := newRecordingRepository()
+		registry := parserapi.NewRegistry(&cancelingParser{cancel: cancel}, configparser.New())
+		_, err = indexer.NewService(repository, registry).Run(ctx, project,
+			indexer.Options{ParseWorkers: workers})
+		cancel()
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("workers=%d: cancelled run reported %v", workers, err)
+		}
+		for _, call := range repository.calls() {
+			if call.Call == "remove_files" {
+				t.Fatalf("workers=%d: cancelled run removed files from truncated membership", workers)
 			}
 		}
 	}

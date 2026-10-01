@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -36,10 +38,13 @@ type Options struct {
 	ProgressObserver ProgressObserver
 	ReportDetail     ReportDetail
 	// ParseWorkers bounds the goroutines that read, hash, and parse files ahead
-	// of the single ordered writer. Zero selects a CPU-derived default; one runs
-	// the stage inline on the writer goroutine and reproduces the sequential
-	// pipeline exactly. Persistence is single-writer and path-ordered at every
-	// worker count, so the indexed graph never depends on this value.
+	// of the single ordered writer. Zero selects a CPU-derived default under an
+	// explicit cap; one runs the stage inline on the writer goroutine and
+	// reproduces the sequential pipeline exactly. A positive value is honored as
+	// given, so a caller exposing this must bound its own input: in-flight parsed
+	// results scale with the worker count. Persistence is single-writer and
+	// path-ordered at every worker count, so the indexed graph never depends on
+	// this value.
 	ParseWorkers int
 	// ResultTransform is a benchmark/test-only interception point after parsing
 	// and before any durable mutation. Production CLI, MCP, watch, and service
@@ -424,9 +429,16 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		// membership at every worker count rather than leaving the outcome to how
 		// far the read-ahead had progressed.
 		if outcome.kind == outcomeParsed {
-			if _, err := os.Stat(filepath.Join(project.Root, filepath.FromSlash(outcome.path))); err != nil {
+			_, statErr := os.Stat(filepath.Join(project.Root, filepath.FromSlash(outcome.path)))
+			// Only a path that no longer resolves may discard parsed evidence. A
+			// permission or I/O failure on a file that still exists is not proof
+			// that it left the repository, so it persists as it did before.
+			// ENOTDIR is load-bearing on Unix, where an ancestor replaced by a
+			// regular file does not satisfy fs.ErrNotExist; Windows maps it into
+			// fs.ErrNotExist already, so it only looks redundant there.
+			if errors.Is(statErr, fs.ErrNotExist) || errors.Is(statErr, syscall.ENOTDIR) {
 				outcome = fileOutcome{path: outcome.path, kind: outcomeUnreadable,
-					diagnostic: graph.Diagnostic{Path: outcome.path, Level: "warning", Message: err.Error()}}
+					diagnostic: graph.Diagnostic{Path: outcome.path, Level: "warning", Message: statErr.Error()}}
 			}
 		}
 		switch outcome.kind {
