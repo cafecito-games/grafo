@@ -23,11 +23,11 @@ func TestBulkWritesAreExactlyEquivalentToSingleRowQueries(t *testing.T) {
 		{ID: "caller", Kind: "method", Name: "Caller2", QualifiedName: "pkg.Caller2", Language: "go", Path: "updated.go", Line: 7, ColumnNo: 8, EndLine: 9, Properties: `{"updated":"true"}`, OwnerFile: "updated.go"},
 	}
 	facts := []sqlcgen.UpsertFactParams{
-		{ID: "fact", FromID: "caller", Kind: "calls", Producer: "go", TargetID: "target", Path: "a.go", Line: 5, Properties: `{"proof":"direct"}`, OwnerFile: "a.go"},
-		{ID: "fact", Source: "pkg.Caller", SourceKind: "method", Kind: "references", Producer: "gdscript", Target: "pkg.Target", TargetKind: "function", Path: "updated.go", Line: 11, ColumnNo: 2, EndLine: 12, Properties: `{"proof":"name"}`, OwnerFile: "updated.go"},
+		{ID: "fact", FromID: "caller", Kind: "calls", Producer: "go", TargetID: "target", PathID: 1, Line: 5, Properties: `{"proof":"direct"}`, OwnerPathID: 1},
+		{ID: "fact", Source: "pkg.Caller", SourceKind: "method", Kind: "references", Producer: "gdscript", Target: "pkg.Target", TargetKind: "function", PathID: 2, Line: 11, ColumnNo: 2, EndLine: 12, Properties: `{"proof":"name"}`, OwnerPathID: 3},
 	}
 	edges := []sqlcgen.InsertEdgeParams{
-		{ID: "edge-1", FactID: "fact", FromID: "caller", ToID: "target", Kind: "references", Producer: "gdscript", Path: "updated.go", Line: 11, ColumnNo: 2, EndLine: 12, Properties: `{"proof":"name"}`},
+		{ID: "edge-1", FactID: "fact", FromID: "caller", ToID: "target", Kind: "references", Properties: `{"proof":"name"}`},
 		{ID: "edge-2", FactID: "other", FromID: "target", ToID: "caller", Kind: "calls", Properties: `{}`},
 	}
 
@@ -324,8 +324,9 @@ func tableRows(t *testing.T, repository *Repository, table string) []string {
 	t.Helper()
 	columns := map[string]string{
 		"nodes": "id,kind,name,qualified_name,language,path,line,column_no,end_line,properties,owner_file,external,name_folded,qualified_name_folded",
-		"facts": "id,from_id,source,source_kind,kind,target_id,target,target_kind,path,line,column_no,end_line,properties,owner_file",
-		"edges": "id,fact_id,from_id,to_id,kind,path,line,column_no,end_line,properties",
+		"facts": "id,from_id,source,source_kind,kind,target_id,target,target_kind,path_id,line,column_no,end_line,properties,owner_path_id",
+		"edges": "id,fact_id,from_id,to_id,kind,properties",
+		"paths": "id,path",
 	}[table]
 	if columns == "" {
 		t.Fatalf("unsupported table %q", table)

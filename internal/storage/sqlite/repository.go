@@ -32,6 +32,10 @@ type Repository struct {
 	writeStatsMu sync.Mutex
 	writeStats   graph.WriteStats
 	afterBatch   func(string, graph.WriteBatchStats)
+
+	// pathKeys caches interned path keys across transactions so a cold index
+	// resolves each repository-relative path once instead of per fact.
+	pathKeys pathInterner
 }
 
 const (
@@ -203,7 +207,7 @@ func validateParseResult(parsed graph.ParseResult) error {
 }
 
 func (r *Repository) RemoveFiles(ctx context.Context, paths []string) error {
-	return r.inTransaction(ctx, func(q *sqlcgen.Queries, _ *batchWriter) error {
+	if err := r.inTransaction(ctx, func(q *sqlcgen.Queries, _ *batchWriter) error {
 		for _, path := range paths {
 			if err := markOwnerDirty(ctx, q, path); err != nil {
 				return err
@@ -221,8 +225,14 @@ func (r *Repository) RemoveFiles(ctx context.Context, paths []string) error {
 				return err
 			}
 		}
-		return nil
-	})
+		// A removed file leaves its interned path row referenced by nothing.
+		return q.DeleteUnreferencedPaths(ctx)
+	}); err != nil {
+		return err
+	}
+	// Pruning can delete a row whose key the shared cache still remembers.
+	r.pathKeys.discard()
+	return nil
 }
 
 func insertParseResult(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter, parsed graph.ParseResult) error {
@@ -241,7 +251,11 @@ func insertParseResult(ctx context.Context, q *sqlcgen.Queries, writer *batchWri
 		}
 	}
 	for _, fact := range parsed.Facts {
-		if err := writer.addFact(ctx, factParams(fact)); err != nil {
+		params, err := factParams(ctx, q, writer, fact)
+		if err != nil {
+			return fmt.Errorf("upsert fact %s: %w", fact.ID, err)
+		}
+		if err := writer.addFact(ctx, params); err != nil {
 			return fmt.Errorf("upsert fact %s: %w", fact.ID, err)
 		}
 	}
@@ -298,10 +312,17 @@ func (r *Repository) ReconcileWithStats(ctx context.Context, observer graph.Reco
 		if err := q.DeleteOrphanExternalNodes(ctx); err != nil {
 			return err
 		}
+		// Replacing an owner can leave an interned path row referenced by
+		// nothing. Sweeping once per converged pass is driven by the small
+		// paths table, so it stays proportional to the indexed file set.
+		if err := q.DeleteUnreferencedPaths(ctx); err != nil {
+			return err
+		}
 		return q.ClearReconciliationCleanup(ctx)
 	}); err != nil {
 		return stats, fmt.Errorf("remove orphan external nodes: %w", err)
 	}
+	r.pathKeys.discard()
 	return stats, r.checkpoint(ctx, true)
 }
 
@@ -354,7 +375,10 @@ func (r *Repository) reconcileBatch(ctx context.Context, resolved *resolutionCac
 		}
 		for _, row := range facts {
 			processed++
-			fact := factFromDirtyRow(row)
+			fact, err := factFromDirtyRow(row)
+			if err != nil {
+				return err
+			}
 			sources, err := resolveSources(ctx, q, writer, fact, row.SourceExists != 0, resolved)
 			if err != nil {
 				return err
@@ -1175,7 +1199,14 @@ func (r *Repository) EdgesFrom(ctx context.Context, id string) ([]graph.Edge, er
 	if err != nil {
 		return nil, err
 	}
-	return edgesFromRows(rows), nil
+	origins := make([]edgeOrigin, 0, len(rows))
+	for _, row := range rows {
+		origins = append(origins, edgeOrigin{id: row.ID, factID: row.FactID, fromID: row.FromID,
+			toID: row.ToID, kind: row.Kind, producer: row.Producer, path: row.Path, line: row.Line,
+			columnNo: row.ColumnNo, endLine: row.EndLine, properties: row.Properties,
+			originResolved: row.OriginResolved})
+	}
+	return edgesFromOrigins(origins)
 }
 
 func (r *Repository) EdgesTo(ctx context.Context, id string) ([]graph.Edge, error) {
@@ -1183,7 +1214,14 @@ func (r *Repository) EdgesTo(ctx context.Context, id string) ([]graph.Edge, erro
 	if err != nil {
 		return nil, err
 	}
-	return edgesFromRows(rows), nil
+	origins := make([]edgeOrigin, 0, len(rows))
+	for _, row := range rows {
+		origins = append(origins, edgeOrigin{id: row.ID, factID: row.FactID, fromID: row.FromID,
+			toID: row.ToID, kind: row.Kind, producer: row.Producer, path: row.Path, line: row.Line,
+			columnNo: row.ColumnNo, endLine: row.EndLine, properties: row.Properties,
+			originResolved: row.OriginResolved})
+	}
+	return edgesFromOrigins(origins)
 }
 
 // ExternalRequestEdges returns unresolved HTTP request boundaries in stable,
@@ -1208,6 +1246,9 @@ func (r *Repository) ExternalRequestEdges(ctx context.Context, after string, lim
 		page.Next = rows[len(rows)-1].EdgeID
 	}
 	for _, row := range rows {
+		if row.EdgeOriginResolved == 0 {
+			return graph.ExternalRequestEdgePage{}, corruptInternedPath("edge " + row.EdgeID)
+		}
 		edgeProperties, err := decodeRelationProperties("edge "+row.EdgeID, row.EdgeProperties)
 		if err != nil {
 			return graph.ExternalRequestEdgePage{}, err
@@ -1271,6 +1312,9 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 				return graph.RelationEdgePage{}, err
 			}
 			for _, row := range rows {
+				if row.EdgeOriginResolved == 0 {
+					return graph.RelationEdgePage{}, corruptInternedPath("edge " + row.EdgeID)
+				}
 				item, err := hydratedRelationEdge(row.EdgeID, row.EdgeFactID, row.EdgeFromID, row.EdgeToID,
 					row.EdgeKind, row.EdgeProducer, row.EdgePath, row.EdgeLine, row.EdgeColumnNo, row.EdgeEndLine, row.EdgeProperties,
 					row.CounterpartID, row.CounterpartKind, row.CounterpartName, row.CounterpartQualifiedName,
@@ -1289,6 +1333,9 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 				return graph.RelationEdgePage{}, err
 			}
 			for _, row := range rows {
+				if row.EdgeOriginResolved == 0 {
+					return graph.RelationEdgePage{}, corruptInternedPath("edge " + row.EdgeID)
+				}
 				item, err := hydratedRelationEdge(row.EdgeID, row.EdgeFactID, row.EdgeFromID, row.EdgeToID,
 					row.EdgeKind, row.EdgeProducer, row.EdgePath, row.EdgeLine, row.EdgeColumnNo, row.EdgeEndLine, row.EdgeProperties,
 					row.CounterpartID, row.CounterpartKind, row.CounterpartName, row.CounterpartQualifiedName,
@@ -1322,7 +1369,14 @@ func (r *Repository) ExternalEdgesTo(ctx context.Context, node graph.Node) ([]gr
 	if err != nil {
 		return nil, err
 	}
-	return edgesFromRows(rows), nil
+	origins := make([]edgeOrigin, 0, len(rows))
+	for _, row := range rows {
+		origins = append(origins, edgeOrigin{id: row.ID, factID: row.FactID, fromID: row.FromID,
+			toID: row.ToID, kind: row.Kind, producer: row.Producer, path: row.Path, line: row.Line,
+			columnNo: row.ColumnNo, endLine: row.EndLine, properties: row.Properties,
+			originResolved: row.OriginResolved})
+	}
+	return edgesFromOrigins(origins)
 }
 
 func (r *Repository) inTransaction(ctx context.Context, fn func(*sqlcgen.Queries, *batchWriter) error) error {
@@ -1337,6 +1391,7 @@ func (r *Repository) inTransaction(ctx context.Context, fn func(*sqlcgen.Queries
 	}
 	defer func() { _ = writer.close() }()
 	writer.afterBatch = r.afterBatch
+	writer.paths = r.pathKeys.begin()
 	if err := fn(r.queries.WithTx(tx), writer); err != nil {
 		return err
 	}
@@ -1349,6 +1404,7 @@ func (r *Repository) inTransaction(ctx context.Context, fn func(*sqlcgen.Queries
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	r.pathKeys.publish(writer.paths.assigned)
 	r.writeStatsMu.Lock()
 	addWriteStats(&r.writeStats, writer.stats())
 	r.writeStatsMu.Unlock()
@@ -1383,19 +1439,37 @@ func foldName(name string) string {
 	return strings.ToLower(name)
 }
 
-func factParams(f graph.Fact) sqlcgen.UpsertFactParams {
+// factParams interns the fact's location path and owner key. A fact's location
+// file and its owner file are interned separately because they are allowed to
+// differ: the indexer's workspace facts are owned by a synthetic workspace key
+// while their location points at the project configuration file.
+func factParams(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter,
+	f graph.Fact,
+) (sqlcgen.UpsertFactParams, error) {
+	pathID, err := writer.pathKey(ctx, q, f.Location.Path)
+	if err != nil {
+		return sqlcgen.UpsertFactParams{}, err
+	}
+	ownerPathID := pathID
+	if f.OwnerFile != f.Location.Path {
+		ownerPathID, err = writer.pathKey(ctx, q, f.OwnerFile)
+		if err != nil {
+			return sqlcgen.UpsertFactParams{}, err
+		}
+	}
 	return sqlcgen.UpsertFactParams{ID: f.ID, FromID: f.FromID, Source: f.Source,
 		SourceKind: string(f.SourceKind), Kind: string(f.Kind), Producer: f.Producer, TargetID: f.TargetID,
-		Target: f.Target, TargetKind: string(f.TargetKind), Path: f.Location.Path, Line: int64(f.Location.Line),
+		Target: f.Target, TargetKind: string(f.TargetKind), PathID: pathID, Line: int64(f.Location.Line),
 		ColumnNo: int64(f.Location.Column), EndLine: int64(f.Location.EndLine),
-		Properties: graph.MarshalProperties(f.Properties), OwnerFile: f.OwnerFile}
+		Properties: graph.MarshalProperties(f.Properties), OwnerPathID: ownerPathID}, nil
 }
 
+// edgeParams stores only what reconciliation can resolve differently from the
+// originating fact. The edge's producer and location are the fact's and are
+// joined back through fact_id instead of being stored a second time.
 func edgeParams(e graph.Edge) sqlcgen.InsertEdgeParams {
 	return sqlcgen.InsertEdgeParams{ID: e.ID, FactID: e.FactID, FromID: e.FromID, ToID: e.ToID,
-		Kind: string(e.Kind), Producer: e.Producer, Path: e.Location.Path, Line: int64(e.Location.Line),
-		ColumnNo: int64(e.Location.Column), EndLine: int64(e.Location.EndLine),
-		Properties: graph.MarshalProperties(e.Properties)}
+		Kind: string(e.Kind), Properties: graph.MarshalProperties(e.Properties)}
 }
 
 func nodeFromRow(n sqlcgen.Node) graph.Node {
@@ -1404,23 +1478,63 @@ func nodeFromRow(n sqlcgen.Node) graph.Node {
 		Properties: graph.UnmarshalProperties(n.Properties), OwnerFile: n.OwnerFile, External: n.External != 0}
 }
 
-func factFromDirtyRow(f sqlcgen.ListDirtyFactBatchRow) graph.Fact {
+func factFromDirtyRow(f sqlcgen.ListDirtyFactBatchRow) (graph.Fact, error) {
+	if f.PathsResolved == 0 {
+		return graph.Fact{}, corruptInternedPath("fact " + f.ID)
+	}
 	return graph.Fact{ID: f.ID, FromID: f.FromID, Source: f.Source, SourceKind: graph.NodeKind(f.SourceKind),
 		Kind: graph.EdgeKind(f.Kind), Producer: f.Producer, TargetID: f.TargetID,
 		Target: f.Target, TargetKind: graph.NodeKind(f.TargetKind),
 		Location:   graph.Location{Path: f.Path, Line: int(f.Line), Column: int(f.ColumnNo), EndLine: int(f.EndLine)},
-		Properties: graph.UnmarshalProperties(f.Properties), OwnerFile: f.OwnerFile}
+		Properties: graph.UnmarshalProperties(f.Properties), OwnerFile: f.OwnerFile}, nil
 }
 
-func edgesFromRows(rows []sqlcgen.Edge) []graph.Edge {
-	result := make([]graph.Edge, 0, len(rows))
-	for _, e := range rows {
-		result = append(result, graph.Edge{ID: e.ID, FactID: e.FactID, FromID: e.FromID,
-			ToID: e.ToID, Kind: graph.EdgeKind(e.Kind), Producer: e.Producer,
-			Location:   graph.Location{Path: e.Path, Line: int(e.Line), Column: int(e.ColumnNo), EndLine: int(e.EndLine)},
-			Properties: graph.UnmarshalProperties(e.Properties)})
+// corruptInternedPath reports an index whose row references an interned path or
+// originating fact that is missing. Reporting an empty location instead would
+// hand a caller evidence that points nowhere.
+func corruptInternedPath(subject string) error {
+	return fmt.Errorf("%s references a missing originating fact or interned path; "+
+		"the index is corrupt and must be rebuilt with 'grafo index --force'", subject)
+}
+
+// edgeOrigin is the producer and location an edge derives from its originating
+// fact, projected by every edge read query.
+type edgeOrigin struct {
+	id             string
+	factID         string
+	fromID         string
+	toID           string
+	kind           string
+	producer       string
+	path           string
+	line           int64
+	columnNo       int64
+	endLine        int64
+	properties     string
+	originResolved int64
+}
+
+func edgeFromOrigin(row edgeOrigin) (graph.Edge, error) {
+	if row.originResolved == 0 {
+		return graph.Edge{}, corruptInternedPath("edge " + row.id)
 	}
-	return result
+	return graph.Edge{ID: row.id, FactID: row.factID, FromID: row.fromID, ToID: row.toID,
+		Kind: graph.EdgeKind(row.kind), Producer: row.producer,
+		Location: graph.Location{Path: row.path, Line: int(row.line),
+			Column: int(row.columnNo), EndLine: int(row.endLine)},
+		Properties: graph.UnmarshalProperties(row.properties)}, nil
+}
+
+func edgesFromOrigins(rows []edgeOrigin) ([]graph.Edge, error) {
+	result := make([]graph.Edge, 0, len(rows))
+	for _, row := range rows {
+		edge, err := edgeFromOrigin(row)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, edge)
+	}
+	return result, nil
 }
 
 func hydratedRelationEdge(edgeID, factID, fromID, toID, kind, producer, path string,

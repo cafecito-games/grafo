@@ -73,14 +73,15 @@ func (q *Queries) DeleteDirtyFactBatch(ctx context.Context, limit int64) error {
 
 const enqueueDirtyFacts = `-- name: EnqueueDirtyFacts :exec
 INSERT OR IGNORE INTO dirty_facts(fact_id, owner_file)
-SELECT facts.id, facts.owner_file
+SELECT facts.id, dirty_owners.owner_file
 FROM dirty_owners
 CROSS JOIN facts INDEXED BY facts_owner
-WHERE facts.owner_file = dirty_owners.owner_file
+WHERE facts.owner_path_id = (SELECT id FROM paths WHERE paths.path = dirty_owners.owner_file)
 UNION ALL
-SELECT facts.id, facts.owner_file
+SELECT facts.id, COALESCE(owner_paths.path, '')
 FROM dirty_nodes
 CROSS JOIN facts INDEXED BY facts_from_id
+LEFT JOIN paths AS owner_paths ON owner_paths.id = facts.owner_path_id
 WHERE facts.from_id = dirty_nodes.node_id
   AND (
     NOT EXISTS (
@@ -93,20 +94,23 @@ WHERE facts.from_id = dirty_nodes.node_id
     )
   )
 UNION ALL
-SELECT facts.id, facts.owner_file
+SELECT facts.id, COALESCE(owner_paths.path, '')
 FROM dirty_nodes
 CROSS JOIN facts INDEXED BY facts_target_id
+LEFT JOIN paths AS owner_paths ON owner_paths.id = facts.owner_path_id
 WHERE facts.target_id = dirty_nodes.node_id
 UNION ALL
-SELECT facts.id, facts.owner_file
+SELECT facts.id, COALESCE(owner_paths.path, '')
 FROM dirty_targets
 CROSS JOIN facts INDEXED BY facts_source
+LEFT JOIN paths AS owner_paths ON owner_paths.id = facts.owner_path_id
 WHERE facts.source = dirty_targets.target
   AND (facts.source_kind = '' OR facts.source_kind = dirty_targets.target_kind)
 UNION ALL
-SELECT facts.id, facts.owner_file
+SELECT facts.id, COALESCE(owner_paths.path, '')
 FROM dirty_targets
 CROSS JOIN facts INDEXED BY facts_target
+LEFT JOIN paths AS owner_paths ON owner_paths.id = facts.owner_path_id
 WHERE facts.target = dirty_targets.target
   AND (facts.target_kind = '' OR facts.target_kind = dirty_targets.target_kind)
 `

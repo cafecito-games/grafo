@@ -53,9 +53,17 @@ func (q *Queries) CountEdgesByKind(ctx context.Context) ([]CountEdgesByKindRow, 
 }
 
 const deleteAllEdges = `-- name: DeleteAllEdges :exec
+
 DELETE FROM edges
 `
 
+// An edge stores only what reconciliation can resolve differently from its
+// originating fact: the resolved endpoints, the relation kind (a structural
+// test edge is derived from a calls or references fact), and the properties
+// (destination evidence and test-coverage evidence are added per edge). Its
+// producer and location are the fact's, so they are joined back instead of
+// stored twice. origin_resolved lets the adapter fail closed on an index whose
+// edge has lost its fact or interned path rather than report an empty location.
 func (q *Queries) DeleteAllEdges(ctx context.Context) error {
 	_, err := q.exec(ctx, q.deleteAllEdgesStmt, deleteAllEdges)
 	return err
@@ -77,18 +85,18 @@ func (q *Queries) DeleteEdgesByDirtyFactBatch(ctx context.Context, limit int64) 
 }
 
 const deleteEdgesByOwnerFacts = `-- name: DeleteEdgesByOwnerFacts :exec
-DELETE FROM edges WHERE fact_id IN (SELECT id FROM facts WHERE owner_file = ?)
+DELETE FROM edges WHERE fact_id IN (
+    SELECT id FROM facts WHERE owner_path_id = (SELECT id FROM paths WHERE path = ?)
+)
 `
 
-func (q *Queries) DeleteEdgesByOwnerFacts(ctx context.Context, ownerFile string) error {
-	_, err := q.exec(ctx, q.deleteEdgesByOwnerFactsStmt, deleteEdgesByOwnerFacts, ownerFile)
+func (q *Queries) DeleteEdgesByOwnerFacts(ctx context.Context, path string) error {
+	_, err := q.exec(ctx, q.deleteEdgesByOwnerFactsStmt, deleteEdgesByOwnerFacts, path)
 	return err
 }
 
 const insertEdge = `-- name: InsertEdge :exec
-INSERT INTO edges(
-    id, fact_id, from_id, to_id, kind, producer, path, line, column_no, end_line, properties
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO edges(id, fact_id, from_id, to_id, kind, properties) VALUES (?, ?, ?, ?, ?, ?)
 `
 
 type InsertEdgeParams struct {
@@ -97,11 +105,6 @@ type InsertEdgeParams struct {
 	FromID     string `json:"from_id"`
 	ToID       string `json:"to_id"`
 	Kind       string `json:"kind"`
-	Producer   string `json:"producer"`
-	Path       string `json:"path"`
-	Line       int64  `json:"line"`
-	ColumnNo   int64  `json:"column_no"`
-	EndLine    int64  `json:"end_line"`
 	Properties string `json:"properties"`
 }
 
@@ -112,41 +115,62 @@ func (q *Queries) InsertEdge(ctx context.Context, arg InsertEdgeParams) error {
 		arg.FromID,
 		arg.ToID,
 		arg.Kind,
-		arg.Producer,
-		arg.Path,
-		arg.Line,
-		arg.ColumnNo,
-		arg.EndLine,
 		arg.Properties,
 	)
 	return err
 }
 
 const listEdgesFrom = `-- name: ListEdgesFrom :many
-SELECT id, fact_id, from_id, to_id, kind, path, line, column_no, end_line, properties, producer FROM edges WHERE from_id = ? ORDER BY kind, to_id, id
+SELECT edges.id, edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.properties,
+       COALESCE(facts.producer, '') AS producer,
+       COALESCE(origin_paths.path, '') AS path,
+       COALESCE(facts.line, 0) AS line,
+       COALESCE(facts.column_no, 0) AS column_no,
+       COALESCE(facts.end_line, 0) AS end_line,
+       CASE WHEN facts.id IS NULL OR origin_paths.id IS NULL THEN 0 ELSE 1 END AS origin_resolved
+FROM edges
+LEFT JOIN facts ON facts.id = edges.fact_id
+LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id
+WHERE edges.from_id = ? ORDER BY edges.kind, edges.to_id, edges.id
 `
 
-func (q *Queries) ListEdgesFrom(ctx context.Context, fromID string) ([]Edge, error) {
+type ListEdgesFromRow struct {
+	ID             string `json:"id"`
+	FactID         string `json:"fact_id"`
+	FromID         string `json:"from_id"`
+	ToID           string `json:"to_id"`
+	Kind           string `json:"kind"`
+	Properties     string `json:"properties"`
+	Producer       string `json:"producer"`
+	Path           string `json:"path"`
+	Line           int64  `json:"line"`
+	ColumnNo       int64  `json:"column_no"`
+	EndLine        int64  `json:"end_line"`
+	OriginResolved int64  `json:"origin_resolved"`
+}
+
+func (q *Queries) ListEdgesFrom(ctx context.Context, fromID string) ([]ListEdgesFromRow, error) {
 	rows, err := q.query(ctx, q.listEdgesFromStmt, listEdgesFrom, fromID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Edge{}
+	items := []ListEdgesFromRow{}
 	for rows.Next() {
-		var i Edge
+		var i ListEdgesFromRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.FactID,
 			&i.FromID,
 			&i.ToID,
 			&i.Kind,
+			&i.Properties,
+			&i.Producer,
 			&i.Path,
 			&i.Line,
 			&i.ColumnNo,
 			&i.EndLine,
-			&i.Properties,
-			&i.Producer,
+			&i.OriginResolved,
 		); err != nil {
 			return nil, err
 		}
@@ -162,30 +186,56 @@ func (q *Queries) ListEdgesFrom(ctx context.Context, fromID string) ([]Edge, err
 }
 
 const listEdgesTo = `-- name: ListEdgesTo :many
-SELECT id, fact_id, from_id, to_id, kind, path, line, column_no, end_line, properties, producer FROM edges WHERE to_id = ? ORDER BY kind, from_id, id
+SELECT edges.id, edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.properties,
+       COALESCE(facts.producer, '') AS producer,
+       COALESCE(origin_paths.path, '') AS path,
+       COALESCE(facts.line, 0) AS line,
+       COALESCE(facts.column_no, 0) AS column_no,
+       COALESCE(facts.end_line, 0) AS end_line,
+       CASE WHEN facts.id IS NULL OR origin_paths.id IS NULL THEN 0 ELSE 1 END AS origin_resolved
+FROM edges
+LEFT JOIN facts ON facts.id = edges.fact_id
+LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id
+WHERE edges.to_id = ? ORDER BY edges.kind, edges.from_id, edges.id
 `
 
-func (q *Queries) ListEdgesTo(ctx context.Context, toID string) ([]Edge, error) {
+type ListEdgesToRow struct {
+	ID             string `json:"id"`
+	FactID         string `json:"fact_id"`
+	FromID         string `json:"from_id"`
+	ToID           string `json:"to_id"`
+	Kind           string `json:"kind"`
+	Properties     string `json:"properties"`
+	Producer       string `json:"producer"`
+	Path           string `json:"path"`
+	Line           int64  `json:"line"`
+	ColumnNo       int64  `json:"column_no"`
+	EndLine        int64  `json:"end_line"`
+	OriginResolved int64  `json:"origin_resolved"`
+}
+
+func (q *Queries) ListEdgesTo(ctx context.Context, toID string) ([]ListEdgesToRow, error) {
 	rows, err := q.query(ctx, q.listEdgesToStmt, listEdgesTo, toID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Edge{}
+	items := []ListEdgesToRow{}
 	for rows.Next() {
-		var i Edge
+		var i ListEdgesToRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.FactID,
 			&i.FromID,
 			&i.ToID,
 			&i.Kind,
+			&i.Properties,
+			&i.Producer,
 			&i.Path,
 			&i.Line,
 			&i.ColumnNo,
 			&i.EndLine,
-			&i.Properties,
-			&i.Producer,
+			&i.OriginResolved,
 		); err != nil {
 			return nil, err
 		}
@@ -201,9 +251,17 @@ func (q *Queries) ListEdgesTo(ctx context.Context, toID string) ([]Edge, error) 
 }
 
 const listExternalEdgesMatching = `-- name: ListExternalEdgesMatching :many
-SELECT edges.id, edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.path, edges.line, edges.column_no, edges.end_line, edges.properties, edges.producer
+SELECT edges.id, edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.properties,
+       COALESCE(facts.producer, '') AS producer,
+       COALESCE(origin_paths.path, '') AS path,
+       COALESCE(facts.line, 0) AS line,
+       COALESCE(facts.column_no, 0) AS column_no,
+       COALESCE(facts.end_line, 0) AS end_line,
+       CASE WHEN facts.id IS NULL OR origin_paths.id IS NULL THEN 0 ELSE 1 END AS origin_resolved
 FROM edges
 JOIN nodes ON nodes.id = edges.to_id
+LEFT JOIN facts ON facts.id = edges.fact_id
+LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id
 WHERE nodes.external = 1
   AND (
       nodes.qualified_name = ?1
@@ -219,27 +277,43 @@ type ListExternalEdgesMatchingParams struct {
 	Name          string `json:"name"`
 }
 
-func (q *Queries) ListExternalEdgesMatching(ctx context.Context, arg ListExternalEdgesMatchingParams) ([]Edge, error) {
+type ListExternalEdgesMatchingRow struct {
+	ID             string `json:"id"`
+	FactID         string `json:"fact_id"`
+	FromID         string `json:"from_id"`
+	ToID           string `json:"to_id"`
+	Kind           string `json:"kind"`
+	Properties     string `json:"properties"`
+	Producer       string `json:"producer"`
+	Path           string `json:"path"`
+	Line           int64  `json:"line"`
+	ColumnNo       int64  `json:"column_no"`
+	EndLine        int64  `json:"end_line"`
+	OriginResolved int64  `json:"origin_resolved"`
+}
+
+func (q *Queries) ListExternalEdgesMatching(ctx context.Context, arg ListExternalEdgesMatchingParams) ([]ListExternalEdgesMatchingRow, error) {
 	rows, err := q.query(ctx, q.listExternalEdgesMatchingStmt, listExternalEdgesMatching, arg.QualifiedName, arg.Name)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Edge{}
+	items := []ListExternalEdgesMatchingRow{}
 	for rows.Next() {
-		var i Edge
+		var i ListExternalEdgesMatchingRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.FactID,
 			&i.FromID,
 			&i.ToID,
 			&i.Kind,
+			&i.Properties,
+			&i.Producer,
 			&i.Path,
 			&i.Line,
 			&i.ColumnNo,
 			&i.EndLine,
-			&i.Properties,
-			&i.Producer,
+			&i.OriginResolved,
 		); err != nil {
 			return nil, err
 		}
@@ -261,12 +335,13 @@ SELECT
     edges.from_id AS edge_from_id,
     edges.to_id AS edge_to_id,
     edges.kind AS edge_kind,
-    edges.producer AS edge_producer,
-    edges.path AS edge_path,
-    edges.line AS edge_line,
-    edges.column_no AS edge_column_no,
-    edges.end_line AS edge_end_line,
+    COALESCE(origin.producer, '') AS edge_producer,
+    COALESCE(origin_paths.path, '') AS edge_path,
+    COALESCE(origin.line, 0) AS edge_line,
+    COALESCE(origin.column_no, 0) AS edge_column_no,
+    COALESCE(origin.end_line, 0) AS edge_end_line,
     edges.properties AS edge_properties,
+    CASE WHEN origin.id IS NULL OR origin_paths.id IS NULL THEN 0 ELSE 1 END AS edge_origin_resolved,
     source.id AS source_id,
     source.kind AS source_kind,
     source.name AS source_name,
@@ -294,6 +369,8 @@ SELECT
 FROM edges
 JOIN nodes AS source ON source.id = edges.from_id
 JOIN nodes AS target ON target.id = edges.to_id
+LEFT JOIN facts AS origin ON origin.id = edges.fact_id
+LEFT JOIN paths AS origin_paths ON origin_paths.id = origin.path_id
 WHERE edges.kind = 'requests'
   AND target.external = 1
   AND edges.id > ?1
@@ -318,6 +395,7 @@ type ListExternalRequestEdgesRow struct {
 	EdgeColumnNo        int64  `json:"edge_column_no"`
 	EdgeEndLine         int64  `json:"edge_end_line"`
 	EdgeProperties      string `json:"edge_properties"`
+	EdgeOriginResolved  int64  `json:"edge_origin_resolved"`
 	SourceID            string `json:"source_id"`
 	SourceKind          string `json:"source_kind"`
 	SourceName          string `json:"source_name"`
@@ -365,6 +443,7 @@ func (q *Queries) ListExternalRequestEdges(ctx context.Context, arg ListExternal
 			&i.EdgeColumnNo,
 			&i.EdgeEndLine,
 			&i.EdgeProperties,
+			&i.EdgeOriginResolved,
 			&i.SourceID,
 			&i.SourceKind,
 			&i.SourceName,
@@ -410,12 +489,13 @@ SELECT
     edges.from_id AS edge_from_id,
     edges.to_id AS edge_to_id,
     edges.kind AS edge_kind,
-    edges.producer AS edge_producer,
-    edges.path AS edge_path,
-    edges.line AS edge_line,
-    edges.column_no AS edge_column_no,
-    edges.end_line AS edge_end_line,
+    COALESCE(facts.producer, '') AS edge_producer,
+    COALESCE(origin_paths.path, '') AS edge_path,
+    COALESCE(facts.line, 0) AS edge_line,
+    COALESCE(facts.column_no, 0) AS edge_column_no,
+    COALESCE(facts.end_line, 0) AS edge_end_line,
     edges.properties AS edge_properties,
+    CASE WHEN facts.id IS NULL OR origin_paths.id IS NULL THEN 0 ELSE 1 END AS edge_origin_resolved,
     COALESCE(nodes.id, '') AS counterpart_id,
     COALESCE(nodes.kind, '') AS counterpart_kind,
     COALESCE(nodes.name, '') AS counterpart_name,
@@ -430,6 +510,8 @@ SELECT
     COALESCE(nodes.external, 0) AS counterpart_external
 FROM edges INDEXED BY edges_to
 LEFT JOIN nodes ON nodes.id = edges.from_id
+LEFT JOIN facts ON facts.id = edges.fact_id
+LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id
 WHERE edges.to_id = ?1 AND edges.kind = ?2
 ORDER BY edges.from_id, edges.id
 LIMIT ?3
@@ -453,6 +535,7 @@ type ListIncomingRelationEdgesRow struct {
 	EdgeColumnNo             int64  `json:"edge_column_no"`
 	EdgeEndLine              int64  `json:"edge_end_line"`
 	EdgeProperties           string `json:"edge_properties"`
+	EdgeOriginResolved       int64  `json:"edge_origin_resolved"`
 	CounterpartID            string `json:"counterpart_id"`
 	CounterpartKind          string `json:"counterpart_kind"`
 	CounterpartName          string `json:"counterpart_name"`
@@ -488,6 +571,7 @@ func (q *Queries) ListIncomingRelationEdges(ctx context.Context, arg ListIncomin
 			&i.EdgeColumnNo,
 			&i.EdgeEndLine,
 			&i.EdgeProperties,
+			&i.EdgeOriginResolved,
 			&i.CounterpartID,
 			&i.CounterpartKind,
 			&i.CounterpartName,
@@ -521,12 +605,13 @@ SELECT
     edges.from_id AS edge_from_id,
     edges.to_id AS edge_to_id,
     edges.kind AS edge_kind,
-    edges.producer AS edge_producer,
-    edges.path AS edge_path,
-    edges.line AS edge_line,
-    edges.column_no AS edge_column_no,
-    edges.end_line AS edge_end_line,
+    COALESCE(facts.producer, '') AS edge_producer,
+    COALESCE(origin_paths.path, '') AS edge_path,
+    COALESCE(facts.line, 0) AS edge_line,
+    COALESCE(facts.column_no, 0) AS edge_column_no,
+    COALESCE(facts.end_line, 0) AS edge_end_line,
     edges.properties AS edge_properties,
+    CASE WHEN facts.id IS NULL OR origin_paths.id IS NULL THEN 0 ELSE 1 END AS edge_origin_resolved,
     COALESCE(nodes.id, '') AS counterpart_id,
     COALESCE(nodes.kind, '') AS counterpart_kind,
     COALESCE(nodes.name, '') AS counterpart_name,
@@ -541,6 +626,8 @@ SELECT
     COALESCE(nodes.external, 0) AS counterpart_external
 FROM edges INDEXED BY edges_from
 LEFT JOIN nodes ON nodes.id = edges.to_id
+LEFT JOIN facts ON facts.id = edges.fact_id
+LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id
 WHERE edges.from_id = ?1 AND edges.kind = ?2
 ORDER BY edges.to_id, edges.id
 LIMIT ?3
@@ -564,6 +651,7 @@ type ListOutgoingRelationEdgesRow struct {
 	EdgeColumnNo             int64  `json:"edge_column_no"`
 	EdgeEndLine              int64  `json:"edge_end_line"`
 	EdgeProperties           string `json:"edge_properties"`
+	EdgeOriginResolved       int64  `json:"edge_origin_resolved"`
 	CounterpartID            string `json:"counterpart_id"`
 	CounterpartKind          string `json:"counterpart_kind"`
 	CounterpartName          string `json:"counterpart_name"`
@@ -599,6 +687,7 @@ func (q *Queries) ListOutgoingRelationEdges(ctx context.Context, arg ListOutgoin
 			&i.EdgeColumnNo,
 			&i.EdgeEndLine,
 			&i.EdgeProperties,
+			&i.EdgeOriginResolved,
 			&i.CounterpartID,
 			&i.CounterpartKind,
 			&i.CounterpartName,
