@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -143,9 +144,16 @@ func factIdentities(parsed graph.ParseResult) []string {
 	return result
 }
 
-// pipelineObservation is everything about one indexing run that the issue
-// requires to stay identical across worker counts.
+// pipelineObservation is everything about an indexing session that the issue
+// requires to stay identical across worker counts. Two runs are observed so the
+// comparison covers a cold pass and the incremental pass that follows it, where
+// every file resolves as unchanged.
 type pipelineObservation struct {
+	Runs  []pipelineRun    `json:"runs"`
+	Calls []repositoryCall `json:"calls"`
+}
+
+type pipelineRun struct {
 	Updated     []string           `json:"updated"`
 	Unchanged   int                `json:"unchanged"`
 	Removed     []string           `json:"removed"`
@@ -155,7 +163,6 @@ type pipelineObservation struct {
 	Diagnostics []graph.Diagnostic `json:"diagnostics"`
 	Boundaries  []indexer.Boundary `json:"boundaries"`
 	Progress    []string           `json:"progress"`
-	Calls       []repositoryCall   `json:"calls"`
 }
 
 func writePipelineCorpus(t testing.TB, root string) {
@@ -178,7 +185,13 @@ func writePipelineCorpus(t testing.TB, root string) {
 	write(t, filepath.Join(root, "service.proto"), "syntax = \"proto3\";\npackage corpus;\nmessage Ping { string id = 1; }\n")
 	write(t, filepath.Join(root, "README.md"), "# Corpus\n\n## Usage\n\nSee `main.go`.\n")
 	write(t, filepath.Join(root, ".env"), "API_URL=http://localhost:8080\n")
+	// Exceeds pipelineMaxFileSize so the size screen is part of the comparison.
+	write(t, filepath.Join(root, "huge.py"), "def wide():\n    return \""+strings.Repeat("x", 2*pipelineMaxFileSize)+"\"\n")
 }
+
+// pipelineMaxFileSize keeps the oversized fixture small while still exercising
+// the size screen and its report slot.
+const pipelineMaxFileSize = 32 << 10
 
 func pipelineRegistry() *parserapi.Registry {
 	return parserapi.NewRegistry(gdscriptparser.New(), godotparser.New(), golangparser.New(),
@@ -201,39 +214,110 @@ func runPipelineObservation(t *testing.T, workers int) pipelineObservation {
 	project.Name = "corpus"
 	repository := newRecordingRepository()
 	observation := pipelineObservation{}
-	options := indexer.Options{
-		ParseWorkers: workers,
-		Boundary: func(boundary indexer.Boundary) error {
-			observation.Boundaries = append(observation.Boundaries, boundary)
-			return nil
-		},
-		ProgressObserver: func(event indexer.ProgressEvent) error {
-			if event.Phase == indexer.ProgressReadHash || event.Phase == indexer.ProgressParse ||
-				event.Phase == indexer.ProgressPersistence {
-				observation.Progress = append(observation.Progress,
-					fmt.Sprintf("%s/%s/%d", event.Phase, event.State, event.Completed))
-			}
-			return nil
-		},
+	// Both passes share one repository and one parser registry, which is how the
+	// CLI reuses them, so the incremental pass sees the first pass's hashes.
+	service := indexer.NewService(repository, pipelineRegistry())
+	for pass := range 2 {
+		run := pipelineRun{}
+		options := indexer.Options{
+			ParseWorkers: workers,
+			MaxFileSize:  pipelineMaxFileSize,
+			Boundary: func(boundary indexer.Boundary) error {
+				run.Boundaries = append(run.Boundaries, boundary)
+				return nil
+			},
+			ProgressObserver: func(event indexer.ProgressEvent) error {
+				if event.Phase == indexer.ProgressReadHash || event.Phase == indexer.ProgressParse ||
+					event.Phase == indexer.ProgressPersistence {
+					run.Progress = append(run.Progress,
+						fmt.Sprintf("%s/%s/%d", event.Phase, event.State, event.Completed))
+				}
+				return nil
+			},
+		}
+		report, err := service.Run(ctx, project, options)
+		if err != nil {
+			t.Fatalf("workers=%d pass=%d: %v", workers, pass, err)
+		}
+		run.Updated = report.Updated
+		run.Unchanged = report.Unchanged
+		run.Removed = report.Removed
+		run.Skipped = report.Skipped
+		run.Checked = report.Checked
+		run.ScopedOut = report.ScopedOut
+		run.Diagnostics = report.Diagnostics
+		observation.Runs = append(observation.Runs, run)
 	}
-	report, err := indexer.NewService(repository, pipelineRegistry()).Run(ctx, project, options)
-	if err != nil {
-		t.Fatalf("workers=%d: %v", workers, err)
-	}
-	observation.Updated = report.Updated
-	observation.Unchanged = report.Unchanged
-	observation.Removed = report.Removed
-	observation.Skipped = report.Skipped
-	observation.Checked = report.Checked
-	observation.ScopedOut = report.ScopedOut
-	observation.Diagnostics = report.Diagnostics
 	observation.Calls = repository.calls()
-	// A thin corpus would let a reordering slip through, so require the whole
-	// fixture tree to have been indexed.
-	if len(observation.Updated) < 15 {
-		t.Fatalf("workers=%d indexed only %v", workers, observation.Updated)
+	// A thin corpus or a pass that silently did nothing would let a reordering
+	// slip through, so pin what each pass must have established.
+	if len(observation.Runs[0].Updated) < 15 {
+		t.Fatalf("workers=%d cold pass indexed only %v", workers, observation.Runs[0].Updated)
+	}
+	if !slices.Contains(observation.Runs[0].Skipped, "huge.py") {
+		t.Fatalf("workers=%d never screened the oversized file: %v", workers, observation.Runs[0].Skipped)
+	}
+	if len(observation.Runs[1].Updated) != 0 || observation.Runs[1].Unchanged < 15 {
+		t.Fatalf("workers=%d incremental pass was not a no-op: updated=%v unchanged=%d",
+			workers, observation.Runs[1].Updated, observation.Runs[1].Unchanged)
 	}
 	return observation
+}
+
+// vanishingTransform removes the file it is handed after that file has been read
+// and parsed, which leaves the writer's pre-persist existence check as the only
+// thing that can keep it out of the graph. Deleting the path being transformed
+// rather than a later one makes that true at every worker count.
+type vanishingTransform struct {
+	root string
+	path string
+}
+
+func (vanishingTransform) SemanticKey() string { return "vanishing-transform-v1" }
+
+func (v vanishingTransform) Transform(_ context.Context, input parserapi.Input, parsed graph.ParseResult) (graph.ParseResult, error) {
+	if input.Path == v.path {
+		if err := os.Remove(filepath.Join(v.root, filepath.FromSlash(v.path))); err != nil {
+			return graph.ParseResult{}, err
+		}
+	}
+	return parsed, nil
+}
+
+func TestServiceDropsFileThatVanishesAfterParsing(t *testing.T) {
+	for _, workers := range []int{1, 4} {
+		ctx := context.Background()
+		root := t.TempDir()
+		writePipelineCorpus(t, root)
+		project, err := indexer.DiscoverProject(ctx, root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		repository := newRecordingRepository()
+		report, err := indexer.NewService(repository, pipelineRegistry()).Run(ctx, project,
+			indexer.Options{ParseWorkers: workers, MaxFileSize: pipelineMaxFileSize,
+				ResultTransform: vanishingTransform{root: root, path: "worker.py"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if slices.Contains(report.Updated, "worker.py") {
+			t.Fatalf("workers=%d: persisted a file that was deleted after parsing", workers)
+		}
+		for _, call := range repository.calls() {
+			if call.Call == "replace_file" && call.Path == "worker.py" {
+				t.Fatalf("workers=%d: the vanished file reached persistence", workers)
+			}
+		}
+		reported := false
+		for _, diagnostic := range report.Diagnostics {
+			if diagnostic.Path == "worker.py" && diagnostic.Level == "warning" {
+				reported = true
+			}
+		}
+		if !reported {
+			t.Fatalf("workers=%d: the vanished file produced no diagnostic: %v", workers, report.Diagnostics)
+		}
+	}
 }
 
 func TestServiceParseWorkerCountsProduceIdenticalRuns(t *testing.T) {

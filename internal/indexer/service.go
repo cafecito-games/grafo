@@ -464,6 +464,11 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		current[outcome.path] = true
 		switch outcome.kind {
 		case outcomeFailed:
+			// The sequential pipeline had already attributed whatever work it
+			// completed before the failing step, so an interrupted run's phase
+			// report keeps the same totals.
+			report.Phases.ReadHashNS += outcome.readHashNS
+			report.Phases.ParseNS += outcome.parseNS
 			return outcome.err
 		case outcomeUnsupported:
 			return nil

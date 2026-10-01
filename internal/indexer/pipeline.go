@@ -46,9 +46,9 @@ func resolveParseWorkers(requested int) int {
 type fileOutcomeKind int
 
 const (
-	// outcomeAborted is the zero value. It is produced only by a closed
-	// hand-off slot and never reaches the writer.
-	outcomeAborted fileOutcomeKind = iota
+	// The zero value is reserved and deliberately unnamed: a closed hand-off slot
+	// yields it, so it must never match a kind the writer acts on.
+	_ fileOutcomeKind = iota
 	// outcomeUnselected means an incremental pass excluded the path before any
 	// filesystem access.
 	outcomeUnselected
@@ -167,7 +167,7 @@ func (stage *fileStage) prepare(ctx context.Context, path string) fileOutcome {
 		transformed, transformErr := stage.options.ResultTransform.Transform(ctx, input, parsed)
 		parseNS += time.Since(transformStarted).Nanoseconds()
 		if transformErr != nil {
-			return fileOutcome{path: path, kind: outcomeFailed,
+			return fileOutcome{path: path, kind: outcomeFailed, readHashNS: readHashNS, parseNS: parseNS,
 				err: fmt.Errorf("transform parsed evidence for %s: %w", path, transformErr)}
 		}
 		parsed = transformed
