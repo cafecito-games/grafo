@@ -144,6 +144,9 @@ func (r Registry) matchSource(source string) (string, string) {
 }
 
 type Loader struct {
+	// buildMu serializes registry construction so concurrent parses in one
+	// indexing run share a single schema scan.
+	buildMu  sync.Mutex
 	mu       sync.Mutex
 	root     string
 	digest   string
@@ -159,13 +162,17 @@ func (l *Loader) Load(ctx context.Context, input parserapi.Input) (Registry, err
 	// Production parsing receives the workspace semantic key computed before
 	// file selection. Reuse that exact immutable snapshot instead of re-reading
 	// every schema for every Go/GDScript file in the same run.
-	l.mu.Lock()
-	if l.root == input.Root && l.digest != "" && strings.Contains(input.SemanticKey, l.digest) {
-		registry := l.registry
-		l.mu.Unlock()
+	if registry, ok := l.cached(input.Root, input.SemanticKey); ok {
 		return registry, nil
 	}
-	l.mu.Unlock()
+	// Scanning every schema is repository-wide work, so concurrent parses
+	// serialize here and probe the cache again once the gate is theirs rather
+	// than each rescanning the same tree.
+	l.buildMu.Lock()
+	defer l.buildMu.Unlock()
+	if registry, ok := l.cached(input.Root, input.SemanticKey); ok {
+		return registry, nil
+	}
 	files, digest, err := relevantFiles(ctx, input.Root)
 	if err != nil {
 		return Registry{}, err
@@ -178,6 +185,17 @@ func (l *Loader) Load(ctx context.Context, input parserapi.Input) (Registry, err
 	registry := buildRegistry(ctx, input, files, digest)
 	l.root, l.digest, l.registry = input.Root, digest, registry
 	return registry, nil
+}
+
+// cached returns the stored registry when it was built for this root and is
+// still vouched for by the run's workspace semantic key.
+func (l *Loader) cached(root, semanticKey string) (Registry, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.root != root || l.digest == "" || !strings.Contains(semanticKey, l.digest) {
+		return Registry{}, false
+	}
+	return l.registry, true
 }
 
 func (l *Loader) SemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
