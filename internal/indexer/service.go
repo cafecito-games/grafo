@@ -529,7 +529,14 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	if err != nil {
 		return report, fmt.Errorf("load workspace state digest: %w", err)
 	}
-	replaceWorkspace := options.Force || options.Boundary != nil || schemaChanged ||
+	// A boundary hook observes durable work; it never creates any. Rewriting an
+	// unchanged workspace just to emit its boundary marked the synthetic
+	// workspace owner dirty, which re-enqueued every fact that owner holds — one
+	// `contains` fact per file per declared component — so an unchanged refresh
+	// could never converge in a single pass. The workspace is replaced only when
+	// its own digest proves it changed, exactly as on a hookless run, and the
+	// boundary reports the replacement that actually happened.
+	replaceWorkspace := options.Force || schemaChanged ||
 		!validDigest(indexedWorkspaceDigest) || indexedWorkspaceDigest != workspaceDigest
 	if replaceWorkspace {
 		persistenceStarted = time.Now()
