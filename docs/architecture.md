@@ -673,8 +673,8 @@ can never override them.
 
 Every narrowing here fails closed. An unparseable Go file, an unscannable
 TypeScript module, and an unreadable input are fingerprinted by their full
-contents instead of a derived surface; a cgo file keeps every comment, because
-its preamble declares the C types cgo projects into Go; and the `go/packages`
+contents instead of a derived surface; a cgo file keeps every comment outside a
+function body, because its preamble declares the C types cgo projects into Go; and the `go/packages`
 view cache revalidates each cached package against its scope key before reuse.
 The scope key is always computed from the bytes on disk rather than from a size
 and modification time, because an invalidation key that a sibling edit can slip

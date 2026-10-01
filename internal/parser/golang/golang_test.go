@@ -3454,7 +3454,10 @@ func (Memory) Get(id string) (string, error) { return id, nil }
 			changed: true,
 		},
 		{
-			name: "cgo preamble changed",
+			// The preamble itself is covered by
+			// TestWorkspaceSemanticKeyTracksCgoPreambles; this case pins that
+			// becoming a cgo file at all is a repository-wide change.
+			name: "cgo import added",
 			mutate: map[string]string{"api/api.go": `package api
 
 /*
@@ -3650,6 +3653,11 @@ func TestPackageScopeKeyRecoversFromAnUnreadableDirectory(t *testing.T) {
 	directory := filepath.Join(root, "api")
 	if err := os.Chmod(directory, 0o000); err != nil {
 		t.Skipf("cannot make a directory unreadable: %v", err)
+	}
+	// chmod succeeds but grants nothing when the test runs as root.
+	if _, err := os.ReadDir(directory); err == nil {
+		_ = os.Chmod(directory, 0o755)
+		t.Skip("this user can list a directory with no permission bits")
 	}
 	input := parserapi.Input{Root: root, Path: "api/api.go", SemanticKey: workspaceKey}
 	unreadable, err := parser.SemanticKey(context.Background(), input)
