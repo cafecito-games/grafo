@@ -1,7 +1,6 @@
 package detailprofile
 
 import (
-	"bufio"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -19,7 +18,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -688,22 +686,14 @@ func inspectEnvironment(output string) (BenchmarkEnvironment, error) {
 	if err != nil {
 		return BenchmarkEnvironment{}, err
 	}
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(output, &stat); err != nil {
-		return BenchmarkEnvironment{}, err
-	}
-	outputInfo, err := os.Stat(output)
+	filesystem, err := inspectFilesystem(output)
 	if err != nil {
 		return BenchmarkEnvironment{}, err
 	}
-	statInfo, ok := outputInfo.Sys().(*syscall.Stat_t)
-	if !ok {
-		return BenchmarkEnvironment{}, fmt.Errorf("output filesystem device identity is unavailable")
-	}
 	return BenchmarkEnvironment{CPUQuota: limits.cpuQuota, EffectiveCPUs: limits.effectiveCPUs, MemoryMaxBytes: limits.memoryMaxBytes,
-		Filesystem: fmt.Sprintf("type=0x%x block_size=%d", stat.Type, stat.Bsize), FilesystemDevice: statInfo.Dev,
-		FilesystemAvailableBytes: stat.Bavail * uint64(stat.Bsize), OutputPath: output,
-		RSSMethod: "50ms samples of /proc/self/status VmRSS; absolute process peak includes Go runtime state retained from earlier samples"}, nil
+		Filesystem: filesystem.description, FilesystemDevice: filesystem.device,
+		FilesystemAvailableBytes: filesystem.availableBytes, OutputPath: output,
+		RSSMethod: rssMethod}, nil
 }
 
 type cgroupLimits struct {
@@ -759,25 +749,15 @@ func inspectHostLimits() (cgroupLimits, error) {
 	if logicalCPUs <= 0 {
 		return cgroupLimits{}, fmt.Errorf("host logical CPU count is unavailable")
 	}
-	var info syscall.Sysinfo_t
-	if err := syscall.Sysinfo(&info); err != nil {
-		return cgroupLimits{}, fmt.Errorf("inspect host memory: %w", err)
-	}
-	totalRAM := widenUnsigned(info.Totalram)
-	memoryUnit := uint64(info.Unit)
-	const maxInt64 = uint64(1<<63 - 1)
-	if totalRAM == 0 || memoryUnit == 0 || totalRAM > maxInt64/memoryUnit {
-		return cgroupLimits{}, fmt.Errorf("host memory size is unavailable")
+	totalRAM, err := hostMemoryBytes()
+	if err != nil {
+		return cgroupLimits{}, err
 	}
 	return cgroupLimits{
 		cpuQuota:       fmt.Sprintf("host:logical-cpus=%d", logicalCPUs),
 		effectiveCPUs:  int64(logicalCPUs),
-		memoryMaxBytes: int64(totalRAM * memoryUnit),
+		memoryMaxBytes: int64(totalRAM),
 	}, nil
-}
-
-func widenUnsigned[T ~uint32 | ~uint64](value T) uint64 {
-	return uint64(value)
 }
 
 func parseCgroupLimits(cpu, memory string) (cgroupLimits, error) {
@@ -871,20 +851,4 @@ func (s *rssSampler) sample() {
 		s.maximum = value
 	}
 	s.mu.Unlock()
-}
-func currentRSS() int64 {
-	file, err := os.Open("/proc/self/status")
-	if err != nil {
-		return 0
-	}
-	defer func() { _ = file.Close() }()
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		fields := strings.Fields(scanner.Text())
-		if len(fields) == 3 && fields[0] == "VmRSS:" {
-			value, _ := strconv.ParseInt(fields[1], 10, 64)
-			return value * 1024
-		}
-	}
-	return 0
 }
