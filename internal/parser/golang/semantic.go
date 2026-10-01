@@ -288,17 +288,23 @@ func (l *PackageLoader) cached(root, key, path string) (SemanticView, bool) {
 		return SemanticView{}, false
 	}
 	view, exists := entry.views[path]
-	if !exists {
-		// A path the workspace load produced no package for has no
-		// body-dependent evidence, so the synthesized view stays valid.
+	recorded, known := entry.scopes[goPackageDirectory(path)]
+	if !exists && !known {
+		// The workspace load produced no package for this path and none for any
+		// sibling, so there is no loaded evidence to go stale: the synthesized
+		// view depends only on the build context and directives, which the
+		// workspace key already covers.
 		l.cacheHits.Add(1)
 		return cloneSemanticView(unloadedSemanticView(root, path, buildContextString(root))), true
 	}
 	scope, err := packageScopeKey(root, path)
-	if err != nil || entry.scopes[goPackageDirectory(path)] != scope {
+	if err != nil || recorded != scope {
 		return SemanticView{}, false
 	}
 	l.cacheHits.Add(1)
+	if !exists {
+		return cloneSemanticView(unloadedSemanticView(root, path, buildContextString(root))), true
+	}
 	return cloneSemanticView(view), true
 }
 

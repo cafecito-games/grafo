@@ -857,16 +857,19 @@ func TestWorkspaceSemanticKeyTracksOnlyResolutionSurface(t *testing.T) {
 	}
 }
 
-func TestWorkspaceSemanticKeyFingerprintsUnscannableModules(t *testing.T) {
+// TestWorkspaceSemanticKeyIgnoresBodyEditsWithoutManifests covers a repository
+// that has no package or compiler manifest at all, so the key rests entirely on
+// the scanned module surface.
+func TestWorkspaceSemanticKeyIgnoresBodyEditsWithoutManifests(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, root, "broken.ts", "export function run() { return 1; }\n")
+	writeFile(t, root, "only.ts", "export function run() { return 1; }\n")
 	parser := typescriptparser.New()
 	input := parserapi.Input{Root: root, RepoID: "repo:sample"}
 	before, err := parser.WorkspaceSemanticKey(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, root, "broken.ts", "export function run() { return 2; }\n")
+	writeFile(t, root, "only.ts", "export function run() { return 2; }\n")
 	after, err := parser.WorkspaceSemanticKey(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)

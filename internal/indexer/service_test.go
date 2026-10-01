@@ -1839,19 +1839,28 @@ func assertOutgoingQualifiedSet(t *testing.T, ctx context.Context, repository gr
 
 // TestServiceScopesGoBodyEditToItsPackage proves the cost of a refresh is
 // proportional to the edit: a body-only change reparses the package that owns
-// it, and the resulting graph still equals a forced clean rebuild.
+// it, including the sibling file its evidence is attributed to, and the
+// resulting graph still equals a forced clean rebuild.
 func TestServiceScopesGoBodyEditToItsPackage(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	write(t, filepath.Join(root, "go.mod"), "module example.com/service\n\ngo 1.26\n")
+	// Routes calls a helper in a sibling file, so the outbound request the
+	// helper performs is attributed to Routes in routes.go. A body-only edit to
+	// helpers.go therefore has to reparse routes.go as well.
 	write(t, filepath.Join(root, "api", "routes.go"), `package api
 
-func Routes() string { return Helper() }
+func Routes() { fetch() }
 `)
-	write(t, filepath.Join(root, "api", "helpers.go"), `package api
+	helpers := func(route string) string {
+		return `package api
 
-func Helper() string { return "first" }
-`)
+import "net/http"
+
+func fetch() { _, _ = http.Get("https://example.com` + route + `") }
+`
+	}
+	write(t, filepath.Join(root, "api", "helpers.go"), helpers("/first"))
 	write(t, filepath.Join(root, "store", "store.go"), `package store
 
 func Open() string { return "store" }
@@ -1877,11 +1886,9 @@ func Work() string { return "worker" }
 	if len(first.Updated) != 5 {
 		t.Fatalf("initial Go report = %#v", first.Updated)
 	}
+	assertRequestedRoute(t, ctx, repository, "example.com/service/api.Routes", "/first")
 
-	write(t, filepath.Join(root, "api", "helpers.go"), `package api
-
-func Helper() string { return "second" }
-`)
+	write(t, filepath.Join(root, "api", "helpers.go"), helpers("/second"))
 	incremental, err := service.Run(ctx, project, indexer.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -1892,6 +1899,7 @@ func Helper() string { return "second" }
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("body-only edit updated %v, want only the owning package %v", got, want)
 	}
+	assertRequestedRoute(t, ctx, repository, "example.com/service/api.Routes", "/second")
 	incrementalCounts := incremental.Counts
 
 	clean, err := service.Run(ctx, project, indexer.Options{Force: true})
@@ -1901,6 +1909,30 @@ func Helper() string { return "second" }
 	if !reflect.DeepEqual(incrementalCounts, clean.Counts) {
 		t.Fatalf("incremental Go reconciliation differs from clean rebuild:\n%#v\n%#v", incrementalCounts, clean.Counts)
 	}
+	assertRequestedRoute(t, ctx, repository, "example.com/service/api.Routes", "/second")
+}
+
+func assertRequestedRoute(t *testing.T, ctx context.Context, repository *sqlite.Repository, from, route string) {
+	t.Helper()
+	node, err := query.NewService(repository).Resolve(ctx, from)
+	if err != nil {
+		t.Fatalf("resolve %s: %v", from, err)
+	}
+	edges, err := repository.EdgesFrom(ctx, node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := []string{}
+	for _, edge := range edges {
+		if edge.Kind != graph.EdgeRequests {
+			continue
+		}
+		routes = append(routes, edge.Properties["http_route"])
+		if edge.Properties["http_route"] == route {
+			return
+		}
+	}
+	t.Fatalf("%s requests %v, want %q", from, routes, route)
 }
 
 // TestServiceReparsesEveryGoFileForCrossPackageDeclarations keeps the fail

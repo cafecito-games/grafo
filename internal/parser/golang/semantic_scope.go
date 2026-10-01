@@ -13,9 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
-	"sync"
 )
 
 // goSemanticSurfaceVersion tags the encoding of the repository-wide Go
@@ -38,7 +36,9 @@ const goPackageScopeVersion = "go-package-scope-v1"
 // ever walks the syntax of the package it belongs to, so a function body is a
 // package-local fact rather than a repository-wide one. A documentation comment
 // is extracted as evidence of the file that carries it, never of another file,
-// so it is covered by that file's own content hash instead.
+// so it is covered by that file's own content hash instead. A file that imports
+// "C" is the exception: its preamble comment is compiler input that declares the
+// C types cgo projects into Go, so every comment of such a file is retained.
 //
 // Everything that selects what the Go toolchain sees stays in the surface:
 // build constraints, every //go: directive, and all declaration syntax with its
@@ -57,6 +57,9 @@ func goDeclarationSurface(path string, content []byte) ([]byte, error) {
 	if parsedFile == nil {
 		return nil, errNoTokenFile
 	}
+	// cgo turns the preamble comment into Go declarations that other packages
+	// type-check against, so no comment of a cgo file is droppable.
+	keepComments := importsC(file)
 	var bodies []byteSpan
 	for _, declaration := range file.Decls {
 		function, ok := declaration.(*goast.FuncDecl)
@@ -86,7 +89,7 @@ func goDeclarationSurface(path string, content []byte) ([]byte, error) {
 		if withinSpan(bodies, offset) {
 			continue
 		}
-		if tokenKind == token.COMMENT && !isGoDirectiveComment(literal) {
+		if tokenKind == token.COMMENT && !keepComments && !isGoDirectiveComment(literal) {
 			continue
 		}
 		surface.WriteString(tokenKind.String())
@@ -111,6 +114,16 @@ func withinSpan(spans []byteSpan, offset int) bool {
 			return false
 		}
 		if offset < span.end {
+			return true
+		}
+	}
+	return false
+}
+
+// importsC reports whether the file is a cgo file.
+func importsC(file *goast.File) bool {
+	for _, imported := range file.Imports {
+		if imported.Path != nil && imported.Path.Value == `"C"` {
 			return true
 		}
 	}
@@ -146,50 +159,26 @@ func isGoManifestInput(path string) bool {
 	return !isGoSourcePath(path) && isGoSemanticInput(path)
 }
 
-// packageScopes is the process-wide memo for package scope digests. It is
-// shared by the incremental cache key and the semantic loader so one directory
-// is never read twice for the same unchanged contents.
-var packageScopes = newPackageScopeCache()
-
 // packageScopeKey digests every Go source file in the directory that owns path.
 // Statement-level evidence is attributed to the highest package-local callsite,
 // which may live in a sibling file, so a package is the smallest scope whose
 // contents can change how one of its files extracts.
+//
+// The digest is always computed from the bytes on disk. A stat fast path would
+// make an unchanged size and modification time stand in for unchanged content,
+// and this key is load bearing for invalidation: a sibling edit it missed would
+// leave a stale graph.
 func packageScopeKey(root, path string) (string, error) {
-	return packageScopes.Key(root, path)
-}
-
-// packageScopeCache memoizes package-local scope digests for one process. The
-// stat fingerprint of the directory guards reuse so a long-lived server cannot
-// serve a digest for contents that have since changed on disk.
-type packageScopeCache struct {
-	mu      sync.Mutex
-	entries map[string]packageScopeEntry
-}
-
-type packageScopeEntry struct {
-	fingerprint string
-	digest      string
-}
-
-func newPackageScopeCache() *packageScopeCache {
-	return &packageScopeCache{entries: map[string]packageScopeEntry{}}
-}
-
-func (c *packageScopeCache) Key(root, path string) (string, error) {
 	directory := goPackageDirectory(path)
 	absolute := filepath.Join(root, filepath.FromSlash(directory))
 	entries, err := os.ReadDir(absolute)
 	if err != nil {
-		// A directory that cannot be listed has no provable package scope.
-		// Fall back to a fingerprint of the error so the key stays stable
-		// while the condition lasts without claiming an empty package.
+		// A directory that cannot be listed has no provable package scope. The
+		// sentinel carries the exact condition, so recovering from it changes
+		// the key and reparses the package.
 		return goPackageScopeVersion + ":unreadable:" + err.Error(), nil
 	}
 	names := make([]string, 0, len(entries))
-	fingerprint := &bytes.Buffer{}
-	fingerprint.WriteString(goPackageScopeVersion)
-	fingerprint.WriteString(directory)
 	for _, entry := range entries {
 		if entry.IsDir() || !isGoSourcePath(entry.Name()) {
 			continue
@@ -197,26 +186,6 @@ func (c *packageScopeCache) Key(root, path string) (string, error) {
 		names = append(names, entry.Name())
 	}
 	sort.Strings(names)
-	for _, name := range names {
-		info, infoErr := os.Stat(filepath.Join(absolute, name))
-		if infoErr != nil {
-			fingerprint.WriteString("\x00" + name + "\x00stat-error")
-			continue
-		}
-		fingerprint.WriteString("\x00" + name + "\x00")
-		fingerprint.WriteString(strconv.FormatInt(info.Size(), 10))
-		fingerprint.WriteString("\x00")
-		fingerprint.WriteString(strconv.FormatInt(info.ModTime().UnixNano(), 10))
-	}
-	cacheKey := root + "\x00" + directory
-	stamp := fingerprint.String()
-	c.mu.Lock()
-	if entry, ok := c.entries[cacheKey]; ok && entry.fingerprint == stamp {
-		c.mu.Unlock()
-		return entry.digest, nil
-	}
-	c.mu.Unlock()
-
 	digest := newSemanticDigest(goPackageScopeVersion)
 	digest.writeField(directory)
 	for _, name := range names {
@@ -228,18 +197,8 @@ func (c *packageScopeCache) Key(root, path string) (string, error) {
 		}
 		digest.writeBytes(content)
 	}
-	result := digest.sum()
-	c.mu.Lock()
-	if len(c.entries) >= packageScopeLimit {
-		c.entries = map[string]packageScopeEntry{}
-	}
-	c.entries[cacheKey] = packageScopeEntry{fingerprint: stamp, digest: result}
-	c.mu.Unlock()
-	return result, nil
+	return digest.sum(), nil
 }
-
-// packageScopeLimit bounds the memo. Discarding it only costs a reread.
-const packageScopeLimit = 1 << 14
 
 var (
 	errNoTokenFile   = errors.New("parsed Go file has no position information")

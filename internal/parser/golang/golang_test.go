@@ -3454,6 +3454,27 @@ func (Memory) Get(id string) (string, error) { return id, nil }
 			changed: true,
 		},
 		{
+			name: "cgo preamble changed",
+			mutate: map[string]string{"api/api.go": `package api
+
+/*
+struct Point { int x; int y; };
+*/
+import "C"
+
+import "strings"
+
+type Store interface {
+	Get(id string) (string, error)
+}
+
+const Prefix = "/v1"
+
+func Join(parts ...string) string { return strings.Join(parts, "/") }
+`},
+			changed: true,
+		},
+		{
 			name:    "module manifest changed",
 			mutate:  map[string]string{"go.mod": "module example.com/service\n\ngo 1.25\n"},
 			changed: true,
@@ -3566,5 +3587,84 @@ func TestSemanticKeyReusesCallerWorkspaceKey(t *testing.T) {
 	}
 	if computed != refined {
 		t.Fatalf("refined key = %q with a supplied workspace key, %q without", refined, computed)
+	}
+}
+
+// TestWorkspaceSemanticKeyTracksCgoPreambles keeps cgo fail-closed: the
+// preamble declares the C types cgo projects into Go, so another package can
+// type-check against them even though the preamble is only a comment.
+func TestWorkspaceSemanticKeyTracksCgoPreambles(t *testing.T) {
+	cgoSource := func(fields string) string {
+		return `package api
+
+/*
+struct Point { ` + fields + ` };
+*/
+import "C"
+
+func NewPoint() C.struct_Point { return C.struct_Point{} }
+`
+	}
+	for _, testCase := range []struct {
+		name    string
+		after   string
+		changed bool
+	}{
+		{name: "preamble type widened", after: cgoSource("int x; int y;"), changed: true},
+		{name: "preamble unchanged", after: cgoSource("int x;"), changed: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, "go.mod"), "module example.com/service\n\ngo 1.26\n")
+			writeFile(t, filepath.Join(root, "api", "api.go"), cgoSource("int x;"))
+			parser := golangparser.New()
+			input := parserapi.Input{Root: root}
+			before, err := parser.WorkspaceSemanticKey(context.Background(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, filepath.Join(root, "api", "api.go"), testCase.after)
+			after, err := parser.WorkspaceSemanticKey(context.Background(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if changed := before != after; changed != testCase.changed {
+				t.Fatalf("workspace key changed = %t, want %t", changed, testCase.changed)
+			}
+		})
+	}
+}
+
+// TestPackageScopeKeyRecoversFromAnUnreadableDirectory proves the unreadable
+// sentinel is not a stable stand-in for real contents.
+func TestPackageScopeKeyRecoversFromAnUnreadableDirectory(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/service\n\ngo 1.26\n")
+	writeFile(t, filepath.Join(root, "api", "api.go"), "package api\n\nfunc Routes() {}\n")
+	parser := golangparser.New()
+	// Supply the workspace key so the test exercises only the package scope.
+	workspaceKey, err := parser.WorkspaceSemanticKey(context.Background(), parserapi.Input{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(root, "api")
+	if err := os.Chmod(directory, 0o000); err != nil {
+		t.Skipf("cannot make a directory unreadable: %v", err)
+	}
+	input := parserapi.Input{Root: root, Path: "api/api.go", SemanticKey: workspaceKey}
+	unreadable, err := parser.SemanticKey(context.Background(), input)
+	if err != nil {
+		_ = os.Chmod(directory, 0o755)
+		t.Fatal(err)
+	}
+	if err := os.Chmod(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	readable, err := parser.SemanticKey(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unreadable == readable {
+		t.Fatal("recovering a readable package directory did not change the semantic key")
 	}
 }
