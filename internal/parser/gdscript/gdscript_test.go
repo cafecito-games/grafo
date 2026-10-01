@@ -531,8 +531,9 @@ func omitted_default(peer: ENetPacketPeer, unrelated: AcmeV1EnvelopeEnvelope) ->
 	default_wrapper(peer)
 
 func shadowed_evidence(peer: ENetPacketPeer, message: AcmeV1EnvelopeEnvelope, items: Array) -> void:
-	var payload = message.to_bytes()
-	var packet = peer.get_packet()
+	if items.is_empty():
+		var payload = message.to_bytes()
+		var packet = peer.get_packet()
 	for payload in items:
 		peer.send(6, payload, ENetPacketPeer.FLAG_RELIABLE)
 	var callback = func(packet):
@@ -988,8 +989,9 @@ func shadow_lambda() -> void:
 	callback.call(null)
 
 func shadow_branch(cond: bool) -> void:
-	var value: AcmeV1EnvelopeEnvelope
 	if cond:
+		var value: AcmeV1EnvelopeEnvelope
+	else:
 		var value
 		value.set_text("untyped branch local")
 
@@ -2275,5 +2277,52 @@ func poll(typed: InputEvent, untyped) -> void:
 		findFactWithTarget(t, result.Facts, graph.EdgeUsesInputAction,
 			"godot:input_action:client/project.godot:"+action)
 		assertHasFact(t, result.Facts, graph.EdgeReadsConfig, "input/"+action)
+	}
+}
+
+func TestParserFollowsGodotTreeShape(t *testing.T) {
+	root := testtemp.Dir(t)
+	writeFile(t, root, "project.godot", "[autoload]\nSession=\"*res://session.gd\"\n")
+	content := []byte(`class_name Shape extends Node
+
+enum Mode {
+	IDLE,
+	RUNNING = 4,
+}
+
+@export var speed: float = 10.0
+@export
+@onready var label: Label = $Label
+
+@rpc("any_peer")
+func sync() -> void:
+	pass
+
+func keys() -> Dictionary:
+	return {Session = 1}
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "shape.gd", Content: content, Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for qualified, want := range map[string]string{"Shape.speed": "export", "Shape.label": "export,onready"} {
+		if got := findQualifiedNode(t, result.Nodes, graph.KindField, qualified).Properties["annotations"]; got != want {
+			t.Fatalf("%s annotations = %q, want %q", qualified, got, want)
+		}
+	}
+	if got := findQualifiedNode(t, result.Nodes, graph.KindMethod, "Shape.sync").Properties["annotations"]; got != "rpc" {
+		t.Fatalf("Shape.sync annotations = %q, want rpc", got)
+	}
+	for qualified, line := range map[string]int{"Shape.Mode.IDLE": 4, "Shape.Mode.RUNNING": 5} {
+		if got := findQualifiedNode(t, result.Nodes, graph.KindField, qualified).Location.Line; got != line {
+			t.Fatalf("%s line = %d, want %d", qualified, got, line)
+		}
+	}
+	for _, fact := range result.Facts {
+		if fact.Properties["form"] == "autoload_reference" {
+			t.Fatalf("Lua-style dictionary key produced an autoload reference: %#v", fact)
+		}
 	}
 }

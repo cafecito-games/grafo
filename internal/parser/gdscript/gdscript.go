@@ -488,6 +488,12 @@ func (e *extractor) walkStatements(statements []gdast.Statement, current scope) 
 		if _, ok := statement.(*gdast.Comment); ok {
 			continue
 		}
+		for _, annotation := range gdast.Annotations(statement) {
+			annotations = append(annotations, annotation.Name)
+			for _, argument := range annotation.Arguments {
+				e.walkExpression(argument, current)
+			}
+		}
 		e.walkStatement(statement, current, annotations)
 		annotations = nil
 	}
@@ -603,7 +609,11 @@ func (e *extractor) walkStatement(statement gdast.Statement, current scope, anno
 			caseScope := cloneFlowScope(current)
 			for _, pattern := range matchCase.Patterns {
 				e.walkExpression(pattern, caseScope)
-				if identifier, ok := pattern.(*gdast.Identifier); ok && identifier.Name == "_" && matchCase.Guard == nil {
+				if matchCase.Guard != nil {
+					continue
+				}
+				switch pattern.(type) {
+				case *gdast.WildcardPattern, *gdast.BindingPattern:
 					exhaustive = true
 				}
 			}
@@ -949,10 +959,8 @@ func (e *extractor) parseEnum(node *gdast.EnumDeclaration, current scope) {
 }
 
 func (e *extractor) addEnumMember(ownerID, container string, member gdast.EnumMember, loc graph.Location) {
-	if member.Value != nil {
-		loc = e.location(member.Value)
-	} else if len(member.Comments) > 0 {
-		loc = e.location(member.Comments[0])
+	if span := member.Span(); span.Start.Line > 0 {
+		loc = graph.Location{Path: e.input.Path, Line: span.Start.Line, Column: span.Start.Column, EndLine: span.End.Line}
 	}
 	id := e.b.AddNode(graph.Node{Kind: graph.KindField, Name: member.Name,
 		QualifiedName: qualify(container, member.Name), Location: loc, Properties: map[string]string{"enum_member": "true"}})
@@ -975,6 +983,16 @@ func (e *extractor) walkExpression(expression gdast.Expression, current scope) {
 		e.addNodeReference(current.currentID, node.Path, e.location(node), properties)
 	case *gdast.Identifier:
 		e.addAutoloadUse(node, node.Name, "autoload_reference", "", current)
+	case *gdast.BindingPattern:
+		e.declareLocal(node.Name, "", e.location(node), current)
+	case *gdast.DictionaryLiteral:
+		if node.LuaStyle {
+			// A Lua-style key is a string spelled as a name, never a reference.
+			for _, entry := range node.Entries {
+				e.walkExpression(entry.Value, current)
+			}
+			return
+		}
 	case *gdast.LambdaExpression:
 		lambdaScope := current
 		lambdaScope.symbols = cloneMap(current.symbols)
