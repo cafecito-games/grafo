@@ -617,3 +617,101 @@ func testGenerationOpener(t *testing.T, opens *atomic.Int32) func(context.Contex
 		return repository, closeRepository, nil
 	}
 }
+
+// Startup must not run the indexer when a usable index already exists: the MCP
+// handshake is answered before any refresh, so a stale index cannot hold
+// `initialize` past the client's connect timeout. See issue #173.
+func TestDeferredStartupPublishesGenerationWithoutRefreshing(t *testing.T) {
+	probe := coordinatorProbe(t, "one")
+	registry := parserapi.NewRegistry(coordinatorParser{})
+
+	// Establish a compatible on-disk index, then make it stale. This is the
+	// shape that produced CONNECT_TIMEOUT in the field.
+	seed, seedStartup, err := NewFreshnessCoordinator(context.Background(), []string{probe.Project.Root}, registry, FreshnessCoordinatorOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seedStartup.Diagnostics.Refreshed) != 1 {
+		t.Fatalf("seed startup did not index: %#v", seedStartup.Diagnostics)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	changedCoordinatorProbe(t, probe, "two")
+
+	coordinator, startup, err := NewFreshnessCoordinator(context.Background(), []string{probe.Project.Root}, registry,
+		FreshnessCoordinatorOptions{DeferStartupRefresh: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := coordinator.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	if len(startup.Diagnostics.Reports) != 0 || len(startup.Diagnostics.Refreshed) != 0 {
+		t.Fatalf("deferred startup ran the indexer: %#v", startup.Diagnostics)
+	}
+	if startup.Repository == nil || len(startup.Projects) != 1 {
+		t.Fatalf("deferred startup published no usable generation: %#v", startup)
+	}
+	if _, writable := startup.Repository.(graph.IndexRepository); writable {
+		t.Fatal("deferred startup generation exposed index-write capability")
+	}
+	// Tool registration keys off these assertions, so a deferred startup must
+	// advertise exactly what a refreshed generation would.
+	if _, ok := startup.Repository.(graph.CatalogRepository); !ok {
+		t.Fatal("deferred startup generation lost catalog capability")
+	}
+	if _, ok := startup.Repository.(graph.TopologyRepository); !ok {
+		t.Fatal("deferred startup generation lost topology capability")
+	}
+
+	// The first tool call performs the refresh the startup path skipped.
+	refreshed, release, err := coordinator.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if len(refreshed.Diagnostics.Refreshed) != 1 {
+		t.Fatalf("first acquisition did not refresh: %#v", refreshed.Diagnostics)
+	}
+	if refreshed.Key == startup.Key {
+		t.Fatal("refreshed generation reused the provisional startup key")
+	}
+	nodes, err := refreshed.Repository.SearchNodes(context.Background(), "two", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) == 0 {
+		t.Fatal("refreshed generation did not contain the edited fixture symbol")
+	}
+}
+
+// A project with no index on disk has nothing to serve queries from, so startup
+// still indexes rather than publishing a fabricated generation. This keeps the
+// index compatibility contract intact; see openProvisionalGeneration.
+func TestDeferredStartupIndexesWhenNoIndexExists(t *testing.T) {
+	probe := coordinatorProbe(t, "one")
+	registry := parserapi.NewRegistry(coordinatorParser{})
+	coordinator, startup, err := NewFreshnessCoordinator(context.Background(), []string{probe.Project.Root}, registry,
+		FreshnessCoordinatorOptions{DeferStartupRefresh: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := coordinator.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	if len(startup.Diagnostics.Refreshed) != 1 {
+		t.Fatalf("cold start did not fall back to indexing: %#v", startup.Diagnostics)
+	}
+	nodes, err := startup.Repository.SearchNodes(context.Background(), "one", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) == 0 {
+		t.Fatal("cold-start generation did not contain the indexed fixture symbol")
+	}
+}

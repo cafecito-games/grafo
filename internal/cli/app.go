@@ -798,7 +798,13 @@ func (a *App) mcp(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
-	coordinator, generation, err := mcpserver.NewFreshnessCoordinator(ctx, roots, parserdefaults.NewRegistry(), mcpserver.FreshnessCoordinatorOptions{})
+	// The handshake must not wait on an index refresh: a stale index would
+	// otherwise hold `initialize` past the client's connect timeout and the
+	// whole server would be reported as failed. Service.ready acquires and
+	// rebinds a refreshed generation on every tool call, so deferring startup
+	// refresh costs nothing in result freshness. See issue #173.
+	coordinator, generation, err := mcpserver.NewFreshnessCoordinator(ctx, roots, parserdefaults.NewRegistry(),
+		mcpserver.FreshnessCoordinatorOptions{DeferStartupRefresh: true})
 	if err != nil {
 		return err
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -25,6 +26,13 @@ var ErrContinuouslyChangingSource = errors.New("source changed during all freshn
 type FreshnessCoordinatorOptions struct {
 	MaxFileSize int64
 	MaxAttempts int
+	// DeferStartupRefresh publishes a provisional generation from the indexes
+	// already on disk instead of refreshing before returning. The transport can
+	// then answer `initialize` immediately, and the first Acquire performs the
+	// refresh. Capability-conditional tool registration still sees a real
+	// repository, so the advertised tool list does not depend on refresh
+	// timing. See issue #173.
+	DeferStartupRefresh bool
 }
 
 // FreshnessDiagnostics is retained for debug and benchmark inspection. It is
@@ -139,6 +147,19 @@ func NewFreshnessCoordinator(ctx context.Context, roots []string, registry *pars
 		open: openFreshnessGeneration,
 	}
 	coordinator := newFreshnessCoordinator(roots, attempts, operations)
+	if options.DeferStartupRefresh {
+		generation, err := coordinator.publishProvisional(ctx)
+		if err == nil {
+			return coordinator, generation, nil
+		}
+		if !errors.Is(err, errNoProvisionalIndex) {
+			_ = coordinator.Close()
+			return nil, nil, err
+		}
+		// Nothing on disk can answer queries yet, so there is no generation to
+		// publish and startup must index before serving. This keeps the index
+		// compatibility contract intact at the cost of a slow first start.
+	}
 	generation, release, err := coordinator.Acquire(ctx)
 	if err != nil {
 		_ = coordinator.Close()
@@ -146,6 +167,104 @@ func NewFreshnessCoordinator(ctx context.Context, roots []string, registry *pars
 	}
 	release()
 	return coordinator, generation, nil
+}
+
+// publishProvisional binds a query-only generation from the indexes already on
+// disk without running the indexer. The generation carries no freshness tokens,
+// so the first Acquire treats every project as changed and refreshes it; the
+// existing drain path closes this repository when the refreshed generation is
+// published.
+func (c *FreshnessCoordinator) publishProvisional(ctx context.Context) (*FreshnessGeneration, error) {
+	projects := make([]indexer.Project, 0, len(c.roots))
+	for _, root := range c.roots {
+		project, err := indexer.DiscoverProject(ctx, root)
+		if err != nil {
+			return nil, fmt.Errorf("discover project for %s: %w", root, err)
+		}
+		projects = append(projects, project)
+	}
+	projects, err := canonicalProvisionalProjects(projects)
+	if err != nil {
+		return nil, err
+	}
+	repository, closeRepository, err := openProvisionalGeneration(ctx, projects)
+	if err != nil {
+		return nil, err
+	}
+	generation := &FreshnessGeneration{
+		Key:        provisionalGenerationKey(projects),
+		Repository: repository,
+		Projects:   projects,
+		// An empty, non-nil token map never equals a probed project set, so
+		// changedFreshnessProbes reports every project as changed.
+		tokens: map[string]indexer.FreshnessToken{},
+		close:  closeRepository,
+	}
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		_ = closeRepository()
+		return nil, errors.New("freshness coordinator is closed")
+	}
+	c.current = generation
+	c.mu.Unlock()
+	return generation, nil
+}
+
+func canonicalProvisionalProjects(projects []indexer.Project) ([]indexer.Project, error) {
+	sort.Slice(projects, func(i, j int) bool { return projects[i].Root < projects[j].Root })
+	seenRoots := map[string]bool{}
+	seenIndexes := map[string]bool{}
+	result := projects[:0]
+	for _, project := range projects {
+		if seenRoots[project.Root] {
+			continue
+		}
+		seenRoots[project.Root] = true
+		if seenIndexes[project.IndexPath] {
+			return nil, fmt.Errorf("projects %q share freshness index %s", project.Root, project.IndexPath)
+		}
+		seenIndexes[project.IndexPath] = true
+		result = append(result, project)
+	}
+	return result, nil
+}
+
+// errNoProvisionalIndex reports that no existing index can back a provisional
+// generation, so the caller must index before serving.
+var errNoProvisionalIndex = errors.New("no readable index for a provisional generation")
+
+// openProvisionalGeneration opens the on-disk indexes read-only. Index metadata
+// is deliberately not validated against the discovered project: a stale index is
+// the expected input here, and the refresh on first Acquire reconciles it. A
+// missing or incompatible index yields errNoProvisionalIndex rather than a
+// fabricated one, because an index that cannot be opened cannot answer queries.
+func openProvisionalGeneration(ctx context.Context, projects []indexer.Project) (graph.ReadRepository, func() error, error) {
+	for _, project := range projects {
+		if _, err := os.Stat(project.IndexPath); err != nil {
+			return nil, nil, fmt.Errorf("%w: %s", errNoProvisionalIndex, project.Root)
+		}
+	}
+	if len(projects) == 1 {
+		repository, err := sqlite.OpenReadOnly(ctx, projects[0].IndexPath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: open %s: %v", errNoProvisionalIndex, projects[0].Root, err)
+		}
+		return repository, repository.Close, nil
+	}
+	repository, err := federation.OpenReadOnlyProjects(ctx, projects)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: open federated projects: %v", errNoProvisionalIndex, err)
+	}
+	return repository, repository.Close, nil
+}
+
+func provisionalGenerationKey(projects []indexer.Project) string {
+	parts := []string{"provisional"}
+	for _, project := range projects {
+		parts = append(parts, projectGenerationKey(project))
+	}
+	return strings.Join(parts, "\x00")
 }
 
 func newFreshnessCoordinator(roots []string, attempts int, operations freshnessOperations) *FreshnessCoordinator {
