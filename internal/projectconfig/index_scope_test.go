@@ -51,3 +51,38 @@ func TestParseIndexScopeRejectsUnsafeContracts(t *testing.T) {
 		}
 	}
 }
+
+func TestParseIndexSeedIsOptionalAndStrict(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		source string
+		want   *bool
+	}{
+		{name: "unset", source: "index:\n  include: [cmd/**]\n", want: nil},
+		{name: "disabled", source: "index:\n  seed: false\n", want: boolPointer(false)},
+		{name: "enabled", source: "index:\n  seed: true\n", want: boolPointer(true)},
+		{name: "empty", source: "index:\n  seed:\n", want: nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			config, err := projectconfig.Parse([]byte(test.source))
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch {
+			case test.want == nil && config.IndexSeed != nil:
+				t.Fatalf("seed = %t, want unset", *config.IndexSeed)
+			case test.want != nil && config.IndexSeed == nil:
+				t.Fatalf("seed unset, want %t", *test.want)
+			case test.want != nil && *config.IndexSeed != *test.want:
+				t.Fatalf("seed = %t, want %t", *config.IndexSeed, *test.want)
+			}
+		})
+	}
+	// A non-boolean seed is rejected rather than coerced, so a typo cannot
+	// silently disable adoption.
+	if _, err := projectconfig.Parse([]byte("index:\n  seed: yes-please\n")); err == nil {
+		t.Fatal("accepted a non-boolean index seed setting")
+	}
+}
+
+func boolPointer(value bool) *bool { return &value }

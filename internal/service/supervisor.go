@@ -17,6 +17,7 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/agentinstall"
 	"github.com/cafecito-games/grafo/internal/indexer"
+	"github.com/cafecito-games/grafo/internal/indexseed"
 	parserdefaults "github.com/cafecito-games/grafo/internal/parser/defaults"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 )
@@ -479,6 +480,19 @@ func (SQLiteRunner) Index(ctx context.Context, project indexer.Project, options 
 		return indexer.Report{}, err
 	}
 	defer func() { _ = unlock() }()
+	// A worktree registered before it has ever been indexed pays the same cold
+	// cost as a foreground run, so the background pass adopts a sibling index on
+	// the same terms. A declined adoption is not an error: the pass below indexes
+	// from scratch exactly as it did before.
+	if options.Seed == nil {
+		if _, statErr := os.Stat(project.IndexPath); errors.Is(statErr, os.ErrNotExist) {
+			result, seedErr := indexseed.Seed(ctx, project, indexseed.Options{TryLock: TryDonorIndexLock})
+			if seedErr != nil {
+				return indexer.Report{}, seedErr
+			}
+			options.Seed = result.Provenance
+		}
+	}
 	repository, err := sqlite.Open(ctx, project.IndexPath)
 	if err != nil {
 		return indexer.Report{}, err
@@ -489,6 +503,18 @@ func (SQLiteRunner) Index(ctx context.Context, project indexer.Project, options 
 		return report, runErr
 	}
 	return report, closeErr
+}
+
+// TryDonorIndexLock adapts the branch-index lock to the narrow capability index
+// adoption needs. Adoption must never wait on a donor another process is
+// refreshing, so contention is reported rather than blocked on, and the seeding
+// package stays independent of this one.
+func TryDonorIndexLock(indexPath string) (indexseed.Unlock, bool, error) {
+	unlock, acquired, err := TryIndexLock(indexPath)
+	if err != nil || !acquired {
+		return nil, false, err
+	}
+	return indexseed.Unlock(unlock), true, nil
 }
 
 // SharedRoots reports the registered roots, other than root, that contain it or

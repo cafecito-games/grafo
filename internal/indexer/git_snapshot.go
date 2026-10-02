@@ -31,6 +31,13 @@ func (execGitRunner) Run(ctx context.Context, directory string, arguments ...str
 	return command.Output()
 }
 
+// RunGit runs one Git command in a directory using the same process policy as
+// repository inspection, so every Grafo component invokes Git identically rather
+// than each rebuilding the environment it needs.
+func RunGit(ctx context.Context, directory string, arguments ...string) ([]byte, error) {
+	return execGitRunner{}.Run(ctx, directory, arguments...)
+}
+
 type cachedGitIdentity struct {
 	identity string
 	origin   string

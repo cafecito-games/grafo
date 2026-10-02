@@ -679,6 +679,7 @@ Repository owners can explicitly narrow indexed source membership in the root
 index:
   include: ["cmd/**", "internal/**"]
   exclude: ["internal/eval/testdata/**"]
+  seed: true
 ```
 
 Patterns are slash-based repository-relative globs with literal segments, `*`,
@@ -687,6 +688,14 @@ eligible source, an empty `exclude` excludes nothing, and exclusion wins. The
 root `grafo.yaml` remains indexed as the control plane even when its own path
 does not match. Includes cannot re-enable built-in ignored paths or symlinks.
 Invalid, absolute, traversing, or backslash paths fail before index mutation.
+
+`seed` controls whether a new worktree may adopt a sibling worktree's index
+instead of parsing every file from scratch. It defaults to enabled; set it to
+`false`, or pass `--no-seed`, to always index from scratch. Adoption copies the
+sibling's index, then re-reads and content-checks every file, so a fact survives
+only where a byte-identical file exists in the adopting worktree. It requires an
+`origin` remote, because that is what makes worktrees of one repository agree on
+a repository identity.
 
 Changing the normalized scope forces full candidate discovery at the next
 index pass: narrowing removes stale file-owned graph evidence and broadening
