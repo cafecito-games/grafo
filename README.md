@@ -30,6 +30,31 @@ go install github.com/cafecito-games/grafo/cmd/grafo@latest
 Prebuilt archives for macOS, Linux, and Windows are also attached to every
 [release](https://github.com/cafecito-games/grafo/releases).
 
+### Staying current
+
+A release build checks for a newer release at most once a day and, when one
+exists, prints a two-line notice on stderr after the command finishes:
+
+```
+grafo: 0.4.2 is available (you have 0.4.1)
+grafo: update with: brew upgrade --cask grafo
+```
+
+The upgrade command is the one that fits how the running binary was installed:
+`brew upgrade --cask grafo` for the Homebrew cask, `go install
+github.com/cafecito-games/grafo/cmd/grafo@latest` for a source install, and the
+name of the release archive for this platform otherwise. Grafo never replaces
+its own binary.
+
+The check runs in the background and never delays or fails a command. It is
+skipped for `grafo mcp`, for `--json` output, when stderr is not a terminal, and
+when `CI` marks a continuous-integration run, so it reaches a person rather than
+a log or a parser. Set
+`GRAFO_NO_UPDATE_CHECK=1` to turn it off entirely, or `GRAFO_UPDATE_CACHE` to
+move the record of the last check off its default path under the user cache
+directory. `grafo version --check` asks immediately, ignoring the cache and
+every rule above.
+
 ## Quick start
 
 ```sh
