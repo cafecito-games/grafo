@@ -47,9 +47,13 @@ const (
 	reconciliationBatchSize = 10_000
 	// reconciliationCheckpointBatches is how many batches share one WAL
 	// checkpoint. Checkpointing after every batch copied the same hot index pages
-	// into the database file again and again; checkpointing never at all let the
-	// log grow past half a gigabyte, and finding a page in a log that large costs
-	// more than the checkpoints saved. Both extremes measured worse than this.
+	// into the database file again and again, and both that and never
+	// checkpointing at all measured worse than this. The explicit checkpoint is
+	// what actually bounds the log here: wal_autocheckpoint fires on commit but
+	// cannot restart a log the next transaction has already started appending to,
+	// so under continuous batch writes the live log reaches 65-180 MiB between
+	// these calls. Each one copies every frame it finds and has never reported
+	// itself blocked.
 	reconciliationCheckpointBatches = 16
 	resolutionCacheSize             = 50_000
 )
@@ -141,12 +145,29 @@ const indexPageSize = 16384
 // the statement succeeds.
 const temporaryStoreMemory = "PRAGMA temp_store=MEMORY"
 
+// retainedLogBytes caps the write-ahead log file a restarted log leaves behind.
+// Reconciliation materializes its whole fact queue in a single transaction, and
+// nothing can checkpoint while a transaction is open, so the log has to grow to
+// hold it: on a 12k-file repository to just over half a gigabyte. Without a limit
+// SQLite then reuses that allocation in place and the file keeps that peak for the
+// rest of the run even though a checkpoint has copied every frame out of it.
+//
+// The cap is comfortably above the log the batch loop keeps live between
+// checkpoints, measured at 150-175 MiB, because the limit is applied by
+// truncating the file: a cap below the working set makes every restart truncate a
+// log that is about to be grown straight back, which measured 7% slower on the
+// reconciliation phase. It is only there to hand back what one oversized
+// transaction forced.
+const retainedLogBytes = 256 << 20
+
 // writableConnectionPragmas configures a writable connection. busy_timeout is
 // deliberately first: it is pure connection-local lock policy that cannot
 // block, while journal_mode=WAL needs the database lock and therefore fails
 // immediately with SQLITE_BUSY_RECOVERY when another writer holds it and the
 // timeout is still SQLite's default of zero. page_size has to precede
-// journal_mode because SQLite ignores it once a database is in WAL mode.
+// journal_mode because SQLite ignores it once a database is in WAL mode, and
+// journal_size_limit has to follow it because the limit applies to the log of a
+// database that is already in WAL mode.
 var writableConnectionPragmas = []string{
 	"PRAGMA busy_timeout=5000",
 	fmt.Sprintf("PRAGMA page_size=%d", indexPageSize),
@@ -155,6 +176,7 @@ var writableConnectionPragmas = []string{
 	"PRAGMA journal_mode=WAL",
 	"PRAGMA synchronous=NORMAL",
 	"PRAGMA wal_autocheckpoint=1000",
+	fmt.Sprintf("PRAGMA journal_size_limit=%d", retainedLogBytes),
 }
 
 func configureWritableConnection(ctx context.Context, db *sql.DB) error {
