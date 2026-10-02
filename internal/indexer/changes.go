@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -55,6 +56,28 @@ func detectGitChanges(ctx context.Context, root, indexedCommit string, snapshot 
 		return gitChanges{}, fmt.Errorf("list untracked files: %w", err)
 	}
 	return gitChanges{changed: uniquePaths(changed, untracked), dirty: uniquePaths(dirty, untracked), untracked: uniquePaths(untracked), gitCommands: 3}, nil
+}
+
+// gitTracksChangesTo reports whether Git's own diffs account for every change to
+// one repository-relative path. Only a path Git holds in its index and still
+// compares against the working tree qualifies: an ignored path appears in no
+// diff and in no untracked list, and `assume-unchanged` or `skip-worktree` tell
+// Git to stop reporting modifications to a path it does track. Change selection
+// therefore needs separate proof for all three, and none for an ordinary tracked
+// file. The second return value is the number of Git commands spent.
+func gitTracksChangesTo(ctx context.Context, root, path string, snapshot *GitSnapshot) (bool, int, error) {
+	runner := gitCommandRunner(execGitRunner{})
+	if snapshot != nil && snapshot.runner != nil {
+		runner = snapshot.runner
+	}
+	// `ls-files -v` prefixes each record with a status letter and a space. An
+	// uppercase "H" is the cached, diff-visible state; the lowercase form marks
+	// assume-unchanged and "S" marks skip-worktree.
+	records, err := gitPathList(ctx, runner, root, "ls-files", "-v", "-z", "--", path)
+	if err != nil {
+		return false, 1, err
+	}
+	return slices.Contains(records, "H "+path), 1, nil
 }
 
 func gitPathList(ctx context.Context, runner gitCommandRunner, root string, arguments ...string) ([]string, error) {
