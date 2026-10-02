@@ -27,11 +27,12 @@ import (
 //	     16   330.5s            359.2s   6.57 GiB
 //
 // Read those against the run-to-run spread, which is large: three runs at eight
-// workers gave 308.9s, 326.7s, and 338.2s, a standard deviation of 14.8s, with
-// their aggregate parse figures spread by 18.1s. Only gaps well outside that
-// band carry information. Four workers are genuinely too few. Eight, twelve,
-// and sixteen are indistinguishable in wall clock, and the aggregate parse
-// growth by sixteen is the one effect clearly outside the noise.
+// workers on one build gave 308.9s, 326.7s, and 338.2s, a standard deviation of
+// 14.8s, their aggregate parse figures a standard deviation of 18.1s. Only gaps
+// well outside that band carry information. Four workers are genuinely too few.
+// Eight, twelve, and sixteen are indistinguishable in wall clock, and the
+// aggregate parse growth by sixteen is the one effect clearly outside the
+// noise.
 //
 // So eight stays as the conservative choice rather than as a demonstrated
 // optimum: nothing here shows that raising it buys wall clock, while the CPU
