@@ -39,19 +39,38 @@ func (*Parser) Supports(path string) bool {
 }
 
 // SemanticKey makes the owning Godot project, configured HTTP adapters, and
-// generated binding vocabulary part of the incremental cache key.
+// generated binding vocabulary part of the incremental cache key. Everything in
+// it but the owning project is repository wide, so it is refined here from the
+// workspace key the caller passes as Input.SemanticKey rather than rebuilt per
+// file: the binding registry is a scan of every schema in the repository, and
+// recomputing it per script made every script wait for one.
 func (p *Parser) SemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
+	workspaceKey := input.SemanticKey
+	if workspaceKey == "" {
+		computed, err := p.WorkspaceSemanticKey(ctx, input)
+		if err != nil {
+			return "", err
+		}
+		workspaceKey = computed
+	}
 	project, err := godotid.LoadProject(input.Root, input.Path, input.SourcePaths)
 	if err != nil {
 		return "", err
 	}
-	key := "gdscript-semantic-v4:" + project.SemanticKey()
+	return "gdscript-semantic-v5:" + workspaceKey + ":" + project.SemanticKey(), nil
+}
+
+// WorkspaceSemanticKey fingerprints the GDScript facts that belong to the whole
+// repository rather than to one script: the configured HTTP adapters and test
+// bases, and the generated Protobuf binding vocabulary. It is computed once per
+// indexing run, and the scan it performs is the same one the extractors then
+// read from cache.
+func (p *Parser) WorkspaceSemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
 	configuration, err := projectconfig.Load(input.Root)
 	if err != nil {
 		return "", err
 	}
-	key += ":" + configuration.Adapters.SemanticKey()
-	key += ":" + configuration.Tests.SemanticKey()
+	key := "gdscript-workspace-v1:" + configuration.Adapters.SemanticKey() + ":" + configuration.Tests.SemanticKey()
 	if p.bindings != nil {
 		bindingKey, bindingErr := p.bindings.SemanticKey(ctx, input)
 		if bindingErr != nil {
@@ -60,6 +79,13 @@ func (p *Parser) SemanticKey(ctx context.Context, input parserapi.Input) (string
 		key += ":" + bindingKey
 	}
 	return key, nil
+}
+
+// WorkspaceSemanticEvidenceKey is a constant because every input to the
+// workspace key above lives in the repository, and the caller only reuses a
+// workspace key while Git proves the repository unchanged.
+func (*Parser) WorkspaceSemanticEvidenceKey(context.Context, parserapi.Input) (string, error) {
+	return "gdscript-worktree-v1", nil
 }
 
 // SemanticAffectedPaths reparses every script under a Godot project whose

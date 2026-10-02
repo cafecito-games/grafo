@@ -71,3 +71,31 @@ func TestRegistryIncludesSQLiteDialect(t *testing.T) {
 	}
 	t.Fatalf("default registry did not route SQLite syntax: %#v", result.Nodes)
 }
+
+// TestRegistryKeepsWorkspaceSemanticKeysCacheable pins the reuse contract. A
+// workspace semantic key may only be carried over from a previous run while every
+// parser that publishes one can also vouch for its inputs cheaply, so a parser
+// that implements one interface without the other silently disables that reuse
+// for every language at once.
+func TestRegistryKeepsWorkspaceSemanticKeysCacheable(t *testing.T) {
+	registry := parserdefaults.NewRegistry()
+	evidence, cacheable, err := registry.WorkspaceSemanticEvidenceKeys(context.Background(), parserapi.Input{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cacheable {
+		t.Fatalf("workspace semantic keys are not cacheable; evidence covers only %v", evidence)
+	}
+	keys, err := registry.WorkspaceSemanticKeys(context.Background(), parserapi.Input{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for language := range keys {
+		if _, ok := evidence[language]; !ok {
+			t.Errorf("%s publishes a workspace semantic key with no evidence key", language)
+		}
+	}
+	if _, ok := keys["gdscript"]; !ok {
+		t.Errorf("gdscript publishes no workspace semantic key: %v", keys)
+	}
+}
