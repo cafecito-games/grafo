@@ -3017,8 +3017,12 @@ func Send(client *http.Client) {
 	}
 }
 
-func TestSemanticAffectedPathsScopesGoSourceEditsToTheirPackage(t *testing.T) {
+// Without a published scope model the import graph is unknown, so a Go source
+// edit has to offer every Go file: narrowing selection on a guessed graph would
+// leave stale facts in an importer the guess missed.
+func TestSemanticAffectedPathsIsConservativeWithoutAPublishedModel(t *testing.T) {
 	all := []string{"routes.go", "helpers.go", "nested/child.go", "go.mod", "README.md", "api/service.proto"}
+	everyGoFile := []string{"routes.go", "helpers.go", "nested/child.go"}
 	for _, testCase := range []struct {
 		name    string
 		changed []string
@@ -3027,17 +3031,17 @@ func TestSemanticAffectedPathsScopesGoSourceEditsToTheirPackage(t *testing.T) {
 		{
 			name:    "package sibling edit",
 			changed: []string{"helpers.go"},
-			want:    []string{"routes.go", "helpers.go"},
+			want:    everyGoFile,
 		},
 		{
 			name:    "edit in another package",
 			changed: []string{"nested/child.go"},
-			want:    []string{"nested/child.go"},
+			want:    everyGoFile,
 		},
 		{
 			name:    "edits in several packages",
 			changed: []string{"helpers.go", "nested/child.go"},
-			want:    []string{"routes.go", "helpers.go", "nested/child.go"},
+			want:    everyGoFile,
 		},
 		{
 			name:    "module manifest edit",
@@ -3052,7 +3056,7 @@ func TestSemanticAffectedPathsScopesGoSourceEditsToTheirPackage(t *testing.T) {
 		{
 			name:    "protobuf binding edit",
 			changed: []string{"api/service.proto"},
-			want:    []string{"routes.go", "helpers.go", "nested/child.go"},
+			want:    everyGoFile,
 		},
 		{
 			name:    "unrelated edit",
@@ -3061,7 +3065,7 @@ func TestSemanticAffectedPathsScopesGoSourceEditsToTheirPackage(t *testing.T) {
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			got := golangparser.New().SemanticAffectedPaths(all, testCase.changed)
+			got := golangparser.New().SemanticAffectedPaths("", all, testCase.changed)
 			if len(got) == 0 && len(testCase.want) == 0 {
 				return
 			}
@@ -3291,9 +3295,31 @@ func TestWorkspaceSemanticEvidenceTracksExternalInputs(t *testing.T) {
 // TestWorkspaceSemanticKeyTracksOnlyRepositoryWideFacts pins the contract that
 // the workspace key changes exactly when an edit can change how an otherwise
 // untouched Go file in another package extracts.
-func TestWorkspaceSemanticKeyTracksOnlyRepositoryWideFacts(t *testing.T) {
+// TestSemanticKeyReachesEveryDependentOfAChangedInput is the staleness contract
+// of the Go keys, asserted where reparsing is actually decided: the effective
+// key of a file, which is the workspace key refined by its package scope.
+//
+// The subject is consumer, which imports both api and store. A change that can
+// alter how consumer extracts must move consumer's key; a change that cannot
+// must leave it alone, because moving it reparses consumer for nothing. The
+// repository-wide key alone no longer answers this: it deliberately covers only
+// what no import edge can bound, so a declaration edit reaches its dependents
+// through the import closure instead.
+func TestSemanticKeyReachesEveryDependentOfAChangedInput(t *testing.T) {
 	baseline := map[string]string{
 		"go.mod": "module example.com/service\n\ngo 1.26\n",
+		"consumer/consumer.go": `package consumer
+
+import (
+	"example.com/service/api"
+	"example.com/service/store"
+)
+
+func Use(memory store.Memory) string {
+	value, _ := memory.Get(api.Prefix)
+	return value
+}
+`,
 		"api/api.go": `package api
 
 import "strings"
@@ -3494,9 +3520,12 @@ func Join(parts ...string) string { return strings.Join(parts, "/") }
 			changed: true,
 		},
 		{
-			name:    "new package added",
+			// A package nothing imports cannot change how consumer extracts.
+			// The new file is parsed because the index has never seen it, so
+			// nothing goes stale by leaving consumer's key alone.
+			name:    "unimported package added",
 			mutate:  map[string]string{"extra/extra.go": "package extra\n"},
-			changed: true,
+			changed: false,
 		},
 		{
 			name:    "source stops parsing",
@@ -3510,20 +3539,14 @@ func Join(parts ...string) string { return strings.Join(parts, "/") }
 				writeFile(t, filepath.Join(root, path), content)
 			}
 			parser := golangparser.New()
-			input := parserapi.Input{Root: root, Repository: "sample", RepoID: "repo:sample"}
-			before, err := parser.WorkspaceSemanticKey(context.Background(), input)
-			if err != nil {
-				t.Fatal(err)
-			}
+			const subject = "consumer/consumer.go"
+			before := effectiveSemanticKey(t, parser, root, subject)
 			for path, content := range testCase.mutate {
 				writeFile(t, filepath.Join(root, path), content)
 			}
-			after, err := parser.WorkspaceSemanticKey(context.Background(), input)
-			if err != nil {
-				t.Fatal(err)
-			}
+			after := effectiveSemanticKey(t, parser, root, subject)
 			if changed := before != after; changed != testCase.changed {
-				t.Fatalf("workspace key changed = %t, want %t", changed, testCase.changed)
+				t.Fatalf("effective key of %s changed = %t, want %t", subject, changed, testCase.changed)
 			}
 		})
 	}
@@ -3597,7 +3620,10 @@ func TestSemanticKeyReusesCallerWorkspaceKey(t *testing.T) {
 // TestWorkspaceSemanticKeyTracksCgoPreambles keeps cgo fail-closed: the
 // preamble declares the C types cgo projects into Go, so another package can
 // type-check against them even though the preamble is only a comment.
-func TestWorkspaceSemanticKeyTracksCgoPreambles(t *testing.T) {
+// TestCgoPreamblesReachImportersOfTheCgoPackage pins that a cgo preamble is
+// compiler input: it declares the C types the package projects into Go, so a
+// widened preamble changes the declarations an importer resolves through.
+func TestCgoPreamblesReachImportersOfTheCgoPackage(t *testing.T) {
 	cgoSource := func(fields string) string {
 		return `package api
 
@@ -3621,19 +3647,15 @@ func NewPoint() C.struct_Point { return C.struct_Point{} }
 			root := testtemp.Dir(t)
 			writeFile(t, filepath.Join(root, "go.mod"), "module example.com/service\n\ngo 1.26\n")
 			writeFile(t, filepath.Join(root, "api", "api.go"), cgoSource("int x;"))
+			writeFile(t, filepath.Join(root, "consumer", "consumer.go"),
+				"package consumer\n\nimport \"example.com/service/api\"\n\nfunc Use() { _ = api.NewPoint() }\n")
 			parser := golangparser.New()
-			input := parserapi.Input{Root: root}
-			before, err := parser.WorkspaceSemanticKey(context.Background(), input)
-			if err != nil {
-				t.Fatal(err)
-			}
+			const subject = "consumer/consumer.go"
+			before := effectiveSemanticKey(t, parser, root, subject)
 			writeFile(t, filepath.Join(root, "api", "api.go"), testCase.after)
-			after, err := parser.WorkspaceSemanticKey(context.Background(), input)
-			if err != nil {
-				t.Fatal(err)
-			}
+			after := effectiveSemanticKey(t, parser, root, subject)
 			if changed := before != after; changed != testCase.changed {
-				t.Fatalf("workspace key changed = %t, want %t", changed, testCase.changed)
+				t.Fatalf("effective key of %s changed = %t, want %t", subject, changed, testCase.changed)
 			}
 		})
 	}
@@ -3676,4 +3698,159 @@ func TestPackageScopeKeyRecoversFromAnUnreadableDirectory(t *testing.T) {
 	if unreadable == readable {
 		t.Fatal("recovering a readable package directory did not change the semantic key")
 	}
+}
+
+// TestSemanticAffectedPathsReachesImportersAndNothingElse pins the narrowing
+// that makes a Go declaration edit proportional to what it can reach. base is
+// imported by mid, which is imported by leaf; unrelated imports nothing and is
+// imported by nothing, so no edit to base may select it.
+func TestSemanticAffectedPathsReachesImportersAndNothingElse(t *testing.T) {
+	root := testtemp.Dir(t)
+	writeFixture(t, root, map[string]string{
+		"go.mod":             "module example.com/fixture\n\ngo 1.26\n",
+		"base/base.go":       "package base\n\nfunc Base() string { return \"base\" }\n",
+		"mid/mid.go":         "package mid\n\nimport \"example.com/fixture/base\"\n\nfunc Mid() string { return base.Base() }\n",
+		"leaf/leaf.go":       "package leaf\n\nimport \"example.com/fixture/mid\"\n\nfunc Leaf() string { return mid.Mid() }\n",
+		"unrelated/other.go": "package unrelated\n\nfunc Other() string { return \"other\" }\n",
+	})
+	all := []string{"go.mod", "base/base.go", "mid/mid.go", "leaf/leaf.go", "unrelated/other.go"}
+
+	parser := golangparser.New()
+	// Publishing the model is what SemanticAffectedPaths consults, and the
+	// indexer publishes it once per pass before selecting changed paths.
+	if _, err := parser.WorkspaceSemanticKey(context.Background(),
+		parserapi.Input{Root: root, SourcePaths: all}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, testCase := range []struct {
+		name    string
+		changed []string
+		want    []string
+	}{
+		{
+			name:    "a dependency reaches its transitive importers",
+			changed: []string{"base/base.go"},
+			want:    []string{"base/base.go", "leaf/leaf.go", "mid/mid.go"},
+		},
+		{
+			name:    "an intermediate package does not reach its own dependency",
+			changed: []string{"mid/mid.go"},
+			want:    []string{"leaf/leaf.go", "mid/mid.go"},
+		},
+		{
+			name:    "a leaf reaches only itself",
+			changed: []string{"leaf/leaf.go"},
+			want:    []string{"leaf/leaf.go"},
+		},
+		{
+			name:    "an unconnected package reaches only itself",
+			changed: []string{"unrelated/other.go"},
+			want:    []string{"unrelated/other.go"},
+		},
+		{
+			name:    "a manifest edit stays conservative",
+			changed: []string{"go.mod"},
+			want:    []string{"base/base.go", "leaf/leaf.go", "mid/mid.go", "unrelated/other.go"},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := parser.SemanticAffectedPaths(root, all, testCase.changed)
+			sort.Strings(got)
+			want := append([]string(nil), testCase.want...)
+			sort.Strings(want)
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("affected paths = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+// TestWorkspaceSemanticKeyIgnoresUnreachableNonTypeEdits is the other half: a
+// function added to a package nothing imports must not move the repository-wide
+// key, because that key is what forces every Go file to be reparsed.
+func TestWorkspaceSemanticKeyIgnoresUnreachableNonTypeEdits(t *testing.T) {
+	root := testtemp.Dir(t)
+	writeFixture(t, root, map[string]string{
+		"go.mod":             "module example.com/fixture\n\ngo 1.26\n",
+		"base/base.go":       "package base\n\nfunc Base() string { return \"base\" }\n",
+		"unrelated/other.go": "package unrelated\n\nfunc Other() string { return \"other\" }\n",
+	})
+	all := []string{"go.mod", "base/base.go", "unrelated/other.go"}
+	parser := golangparser.New()
+	input := parserapi.Input{Root: root, SourcePaths: all}
+	before, err := parser.WorkspaceSemanticKey(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeFixture(t, root, map[string]string{
+		"unrelated/other.go": "package unrelated\n\nfunc Other() string { return \"other\" }\n\nfunc Added() string { return \"added\" }\n",
+	})
+	afterFunction, err := parser.WorkspaceSemanticKey(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterFunction != before {
+		t.Fatal("adding a function moved the repository-wide key, which reparses every Go file")
+	}
+
+	// An interface is the exception: satisfaction is matched globally, so a new
+	// interface anywhere can change any package's implements edges.
+	writeFixture(t, root, map[string]string{
+		"unrelated/other.go": "package unrelated\n\nfunc Other() string { return \"other\" }\n\ntype Stringer interface{ String() string }\n",
+	})
+	afterInterface, err := parser.WorkspaceSemanticKey(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterInterface == before {
+		t.Fatal("adding an interface left the repository-wide key unchanged")
+	}
+
+	// A struct cannot name an interface, so it stays package-local and reaches
+	// importers through the import closure instead.
+	writeFixture(t, root, map[string]string{
+		"unrelated/other.go": "package unrelated\n\nfunc Other() string { return \"other\" }\n\ntype Record struct{ Name string }\n",
+	})
+	afterStruct, err := parser.WorkspaceSemanticKey(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterStruct != before {
+		t.Fatal("adding a struct moved the repository-wide key")
+	}
+}
+
+func writeFixture(t *testing.T, root string, files map[string]string) {
+	t.Helper()
+	for name, content := range files {
+		path := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// effectiveSemanticKey returns the key the indexer actually mixes into a file's
+// content hash: the repository-wide workspace key refined by the file's package
+// scope. Asserting on it keeps staleness tests honest about the whole
+// invalidation contract rather than one of its two halves.
+func effectiveSemanticKey(t *testing.T, parser *golangparser.Parser, root, path string) string {
+	t.Helper()
+	workspaceKey, err := parser.WorkspaceSemanticKey(context.Background(),
+		parserapi.Input{Root: root, Repository: "sample", RepoID: "repo:sample"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileKey, err := parser.SemanticKey(context.Background(), parserapi.Input{
+		Root: root, Path: path, Repository: "sample", RepoID: "repo:sample", SemanticKey: workspaceKey,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fileKey
 }

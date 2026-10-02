@@ -297,8 +297,8 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	if len(supportedPaths) == 0 {
 		return report, fmt.Errorf("corpus has no tracked inputs supported by the production parser registry")
 	}
-	target := chooseMutationTarget(supportedPaths, registry)
-	expectedMutationPaths := registry.SemanticAffectedPaths(supportedPaths, []string{target})
+	target := chooseMutationTarget(source, supportedPaths, registry)
+	expectedMutationPaths := registry.SemanticAffectedPaths(source, supportedPaths, []string{target})
 	expectedDeletionPaths := make([]string, 0, len(expectedMutationPaths)-1)
 	for _, path := range expectedMutationPaths {
 		if path != target {
@@ -785,13 +785,13 @@ func collectCoverage(ctx context.Context, root string, registry *parserapi.Regis
 	return coverage, indexable, nil
 }
 
-func chooseMutationTarget(paths []string, registry *parserapi.Registry) string {
+func chooseMutationTarget(root string, paths []string, registry *parserapi.Registry) string {
 	preferences := []string{".go", ".gd", ".py", ".ts", ".tsx", ".sql", ".yaml", ".yml", ".json"}
 	fallback := paths[0]
 	for _, extension := range preferences {
 		for _, path := range paths {
 			if strings.EqualFold(filepath.Ext(path), extension) {
-				if len(registry.SemanticAffectedPaths(paths, []string{path})) == 1 {
+				if len(registry.SemanticAffectedPaths(root, paths, []string{path})) == 1 {
 					return path
 				}
 				fallback = path

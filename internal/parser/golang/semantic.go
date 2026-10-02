@@ -1431,111 +1431,25 @@ func relativeSourcePath(root, filename string) (string, bool) {
 	return filepath.ToSlash(relative), true
 }
 
-// semanticWorkspaceKey fingerprints the repository-wide Go facts that change
-// how an otherwise untouched Go file extracts: the build context, every module
-// and vendor manifest that selects the load plan, and the declaration surface
-// of every Go source file the toolchain compiles. Function bodies are
-// deliberately excluded because the statement-level analyzers only ever walk the
-// package they belong to; their blast radius is the package scope key instead.
+// semanticWorkspaceKey fingerprints the Go facts that no import edge can
+// bound: the build context, every module and vendor manifest that selects the
+// load plan, the Go workspace manifests, and the repository's type universe.
 //
-// "Every Go source file the toolchain compiles" is wider than the repository's
-// graph sources: it includes git-ignored siblings of a package and, for a module
-// that vendors, the vendor tree. See goSemanticSourcePaths for why resolution
-// evidence and graph membership are different questions.
+// The type universe is here, rather than in a package scope, because interface
+// satisfaction is matched globally: collectImplementations tests every concrete
+// type against the interfaces declared in every loaded package, so an interface
+// a package never imports can still decide that package's `implements` edges.
+//
+// Everything else a Go file depends on is reachable by import edges and lives in
+// packageScopeKey instead. See semantic_model.go for why that split is both
+// correct and what keeps a single declaration edit from reparsing a repository.
 func semanticWorkspaceKey(ctx context.Context, root string) (string, string, error) {
-	buildContext := buildContextString(root)
-	digest := newSemanticDigest(goSemanticSurfaceVersion)
-	digest.writeField(buildContext)
-	paths, err := semanticRepositoryPaths(ctx, root)
+	model, err := buildScopeModel(ctx, root)
 	if err != nil {
 		return "", "", err
 	}
-	// Manifests select the module graph and load mode for every package, so they
-	// remain fingerprinted in full, and only tracked manifests select anything.
-	digest.writeField("manifests")
-	for _, relative := range paths {
-		if !isGoManifestInput(relative) {
-			continue
-		}
-		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
-		if err != nil {
-			continue
-		}
-		digest.writeField(relative)
-		digest.writeBytes(content)
-	}
-	// The declaration surface is taken from the set go/packages compiles, not
-	// from the git-visible snapshot: a git-ignored sibling and a vendored
-	// dependency both decide how repository code type-checks.
-	sources, err := goSemanticSourcePaths(ctx, root, paths)
-	if err != nil {
-		return "", "", err
-	}
-	digest.writeField("unreadable")
-	for _, condition := range sources.Unreadable {
-		digest.writeField(condition)
-	}
-	digest.writeField("sources")
-	for _, relative := range sources.Paths {
-		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
-		if err != nil {
-			// A file listed on disk but unreadable now has no provable surface.
-			// Recording the condition keeps it out of the silent-staleness class:
-			// the key changes, and changes again when the file comes back.
-			digest.writeField(relative)
-			digest.writeField("unreadable:" + err.Error())
-			continue
-		}
-		digest.writeField(relative)
-		if isVendoredPath(relative) {
-			// A vendor tree can dwarf the repository, and parsing a declaration
-			// surface for each of its files is the single most expensive thing
-			// this key does: on a corpus whose vendor tree outnumbers its own
-			// sources 10:1 it cost more than five times the rest of a cold index.
-			//
-			// Vendored code is never extracted, so a vendored function body
-			// cannot change any graph node. Hashing the bytes instead of parsing
-			// them therefore costs only invalidation precision, never
-			// correctness: a vendored body edit now reparses the repository where
-			// a declaration edit already did. In practice that precision is not
-			// lost at all, because a vendor tree changes through `go mod vendor`,
-			// which rewrites vendor/modules.txt — already fingerprinted in full.
-			sum := sha256.Sum256(content)
-			digest.writeField("vendored:" + hex.EncodeToString(sum[:]))
-			continue
-		}
-		digest.writeField(declarationSurfaceDigest(relative, content))
-	}
-	// Vendor trees are not application modules, but their manifest controls
-	// the load mode and exact dependency graph for each eligible module.
-	for _, relative := range paths {
-		if filepath.Base(relative) != "go.mod" {
-			continue
-		}
-		vendorManifest := filepath.ToSlash(filepath.Join(filepath.Dir(relative), "vendor", "modules.txt"))
-		content, readErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(vendorManifest)))
-		if readErr != nil {
-			continue
-		}
-		digest.writeField(vendorManifest)
-		digest.writeBytes(content)
-	}
-	workspace := discoverGoWorkspace(root)
-	if workspace != "" && workspace != "off" {
-		for _, path := range []string{
-			workspace,
-			workspace + ".sum",
-			filepath.Join(filepath.Dir(workspace), "vendor", "modules.txt"),
-		} {
-			content, readErr := os.ReadFile(path)
-			if readErr != nil {
-				continue
-			}
-			digest.writeField(filepath.Clean(path))
-			digest.writeBytes(content)
-		}
-	}
-	return digest.sum(), buildContext, nil
+	storeScopeModel(root, model)
+	return model.RepositoryKey, model.BuildContext, nil
 }
 
 // declarationSurfaceDigest returns a stable digest of a Go file's declaration

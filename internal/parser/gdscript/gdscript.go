@@ -65,7 +65,7 @@ func (p *Parser) SemanticKey(ctx context.Context, input parserapi.Input) (string
 // SemanticAffectedPaths reparses every script under a Godot project whose
 // project.godot changed. SemanticDependencies matches only repository-root
 // paths, and a Godot project can sit in any subdirectory of a monorepo.
-func (*Parser) SemanticAffectedPaths(allPaths, changedPaths []string) []string {
+func (*Parser) SemanticAffectedPaths(_ string, allPaths, changedPaths []string) []string {
 	var roots []string
 	bindingChanged := false
 	for _, path := range changedPaths {

@@ -832,17 +832,63 @@ re-parsed from this worktree's content and a donor's untracked file is removed.
 Nothing is trusted from the donor's own description of its working tree.
 
 The saving is therefore proportional to how much content the two worktrees
-share. A worktree indexed at its donor's committed state reuses everything. A
-Go repository is more sensitive than that: the Go workspace semantic key digests
-every Go source in the repository and enters each file's content hash, so any
-difference in the declaration surface re-parses every Go file while non-Go files
-still reuse. Adoption is never incorrect in that case, only less profitable, and
-indexing a worktree before editing it is what realises the full saving.
+share. A worktree indexed at its donor's committed state reuses everything, and
+a worktree that has diverged reuses whatever its files still have in common with
+the donor's. Go files additionally obey the invalidation scoping described under
+"Go invalidation scope": a declaration edit in the donor's tree reaches the
+edited package and its importers, not every Go file.
 
 Every failure is a declined adoption rather than an error, and adoption runs
 before the index is opened, so a database it leaves behind faces the same
 migration and compatibility checks as any other. `--no-seed` declines for one
 invocation and `index.seed: false` in `grafo.yaml` declines for the repository.
+
+## Go invalidation scope
+
+A Go fact can be changed by three different things, and each has its own blast
+radius. Keeping them apart is what stops one declaration edit from reparsing a
+repository.
+
+- **The package's own contents.** The statement-level analyzers only walk the
+  package they belong to, so a function body is a package-local fact.
+  `packageScopeKey` digests the whole directory.
+- **The declarations of the packages it imports, transitively.** Identifier
+  resolution, call targets, promoted method sets, and constant folding all read
+  them. A package that cannot be reached by an import edge is irrelevant, which
+  is what bounds this to the import closure. The closure is digested from
+  declaration surfaces rather than contents, because a body in an imported
+  package is that package's own business.
+- **The repository's type universe.** This one is genuinely global:
+  `collectImplementations` tests every concrete type against the interfaces
+  declared in *every* loaded package, so adding a method to a type can create an
+  `implements` edge to an interface its package never imports. An interface
+  cannot be reached by import edges, so every type declaration that could name
+  one stays in the repository-wide key. A declaration that cannot be an
+  interface — a struct, array, map, channel, function, or pointer type — reaches
+  its dependents through the import closure instead.
+
+The repository-wide key also covers the build context, every module and vendor
+manifest, the Go workspace manifests, and imports that name a package inside
+this repository which holds no Go files. That last one is not reachable by
+import edges either: the toolchain cannot type-check the importing package, and
+a failed load changes which interfaces the type universe contains, so deleting a
+package can change an `implements` edge in a package that never imported it.
+
+Keys decide whether a visited file is reparsed, but a file the indexer never
+visits is never hashed, so `SemanticAffectedPaths` widens selection to the
+edited package and its transitive importers. The two halves have to move
+together: narrowing the keys alone would retain stale facts in a package whose
+dependency changed, and widening selection alone would reparse files whose keys
+prove they are unaffected.
+
+A package whose files do not parse has no readable imports, so it may depend on
+anything; its closure falls back to the whole repository rather than guessing a
+narrower answer.
+
+Correctness here is proven by equivalence rather than by argument:
+`TestIncrementalEditsMatchAColdIndexRowForRow` applies each edit shape and
+compares every node and fact row against a cold index of the same tree, because
+a count can match while a single edge points somewhere stale.
 
 ## Extension seams
 

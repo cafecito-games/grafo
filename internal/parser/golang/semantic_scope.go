@@ -2,6 +2,7 @@ package golang
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -21,8 +22,8 @@ import (
 // previously indexed graph cannot be reused against a different fingerprint.
 const goSemanticSurfaceVersion = "go-declaration-surface-v2"
 
-// goPackageScopeVersion tags the encoding of the package-local scope key.
-const goPackageScopeVersion = "go-package-scope-v1"
+// goPackageScopeVersion tags the encoding of the package scope key.
+const goPackageScopeVersion = "go-package-scope-v2"
 
 // goDeclarationSurface returns the token stream of a Go source file with every
 // top-level function body, and every comment that is not a compiler directive,
@@ -100,6 +101,33 @@ func goDeclarationSurface(path string, content []byte) ([]byte, error) {
 	return surface.Bytes(), nil
 }
 
+// normalizedTokens emits the token stream of a Go source fragment, dropping
+// comments. Emitting tokens rather than source text makes the result
+// independent of layout, so reformatting a declaration cannot change it while a
+// changed literal always does. Comments are dropped because this is only used
+// for the type universe, where no comment can change which concrete types
+// satisfy an interface; the directive comments that do select what the toolchain
+// sees are retained by goDeclarationSurface, which covers the same bytes.
+func normalizedTokens(path string, fragment []byte) []byte {
+	fset := token.NewFileSet()
+	scannedFile := fset.AddFile(path, fset.Base(), len(fragment))
+	var lexer scanner.Scanner
+	lexer.Init(scannedFile, fragment, nil, 0)
+	var tokens bytes.Buffer
+	tokens.Grow(len(fragment))
+	for {
+		_, tokenKind, literal := lexer.Scan()
+		if tokenKind == token.EOF {
+			break
+		}
+		tokens.WriteString(tokenKind.String())
+		tokens.WriteByte(0)
+		tokens.WriteString(literal)
+		tokens.WriteByte(0)
+	}
+	return tokens.Bytes()
+}
+
 type byteSpan struct {
 	start int
 	end   int
@@ -170,6 +198,28 @@ func isGoManifestInput(path string) bool {
 // leave a stale graph.
 func packageScopeKey(root, path string) (string, error) {
 	directory := goPackageDirectory(path)
+	own, err := packageContentDigest(root, directory)
+	if err != nil {
+		return "", err
+	}
+	// The packages this one imports, transitively, are the rest of what can
+	// change how its files extract. They are digested by their declaration
+	// surfaces rather than their contents, because a body in an imported package
+	// is that package's own business.
+	model, err := scopeModelFor(context.Background(), root)
+	if err != nil {
+		return "", err
+	}
+	digest := newSemanticDigest(goPackageScopeVersion)
+	digest.writeField("own")
+	digest.writeField(own)
+	digest.writeField("closure")
+	digest.writeField(model.Closure(directory))
+	return digest.sum(), nil
+}
+
+// packageContentDigest digests every Go source file in a package directory.
+func packageContentDigest(root, directory string) (string, error) {
 	absolute := filepath.Join(root, filepath.FromSlash(directory))
 	entries, err := os.ReadDir(absolute)
 	if err != nil {
