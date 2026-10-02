@@ -400,7 +400,13 @@ func (l *PackageLoader) cached(root, key, path string) (SemanticView, bool) {
 func (l *PackageLoader) decodeSegment(root, key, directory string, segment semanticViewSegment) (map[string]SemanticView, error) {
 	views, err := loadSemanticViewSegment(root, directory, segment)
 	if err != nil {
-		discardSemanticViewSegment(root, segment)
+		if errors.Is(err, errSemanticViewCacheUnusable) {
+			// The bytes themselves are wrong, so the file will never decode.
+			// A read that failed for any other reason — the file already gone,
+			// a transient device error — says nothing about its contents and
+			// costs a package re-encode if it is deleted on a guess.
+			discardSemanticViewSegment(root, segment)
+		}
 		// The adopted entry recorded a scope key for this package, so leaving it
 		// in place would let a later caller mistake the package for one the
 		// workspace load never produced and serve it an unloaded view. The whole
@@ -419,6 +425,14 @@ func (l *PackageLoader) decodeSegment(root, key, directory string, segment seman
 	defer l.mu.Unlock()
 	current, ok := l.cache[root]
 	if !ok || current.key != key {
+		return views, nil
+	}
+	if _, pending := current.segments[directory]; !pending {
+		// Either another goroutine already materialized this package, or the
+		// adopted entry this decode started from has been replaced by one a real
+		// load derived. A derived entry's views map is handed to the store and
+		// read back without the lock, so merging into it would write to a map
+		// another goroutine is iterating.
 		return views, nil
 	}
 	for viewPath, view := range views {

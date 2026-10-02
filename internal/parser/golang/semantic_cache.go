@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cafecito-games/grafo/internal/indexversion"
 )
@@ -76,6 +77,10 @@ const semanticViewCacheVersion = "go-semantic-views-v2"
 // semanticViewSegmentPrefix marks the per-package files inside the cache
 // directory, so pruning never considers anything it did not write.
 const semanticViewSegmentPrefix = "package-"
+
+// temporaryFilePrefix marks the unpublished files publishFile creates, so a
+// killed run's residue is recognizable without being mistaken for a segment.
+const temporaryFilePrefix = ".go-semantic-views-"
 
 // semanticViewCacheDirectory holds one repository root's index and package
 // segments. It lives under .grafo, which is never committed and already holds
@@ -230,6 +235,11 @@ type semanticViewCacheWrite struct {
 // unwritable simply keeps recomputing views.
 func storeSemanticViewCache(root, buildContext string, entry cachedWorkspace) (semanticViewCacheWrite, error) {
 	var written semanticViewCacheWrite
+	// Nothing reads the legacy payload, so it goes whether or not this store has
+	// anything to publish. Leaving it for a successful publish would keep a
+	// whole workspace of unreadable views in .grafo for every repository whose
+	// packages this run could not prove.
+	_ = os.Remove(legacySemanticViewCachePath(root))
 	if len(entry.views) == 0 {
 		// Nothing worth reusing, and an empty payload would be rejected on read.
 		return written, nil
@@ -270,7 +280,6 @@ func storeSemanticViewCache(root, buildContext string, entry cachedWorkspace) (s
 	}
 	written.Index = true
 	pruneSemanticViewSegments(directory, packages)
-	_ = os.Remove(legacySemanticViewCachePath(root))
 	return written, nil
 }
 
@@ -337,10 +346,18 @@ func writeSemanticViewIndex(root, buildContext, key string, packages map[string]
 	return publishFile(semanticViewIndexPath(root), encoded.Bytes())
 }
 
+// abandonedTemporaryAge is how long an unpublished temporary must have gone
+// untouched before pruning treats it as the residue of a killed run. A store
+// publishes within milliseconds of creating one, so nothing this old is still
+// being written — including by another process, whose in-flight temporary must
+// never be removed under it.
+const abandonedTemporaryAge = time.Hour
+
 // pruneSemanticViewSegments removes the segments the freshly published index no
-// longer references. The index is renamed first, so a concurrent reader either
-// sees the new index and the files it names, or sees the old index and fails
-// closed on a segment that has gone.
+// longer references, along with the temporaries of runs that were killed between
+// creating one and publishing it. The index is renamed first, so a concurrent
+// reader either sees the new index and the files it names, or sees the old index
+// and fails closed on a segment that has gone.
 func pruneSemanticViewSegments(directory string, packages map[string]semanticViewSegment) {
 	referenced := make(map[string]struct{}, len(packages))
 	for _, segment := range packages {
@@ -352,7 +369,17 @@ func pruneSemanticViewSegments(directory string, packages map[string]semanticVie
 	}
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || !strings.HasPrefix(name, semanticViewSegmentPrefix) {
+		if entry.IsDir() {
+			continue
+		}
+		if strings.HasPrefix(name, temporaryFilePrefix) {
+			info, err := entry.Info()
+			if err == nil && time.Since(info.ModTime()) > abandonedTemporaryAge {
+				_ = os.Remove(filepath.Join(directory, name))
+			}
+			continue
+		}
+		if !strings.HasPrefix(name, semanticViewSegmentPrefix) {
 			continue
 		}
 		if _, keep := referenced[name]; keep {
@@ -364,7 +391,7 @@ func pruneSemanticViewSegments(directory string, packages map[string]semanticVie
 
 // publishFile writes content to path atomically.
 func publishFile(path string, content []byte) error {
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".go-semantic-views-*")
+	temporary, err := os.CreateTemp(filepath.Dir(path), temporaryFilePrefix+"*")
 	if err != nil {
 		return err
 	}

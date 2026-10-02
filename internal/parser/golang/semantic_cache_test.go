@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	"github.com/cafecito-games/grafo/internal/testtemp"
@@ -583,5 +584,103 @@ func encodeSegmentFile(t *testing.T, root, directory string, file semanticViewSe
 	path := filepath.Join(semanticViewCacheDirectory(root), segment.Name)
 	if err := os.WriteFile(path, encoded.Bytes(), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestSegmentDecodeMergesOnlyIntoTheEntryItRead pins the ownership rule that
+// keeps the lazy decode off another goroutine's map. An entry a real load derived
+// is handed to the store and read back without the lock, so a decode that
+// started from the adopted entry must not write into it just because the
+// workspace key still matches; an entry that still lists the package as pending
+// is the decode's own and does take the views.
+func TestSegmentDecodeMergesOnlyIntoTheEntryItRead(t *testing.T) {
+	root := semanticCacheModule(t)
+	loadAppView(t, NewPackageLoader(), root)
+	segment := decodeIndex(t, root).Packages["app"]
+
+	derived := cachedWorkspace{
+		key:    "key",
+		views:  map[string]SemanticView{},
+		scopes: map[string]string{"app": segment.ScopeKey},
+	}
+	loader := NewPackageLoader()
+	loader.cache[root] = derived
+	views, err := loader.decodeSegment(root, "key", "app", segment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(views) == 0 {
+		t.Fatal("decode returned no views")
+	}
+	if len(derived.views) != 0 {
+		t.Fatalf("decode merged into an entry it did not read: %#v", derived.views)
+	}
+
+	adopted := cachedWorkspace{
+		key:      "key",
+		views:    map[string]SemanticView{},
+		scopes:   map[string]string{"app": segment.ScopeKey},
+		segments: map[string]semanticViewSegment{"app": segment},
+	}
+	loader.cache[root] = adopted
+	if _, err := loader.decodeSegment(root, "key", "app", segment); err != nil {
+		t.Fatal(err)
+	}
+	if len(adopted.views) != len(views) {
+		t.Fatalf("decode did not materialize its own entry: %#v", adopted.views)
+	}
+	if _, pending := adopted.segments["app"]; pending {
+		t.Fatal("a materialized package is still listed as pending")
+	}
+}
+
+// TestLegacyPayloadIsRemovedEvenWhenNothingIsPublished covers the repository
+// whose packages a run cannot prove: nothing reads the previous encoding's
+// whole-workspace payload, so it must not survive on the strength of a store
+// that had nothing to publish.
+func TestLegacyPayloadIsRemovedEvenWhenNothingIsPublished(t *testing.T) {
+	root := testtemp.Dir(t)
+	legacy := legacySemanticViewCachePath(root)
+	writeCacheFile(t, legacy, "views from a previous encoding")
+	if _, err := storeSemanticViewCache(root, "context", cachedWorkspace{key: "key"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("legacy payload survived a store with nothing to publish: %v", err)
+	}
+}
+
+// TestStoreSemanticViewCachePrunesAbandonedTemporariesOnly keeps the residue of
+// a killed run from accumulating, without ever removing a temporary another
+// process is still writing.
+func TestStoreSemanticViewCachePrunesAbandonedTemporariesOnly(t *testing.T) {
+	root := testtemp.Dir(t)
+	entry := cachedWorkspace{
+		key:    "key",
+		views:  map[string]SemanticView{"pkg/a.go": {Available: true, Included: true}},
+		scopes: map[string]string{"pkg": "scope"},
+	}
+	if _, err := storeSemanticViewCache(root, "context", entry); err != nil {
+		t.Fatal(err)
+	}
+	directory := semanticViewCacheDirectory(root)
+	fresh := filepath.Join(directory, temporaryFilePrefix+"fresh")
+	abandoned := filepath.Join(directory, temporaryFilePrefix+"abandoned")
+	writeCacheFile(t, fresh, "in flight")
+	writeCacheFile(t, abandoned, "killed before publishing")
+	stale := time.Now().Add(-2 * abandonedTemporaryAge)
+	if err := os.Chtimes(abandoned, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	entry.scopes = map[string]string{"pkg": "moved"}
+	if _, err := storeSemanticViewCache(root, "context", entry); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Fatalf("a temporary another run may still be writing was pruned: %v", err)
+	}
+	if _, err := os.Stat(abandoned); !os.IsNotExist(err) {
+		t.Fatalf("an abandoned temporary survived: %v", err)
 	}
 }
