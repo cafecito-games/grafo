@@ -23,10 +23,15 @@ func run() int {
 	flags.StringVar(&options.Output, "output", os.Getenv("GRAFO_BENCH_OUTPUT"), "artifact directory (or GRAFO_BENCH_OUTPUT)")
 	flags.StringVar(&options.Baseline, "baseline", os.Getenv("GRAFO_BENCH_BASELINE"), "compatible report to validate (or GRAFO_BENCH_BASELINE)")
 	flags.StringVar(&options.Engine, "engine", os.Getenv("GRAFO_BENCH_ENGINE"), "storage engine: sqlite, bbolt, or pebble (or GRAFO_BENCH_ENGINE)")
+	workers, err := environmentInt("GRAFO_BENCH_PARSE_WORKERS")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "grafo benchmark:", err)
+		return 2
+	}
+	flags.IntVar(&options.ParseWorkers, "parse-workers", workers, "parse pool size, 0 for the derived default (or GRAFO_BENCH_PARSE_WORKERS)")
 	if err := flags.Parse(os.Args[1:]); err != nil {
 		return 2
 	}
-	var err error
 	if options.MaxWALBytes, err = environmentInt64("GRAFO_BENCH_MAX_WAL_BYTES"); err != nil {
 		fmt.Fprintln(os.Stderr, "grafo benchmark:", err)
 		return 2
@@ -47,6 +52,21 @@ func run() int {
 	}
 	_, _ = fmt.Fprintln(os.Stdout, report.Artifacts.Report)
 	return 0
+}
+
+// environmentInt reads a positive count, rejecting a value that is not one so a
+// mistyped worker count fails the run rather than silently measuring the
+// default.
+func environmentInt(name string) (int, error) {
+	value := os.Getenv(name)
+	if value == "" {
+		return 0, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("%s must be a positive worker count", name)
+	}
+	return parsed, nil
 }
 
 func environmentInt64(name string) (int64, error) {

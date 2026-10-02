@@ -56,7 +56,7 @@ func TestScenarioRecountsWhenRunDidNotCollectCounts(t *testing.T) {
 	root := fixtureRepository(t)
 	database := filepath.Join(testtemp.Dir(t), "scenario.db")
 
-	scenario, err := executeScenarioRun(context.Background(), "sqlite", ScenarioReport{Name: "recount"}, root, database, nil)
+	scenario, err := executeScenarioRun(context.Background(), "sqlite", ScenarioReport{Name: "recount"}, root, database, 0, nil)
 	if err != nil {
 		t.Fatalf("recoverable count failure failed the scenario: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestScenarioFailsWhenRecountAlsoFails(t *testing.T) {
 	root := fixtureRepository(t)
 	database := filepath.Join(testtemp.Dir(t), "scenario.db")
 
-	scenario, err := executeScenarioRun(context.Background(), "sqlite", ScenarioReport{Name: "recount"}, root, database, nil)
+	scenario, err := executeScenarioRun(context.Background(), "sqlite", ScenarioReport{Name: "recount"}, root, database, 0, nil)
 	if err == nil {
 		t.Fatal("an unrecoverable count failure did not fail the scenario")
 	}

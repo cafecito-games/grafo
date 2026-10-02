@@ -22,10 +22,12 @@ import (
 // several repositories index at once and each one brings its own pool.
 const maxParseWorkers = 8
 
-// resolveParseWorkers selects how many goroutines read, hash, and parse files
+// ResolveParseWorkers selects how many goroutines read, hash, and parse files
 // ahead of the ordered writer. A resolved count of one runs the stage inline on
 // the writer goroutine, which is byte-for-byte the historical sequential path.
-func resolveParseWorkers(requested int) int {
+// It is exported so a caller that reports the count it ran under derives it
+// here rather than reimplementing the derivation.
+func ResolveParseWorkers(requested int) int {
 	if requested > 0 {
 		return requested
 	}
@@ -137,6 +139,18 @@ func (stage *fileStage) prepare(ctx context.Context, path string) fileOutcome {
 		_, _ = digest.Write([]byte{0})
 		_, _ = digest.Write([]byte(semanticKey))
 		input.SemanticKey = semanticKey
+	}
+	// Deriving the scope-local part of the key can cost real filesystem work,
+	// and the parser needs the same value again when it decides whether its
+	// cached semantic view is still valid. Derive it once here and carry it, so
+	// the refinement below and the parse that follows both read one value.
+	if scopeKeyer, ok := languageParser.(parserapi.ScopeKeyer); ok {
+		scopeKey, scopeErr := scopeKeyer.ScopeKey(ctx, input)
+		if scopeErr != nil {
+			return fileOutcome{path: path, kind: outcomeFailed,
+				err: fmt.Errorf("derive parser scope key for %s: %w", path, scopeErr)}
+		}
+		input.ScopeKey = scopeKey
 	}
 	// A workspace keyer may also refine its shared key per file. The
 	// refinement enters the content hash only: Input.SemanticKey stays the
