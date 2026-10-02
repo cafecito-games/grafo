@@ -8,3 +8,6 @@
 
 # GoReleaser build output
 dist/
+
+# Zig cross-compilation cache (setup-zig points it at the workspace)
+.zig-cache/
