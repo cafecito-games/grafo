@@ -15,11 +15,34 @@ import (
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 )
 
-// maxParseWorkers caps the automatically derived worker count. Reading, hashing,
-// and parsing stop scaling well before the core count of a large machine, and
-// every additional worker also raises the number of parsed results held in
-// memory ahead of the single writer. The cap matters most in service mode, where
-// several repositories index at once and each one brings its own pool.
+// maxParseWorkers caps the automatically derived worker count.
+//
+// Eight is measured rather than assumed. A cold index of cafecito-games/uzir at
+// 638159ead (11,696 indexed files) on a 12-core machine:
+//
+//	workers   wall    aggregate parse   peak RSS
+//	      4   394.7s            169.3s   5.34 GiB
+//	      8   314.5s            202.4s   6.52 GiB
+//	     12   320.7s            249.8s   6.47 GiB
+//	     16   330.5s            359.2s   6.57 GiB
+//
+// Four workers leave the stage underparallelized. Past eight, wall clock gets
+// worse while the parse work summed across workers keeps growing, which is the
+// signature of contention rather than of more work: the same files cost more
+// CPU when more workers race for them. So the cap is not leaving throughput on
+// the table on a larger machine, and raising it would cost wall clock and
+// memory. Lowering the contention is what would move this number, not raising
+// it.
+//
+// Every additional worker also raises the number of parsed results held in
+// memory ahead of the single writer, on top of the grouped commits in
+// service.go, which is why worker count and group size belong together.
+//
+// The cap matters most in service mode, where several repositories index at
+// once and each one brings its own pool: this bounds one pool, not their sum.
+// On this 12-core machine the supervisor's default concurrency of four roots
+// means 4 x 8 = 32 parse workers plus four writers. Issue #185 owns that
+// aggregate; do not raise this constant without reading it.
 const maxParseWorkers = 8
 
 // ResolveParseWorkers selects how many goroutines read, hash, and parse files
