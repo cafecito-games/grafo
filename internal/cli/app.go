@@ -108,85 +108,12 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		return 2
 	}
 	var runErr error
-	switch parsed.command {
-	case "install":
-		runErr = a.install(ctx, parsed)
-	case "uninstall":
-		runErr = a.uninstall(ctx, parsed)
-	case "guidance":
-		runErr = a.guidance(ctx, parsed)
-	case "index":
-		runErr = a.index(ctx, parsed)
-	case "indexes":
-		runErr = a.indexes(ctx, parsed)
-	case "watch":
-		runErr = a.watch(ctx, parsed)
-	case "service":
-		runErr = a.service(ctx, parsed)
-	case "doctor":
-		runErr = a.doctor(ctx, parsed)
-	case "status", "counts":
-		runErr = a.status(ctx, parsed)
-	case "mcp":
-		runErr = a.mcp(ctx, parsed)
-	case "embed":
-		runErr = a.embed(ctx, parsed)
-	case "embed-cache":
-		runErr = a.embedCache(ctx, parsed)
-	case "reusable", "find-reusable-code":
-		runErr = a.reusable(ctx, parsed)
-	case "find":
-		runErr = a.find(ctx, parsed)
-	case "show":
-		runErr = a.show(ctx, parsed)
-	case "source":
-		runErr = a.source(ctx, parsed)
-	case "neighbors", "query":
-		runErr = a.neighbors(ctx, parsed, "")
-	case "callers":
-		runErr = a.neighbors(ctx, parsed, "callers")
-	case "callees":
-		runErr = a.neighbors(ctx, parsed, "callees")
-	case "impact", "blast-radius":
-		runErr = a.impact(ctx, parsed)
-	case "failure-flow", "get-failure-flow":
-		runErr = a.failureFlow(ctx, parsed)
-	case "search":
-		runErr = a.search(ctx, parsed)
-	case "path":
-		runErr = a.path(ctx, parsed)
-	case "data-resources":
-		runErr = a.dataResources(ctx, parsed)
-	case "data-usage":
-		runErr = a.dataResourceUsage(ctx, parsed)
-	case "config-keys":
-		runErr = a.configKeys(ctx, parsed)
-	case "events":
-		runErr = a.events(ctx, parsed)
-	case "orphaned-events":
-		runErr = a.orphanedEvents(ctx, parsed)
-	case "endpoints", "list-endpoints", "list_endpoints":
-		runErr = a.endpoints(ctx, parsed)
-	case "outbound-requests", "list-outbound-requests", "list_outbound_requests":
-		runErr = a.outboundRequests(ctx, parsed)
-	case "find-handler", "find_handler":
-		runErr = a.findHandler(ctx, parsed)
-	case "service-topology", "get-service-topology", "get_service_topology":
-		runErr = a.serviceTopology(ctx, parsed)
-	case "message-flow", "get-message-flow", "get_message_flow":
-		runErr = a.messageFlow(ctx, parsed)
-	case "message-coverage", "list-message-coverage", "list_message_coverage":
-		runErr = a.messageCoverage(ctx, parsed)
-	case "find-tests", "find_tests":
-		runErr = a.testCoverage(ctx, parsed, true)
-	case "test-coverage", "get-test-coverage", "get_test_coverage":
-		runErr = a.testCoverage(ctx, parsed, false)
-	default:
-		if namespace, known := toolchainNamespaces[parsed.command]; known {
-			runErr = a.toolchainCommand(ctx, namespace, parsed)
-		} else {
-			runErr = fmt.Errorf("unknown command %q (run 'grafo help')", parsed.command)
-		}
+	if handler, dispatched := commandHandlers[parsed.command]; dispatched {
+		runErr = handler(a, ctx, parsed)
+	} else if namespace, known := toolchainNamespaces[parsed.command]; known {
+		runErr = a.toolchainCommand(ctx, namespace, parsed)
+	} else {
+		runErr = unknownCommandError(parsed.command)
 	}
 	if runErr != nil {
 		var rendered *progressRenderedError
