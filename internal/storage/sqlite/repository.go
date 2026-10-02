@@ -96,13 +96,34 @@ func Open(ctx context.Context, path string) (*Repository, error) {
 	return repository, nil
 }
 
+// pageCacheKiB caps the page cache of a writable connection. Indexing inserts
+// node, fact, and edge rows keyed by content hash, so every secondary index
+// receives its entries in random order and each one touches a different b-tree
+// page. Under SQLite's default cache of 2 MiB a repository whose index outgrows
+// it re-reads nearly every page it writes. The cap is a ceiling rather than a
+// reservation: SQLite allocates pages on demand, so an idle connection holds
+// almost nothing and only a connection that is actively rewriting a large graph
+// approaches the limit.
+const pageCacheKiB = 512 * 1024
+
+// indexPageSize is the page size of a newly created index. Larger pages hold
+// more index entries per read and turn the random b-tree traffic above into
+// fewer, larger I/O operations. SQLite only honors the pragma while the
+// database is empty and not yet in WAL mode, so it applies to indexes this
+// version creates; one created by an earlier version keeps its own page size
+// until it is rebuilt.
+const indexPageSize = 16384
+
 // writableConnectionPragmas configures a writable connection. busy_timeout is
 // deliberately first: it is pure connection-local lock policy that cannot
 // block, while journal_mode=WAL needs the database lock and therefore fails
 // immediately with SQLITE_BUSY_RECOVERY when another writer holds it and the
-// timeout is still SQLite's default of zero.
+// timeout is still SQLite's default of zero. page_size has to precede
+// journal_mode because SQLite ignores it once a database is in WAL mode.
 var writableConnectionPragmas = []string{
 	"PRAGMA busy_timeout=5000",
+	fmt.Sprintf("PRAGMA page_size=%d", indexPageSize),
+	fmt.Sprintf("PRAGMA cache_size=-%d", pageCacheKiB),
 	"PRAGMA journal_mode=WAL",
 	"PRAGMA synchronous=NORMAL",
 	"PRAGMA wal_autocheckpoint=1000",

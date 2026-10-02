@@ -81,3 +81,56 @@ func TestConfigureWritableConnectionWaitsOutContendedJournalMode(t *testing.T) {
 		t.Fatalf("journal mode = %q, want wal", mode)
 	}
 }
+
+// TestWritableConnectionSetsPageSizeBeforeJournalMode pins the second ordering
+// constraint: SQLite ignores page_size once a database is in WAL mode, so a
+// fresh index would silently keep the default page size if the pragmas were
+// applied the other way round.
+func TestWritableConnectionSetsPageSizeBeforeJournalMode(t *testing.T) {
+	pageSizeIndex, journalModeIndex := -1, -1
+	for index, pragma := range writableConnectionPragmas {
+		switch {
+		case strings.Contains(pragma, "page_size"):
+			pageSizeIndex = index
+		case strings.Contains(pragma, "journal_mode"):
+			journalModeIndex = index
+		}
+	}
+	if pageSizeIndex < 0 {
+		t.Fatalf("writable pragmas set no page size: %#v", writableConnectionPragmas)
+	}
+	if journalModeIndex < 0 {
+		t.Fatalf("writable pragmas set no journal mode: %#v", writableConnectionPragmas)
+	}
+	if pageSizeIndex > journalModeIndex {
+		t.Fatalf("page_size is applied after journal_mode: %#v", writableConnectionPragmas)
+	}
+}
+
+// TestOpenAppliesPageSizeAndPageCache covers the effect rather than the order:
+// a newly created index has to come out with the larger page size and the
+// raised cache ceiling, because random secondary-index writes are what the two
+// settings exist to absorb.
+func TestOpenAppliesPageSizeAndPageCache(t *testing.T) {
+	ctx := context.Background()
+	repository, err := Open(ctx, filepath.Join(testtemp.Dir(t), "graph.db"))
+	if err != nil {
+		t.Fatalf("open graph: %v", err)
+	}
+	defer func() { _ = repository.Close() }()
+
+	var pageSize int
+	if err := repository.db.QueryRowContext(ctx, "PRAGMA page_size").Scan(&pageSize); err != nil {
+		t.Fatalf("read page size: %v", err)
+	}
+	if pageSize != indexPageSize {
+		t.Fatalf("page size = %d, want %d", pageSize, indexPageSize)
+	}
+	var cacheSize int
+	if err := repository.db.QueryRowContext(ctx, "PRAGMA cache_size").Scan(&cacheSize); err != nil {
+		t.Fatalf("read cache size: %v", err)
+	}
+	if cacheSize != -pageCacheKiB {
+		t.Fatalf("cache size = %d, want %d", cacheSize, -pageCacheKiB)
+	}
+}
