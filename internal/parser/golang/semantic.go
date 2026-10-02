@@ -193,8 +193,14 @@ type SemanticLoadMetrics struct {
 	// cache, and PersistedSaves the entries written to it.
 	PersistedHits  int64
 	PersistedSaves int64
-	PeakConcurrent int64
-	LastDurationMS int64
+	// PersistedDecodes counts the package segments decoded from an adopted
+	// entry, and PersistedSegmentWrites the segments re-encoded by a save. Both
+	// stay well below the package count on an incremental refresh: a run reads
+	// and rewrites the packages its edit touched, not the workspace.
+	PersistedDecodes       int64
+	PersistedSegmentWrites int64
+	PeakConcurrent         int64
+	LastDurationMS         int64
 }
 
 type cachedWorkspace struct {
@@ -204,6 +210,11 @@ type cachedWorkspace struct {
 	// The workspace key deliberately excludes function bodies, so a cached
 	// view is only reusable while its own package is also unchanged.
 	scopes map[string]string
+	// segments locates the persisted views of each package directory this
+	// process has not decoded yet. An adopted entry starts with every package
+	// here and empty views; a directory moves into views when a caller needs it,
+	// so a run never decodes a package it does not read.
+	segments map[string]semanticViewSegment
 }
 
 // PackageLoader is the production go/packages adapter. A single load at a time
@@ -213,13 +224,15 @@ type PackageLoader struct {
 	mu    sync.Mutex
 	cache map[string]cachedWorkspace
 
-	loads          atomic.Int64
-	cacheHits      atomic.Int64
-	persistedHits  atomic.Int64
-	persistedSaves atomic.Int64
-	active         atomic.Int64
-	peakConcurrent atomic.Int64
-	lastDurationMS atomic.Int64
+	loads                  atomic.Int64
+	cacheHits              atomic.Int64
+	persistedHits          atomic.Int64
+	persistedSaves         atomic.Int64
+	persistedDecodes       atomic.Int64
+	persistedSegmentWrites atomic.Int64
+	active                 atomic.Int64
+	peakConcurrent         atomic.Int64
+	lastDurationMS         atomic.Int64
 }
 
 var packageLoadGate = make(chan struct{}, 1)
@@ -232,7 +245,9 @@ func (l *PackageLoader) Metrics() SemanticLoadMetrics {
 	return SemanticLoadMetrics{
 		Loads: l.loads.Load(), CacheHits: l.cacheHits.Load(),
 		PersistedHits: l.persistedHits.Load(), PersistedSaves: l.persistedSaves.Load(),
-		PeakConcurrent: l.peakConcurrent.Load(), LastDurationMS: l.lastDurationMS.Load(),
+		PersistedDecodes:       l.persistedDecodes.Load(),
+		PersistedSegmentWrites: l.persistedSegmentWrites.Load(),
+		PeakConcurrent:         l.peakConcurrent.Load(), LastDurationMS: l.lastDurationMS.Load(),
 	}
 }
 
@@ -295,8 +310,9 @@ func (l *PackageLoader) Load(ctx context.Context, input parserapi.Input) (Semant
 	l.mu.Unlock()
 	// A cache that cannot be written is not an indexing failure: the run has the
 	// views it needs and the next one recomputes them.
-	if err := storeSemanticViewCache(root, buildContext, entry); err == nil {
+	if written, err := storeSemanticViewCache(root, buildContext, entry); err == nil && written.Index {
 		l.persistedSaves.Add(1)
+		l.persistedSegmentWrites.Add(int64(written.Segments))
 	}
 	if view, ok := views[path]; ok {
 		return cloneSemanticView(view), nil
@@ -305,40 +321,51 @@ func (l *PackageLoader) Load(ctx context.Context, input parserapi.Input) (Semant
 }
 
 // adoptPersisted installs the cross-process entry for root when it is reusable,
-// reporting whether the in-process cache now holds it. It must be called while
-// the package load gate is held, so one process never adopts over views another
-// goroutine just derived.
+// reporting whether the in-process cache now holds it. Only the package index is
+// read here: the adopted entry carries every package's scope key and no views,
+// so a caller whose package moved costs one small file read rather than a decode
+// of the whole workspace. It must be called while the package load gate is held,
+// so one process never adopts over views another goroutine just derived.
 func (l *PackageLoader) adoptPersisted(root, key, buildContext string) bool {
 	l.mu.Lock()
 	existing, held := l.cache[root]
 	l.mu.Unlock()
 	if held && existing.key == key {
-		// Already adopted or derived in this process; re-reading the file would
-		// only cost a decode of views the caller is about to reject anyway.
+		// Already adopted or derived in this process.
 		return true
 	}
-	entry, err := loadSemanticViewCache(root, key, buildContext)
+	packages, err := loadSemanticViewIndex(root, key, buildContext)
 	if err != nil {
 		return false
+	}
+	scopes := make(map[string]string, len(packages))
+	for directory, segment := range packages {
+		scopes[directory] = segment.ScopeKey
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if current, ok := l.cache[root]; ok && current.key == key {
 		return true
 	}
-	l.cache[root] = entry
+	l.cache[root] = cachedWorkspace{
+		key: key, views: map[string]SemanticView{},
+		scopes: scopes, segments: packages,
+	}
 	return true
 }
 
 func (l *PackageLoader) cached(root, key, path string) (SemanticView, bool) {
+	directory := goPackageDirectory(path)
 	l.mu.Lock()
 	entry, ok := l.cache[root]
-	l.mu.Unlock()
 	if !ok || entry.key != key {
+		l.mu.Unlock()
 		return SemanticView{}, false
 	}
 	view, exists := entry.views[path]
-	recorded, known := entry.scopes[goPackageDirectory(path)]
+	recorded, known := entry.scopes[directory]
+	segment, pending := entry.segments[directory]
+	l.mu.Unlock()
 	if !exists && !known {
 		// The workspace load produced no package for this path and none for any
 		// sibling, so there is no loaded evidence to go stale: the synthesized
@@ -351,11 +378,70 @@ func (l *PackageLoader) cached(root, key, path string) (SemanticView, bool) {
 	if err != nil || recorded != scope {
 		return SemanticView{}, false
 	}
+	if pending && !exists {
+		decoded, decodeErr := l.decodeSegment(root, key, directory, segment)
+		if decodeErr != nil {
+			// An unusable segment is a miss like any other, so the caller runs a
+			// real load rather than serving a package no evidence backs.
+			return SemanticView{}, false
+		}
+		view, exists = decoded[path]
+	}
 	l.cacheHits.Add(1)
 	if !exists {
 		return cloneSemanticView(unloadedSemanticView(root, path, buildContextString(root))), true
 	}
 	return cloneSemanticView(view), true
+}
+
+// decodeSegment materializes one pending package directory into the entry for
+// root and returns its views. Concurrent callers on the same directory may each
+// decode it; the payload is one package, and merging is idempotent.
+func (l *PackageLoader) decodeSegment(root, key, directory string, segment semanticViewSegment) (map[string]SemanticView, error) {
+	views, err := loadSemanticViewSegment(root, directory, segment)
+	if err != nil {
+		if errors.Is(err, errSemanticViewCacheUnusable) {
+			// The bytes themselves are wrong, so the file will never decode.
+			// A read that failed for any other reason — the file already gone,
+			// a transient device error — says nothing about its contents and
+			// costs a package re-encode if it is deleted on a guess.
+			discardSemanticViewSegment(root, segment)
+		}
+		// The adopted entry recorded a scope key for this package, so leaving it
+		// in place would let a later caller mistake the package for one the
+		// workspace load never produced and serve it an unloaded view. The whole
+		// entry goes, and every caller falls through to a real load.
+		l.mu.Lock()
+		if current, ok := l.cache[root]; ok && current.key == key {
+			if _, stale := current.segments[directory]; stale {
+				delete(l.cache, root)
+			}
+		}
+		l.mu.Unlock()
+		return nil, err
+	}
+	l.persistedDecodes.Add(1)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	current, ok := l.cache[root]
+	if !ok || current.key != key {
+		return views, nil
+	}
+	if _, pending := current.segments[directory]; !pending {
+		// Either another goroutine already materialized this package, or the
+		// adopted entry this decode started from has been replaced by one a real
+		// load derived. A derived entry's views map is handed to the store and
+		// read back without the lock, so merging into it would write to a map
+		// another goroutine is iterating.
+		return views, nil
+	}
+	for viewPath, view := range views {
+		if _, held := current.views[viewPath]; !held {
+			current.views[viewPath] = view
+		}
+	}
+	delete(current.segments, directory)
+	return views, nil
 }
 
 // packageScopeKeys records the scope key of every package directory the load

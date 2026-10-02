@@ -722,14 +722,32 @@ Derived Go semantic views also outlive the process that computed them. Every
 parsed one Go file paid a full `packages.Load` of the owning module with
 `NeedTypes | NeedDeps | NeedSyntax | NeedTypesInfo` and `Tests: true`. The views
 are already compact — they retain no `go/ast` or `go/types` objects — so
-`internal/parser/golang/semantic_cache.go` persists one workspace entry per root
-under `.grafo/cache`, and reuse is fail-closed on all of: the encoding version,
-the semantic-index version, the workspace key, the build context, a digest over
-the payload bytes, a successful decode, and a non-empty view set. A payload that
-decodes to no views is rejected rather than served, because empty views silently
-drop every cross-file edge and look like a repository with nothing to resolve.
-Per-package staleness is unchanged: an adopted entry is still revalidated against
-each path's package scope key, so an edited package re-derives its evidence.
+`internal/parser/golang/semantic_cache.go` persists them under `.grafo/cache`,
+and reuse is fail-closed on all of: the encoding version, the semantic-index
+version, the workspace key, the build context, the package a payload claims to
+hold, a digest over the payload bytes, a successful decode, and a non-empty view
+set. A payload that decodes to no views is rejected rather than served, because
+empty views silently drop every cross-file edge and look like a repository with
+nothing to resolve. Per-package staleness is unchanged: a persisted package is
+still revalidated against the path's package scope key, so an edited package
+re-derives its evidence.
+
+The unit of persistence is one package directory, because that is the unit a
+single Go edit invalidates. A whole-workspace payload made the most common
+incremental operation slower than having no cache at all: a one-line Go body edit
+leaves the workspace key alone but moves the edited package's scope key, so a run
+decoded a 118.5 MB payload, was correctly rejected for the one package it needed,
+ran a real `packages.Load` anyway, and re-encoded every other package to rewrite
+it unchanged — 21.7s and 4763 MB before the cache existed against 32.3s and
+5198 MB with it, with peak memory above the uncached baseline because the adopted
+views stayed resident while the fresh load built its package graph. So the cache
+is an index file naming each package's scope key, segment file and digest, plus
+one content-addressed segment per package. A run reads a few kilobytes to learn
+whether the package it wants is current and decodes that package alone, and a
+store carries every segment whose scope key still matches forward by reference
+and re-encodes only the packages that moved. A segment that fails to decode is
+deleted rather than carried forward, so a corrupted cache heals on the next store
+instead of making every later run pay a full load over it.
 
 TypeScript needs no per-file refinement, because a module's extraction depends
 only on its own content plus the catalog's cross-module resolution surface. The

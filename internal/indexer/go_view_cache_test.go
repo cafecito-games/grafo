@@ -3,6 +3,7 @@ package indexer_test
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -87,14 +88,19 @@ func (Worker) Run() error { return nil }
 
 	expected, _ := indexIntoFreshDatabase(t, ctx, root, "expected.db")
 
-	caches, err := filepath.Glob(filepath.Join(root, ".grafo", "cache", "*"))
-	if err != nil || len(caches) == 0 {
-		t.Fatalf("no view cache to corrupt: %v %v", caches, err)
-	}
-	for _, path := range caches {
-		if err := os.WriteFile(path, []byte("corrupt"), 0o644); err != nil {
-			t.Fatal(err)
+	corrupted := 0
+	cache := filepath.Join(root, ".grafo", "cache")
+	if err := filepath.WalkDir(cache, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
 		}
+		corrupted++
+		return os.WriteFile(path, []byte("corrupt"), 0o644)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if corrupted == 0 {
+		t.Fatalf("no view cache to corrupt under %s", cache)
 	}
 
 	recovered, metrics := indexIntoFreshDatabase(t, ctx, root, "recovered.db")
