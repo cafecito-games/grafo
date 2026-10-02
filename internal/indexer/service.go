@@ -418,7 +418,7 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 			// neither diff nor the untracked list, so nothing else in this pass
 			// would notice it changing. An ordinary tracked control file needs no
 			// separate proof: a committed edit lands in the indexed-commit diff
-			// and an uncommitted one in the working-tree diff. Hash only the case
+			// and an uncommitted one in the working-tree diff. Hash only the cases
 			// Git cannot account for, so an unchanged refresh of a repository that
 			// tracks its control file reads no files at all. A failed probe hashes
 			// the file, because an unanswered question about the control plane is
@@ -429,6 +429,10 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 				}
 				tracked, gitCommands, trackErr := gitTracksChangesTo(ctx, project.Root, path, project.gitSnapshot)
 				report.GitCommands += gitCommands
+				if trackErr != nil {
+					report.Diagnostics = append(report.Diagnostics, graph.Diagnostic{Path: path, Level: "warning",
+						Message: "probe Git's coverage of " + path + ": " + trackErr.Error() + "; content-checking it instead"})
+				}
 				if trackErr != nil || !tracked {
 					selected[path] = true
 				}

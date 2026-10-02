@@ -2,8 +2,10 @@ package indexer_test
 
 import (
 	"context"
+	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	configparser "github.com/cafecito-games/grafo/internal/parser/config"
@@ -54,6 +56,25 @@ func refreshUnchangedRefreshCorpus(t *testing.T, ctx context.Context, repository
 		t.Fatal(err)
 	}
 	return report
+}
+
+// gitPathLines runs one Git command in root and returns the paths it printed on
+// stdout, so a test can assert on what Git itself reports. Stdout only: Git sends
+// advice about line-ending normalization to stderr, and that text names the very
+// path under test.
+func gitPathLines(t *testing.T, root string, args ...string) []string {
+	t.Helper()
+	output, err := exec.Command("git", append([]string{"-C", root}, args...)...).Output()
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+	lines := make([]string, 0)
+	for _, line := range strings.Split(string(output), "\n") {
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }
 
 func openUnchangedRefreshIndex(t *testing.T, ctx context.Context, root string) *sqlite.Repository {
@@ -128,6 +149,40 @@ func TestServiceUnchangedRefreshHashesConfigGitIgnores(t *testing.T) {
 	edited := refreshUnchangedRefreshCorpus(t, ctx, repository, root)
 	if !slices.Contains(edited.Updated, "grafo.yaml") {
 		t.Fatalf("edit to an ignored control file went unnoticed: %#v", edited.Updated)
+	}
+}
+
+// TestServiceUnchangedRefreshNoticesConfigEditGitFiltersAway pins the narrowest
+// case for treating a tracked control file as covered by Git. Under `text=auto`
+// a line-ending change is normalized away by the clean filter, so
+// `git diff --name-only HEAD` reports a clean tree while the bytes the indexer
+// hashes have changed. Porcelain status still flags the path as worktree-
+// modified, which is what change detection reads, so the edit is selected
+// anyway. The test exists because that is the evidence the skipped content check
+// now leans on, and nothing else states it.
+func TestServiceUnchangedRefreshNoticesConfigEditGitFiltersAway(t *testing.T) {
+	ctx := context.Background()
+	root := testtemp.Dir(t)
+	writeUnchangedRefreshCorpus(t, root, false)
+	write(t, filepath.Join(root, ".gitattributes"), "* text=auto\n")
+	runGit(t, root, "add", ".gitattributes")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "normalize")
+	repository := openUnchangedRefreshIndex(t, ctx, root)
+
+	refreshUnchangedRefreshCorpus(t, ctx, repository, root)
+	if report := refreshUnchangedRefreshCorpus(t, ctx, repository, root); report.Checked != 0 {
+		t.Fatalf("steady state read %d files under a clean filter", report.Checked)
+	}
+
+	// The edit has to reach the graph even though a Git diff of the tree is
+	// clean, so the assertion below is about selection, not about the diff.
+	write(t, filepath.Join(root, "grafo.yaml"), "sql:\r\n  paths:\r\n    \"db/**/*.sql\": sqlite\r\n")
+	if changed := gitPathLines(t, root, "diff", "--name-only", "HEAD", "--"); slices.Contains(changed, "grafo.yaml") {
+		t.Skipf("this Git configuration reports the filtered edit, so the gap under test is absent: %v", changed)
+	}
+	edited := refreshUnchangedRefreshCorpus(t, ctx, repository, root)
+	if !slices.Contains(edited.Updated, "grafo.yaml") {
+		t.Fatalf("edit Git filtered away went unnoticed: %#v", edited.Updated)
 	}
 }
 
