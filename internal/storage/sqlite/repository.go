@@ -40,11 +40,18 @@ type Repository struct {
 
 const (
 	reconciliationBatchSize = 10_000
-	resolutionCacheSize     = 50_000
-	sqliteLimitVariables    = 9
+	// reconciliationCheckpointBatches is how many batches share one WAL
+	// checkpoint. Checkpointing after every batch copied the same hot index pages
+	// into the database file again and again; checkpointing never at all let the
+	// log grow past half a gigabyte, and finding a page in a log that large costs
+	// more than the checkpoints saved. Both extremes measured worse than this.
+	reconciliationCheckpointBatches = 16
+	resolutionCacheSize             = 50_000
+	sqliteLimitVariables            = 9
 )
 
 var _ graph.Repository = (*Repository)(nil)
+var _ graph.BulkIndexRepository = (*Repository)(nil)
 var _ graph.CatalogRepository = (*Repository)(nil)
 var _ graph.CanonicalMessageRepository = (*Repository)(nil)
 var _ semantic.CandidateRepository = (*Repository)(nil)
@@ -199,24 +206,48 @@ func (r *Repository) ReplaceFile(ctx context.Context, file graph.FileRecord, par
 		return err
 	}
 	return r.inTransaction(ctx, func(q *sqlcgen.Queries, writer *batchWriter) error {
-		if err := markOwnerDirty(ctx, q, file.Path); err != nil {
-			return err
-		}
-		if err := q.DeleteEdgesByOwnerFacts(ctx, file.Path); err != nil {
-			return err
-		}
-		if err := q.DeleteFactsByOwner(ctx, file.Path); err != nil {
-			return err
-		}
-		if err := q.DeleteNodesByOwner(ctx, file.Path); err != nil {
-			return err
-		}
-		if err := q.UpsertFile(ctx, sqlcgen.UpsertFileParams{Path: file.Path, Hash: file.Hash,
-			Language: file.Language, Size: file.Size, ModifiedNs: file.ModifiedNS, IndexedAt: file.IndexedAt}); err != nil {
-			return err
-		}
-		return insertParseResult(ctx, q, writer, parsed)
+		return replaceFile(ctx, q, writer, file, parsed)
 	})
+}
+
+// ReplaceFiles applies several file replacements in one transaction. A cold run
+// replaces every file in the repository, and one transaction per file meant one
+// commit, one WAL header, and one freshly prepared statement set per file.
+func (r *Repository) ReplaceFiles(ctx context.Context, replacements []graph.FileReplacement) error {
+	for _, replacement := range replacements {
+		if err := validateParseResult(replacement.Parsed); err != nil {
+			return err
+		}
+	}
+	return r.inTransaction(ctx, func(q *sqlcgen.Queries, writer *batchWriter) error {
+		for _, replacement := range replacements {
+			if err := replaceFile(ctx, q, writer, replacement.File, replacement.Parsed); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func replaceFile(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter,
+	file graph.FileRecord, parsed graph.ParseResult) error {
+	if err := markOwnerDirty(ctx, q, file.Path); err != nil {
+		return err
+	}
+	if err := q.DeleteEdgesByOwnerFacts(ctx, file.Path); err != nil {
+		return err
+	}
+	if err := q.DeleteFactsByOwner(ctx, file.Path); err != nil {
+		return err
+	}
+	if err := q.DeleteNodesByOwner(ctx, file.Path); err != nil {
+		return err
+	}
+	if err := q.UpsertFile(ctx, sqlcgen.UpsertFileParams{Path: file.Path, Hash: file.Hash,
+		Language: file.Language, Size: file.Size, ModifiedNs: file.ModifiedNS, IndexedAt: file.IndexedAt}); err != nil {
+		return err
+	}
+	return insertParseResult(ctx, q, writer, parsed)
 }
 
 func (r *Repository) ReplaceOwner(ctx context.Context, owner string, parsed graph.ParseResult) error {
@@ -340,8 +371,10 @@ func (r *Repository) ReconcileWithStats(ctx context.Context, observer graph.Reco
 				return stats, err
 			}
 		}
-		if err := r.checkpoint(ctx, false); err != nil {
-			return stats, err
+		if stats.Batches%reconciliationCheckpointBatches == 0 {
+			if err := r.checkpoint(ctx, false); err != nil {
+				return stats, err
+			}
 		}
 	}
 	cleanupPending, err := r.queries.ReconciliationCleanupPending(ctx)

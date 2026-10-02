@@ -19,6 +19,20 @@ type IndexRepository interface {
 	Counts(context.Context) (Counts, error)
 }
 
+// FileReplacement is one file's record paired with the evidence parsed from it.
+type FileReplacement struct {
+	File   FileRecord
+	Parsed ParseResult
+}
+
+// BulkIndexRepository optionally replaces several files in one durable step.
+// Indexers fall back to ReplaceFile per file when a repository does not offer
+// it, so the capability only ever changes how many files share a commit, never
+// which evidence is stored.
+type BulkIndexRepository interface {
+	ReplaceFiles(context.Context, []FileReplacement) error
+}
+
 // ReconciliationStats describes durable work completed during reconciliation.
 type ReconciliationStats struct {
 	Batches int        `json:"batches"`
@@ -41,8 +55,9 @@ type WriteStats struct {
 	Edges WriteBatchStats `json:"edges"`
 }
 
-// ReconciliationObserver runs after a reconciliation batch commits and before
-// its WAL checkpoint. Returning an error stops at that durable boundary.
+// ReconciliationObserver runs immediately after a reconciliation batch commits,
+// before any WAL checkpoint that batch triggers. Returning an error stops at
+// that durable boundary.
 type ReconciliationObserver func(ReconciliationStats) error
 
 // InstrumentedIndexRepository optionally exposes reconciliation progress.
