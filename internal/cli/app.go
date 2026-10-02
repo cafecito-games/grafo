@@ -29,6 +29,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/service"
 	sourcecontext "github.com/cafecito-games/grafo/internal/source"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
+	"github.com/cafecito-games/grafo/internal/updatecheck"
 	"github.com/cafecito-games/grafo/internal/version"
 	"github.com/mattn/go-isatty"
 )
@@ -62,6 +63,7 @@ type App struct {
 	stderr           io.Writer
 	stderrIsTerminal func(io.Writer) bool
 	progressDelay    time.Duration
+	checker          *updatecheck.Checker
 }
 
 func New(stdout, stderr io.Writer) *App {
@@ -101,8 +103,11 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		return 0
 	}
 	if parsed.command == "version" {
-		a.println("grafo " + Version)
-		return 0
+		return a.version(ctx, parsed)
+	}
+	if parsed.flags["check"] {
+		a.fail(fmt.Errorf("--check is not supported by %s", parsed.command))
+		return 2
 	}
 	if _, present := parsed.values["path-prefix"]; present && !pathPrefixCommands[parsed.command] {
 		a.fail(fmt.Errorf("--path-prefix is not supported by %s", parsed.command))
@@ -112,6 +117,8 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		a.fail(fmt.Errorf("--no-seed is not supported by %s", parsed.command))
 		return 2
 	}
+	updateLookup := a.startUpdateCheck(ctx, parsed)
+	defer a.reportUpdate(ctx, updateLookup)
 	var runErr error
 	if handler, dispatched := commandHandlers[parsed.command]; dispatched {
 		runErr = handler(a, ctx, parsed)
@@ -2664,7 +2671,7 @@ var booleanOptions = map[string]bool{
 	"json": true, "force": true, "help": true, "source": true, "regex": true, "case-sensitive": true,
 	"list": true, "all": true, "dry-run": true, "mcp-only": true, "hooks": true, "refresh": true,
 	"repair": true, "once": true, "paused": true, "mermaid": true, "yes": true,
-	"counts": true, "no-seed": true,
+	"counts": true, "no-seed": true, "check": true,
 }
 var valueOptions = map[string]bool{
 	"repo": true, "repos": true, "depth": true, "direction": true, "relation": true,
@@ -2895,7 +2902,7 @@ Usage:
                          [--path-prefix dir,...] [--limit 100] [--json]
   grafo find-tests <production-symbol-or-id> [--kind function] [--depth 8] [--limit 100] [--json]
   grafo test-coverage <test-or-id> [--depth 8] [--limit 100] [--json]
-  grafo version
+  grafo version [--check]
 
 Options may appear before or after positional arguments. All query commands
 accept --repo or a comma-separated --repos list. Commands that take a selector
