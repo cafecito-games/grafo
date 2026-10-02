@@ -10,6 +10,7 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/sqlcgen"
+	"github.com/cafecito-games/grafo/internal/storage/sqlitedriver"
 )
 
 const maxMetadataEntries = 10_000
@@ -71,12 +72,18 @@ func OpenMaintenance(ctx context.Context, path string) (MaintenanceRepository, e
 		_ = db.Close()
 		return nil, err
 	}
+	// Maintenance prepares the same statements as an indexing open, so an
+	// interrupted bulk load has to be repaired before any of them.
+	if err := repairDeferredIndexes(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	queries, err := sqlcgen.Prepare(ctx, db)
 	if err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("prepare graph maintenance queries: %w", err)
 	}
-	variableLimit, err := activeVariableLimit(ctx, db)
+	variableLimit, err := sqlitedriver.VariableLimit(ctx, db)
 	if err != nil {
 		_ = queries.Close()
 		_ = db.Close()

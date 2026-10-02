@@ -159,7 +159,7 @@ func resolveStorage(requested string) (string, Storage, error) {
 	}
 	switch engine {
 	case "sqlite":
-		return engine, Storage{Engine: engine, Library: "modernc.org/sqlite", LibraryVersion: dependencyVersion("modernc.org/sqlite", "v1.57.0"),
+		return engine, Storage{Engine: engine, Library: "github.com/mattn/go-sqlite3", LibraryVersion: dependencyVersion("github.com/mattn/go-sqlite3", "v1.14.52"),
 			Durability: "WAL with synchronous=NORMAL; atomic file and reconciliation transactions"}, nil
 	case string(kvbench.EngineBolt):
 		return engine, Storage{Engine: engine, Library: "go.etcd.io/bbolt", LibraryVersion: dependencyVersion("go.etcd.io/bbolt", "v1.5.0"),

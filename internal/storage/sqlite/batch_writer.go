@@ -11,7 +11,12 @@ import (
 )
 
 const (
-	defaultBatchRows  = 32
+	// defaultBatchRows bounds how many rows one INSERT carries. Each flush is a
+	// statement SQLite has to prepare, plan, and journal, so a cold run that
+	// writes millions of rows pays the per-statement overhead millions of times
+	// at a small row count. The encoded-byte and variable limits below still cap
+	// the statement, so a batch of wide rows flushes before reaching this count.
+	defaultBatchRows  = 256
 	defaultBatchBytes = 1 << 20
 )
 

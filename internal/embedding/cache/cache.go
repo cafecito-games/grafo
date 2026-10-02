@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/cafecito-games/grafo/internal/semantic"
-	_ "modernc.org/sqlite"
+	_ "github.com/cafecito-games/grafo/internal/storage/sqlitedriver"
 )
 
 const (

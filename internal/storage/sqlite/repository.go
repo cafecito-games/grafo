@@ -18,8 +18,8 @@ import (
 	"github.com/cafecito-games/grafo/internal/semantic"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/migrations"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/sqlcgen"
+	"github.com/cafecito-games/grafo/internal/storage/sqlitedriver"
 	"github.com/pressly/goose/v3"
-	modernsqlite "modernc.org/sqlite"
 )
 
 // Repository is the SQLite adapter for graph.Repository.
@@ -36,15 +36,26 @@ type Repository struct {
 	// pathKeys caches interned path keys across transactions so a cold index
 	// resolves each repository-relative path once instead of per fact.
 	pathKeys pathInterner
+
+	// deferredIndexes holds the secondary indexes a bulk load currently has
+	// dropped. It is owned by the single writer, like every other durable
+	// mutation, and the stored ledger is the authority a new process reads.
+	deferredIndexes []deferredIndex
 }
 
 const (
 	reconciliationBatchSize = 10_000
-	resolutionCacheSize     = 50_000
-	sqliteLimitVariables    = 9
+	// reconciliationCheckpointBatches is how many batches share one WAL
+	// checkpoint. Checkpointing after every batch copied the same hot index pages
+	// into the database file again and again; checkpointing never at all let the
+	// log grow past half a gigabyte, and finding a page in a log that large costs
+	// more than the checkpoints saved. Both extremes measured worse than this.
+	reconciliationCheckpointBatches = 16
+	resolutionCacheSize             = 50_000
 )
 
 var _ graph.Repository = (*Repository)(nil)
+var _ graph.BulkIndexRepository = (*Repository)(nil)
 var _ graph.CatalogRepository = (*Repository)(nil)
 var _ graph.CanonicalMessageRepository = (*Repository)(nil)
 var _ semantic.CandidateRepository = (*Repository)(nil)
@@ -53,7 +64,7 @@ func Open(ctx context.Context, path string) (*Repository, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create index directory: %w", err)
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open(sqlitedriver.Name, path)
 	if err != nil {
 		return nil, fmt.Errorf("open graph: %w", err)
 	}
@@ -75,12 +86,19 @@ func Open(ctx context.Context, path string) (*Repository, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("validate migrated graph database: %w", err)
 	}
+	// An interrupted bulk load leaves secondary indexes dropped, and the schema
+	// names several of them in INDEXED BY clauses, so the repair has to happen
+	// before any statement is prepared against it.
+	if err := repairDeferredIndexes(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	queries, err := sqlcgen.Prepare(ctx, db)
 	if err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("prepare graph queries: %w", err)
 	}
-	variableLimit, err := activeVariableLimit(ctx, db)
+	variableLimit, err := sqlitedriver.VariableLimit(ctx, db)
 	if err != nil {
 		_ = queries.Close()
 		_ = db.Close()
@@ -96,13 +114,44 @@ func Open(ctx context.Context, path string) (*Repository, error) {
 	return repository, nil
 }
 
+// pageCacheKiB caps the page cache of a writable connection. Indexing inserts
+// node, fact, and edge rows keyed by content hash, so every secondary index
+// receives its entries in random order and each one touches a different b-tree
+// page. Under SQLite's default cache of 2 MiB a repository whose index outgrows
+// it re-reads nearly every page it writes. The cap is a ceiling rather than a
+// reservation: SQLite allocates pages on demand, so an idle connection holds
+// almost nothing and only a connection that is actively rewriting a large graph
+// approaches the limit.
+const pageCacheKiB = 512 * 1024
+
+// indexPageSize is the page size of a newly created index. Larger pages hold
+// more index entries per read and turn the random b-tree traffic above into
+// fewer, larger I/O operations. SQLite only honors the pragma while the
+// database is empty and not yet in WAL mode, so it applies to indexes this
+// version creates; one created by an earlier version keeps its own page size
+// until it is rebuilt.
+const indexPageSize = 16384
+
+// temporaryStoreMemory keeps SQLite's statement journals in memory. Every
+// batched node and fact write is an upsert, and an upsert is a statement that
+// may have to undo part of itself without rolling back its transaction, so
+// SQLite journals the pages it is about to overwrite. On disk that journal is
+// written as one four-byte page number plus one page at a time: a quarter of a
+// cold run's CPU went into those writes, for data that is discarded the moment
+// the statement succeeds.
+const temporaryStoreMemory = "PRAGMA temp_store=MEMORY"
+
 // writableConnectionPragmas configures a writable connection. busy_timeout is
 // deliberately first: it is pure connection-local lock policy that cannot
 // block, while journal_mode=WAL needs the database lock and therefore fails
 // immediately with SQLITE_BUSY_RECOVERY when another writer holds it and the
-// timeout is still SQLite's default of zero.
+// timeout is still SQLite's default of zero. page_size has to precede
+// journal_mode because SQLite ignores it once a database is in WAL mode.
 var writableConnectionPragmas = []string{
 	"PRAGMA busy_timeout=5000",
+	fmt.Sprintf("PRAGMA page_size=%d", indexPageSize),
+	fmt.Sprintf("PRAGMA cache_size=-%d", pageCacheKiB),
+	temporaryStoreMemory,
 	"PRAGMA journal_mode=WAL",
 	"PRAGMA synchronous=NORMAL",
 	"PRAGMA wal_autocheckpoint=1000",
@@ -168,24 +217,48 @@ func (r *Repository) ReplaceFile(ctx context.Context, file graph.FileRecord, par
 		return err
 	}
 	return r.inTransaction(ctx, func(q *sqlcgen.Queries, writer *batchWriter) error {
-		if err := markOwnerDirty(ctx, q, file.Path); err != nil {
-			return err
-		}
-		if err := q.DeleteEdgesByOwnerFacts(ctx, file.Path); err != nil {
-			return err
-		}
-		if err := q.DeleteFactsByOwner(ctx, file.Path); err != nil {
-			return err
-		}
-		if err := q.DeleteNodesByOwner(ctx, file.Path); err != nil {
-			return err
-		}
-		if err := q.UpsertFile(ctx, sqlcgen.UpsertFileParams{Path: file.Path, Hash: file.Hash,
-			Language: file.Language, Size: file.Size, ModifiedNs: file.ModifiedNS, IndexedAt: file.IndexedAt}); err != nil {
-			return err
-		}
-		return insertParseResult(ctx, q, writer, parsed)
+		return replaceFile(ctx, q, writer, file, parsed)
 	})
+}
+
+// ReplaceFiles applies several file replacements in one transaction. A cold run
+// replaces every file in the repository, and one transaction per file meant one
+// commit, one WAL header, and one freshly prepared statement set per file.
+func (r *Repository) ReplaceFiles(ctx context.Context, replacements []graph.FileReplacement) error {
+	for _, replacement := range replacements {
+		if err := validateParseResult(replacement.Parsed); err != nil {
+			return err
+		}
+	}
+	return r.inTransaction(ctx, func(q *sqlcgen.Queries, writer *batchWriter) error {
+		for _, replacement := range replacements {
+			if err := replaceFile(ctx, q, writer, replacement.File, replacement.Parsed); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func replaceFile(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter,
+	file graph.FileRecord, parsed graph.ParseResult) error {
+	if err := markOwnerDirty(ctx, q, file.Path); err != nil {
+		return err
+	}
+	if err := q.DeleteEdgesByOwnerFacts(ctx, file.Path); err != nil {
+		return err
+	}
+	if err := q.DeleteFactsByOwner(ctx, file.Path); err != nil {
+		return err
+	}
+	if err := q.DeleteNodesByOwner(ctx, file.Path); err != nil {
+		return err
+	}
+	if err := q.UpsertFile(ctx, sqlcgen.UpsertFileParams{Path: file.Path, Hash: file.Hash,
+		Language: file.Language, Size: file.Size, ModifiedNs: file.ModifiedNS, IndexedAt: file.IndexedAt}); err != nil {
+		return err
+	}
+	return insertParseResult(ctx, q, writer, parsed)
 }
 
 func (r *Repository) ReplaceOwner(ctx context.Context, owner string, parsed graph.ParseResult) error {
@@ -288,6 +361,15 @@ func (r *Repository) ReconciliationPending(ctx context.Context) (bool, error) {
 
 func (r *Repository) ReconcileWithStats(ctx context.Context, observer graph.ReconciliationObserver) (graph.ReconciliationStats, error) {
 	var stats graph.ReconciliationStats
+	// Resolution reads nodes and facts and names several of their indexes in
+	// INDEXED BY clauses, so those have to be back before the first batch. The
+	// edge indexes deliberately stay deferred: this loop is what fills the edge
+	// table, and they are the widest indexes in the schema.
+	if err := r.rebuildDeferredIndexes(ctx, func(index deferredIndex) bool {
+		return index.Table != edgeTable
+	}); err != nil {
+		return stats, err
+	}
 	if err := r.queueDirtyFacts(ctx); err != nil {
 		return stats, fmt.Errorf("queue dirty facts: %w", err)
 	}
@@ -309,9 +391,17 @@ func (r *Repository) ReconcileWithStats(ctx context.Context, observer graph.Reco
 				return stats, err
 			}
 		}
-		if err := r.checkpoint(ctx, false); err != nil {
-			return stats, err
+		if stats.Batches%reconciliationCheckpointBatches == 0 {
+			if err := r.checkpoint(ctx, false); err != nil {
+				return stats, err
+			}
 		}
+	}
+	// Every edge is written, so the edge indexes can be built in one sorted pass.
+	// The cleanup below needs them: it looks for external nodes that no edge
+	// mentions, which without them would scan the whole edge table per node.
+	if err := r.EndBulkLoad(ctx); err != nil {
+		return stats, err
 	}
 	cleanupPending, err := r.queries.ReconciliationCleanupPending(ctx)
 	if err != nil {
@@ -1421,22 +1511,6 @@ func (r *Repository) inTransaction(ctx context.Context, fn func(*sqlcgen.Queries
 	addWriteStats(&r.writeStats, writer.stats())
 	r.writeStatsMu.Unlock()
 	return nil
-}
-
-func activeVariableLimit(ctx context.Context, db *sql.DB) (int, error) {
-	connection, err := db.Conn(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = connection.Close() }()
-	limit, err := modernsqlite.Limit(connection, sqliteLimitVariables, -1)
-	if err != nil {
-		return 0, err
-	}
-	if limit <= 0 {
-		return 0, fmt.Errorf("driver reported invalid limit %d", limit)
-	}
-	return limit, nil
 }
 
 func nodeParams(n graph.Node, external int64) sqlcgen.UpsertNodeParams {

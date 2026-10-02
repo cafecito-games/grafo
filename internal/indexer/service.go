@@ -35,6 +35,17 @@ const indexScopePendingMeta = "index_scope_pending"
 const indexScopeScopedOutMeta = "index_scope_scoped_out"
 const SemanticIndexVersion = indexversion.Semantic
 
+// maxGroupedFiles and maxGroupedRows bound one grouped persistence commit. A
+// repository that can replace several files at once lets a cold run amortize the
+// commit, the WAL header, and the prepared statement set over many files instead
+// of paying for each one per file. The row bound keeps the memory held ahead of
+// the commit proportional to evidence rather than to file count, so a handful of
+// very large files flushes early.
+const (
+	maxGroupedFiles = 64
+	maxGroupedRows  = 25_000
+)
+
 type Options struct {
 	Force            bool
 	MaxFileSize      int64
@@ -447,6 +458,51 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	}
 	stage := &fileStage{project: project, options: options, parsers: s.parsers, paths: paths,
 		selected: selected, known: known, workspaceSemanticKeys: workspaceSemanticKeys}
+	// A pass that selected nothing is replacing the whole repository, which is
+	// the only shape of run where storage can reorganize itself around the load.
+	// Whether it does, and what that means, is the repository's decision.
+	if loader, ok := s.repository.(graph.BulkLoadRepository); ok && selected == nil {
+		persistenceStarted := time.Now()
+		if err := loader.BeginBulkLoad(ctx); err != nil {
+			return report, fmt.Errorf("begin bulk load: %w", err)
+		}
+		report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
+	}
+	// A boundary observer is promised one durable boundary per persisted file, so
+	// a run that installs one keeps its transaction per file.
+	grouping, groupable := s.repository.(graph.BulkIndexRepository)
+	if options.Boundary != nil {
+		groupable = false
+	}
+	var grouped []fileOutcome
+	groupedRows := 0
+	parsedFiles := 0
+	// persistGrouped commits the files held back so far and only then records
+	// them in the report, which keeps every report slice in path order.
+	persistGrouped := func() error {
+		if len(grouped) == 0 {
+			return nil
+		}
+		replacements := make([]graph.FileReplacement, 0, len(grouped))
+		for _, outcome := range grouped {
+			replacements = append(replacements, graph.FileReplacement{File: outcome.record, Parsed: outcome.parsed})
+		}
+		persistenceStarted := time.Now()
+		if err := grouping.ReplaceFiles(ctx, replacements); err != nil {
+			return fmt.Errorf("store %d files from %s: %w", len(grouped), grouped[0].path, err)
+		}
+		graphDirtied = true
+		report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
+		for _, outcome := range grouped {
+			report.Updated = append(report.Updated, outcome.path)
+			if err := progress.emit(ProgressPersistence, ProgressProgress, "files", len(report.Updated), 0, ""); err != nil {
+				return err
+			}
+			report.Diagnostics = append(report.Diagnostics, outcome.parsed.Diagnostics...)
+		}
+		grouped, groupedRows = grouped[:0], 0
+		return nil
+	}
 	// The writer owns every durable mutation and every piece of run state, so
 	// report slices, progress counters, and boundary callbacks stay in the
 	// original path order regardless of how many workers prepared the files.
@@ -476,9 +532,15 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 			report.Unchanged++
 			return nil
 		case outcomeUnreadable:
+			if err := persistGrouped(); err != nil {
+				return err
+			}
 			report.Diagnostics = append(report.Diagnostics, outcome.diagnostic)
 			return nil
 		case outcomeTooLarge:
+			if err := persistGrouped(); err != nil {
+				return err
+			}
 			report.Phases.ReadHashNS += outcome.readHashNS
 			report.Skipped = append(report.Skipped, outcome.path)
 			return nil
@@ -508,15 +570,24 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 			return nil
 		}
 		report.Phases.ParseNS += outcome.parseNS
-		if err := progress.emit(ProgressParse, ProgressProgress, "files", len(report.Updated)+1, 0, ""); err != nil {
+		parsedFiles++
+		if err := progress.emit(ProgressParse, ProgressProgress, "files", parsedFiles, 0, ""); err != nil {
 			return err
 		}
-		record := outcome.record
-		record.IndexedAt = graph.NowUTC()
-		persistenceStarted := time.Now()
+		outcome.record.IndexedAt = graph.NowUTC()
 		if err := markScopeMutation(); err != nil {
 			return err
 		}
+		if groupable {
+			grouped = append(grouped, outcome)
+			groupedRows += len(outcome.parsed.Nodes) + len(outcome.parsed.Facts)
+			if len(grouped) >= maxGroupedFiles || groupedRows >= maxGroupedRows {
+				return persistGrouped()
+			}
+			return nil
+		}
+		record := outcome.record
+		persistenceStarted := time.Now()
 		if err := s.repository.ReplaceFile(ctx, record, outcome.parsed); err != nil {
 			return fmt.Errorf("store %s: %w", outcome.path, err)
 		}
@@ -535,6 +606,9 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		return nil
 	}
 	if err := stage.run(ctx, resolveParseWorkers(options.ParseWorkers), applyOutcome); err != nil {
+		return report, err
+	}
+	if err := persistGrouped(); err != nil {
 		return report, err
 	}
 	if err := progress.emit(ProgressReadHash, ProgressCompleted, "files", report.Checked, 0, ""); err != nil {
@@ -643,6 +717,15 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	}
 	if err := progress.emit(ProgressReconciliation, ProgressCompleted, "batches", report.ReconciliationBatches, report.ReconciliationBatches, ""); err != nil {
 		return report, err
+	}
+	// The load is over. Reconciliation restores what it needs as it goes, so this
+	// is normally nothing; it is what closes out a run that skipped reconciling.
+	if loader, ok := s.repository.(graph.BulkLoadRepository); ok {
+		persistenceStarted = time.Now()
+		if err := loader.EndBulkLoad(ctx); err != nil {
+			return report, fmt.Errorf("end bulk load: %w", err)
+		}
+		report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
 	}
 	persistenceStarted = time.Now()
 	if err := setMetaIfChanged(ctx, s.repository, "repository_id", project.ID); err != nil {

@@ -78,7 +78,7 @@ SELECT
     COALESCE(nodes.properties, '{}') AS counterpart_properties,
     COALESCE(nodes.owner_file, '') AS counterpart_owner_file,
     COALESCE(nodes.external, 0) AS counterpart_external
-FROM edges INDEXED BY edges_to
+FROM edges
 LEFT JOIN nodes ON nodes.id = edges.from_id
 LEFT JOIN facts ON facts.id = edges.fact_id
 LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id
@@ -112,7 +112,7 @@ SELECT
     COALESCE(nodes.properties, '{}') AS counterpart_properties,
     COALESCE(nodes.owner_file, '') AS counterpart_owner_file,
     COALESCE(nodes.external, 0) AS counterpart_external
-FROM edges INDEXED BY edges_from
+FROM edges
 LEFT JOIN nodes ON nodes.id = edges.to_id
 LEFT JOIN facts ON facts.id = edges.fact_id
 LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id

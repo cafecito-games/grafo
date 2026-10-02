@@ -65,7 +65,7 @@ func TestOpenReadOnlyRequiresExistingCompatibleDatabaseAndEscapesPath(t *testing
 
 func TestReadOnlyDSNEncodesWindowsDrivePathWithoutURIAuthority(t *testing.T) {
 	got := readOnlyDSN(`C:/Users/Grafo Data/index ?#%.sqlite`)
-	want := "file:///C:/Users/Grafo%20Data/index%20%3F%23%25.sqlite?mode=ro"
+	want := "file:///C:/Users/Grafo%20Data/index%20%3F%23%25.sqlite?_busy_timeout=0&mode=ro"
 	if got != want {
 		t.Fatalf("read-only Windows DSN = %q, want %q", got, want)
 	}
