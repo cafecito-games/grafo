@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	goast "go/ast"
 	goparser "go/parser"
 	"go/scanner"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // goSemanticSurfaceVersion tags the encoding of the repository-wide Go
@@ -218,6 +220,32 @@ func packageScopeKey(root, path string) (string, error) {
 	return digest.sum(), nil
 }
 
+// packageDigestKey identifies one package directory within one repository.
+type packageDigestKey struct {
+	root      string
+	directory string
+}
+
+// packageDigestEntry pairs a remembered digest with the directory listing it
+// was computed from. The listing is the reuse evidence: the digest covers file
+// contents, and content cannot change without the size or the modification time
+// changing with it. This is the same evidence the Godot project cache accepts
+// for the same reason.
+type packageDigestEntry struct {
+	listing string
+	digest  string
+}
+
+// packageDigests remembers the newest digest of each package directory. Every
+// file of a package shares that package's scope key, so without this the
+// contents of a package were read and hashed once per file it contains. Holding
+// one entry per directory bounds the map by the repository's package count even
+// in a long-lived process that indexes the same repository repeatedly.
+var (
+	packageDigestsMutex sync.Mutex
+	packageDigests      = map[packageDigestKey]packageDigestEntry{}
+)
+
 // packageContentDigest digests every Go source file in a package directory.
 func packageContentDigest(root, directory string) (string, error) {
 	absolute := filepath.Join(root, filepath.FromSlash(directory))
@@ -229,6 +257,7 @@ func packageContentDigest(root, directory string) (string, error) {
 		return goPackageScopeVersion + ":unreadable:" + err.Error(), nil
 	}
 	names := make([]string, 0, len(entries))
+	listing := &strings.Builder{}
 	for _, entry := range entries {
 		if entry.IsDir() || !isGoSourcePath(entry.Name()) {
 			continue
@@ -236,6 +265,28 @@ func packageContentDigest(root, directory string) (string, error) {
 		names = append(names, entry.Name())
 	}
 	sort.Strings(names)
+	for _, name := range names {
+		listing.WriteString(name)
+		listing.WriteByte(0)
+		// A failure to stat is itself evidence: it is recorded verbatim, so a
+		// file that becomes stattable again changes the listing and the digest
+		// is recomputed.
+		info, infoErr := os.Stat(filepath.Join(absolute, name))
+		if infoErr != nil {
+			listing.WriteString("unstattable:" + infoErr.Error())
+		} else {
+			fmt.Fprintf(listing, "%d:%d", info.Size(), info.ModTime().UnixNano())
+		}
+		listing.WriteByte(0)
+	}
+	key := packageDigestKey{root: root, directory: directory}
+	evidence := listing.String()
+	packageDigestsMutex.Lock()
+	remembered, ok := packageDigests[key]
+	packageDigestsMutex.Unlock()
+	if ok && remembered.listing == evidence {
+		return remembered.digest, nil
+	}
 	digest := newSemanticDigest(goPackageScopeVersion)
 	digest.writeField(directory)
 	for _, name := range names {
@@ -247,7 +298,11 @@ func packageContentDigest(root, directory string) (string, error) {
 		}
 		digest.writeBytes(content)
 	}
-	return digest.sum(), nil
+	sum := digest.sum()
+	packageDigestsMutex.Lock()
+	packageDigests[key] = packageDigestEntry{listing: evidence, digest: sum}
+	packageDigestsMutex.Unlock()
+	return sum, nil
 }
 
 var (

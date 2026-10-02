@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 )
@@ -31,14 +32,28 @@ var ignoredFiles = map[string]bool{
 func DirectoryIgnored(name string) bool { return ignoredDirectories[name] }
 
 // Ignored reports whether a normalized or platform-native repository-relative
-// path is always outside source membership.
+// path is always outside source membership. Repository-wide scanners call it
+// once per candidate path per file they key, so it walks the segments in place
+// rather than allocating a split: on a large repository the allocation alone
+// was a measurable share of an indexing run.
 func Ignored(path string) bool {
-	for _, part := range strings.Split(filepath.ToSlash(path), "/") {
-		if DirectoryIgnored(part) {
+	normalized := filepath.ToSlash(path)
+	for remainder := normalized; ; {
+		separator := strings.IndexByte(remainder, '/')
+		if separator < 0 {
+			if DirectoryIgnored(remainder) {
+				return true
+			}
+			break
+		}
+		if DirectoryIgnored(remainder[:separator]) {
 			return true
 		}
+		remainder = remainder[separator+1:]
 	}
-	return ignoredFiles[strings.ToLower(filepath.Base(path))]
+	// ToLower returns its argument unchanged when there is nothing to fold, so
+	// the common all-lowercase base name costs no allocation either.
+	return ignoredFiles[strings.ToLower(pathpkg.Base(normalized))]
 }
 
 // ResolvePath resolves a repository-relative path without following symlinks
