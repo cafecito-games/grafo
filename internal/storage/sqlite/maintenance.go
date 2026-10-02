@@ -71,6 +71,12 @@ func OpenMaintenance(ctx context.Context, path string) (MaintenanceRepository, e
 		_ = db.Close()
 		return nil, err
 	}
+	// Maintenance prepares the same statements as an indexing open, so an
+	// interrupted bulk load has to be repaired before any of them.
+	if err := repairDeferredIndexes(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	queries, err := sqlcgen.Prepare(ctx, db)
 	if err != nil {
 		_ = db.Close()

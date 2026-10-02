@@ -36,6 +36,11 @@ type Repository struct {
 	// pathKeys caches interned path keys across transactions so a cold index
 	// resolves each repository-relative path once instead of per fact.
 	pathKeys pathInterner
+
+	// deferredIndexes holds the secondary indexes a bulk load currently has
+	// dropped. It is owned by the single writer, like every other durable
+	// mutation, and the stored ledger is the authority a new process reads.
+	deferredIndexes []deferredIndex
 }
 
 const (
@@ -81,6 +86,13 @@ func Open(ctx context.Context, path string) (*Repository, error) {
 	if err := validateStorageCompatibility(ctx, db); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("validate migrated graph database: %w", err)
+	}
+	// An interrupted bulk load leaves secondary indexes dropped, and the schema
+	// names several of them in INDEXED BY clauses, so the repair has to happen
+	// before any statement is prepared against it.
+	if err := repairDeferredIndexes(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
 	}
 	queries, err := sqlcgen.Prepare(ctx, db)
 	if err != nil {
@@ -350,6 +362,12 @@ func (r *Repository) ReconciliationPending(ctx context.Context) (bool, error) {
 
 func (r *Repository) ReconcileWithStats(ctx context.Context, observer graph.ReconciliationObserver) (graph.ReconciliationStats, error) {
 	var stats graph.ReconciliationStats
+	// Resolution names several deferred indexes in INDEXED BY clauses, so a bulk
+	// load has to be finished before the first batch regardless of whether the
+	// caller announced the boundary itself.
+	if err := r.EndBulkLoad(ctx); err != nil {
+		return stats, err
+	}
 	if err := r.queueDirtyFacts(ctx); err != nil {
 		return stats, fmt.Errorf("queue dirty facts: %w", err)
 	}

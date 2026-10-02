@@ -458,6 +458,16 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	}
 	stage := &fileStage{project: project, options: options, parsers: s.parsers, paths: paths,
 		selected: selected, known: known, workspaceSemanticKeys: workspaceSemanticKeys}
+	// A pass that selected nothing is replacing the whole repository, which is
+	// the only shape of run where storage can reorganize itself around the load.
+	// Whether it does, and what that means, is the repository's decision.
+	if loader, ok := s.repository.(graph.BulkLoadRepository); ok && selected == nil {
+		persistenceStarted := time.Now()
+		if err := loader.BeginBulkLoad(ctx); err != nil {
+			return report, fmt.Errorf("begin bulk load: %w", err)
+		}
+		report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
+	}
 	// A boundary observer is promised one durable boundary per persisted file, so
 	// a run that installs one keeps its transaction per file.
 	grouping, groupable := s.repository.(graph.BulkIndexRepository)
@@ -600,6 +610,15 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	}
 	if err := persistGrouped(); err != nil {
 		return report, err
+	}
+	// Every file is stored, so whatever storage set aside for the load has to be
+	// back before removal, workspace evidence, or reconciliation runs against it.
+	if loader, ok := s.repository.(graph.BulkLoadRepository); ok {
+		persistenceStarted := time.Now()
+		if err := loader.EndBulkLoad(ctx); err != nil {
+			return report, fmt.Errorf("end bulk load: %w", err)
+		}
+		report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
 	}
 	if err := progress.emit(ProgressReadHash, ProgressCompleted, "files", report.Checked, 0, ""); err != nil {
 		return report, err

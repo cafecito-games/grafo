@@ -33,6 +33,15 @@ type BulkIndexRepository interface {
 	ReplaceFiles(context.Context, []FileReplacement) error
 }
 
+// BulkLoadRepository optionally reorganizes storage around an initial load of a
+// whole repository. Indexers announce the boundaries; whether anything is
+// reorganized, and what, is the adapter's decision, and a repository that does
+// not offer the capability indexes exactly as before.
+type BulkLoadRepository interface {
+	BeginBulkLoad(context.Context) error
+	EndBulkLoad(context.Context) error
+}
+
 // ReconciliationStats describes durable work completed during reconciliation.
 type ReconciliationStats struct {
 	Batches int        `json:"batches"`
