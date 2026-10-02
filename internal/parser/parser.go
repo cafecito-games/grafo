@@ -57,6 +57,42 @@ type ScopeKeyer interface {
 	ScopeKey(context.Context, Input) (string, error)
 }
 
+// SemanticLoadMetrics reports a semantic loader's own counters for one process.
+// They exist so a refresh can be attributed without a bespoke build: the
+// whole-workspace load and the per-package view derivation both happen inside a
+// single Parse call, so without these they are indistinguishable from per-file
+// parse time.
+//
+// The counters are reporting-only. Nothing may branch on them, and a loader
+// that does not keep them reports zeroes rather than failing a run.
+type SemanticLoadMetrics struct {
+	// Loads counts whole-workspace loads, CacheHits the views served from the
+	// in-process cache without one.
+	Loads     int64
+	CacheHits int64
+	// PersistedHits counts workspace entries adopted from the cross-process
+	// view cache, and PersistedSaves the entries written to it.
+	PersistedHits  int64
+	PersistedSaves int64
+	// PersistedDecodes counts the package segments decoded from an adopted
+	// entry, and PersistedSegmentWrites the segments re-encoded by a save.
+	PersistedDecodes       int64
+	PersistedSegmentWrites int64
+	PeakConcurrent         int64
+	LastDurationMS         int64
+	// LoadNS is the time spent in whole-workspace loads and DerivationNS the
+	// part of it spent deriving views from what was loaded. Both are cumulative
+	// across the run, and DerivationNS is a subset of LoadNS.
+	LoadNS       int64
+	DerivationNS int64
+}
+
+// SemanticLoadMetricsReporter is a parser that keeps the counters above. The
+// indexer reports what it finds here and never recounts.
+type SemanticLoadMetricsReporter interface {
+	SemanticLoadMetrics() SemanticLoadMetrics
+}
+
 // WorkspaceSemanticKeyer marks a semantic key that is shared by every source
 // file in one indexing run, allowing the indexer to compute it once.
 type WorkspaceSemanticKeyer interface {
@@ -105,6 +141,24 @@ func (r *Registry) For(path string) (Parser, bool) {
 		}
 	}
 	return nil, false
+}
+
+// SemanticLoadMetrics collects each parser's loader counters, keyed by
+// language. A parser that keeps none is omitted rather than reported as zero, so
+// a reader can tell "no semantic loader" from "a loader that did nothing".
+func (r *Registry) SemanticLoadMetrics() map[string]SemanticLoadMetrics {
+	var collected map[string]SemanticLoadMetrics
+	for _, languageParser := range r.parsers {
+		reporter, ok := languageParser.(SemanticLoadMetricsReporter)
+		if !ok {
+			continue
+		}
+		if collected == nil {
+			collected = map[string]SemanticLoadMetrics{}
+		}
+		collected[languageParser.Language()] = reporter.SemanticLoadMetrics()
+	}
+	return collected
 }
 
 func (r *Registry) Languages() []string {

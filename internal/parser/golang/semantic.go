@@ -186,22 +186,10 @@ type SemanticView struct {
 	Diagnostics           []graph.Diagnostic
 }
 
-type SemanticLoadMetrics struct {
-	Loads     int64
-	CacheHits int64
-	// PersistedHits counts workspace entries adopted from the cross-process view
-	// cache, and PersistedSaves the entries written to it.
-	PersistedHits  int64
-	PersistedSaves int64
-	// PersistedDecodes counts the package segments decoded from an adopted
-	// entry, and PersistedSegmentWrites the segments re-encoded by a save. Both
-	// stay well below the package count on an incremental refresh: a run reads
-	// and rewrites the packages its edit touched, not the workspace.
-	PersistedDecodes       int64
-	PersistedSegmentWrites int64
-	PeakConcurrent         int64
-	LastDurationMS         int64
-}
+// SemanticLoadMetrics is the parser API's loader metrics. It is an alias rather
+// than a second definition so the indexer can report these counters without
+// this package's shape becoming the contract.
+type SemanticLoadMetrics = parserapi.SemanticLoadMetrics
 
 type cachedWorkspace struct {
 	key   string
@@ -233,6 +221,12 @@ type PackageLoader struct {
 	active                 atomic.Int64
 	peakConcurrent         atomic.Int64
 	lastDurationMS         atomic.Int64
+	// loadNS accumulates whole-workspace load time and derivationNS the part of
+	// it spent turning loaded packages into views. One invalidated package
+	// forces a whole-workspace load, so these are the fixed cost of any Go edit
+	// and are what separates it from per-file parse time.
+	loadNS       atomic.Int64
+	derivationNS atomic.Int64
 }
 
 var packageLoadGate = make(chan struct{}, 1)
@@ -248,6 +242,8 @@ func (l *PackageLoader) Metrics() SemanticLoadMetrics {
 		PersistedDecodes:       l.persistedDecodes.Load(),
 		PersistedSegmentWrites: l.persistedSegmentWrites.Load(),
 		PeakConcurrent:         l.peakConcurrent.Load(), LastDurationMS: l.lastDurationMS.Load(),
+		LoadNS:       l.loadNS.Load(),
+		DerivationNS: l.derivationNS.Load(),
 	}
 }
 
@@ -297,9 +293,11 @@ func (l *PackageLoader) Load(ctx context.Context, input parserapi.Input) (Semant
 	active := l.active.Add(1)
 	for peak := l.peakConcurrent.Load(); active > peak && !l.peakConcurrent.CompareAndSwap(peak, active); peak = l.peakConcurrent.Load() {
 	}
-	views, loadErr := safeLoadWorkspace(ctx, root, buildContext)
+	views, derivation, loadErr := safeLoadWorkspace(ctx, root, buildContext)
 	l.active.Add(-1)
 	l.loads.Add(1)
+	l.loadNS.Add(int64(time.Since(started)))
+	l.derivationNS.Add(int64(derivation))
 	l.lastDurationMS.Store(time.Since(started).Milliseconds())
 	if loadErr != nil {
 		return SemanticView{}, loadErr
@@ -586,7 +584,7 @@ func cloneStringMap(values map[string]string) map[string]string {
 	return result
 }
 
-func safeLoadWorkspace(ctx context.Context, root, buildContext string) (views map[string]SemanticView, err error) {
+func safeLoadWorkspace(ctx context.Context, root, buildContext string) (views map[string]SemanticView, derivation time.Duration, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("recovered from Go semantic loader panic: %v", recovered)
@@ -595,30 +593,32 @@ func safeLoadWorkspace(ctx context.Context, root, buildContext string) (views ma
 	return loadWorkspace(ctx, root, buildContext)
 }
 
-func loadWorkspace(ctx context.Context, root, buildContext string) (map[string]SemanticView, error) {
+func loadWorkspace(ctx context.Context, root, buildContext string) (map[string]SemanticView, time.Duration, error) {
 	plan, err := semanticLoadPlan(ctx, root)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	views := map[string]SemanticView{}
+	derivation := time.Duration(0)
 	for _, unit := range plan {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
-		unitViews, loadErr := safeLoadSemanticUnit(ctx, root, buildContext, unit)
+		unitViews, unitDerivation, loadErr := safeLoadSemanticUnit(ctx, root, buildContext, unit)
+		derivation += unitDerivation
 		if loadErr != nil {
 			if err := ctx.Err(); err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			recordModuleLoadFailure(root, buildContext, unit, loadErr, views)
 			continue
 		}
 		mergeSemanticUnit(root, buildContext, unit, unitViews, views)
 	}
-	return views, nil
+	return views, derivation, nil
 }
 
-func safeLoadSemanticUnit(ctx context.Context, root, buildContext string, unit semanticLoadUnit) (views map[string]SemanticView, err error) {
+func safeLoadSemanticUnit(ctx context.Context, root, buildContext string, unit semanticLoadUnit) (views map[string]SemanticView, derivation time.Duration, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("recovered from Go semantic module loader panic: %v", recovered)
@@ -634,7 +634,11 @@ type semanticLoadUnit struct {
 	sources    []string
 }
 
-func loadSemanticUnit(ctx context.Context, root, buildContext string, unit semanticLoadUnit) (map[string]SemanticView, error) {
+// loadSemanticUnit loads one module and derives its views. It reports the time
+// spent deriving, which is everything after packages.Load returns: that half is
+// Grafo's own work, and separating it from the toolchain's is the point of
+// reporting either.
+func loadSemanticUnit(ctx context.Context, root, buildContext string, unit semanticLoadUnit) (map[string]SemanticView, time.Duration, error) {
 	environment := append([]string(nil), os.Environ()...)
 	environment = setEnvironment(environment, "GOPROXY", "off")
 	environment = setEnvironment(environment, "GOSUMDB", "off")
@@ -660,8 +664,9 @@ func loadSemanticUnit(ctx context.Context, root, buildContext string, unit seman
 	}
 	loaded, err := packages.Load(config, unit.patterns...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
+	derivationStarted := time.Now()
 	views := map[string]SemanticView{}
 	basePackages := make([]*packages.Package, 0, len(loaded))
 	for _, pkg := range loaded {
@@ -688,7 +693,7 @@ func loadSemanticUnit(ctx context.Context, root, buildContext string, unit seman
 		})
 		views[path] = view
 	}
-	return views, nil
+	return views, time.Since(derivationStarted), nil
 }
 
 func mergeSemanticUnit(root, buildContext string, unit semanticLoadUnit, incoming, views map[string]SemanticView) {
