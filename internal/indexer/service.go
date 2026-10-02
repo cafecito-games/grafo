@@ -605,7 +605,7 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		}
 		return nil
 	}
-	if err := stage.run(ctx, resolveParseWorkers(options.ParseWorkers), applyOutcome); err != nil {
+	if err := stage.run(ctx, ResolveParseWorkers(options.ParseWorkers), applyOutcome); err != nil {
 		return report, err
 	}
 	if err := persistGrouped(); err != nil {

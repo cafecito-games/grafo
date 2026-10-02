@@ -269,7 +269,7 @@ func (l *PackageLoader) Load(ctx context.Context, input parserapi.Input) (Semant
 		}
 	}
 	path := filepath.ToSlash(filepath.Clean(input.Path))
-	if view, ok := l.cached(root, key, path); ok {
+	if view, ok := l.cached(root, key, path, input.ScopeKey); ok {
 		return view, nil
 	}
 	select {
@@ -278,7 +278,7 @@ func (l *PackageLoader) Load(ctx context.Context, input parserapi.Input) (Semant
 	case <-ctx.Done():
 		return SemanticView{}, ctx.Err()
 	}
-	if view, ok := l.cached(root, key, path); ok {
+	if view, ok := l.cached(root, key, path, input.ScopeKey); ok {
 		return view, nil
 	}
 	// Every grafo index is a fresh process, so without this the first Go file of
@@ -287,7 +287,7 @@ func (l *PackageLoader) Load(ctx context.Context, input parserapi.Input) (Semant
 	// cache and then revalidated through cached(), which still checks this path's
 	// package scope key against disk.
 	if l.adoptPersisted(root, key, buildContext) {
-		if view, ok := l.cached(root, key, path); ok {
+		if view, ok := l.cached(root, key, path, input.ScopeKey); ok {
 			l.persistedHits.Add(1)
 			return view, nil
 		}
@@ -354,7 +354,11 @@ func (l *PackageLoader) adoptPersisted(root, key, buildContext string) bool {
 	return true
 }
 
-func (l *PackageLoader) cached(root, key, path string) (SemanticView, bool) {
+// cached reports the view for path when the workspace key and the package's own
+// scope key both still match what was recorded at load time. scopeKey is the
+// caller's already derived value; an empty one is derived here, so a caller that
+// has none still gets a real comparison rather than a free match.
+func (l *PackageLoader) cached(root, key, path, scopeKey string) (SemanticView, bool) {
 	directory := goPackageDirectory(path)
 	l.mu.Lock()
 	entry, ok := l.cache[root]
@@ -374,8 +378,15 @@ func (l *PackageLoader) cached(root, key, path string) (SemanticView, bool) {
 		l.cacheHits.Add(1)
 		return cloneSemanticView(unloadedSemanticView(root, path, buildContextString(root))), true
 	}
-	scope, err := packageScopeKey(root, path)
-	if err != nil || recorded != scope {
+	scope := scopeKey
+	if scope == "" {
+		derived, err := packageScopeKey(root, path)
+		if err != nil {
+			return SemanticView{}, false
+		}
+		scope = derived
+	}
+	if recorded != scope {
 		return SemanticView{}, false
 	}
 	if pending && !exists {

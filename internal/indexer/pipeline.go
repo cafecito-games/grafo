@@ -15,17 +15,50 @@ import (
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 )
 
-// maxParseWorkers caps the automatically derived worker count. Reading, hashing,
-// and parsing stop scaling well before the core count of a large machine, and
-// every additional worker also raises the number of parsed results held in
-// memory ahead of the single writer. The cap matters most in service mode, where
-// several repositories index at once and each one brings its own pool.
+// maxParseWorkers caps the automatically derived worker count.
+//
+// A cold index of cafecito-games/uzir at 638159ead (11,696 indexed files) on a
+// 12-core machine, one run per worker count:
+//
+//	workers   wall    aggregate parse   peak RSS
+//	      4   394.7s            169.3s   5.34 GiB
+//	      8   314.5s            202.4s   6.52 GiB
+//	     12   320.7s            249.8s   6.47 GiB
+//	     16   330.5s            359.2s   6.57 GiB
+//
+// Read those against the run-to-run spread, which is large: three runs at eight
+// workers on one build gave 308.9s, 326.7s, and 338.2s, a standard deviation of
+// 14.8s, their aggregate parse figures a standard deviation of 18.1s. Only gaps
+// well outside that band carry information. Four workers are genuinely too few.
+// Eight, twelve, and sixteen are indistinguishable in wall clock, and the
+// aggregate parse growth by sixteen is the one effect clearly outside the
+// noise.
+//
+// So eight stays as the conservative choice rather than as a demonstrated
+// optimum: nothing here shows that raising it buys wall clock, while the CPU
+// summed across workers and the peak memory both rise. Why they rise is not
+// settled. Lock contention would do it, and so would the extra workers merely
+// queueing deeper ahead of the single ordered writer; these numbers cannot
+// separate the two, and a worker count chosen on more than one run per point
+// would need to.
+//
+// Every additional worker also raises the number of parsed results held in
+// memory ahead of that writer, on top of the grouped commits in service.go,
+// which is why worker count and group size belong together.
+//
+// The cap matters most in service mode, where several repositories index at
+// once and each one brings its own pool: this bounds one pool, not their sum.
+// On this 12-core machine the supervisor's default concurrency of four roots
+// means 4 x 8 = 32 parse workers plus four writers. Issue #185 owns that
+// aggregate; do not raise this constant without reading it.
 const maxParseWorkers = 8
 
-// resolveParseWorkers selects how many goroutines read, hash, and parse files
+// ResolveParseWorkers selects how many goroutines read, hash, and parse files
 // ahead of the ordered writer. A resolved count of one runs the stage inline on
 // the writer goroutine, which is byte-for-byte the historical sequential path.
-func resolveParseWorkers(requested int) int {
+// It is exported so a caller that reports the count it ran under derives it
+// here rather than reimplementing the derivation.
+func ResolveParseWorkers(requested int) int {
 	if requested > 0 {
 		return requested
 	}
@@ -137,6 +170,18 @@ func (stage *fileStage) prepare(ctx context.Context, path string) fileOutcome {
 		_, _ = digest.Write([]byte{0})
 		_, _ = digest.Write([]byte(semanticKey))
 		input.SemanticKey = semanticKey
+	}
+	// Deriving the scope-local part of the key can cost real filesystem work,
+	// and the parser needs the same value again when it decides whether its
+	// cached semantic view is still valid. Derive it once here and carry it, so
+	// the refinement below and the parse that follows both read one value.
+	if scopeKeyer, ok := languageParser.(parserapi.ScopeKeyer); ok {
+		scopeKey, scopeErr := scopeKeyer.ScopeKey(ctx, input)
+		if scopeErr != nil {
+			return fileOutcome{path: path, kind: outcomeFailed,
+				err: fmt.Errorf("derive parser scope key for %s: %w", path, scopeErr)}
+		}
+		input.ScopeKey = scopeKey
 	}
 	// A workspace keyer may also refine its shared key per file. The
 	// refinement enters the content hash only: Input.SemanticKey stays the

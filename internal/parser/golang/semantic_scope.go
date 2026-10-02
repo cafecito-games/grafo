@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // goSemanticSurfaceVersion tags the encoding of the repository-wide Go
@@ -199,6 +200,7 @@ func isGoManifestInput(path string) bool {
 // and this key is load bearing for invalidation: a sibling edit it missed would
 // leave a stale graph.
 func packageScopeKey(root, path string) (string, error) {
+	scopeKeyComputations.Add(1)
 	directory := goPackageDirectory(path)
 	own, err := packageContentDigest(root, directory)
 	if err != nil {
@@ -246,9 +248,40 @@ var (
 	packageDigests      = map[packageDigestKey]packageDigestEntry{}
 )
 
+// scopeKeyComputations counts packageScopeKey calls and packageListings counts
+// the directory listings packageContentDigest performs. The scope key is
+// per-directory but is asked for per-file, and the listing is the memo's reuse
+// evidence so it cannot be skipped, which makes both counts easy to multiply by
+// accident. They are reported so that redundancy is measured rather than
+// inferred, and so a test can hold the per-file and per-directory work to what
+// the run actually needs.
+var (
+	scopeKeyComputations atomic.Int64
+	packageListings      atomic.Int64
+)
+
+// ScopeWork reports the package scope work this process has performed.
+type ScopeWork struct {
+	// ScopeKeyComputations counts derivations of a package scope key.
+	ScopeKeyComputations int64
+	// PackageListings counts package directory listings, each of which also
+	// stats every Go file in that directory.
+	PackageListings int64
+}
+
+// ScopeWorkCounts reports the counters above. They are process wide because the
+// memo they measure is.
+func ScopeWorkCounts() ScopeWork {
+	return ScopeWork{
+		ScopeKeyComputations: scopeKeyComputations.Load(),
+		PackageListings:      packageListings.Load(),
+	}
+}
+
 // packageContentDigest digests every Go source file in a package directory.
 func packageContentDigest(root, directory string) (string, error) {
 	absolute := filepath.Join(root, filepath.FromSlash(directory))
+	packageListings.Add(1)
 	entries, err := os.ReadDir(absolute)
 	if err != nil {
 		// A directory that cannot be listed has no provable package scope. The

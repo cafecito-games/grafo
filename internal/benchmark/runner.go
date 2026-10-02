@@ -45,6 +45,11 @@ type Options struct {
 	CleanupDatabase bool
 	MaxWALBytes     int64
 	MaxRSSBytes     int64
+	// ParseWorkers overrides the indexer's derived parse pool size. Zero keeps
+	// the derived default. It exists so a worker-count matrix can be measured
+	// without editing source, and the value the run resolved is reported rather
+	// than left to be inferred from the machine.
+	ParseWorkers int
 }
 
 type Report struct {
@@ -59,6 +64,7 @@ type Report struct {
 	Status               string           `json:"status"`
 	Error                string           `json:"error,omitempty"`
 	Corpus               Corpus           `json:"corpus"`
+	ParseWorkers         ParseWorkers     `json:"parse_workers"`
 	Inputs               InputCoverage    `json:"inputs"`
 	Scenarios            []ScenarioReport `json:"scenarios"`
 	Artifacts            Artifacts        `json:"artifacts"`
@@ -76,6 +82,24 @@ type Corpus struct {
 	Path   string `json:"path"`
 	Commit string `json:"commit"`
 	Branch string `json:"branch"`
+}
+
+// maxBenchmarkParseWorkers bounds the exposed worker count. The ceiling is a
+// multiple of the core count rather than a fixed number: it stays generous
+// enough to measure deliberate oversubscription, which is one of the things the
+// matrix is for, while a mistyped count still fails the run.
+func maxBenchmarkParseWorkers() int {
+	return 16 * runtime.NumCPU()
+}
+
+// ParseWorkers records the parse pool the run used. Requested is what the
+// caller asked for, zero meaning it asked for nothing; Resolved is the count
+// the indexer actually ran, so comparing two reports never depends on
+// reconstructing the default from the machine that produced them.
+type ParseWorkers struct {
+	Requested int `json:"requested"`
+	Resolved  int `json:"resolved"`
+	CPUs      int `json:"cpus"`
 }
 
 type InputStats struct {
@@ -213,6 +237,16 @@ var openRepository = func(ctx context.Context, engine, path string) (graph.Repos
 }
 
 func Run(ctx context.Context, options Options) (report Report, resultErr error) {
+	// The indexer honors a positive ParseWorkers exactly as given, so this
+	// harness is what has to reject a value that cannot be a pool size. Zero
+	// means the derived default; anything else is bounded in both directions,
+	// because resolving silently would report a measurement of something other
+	// than what was asked for, and an absurd count would spawn a pool the
+	// machine cannot schedule.
+	if options.ParseWorkers < 0 || options.ParseWorkers > maxBenchmarkParseWorkers() {
+		return Report{}, fmt.Errorf("parse workers must be zero for the derived default or between 1 and %d, got %d",
+			maxBenchmarkParseWorkers(), options.ParseWorkers)
+	}
 	engine, storage, err := resolveStorage(options.Engine)
 	if err != nil {
 		return Report{}, err
@@ -230,11 +264,17 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 		return Report{}, fmt.Errorf("create artifact directory: %w", err)
 	}
 	grafoCommit, grafoDirty := buildProvenance()
+	// The indexer resolves its own default when nothing is requested, so the
+	// resolved count is asked for here rather than reconstructed from the
+	// machine when the report is read.
+	parseWorkers := options.ParseWorkers
 	report = Report{
 		SchemaVersion: ReportSchemaVersion, SemanticIndexVersion: indexer.SemanticIndexVersion,
 		GraphSchemaVersion: graph.SchemaVersion, GrafoVersion: version.Value, GrafoCommit: grafoCommit, GrafoDirty: grafoDirty,
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano), Status: StatusFailed, Storage: storage,
-		Corpus:    Corpus{Path: source, Commit: snapshot.commit, Branch: snapshot.branch},
+		Corpus: Corpus{Path: source, Commit: snapshot.commit, Branch: snapshot.branch},
+		ParseWorkers: ParseWorkers{Requested: parseWorkers,
+			Resolved: indexer.ResolveParseWorkers(parseWorkers), CPUs: runtime.NumCPU()},
 		Scenarios: []ScenarioReport{},
 		Artifacts: Artifacts{OutputDirectory: output, Report: filepath.Join(output, ReportFileName),
 			ColdDatabase:   filepath.Join(artifactDirectory, "cold"+storageSuffix(engine)),
@@ -315,7 +355,7 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 		return report, fmt.Errorf("read scenario target %s: %w", target, err)
 	}
 
-	cold, err := executeScenario(ctx, engine, "cold", isolation, report.Artifacts.ColdDatabase, nil)
+	cold, err := executeScenario(ctx, engine, "cold", isolation, report.Artifacts.ColdDatabase, parseWorkers, nil)
 	if err == nil && cold.Index.Updated+cold.Index.Skipped != coverage.Routed.Files {
 		err = fmt.Errorf("cold scenario accounted for %d inputs, want %d", cold.Index.Updated+cold.Index.Skipped, coverage.Routed.Files)
 		cold = withScenarioError(cold, err)
@@ -324,7 +364,7 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	if err != nil {
 		return report, err
 	}
-	unchanged, err := executeScenario(ctx, engine, "unchanged", isolation, report.Artifacts.ColdDatabase, nil)
+	unchanged, err := executeScenario(ctx, engine, "unchanged", isolation, report.Artifacts.ColdDatabase, parseWorkers, nil)
 	if err == nil {
 		err = requireUnchanged(unchanged, cold.Index.Counts)
 	}
@@ -337,7 +377,7 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	}
 	report.Artifacts.ColdDatabase = ""
 
-	interrupted, interruptErr := executeScenario(ctx, engine, "interrupted", isolation, report.Artifacts.ResumeDatabase,
+	interrupted, interruptErr := executeScenario(ctx, engine, "interrupted", isolation, report.Artifacts.ResumeDatabase, parseWorkers,
 		func(boundary indexer.Boundary) error {
 			if boundary.Kind == indexer.BoundaryFilePersisted && boundary.Completed == 1 {
 				return errRequestedInterruption
@@ -353,7 +393,7 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	}
 	interrupted.Status, interrupted.Error = StatusPassed, ""
 	report.Scenarios = append(report.Scenarios, interrupted)
-	resumed, err := executeScenario(ctx, engine, "resumed", isolation, report.Artifacts.ResumeDatabase, nil)
+	resumed, err := executeScenario(ctx, engine, "resumed", isolation, report.Artifacts.ResumeDatabase, parseWorkers, nil)
 	if err == nil && !reflect.DeepEqual(cold.Index.Counts, resumed.Index.Counts) {
 		err = fmt.Errorf("resumed graph counts differ from uninterrupted cold index")
 	}
@@ -361,7 +401,7 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	if err != nil {
 		return report, err
 	}
-	resumeUnchanged, err := executeScenario(ctx, engine, "resume_unchanged", isolation, report.Artifacts.ResumeDatabase, nil)
+	resumeUnchanged, err := executeScenario(ctx, engine, "resume_unchanged", isolation, report.Artifacts.ResumeDatabase, parseWorkers, nil)
 	if err == nil {
 		err = requireUnchanged(resumeUnchanged, cold.Index.Counts)
 	}
@@ -376,13 +416,13 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	if err := os.WriteFile(targetPath, append(append([]byte{}, original...), '\n'), 0o644); err != nil {
 		return report, err
 	}
-	if err := runMutationPair(ctx, engine, &report, "edit", "edit_unchanged", isolation, report.Artifacts.ResumeDatabase, expectedMutationPaths, 0, cold.Index.Counts, false); err != nil {
+	if err := runMutationPair(ctx, engine, &report, "edit", "edit_unchanged", isolation, report.Artifacts.ResumeDatabase, parseWorkers, expectedMutationPaths, 0, cold.Index.Counts, false); err != nil {
 		return report, err
 	}
 	if err := os.Remove(targetPath); err != nil {
 		return report, err
 	}
-	deleted, err := executeScenario(ctx, engine, "delete", isolation, report.Artifacts.ResumeDatabase, nil)
+	deleted, err := executeScenario(ctx, engine, "delete", isolation, report.Artifacts.ResumeDatabase, parseWorkers, nil)
 	if err == nil && (deleted.Index.Removed != 1 || len(deleted.Index.RemovedPaths) != 1 || deleted.Index.RemovedPaths[0] != target ||
 		!reflect.DeepEqual(deleted.Index.UpdatedPaths, expectedDeletionPaths)) {
 		err = fmt.Errorf("delete scenario updated=%v removed=%v, want updated=%v removed=[%s]",
@@ -395,7 +435,7 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	if err := restoreTrackedFile(targetPath, original, targetInfo.Mode()); err != nil {
 		return report, err
 	}
-	if err := runMutationPair(ctx, engine, &report, "restore", "restore_unchanged", isolation, report.Artifacts.ResumeDatabase, expectedMutationPaths, 0, cold.Index.Counts, true); err != nil {
+	if err := runMutationPair(ctx, engine, &report, "restore", "restore_unchanged", isolation, report.Artifacts.ResumeDatabase, parseWorkers, expectedMutationPaths, 0, cold.Index.Counts, true); err != nil {
 		return report, err
 	}
 	if err := runGit(ctx, isolation, "diff", "--quiet", "--", target); err != nil {
@@ -414,7 +454,7 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	if err := runGit(ctx, isolation, "commit", "-m", "benchmark branch mutation"); err != nil {
 		return report, err
 	}
-	branchSwitch, err := executeScenario(ctx, engine, "branch_switch", isolation, report.Artifacts.ResumeDatabase, nil)
+	branchSwitch, err := executeScenario(ctx, engine, "branch_switch", isolation, report.Artifacts.ResumeDatabase, parseWorkers, nil)
 	if err == nil {
 		err = requireUpdatedPaths(branchSwitch, expectedMutationPaths)
 	}
@@ -425,7 +465,7 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	if err := runGit(ctx, isolation, "switch", "grafo-benchmark-base"); err != nil {
 		return report, err
 	}
-	branchRestore, err := executeScenario(ctx, engine, "branch_restore", isolation, report.Artifacts.ResumeDatabase, nil)
+	branchRestore, err := executeScenario(ctx, engine, "branch_restore", isolation, report.Artifacts.ResumeDatabase, parseWorkers, nil)
 	if err == nil {
 		err = requireUpdatedPaths(branchRestore, expectedMutationPaths)
 	}
@@ -433,7 +473,7 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	if err != nil {
 		return report, err
 	}
-	branchUnchanged, err := executeScenario(ctx, engine, "branch_unchanged", isolation, report.Artifacts.ResumeDatabase, nil)
+	branchUnchanged, err := executeScenario(ctx, engine, "branch_unchanged", isolation, report.Artifacts.ResumeDatabase, parseWorkers, nil)
 	if err == nil {
 		err = requireUnchanged(branchUnchanged, cold.Index.Counts)
 	}
@@ -464,7 +504,7 @@ func Run(ctx context.Context, options Options) (report Report, resultErr error) 
 	return report, nil
 }
 
-func executeScenario(ctx context.Context, engine, name, root, database string, hook indexer.BoundaryHook) (scenario ScenarioReport, resultErr error) {
+func executeScenario(ctx context.Context, engine, name, root, database string, parseWorkers int, hook indexer.BoundaryHook) (scenario ScenarioReport, resultErr error) {
 	scenario = ScenarioReport{Name: name, Status: StatusFailed}
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -472,10 +512,10 @@ func executeScenario(ctx context.Context, engine, name, root, database string, h
 			scenario = withScenarioError(scenario, resultErr)
 		}
 	}()
-	return executeScenarioRun(ctx, engine, scenario, root, database, hook)
+	return executeScenarioRun(ctx, engine, scenario, root, database, parseWorkers, hook)
 }
 
-func executeScenarioRun(ctx context.Context, engine string, scenario ScenarioReport, root, database string, hook indexer.BoundaryHook) (ScenarioReport, error) {
+func executeScenarioRun(ctx context.Context, engine string, scenario ScenarioReport, root, database string, parseWorkers int, hook indexer.BoundaryHook) (ScenarioReport, error) {
 	project, err := indexer.DiscoverProject(ctx, root)
 	if err != nil {
 		return withScenarioError(scenario, err), err
@@ -502,7 +542,8 @@ func executeScenarioRun(ctx context.Context, engine string, scenario ScenarioRep
 		}
 		return nil
 	}
-	indexed, runErr := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{Boundary: wrappedHook})
+	indexed, runErr := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project,
+		indexer.Options{Boundary: wrappedHook, ParseWorkers: parseWorkers})
 	if !indexed.CountsCollected {
 		// Scenario comparisons read graph totals, so a summary the run did not
 		// collect is recounted directly instead of compared as zeros.
@@ -543,8 +584,8 @@ func restoreTrackedFile(path string, content []byte, mode os.FileMode) error {
 	return nil
 }
 
-func runMutationPair(ctx context.Context, engine string, report *Report, changedName, stableName, root, database string, expectedUpdated []string, removed int, expectedCounts graph.Counts, zeroReadStable bool) error {
-	changed, err := executeScenario(ctx, engine, changedName, root, database, nil)
+func runMutationPair(ctx context.Context, engine string, report *Report, changedName, stableName, root, database string, parseWorkers int, expectedUpdated []string, removed int, expectedCounts graph.Counts, zeroReadStable bool) error {
+	changed, err := executeScenario(ctx, engine, changedName, root, database, parseWorkers, nil)
 	if err == nil && (changed.Index.Updated != len(expectedUpdated) || changed.Index.Removed != removed) {
 		err = fmt.Errorf("%s changed updated=%d removed=%d, want %d/%d", changedName, changed.Index.Updated, changed.Index.Removed, len(expectedUpdated), removed)
 	}
@@ -555,7 +596,7 @@ func runMutationPair(ctx context.Context, engine string, report *Report, changed
 	if err != nil {
 		return err
 	}
-	stable, err := executeScenario(ctx, engine, stableName, root, database, nil)
+	stable, err := executeScenario(ctx, engine, stableName, root, database, parseWorkers, nil)
 	if err == nil && (stable.Index.Updated != 0 || stable.Index.Removed != 0) {
 		err = fmt.Errorf("%s did not converge", stableName)
 	}

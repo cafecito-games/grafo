@@ -82,10 +82,18 @@ func (m *goScopeModel) Closure(directory string) string {
 		return ""
 	}
 	m.closureMu.Lock()
-	defer m.closureMu.Unlock()
-	if cached, ok := m.closure[directory]; ok {
+	cached, ok := m.closure[directory]
+	m.closureMu.Unlock()
+	if ok {
 		return cached
 	}
+	// The traversal runs without the lock. Every field it reads is built once in
+	// buildScopeModel and never written afterwards, so concurrent callers may
+	// duplicate one directory's work but cannot observe a partial model, and a
+	// digest over immutable inputs is the same whoever computes it. This is the
+	// trade decodeSegment already makes for the same reason: holding the lock
+	// across the traversal serialized every package of every repository in the
+	// process behind one mutex.
 	reached := map[string]bool{}
 	opaque := m.collect(directory, reached)
 	delete(reached, directory)
@@ -101,6 +109,13 @@ func (m *goScopeModel) Closure(directory string) string {
 		}
 	}
 	result := digest.sum()
+	m.closureMu.Lock()
+	defer m.closureMu.Unlock()
+	if published, ok := m.closure[directory]; ok {
+		// A concurrent caller published first. Its digest covers the same
+		// immutable inputs, so keep the published one and stay single valued.
+		return published
+	}
 	if m.closure == nil {
 		m.closure = map[string]string{}
 	}

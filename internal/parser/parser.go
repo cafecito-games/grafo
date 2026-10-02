@@ -22,6 +22,12 @@ type Input struct {
 	RepoID      string
 	GoModule    string
 	SemanticKey string
+	// ScopeKey is the scope-local component of this file's semantic key, when
+	// the caller has already derived it. A parser that would otherwise compute
+	// the same value again consumes this instead. Empty means the caller has no
+	// value to offer and the parser derives its own, so a missing key is never
+	// read as a match.
+	ScopeKey string
 }
 
 type Parser interface {
@@ -40,6 +46,15 @@ type Parser interface {
 // repository-wide part is never recomputed per file.
 type SemanticKeyer interface {
 	SemanticKey(context.Context, Input) (string, error)
+}
+
+// ScopeKeyer reports the scope-local component of a file's semantic key on its
+// own. Deriving that component can cost filesystem work, and SemanticKey folds
+// it into a larger string the caller cannot take apart, so a caller that needs
+// the component itself asks for it here and hands it back through
+// Input.ScopeKey rather than making the parser derive it twice.
+type ScopeKeyer interface {
+	ScopeKey(context.Context, Input) (string, error)
 }
 
 // WorkspaceSemanticKeyer marks a semantic key that is shared by every source

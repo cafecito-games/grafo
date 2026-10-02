@@ -73,11 +73,27 @@ func (p *Parser) SemanticKey(ctx context.Context, input parserapi.Input) (string
 	if input.Root == "" || input.Path == "" || !isGoSourcePath(input.Path) {
 		return workspaceKey, nil
 	}
-	scopeKey, err := packageScopeKey(input.Root, input.Path)
-	if err != nil {
-		return "", err
+	scopeKey := input.ScopeKey
+	if scopeKey == "" {
+		computed, err := packageScopeKey(input.Root, input.Path)
+		if err != nil {
+			return "", err
+		}
+		scopeKey = computed
 	}
 	return workspaceKey + ":" + scopeKey, nil
+}
+
+// ScopeKey reports the package scope component of this file's semantic key. The
+// semantic loader compares the same value against the one it recorded when the
+// package was loaded, so a caller derives it once here and hands it to both
+// SemanticKey and Parse through Input.ScopeKey. Deriving it reads and digests
+// every file of the package, which is why it is worth not doing twice.
+func (p *Parser) ScopeKey(_ context.Context, input parserapi.Input) (string, error) {
+	if input.Root == "" || input.Path == "" || !isGoSourcePath(input.Path) {
+		return "", nil
+	}
+	return packageScopeKey(input.Root, input.Path)
 }
 
 // WorkspaceSemanticKey fingerprints only the Go facts that no import edge can
