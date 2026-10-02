@@ -35,12 +35,16 @@ var (
 // sections are deliberately ignored so their owning consumers remain free to
 // interpret them.
 type Config struct {
-	Components      []Component
-	Adapters        calleffect.Registry
-	HTTP            HTTP
-	SQL             SQL
-	Tests           Tests
-	Index           IndexScope
+	Components []Component
+	Adapters   calleffect.Registry
+	HTTP       HTTP
+	SQL        SQL
+	Tests      Tests
+	Index      IndexScope
+	// IndexSeed is the repository's position on adopting a sibling worktree's
+	// index when this worktree has none. Nil means unset, so the caller's own
+	// default applies.
+	IndexSeed       *bool
 	UnknownSections map[string][]yaml.Node
 }
 
@@ -308,7 +312,7 @@ func Parse(content []byte) (Config, error) {
 				return Config{}, fmt.Errorf("line %d: duplicate top-level section %q", keyNode.Line, key)
 			}
 			seenOwned[key] = true
-			result.Index, err = parseIndexScope(valueNode)
+			result.Index, result.IndexSeed, err = parseIndexSection(valueNode)
 			if err != nil {
 				return Config{}, err
 			}
@@ -505,23 +509,27 @@ func parseAdapterRoles(node *yaml.Node) (map[string]calleffect.Selector, error) 
 	return roles, nil
 }
 
-func parseIndexScope(node *yaml.Node) (IndexScope, error) {
+// parseIndexSection reads the repository-owned index settings: the source
+// membership scope, and whether a new worktree may adopt a sibling worktree's
+// index. A nil seed result means the repository expressed no preference.
+func parseIndexSection(node *yaml.Node) (IndexScope, *bool, error) {
 	if isEmptyYAMLValue(node) {
-		return IndexScope{}, nil
+		return IndexScope{}, nil, nil
 	}
 	if node.Kind != yaml.MappingNode {
-		return IndexScope{}, fmt.Errorf("line %d: index must be a mapping", node.Line)
+		return IndexScope{}, nil, fmt.Errorf("line %d: index must be a mapping", node.Line)
 	}
 	var result IndexScope
+	var seed *bool
 	seen := map[string]bool{}
 	for index := 0; index < len(node.Content); index += 2 {
 		keyNode, valueNode := node.Content[index], node.Content[index+1]
 		key, err := stringScalar(keyNode)
 		if err != nil {
-			return IndexScope{}, fmt.Errorf("line %d: index setting name must be a string", keyNode.Line)
+			return IndexScope{}, nil, fmt.Errorf("line %d: index setting name must be a string", keyNode.Line)
 		}
 		if seen[key] {
-			return IndexScope{}, fmt.Errorf("line %d: duplicate index setting %q", keyNode.Line, key)
+			return IndexScope{}, nil, fmt.Errorf("line %d: duplicate index setting %q", keyNode.Line, key)
 		}
 		seen[key] = true
 		var target *[]string
@@ -530,24 +538,34 @@ func parseIndexScope(node *yaml.Node) (IndexScope, error) {
 			target = &result.Include
 		case "exclude":
 			target = &result.Exclude
+		case "seed":
+			if isEmptyYAMLValue(valueNode) {
+				continue
+			}
+			enabled, err := boolScalar(valueNode)
+			if err != nil {
+				return IndexScope{}, nil, fmt.Errorf("line %d: index seed must be true or false", valueNode.Line)
+			}
+			seed = &enabled
+			continue
 		default:
-			return IndexScope{}, fmt.Errorf("line %d: unknown index setting %q", keyNode.Line, key)
+			return IndexScope{}, nil, fmt.Errorf("line %d: unknown index setting %q", keyNode.Line, key)
 		}
 		if isEmptyYAMLValue(valueNode) {
 			continue
 		}
 		if valueNode.Kind != yaml.SequenceNode {
-			return IndexScope{}, fmt.Errorf("line %d: index %s must be a sequence", valueNode.Line, key)
+			return IndexScope{}, nil, fmt.Errorf("line %d: index %s must be a sequence", valueNode.Line, key)
 		}
 		unique := map[string]bool{}
 		for _, patternNode := range valueNode.Content {
 			pattern, err := stringScalar(patternNode)
 			if err != nil {
-				return IndexScope{}, fmt.Errorf("line %d: index %s pattern must be a string", patternNode.Line, key)
+				return IndexScope{}, nil, fmt.Errorf("line %d: index %s pattern must be a string", patternNode.Line, key)
 			}
 			normalized, err := pathscope.NormalizeGlob(pattern)
 			if err != nil {
-				return IndexScope{}, fmt.Errorf("line %d: invalid %s pattern %q: %w", patternNode.Line, key, pattern, err)
+				return IndexScope{}, nil, fmt.Errorf("line %d: invalid %s pattern %q: %w", patternNode.Line, key, pattern, err)
 			}
 			if !unique[normalized] {
 				*target = append(*target, normalized)
@@ -555,7 +573,7 @@ func parseIndexScope(node *yaml.Node) (IndexScope, error) {
 			}
 		}
 	}
-	return result, nil
+	return result, seed, nil
 }
 
 func parseTests(node *yaml.Node) Tests {
@@ -940,6 +958,13 @@ func validateSQLPattern(pattern string) error {
 		}
 	}
 	return nil
+}
+
+func boolScalar(node *yaml.Node) (bool, error) {
+	if node.Kind != yaml.ScalarNode || node.Tag != "!!bool" {
+		return false, fmt.Errorf("expected boolean scalar")
+	}
+	return node.Value == "true" || node.Value == "True" || node.Value == "TRUE", nil
 }
 
 func stringScalar(node *yaml.Node) (string, error) {

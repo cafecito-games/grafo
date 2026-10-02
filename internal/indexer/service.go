@@ -25,7 +25,11 @@ import (
 const workspaceOwner = "__workspace__"
 const workspaceSemanticKeysMeta = "parser_workspace_semantic_keys"
 const workspaceStateDigestMeta = "workspace_state_digest"
-const gitUntrackedPathsMeta = "git_untracked_paths"
+
+// GitUntrackedPathsMeta names the stored ledger of untracked paths the index
+// last covered. See GitDirtyPathsMeta for why both are cleared rather than
+// carried when an index is adopted from another worktree.
+const GitUntrackedPathsMeta = "git_untracked_paths"
 const indexScopeDigestMeta = "index_scope_digest"
 const indexScopePendingMeta = "index_scope_pending"
 const indexScopeScopedOutMeta = "index_scope_scoped_out"
@@ -46,11 +50,35 @@ type Options struct {
 	// path-ordered at every worker count, so the indexed graph never depends on
 	// this value.
 	ParseWorkers int
+	// Seed records that this index was adopted from another worktree immediately
+	// before the run, so the report can explain where its starting facts came
+	// from. It is provenance only: the run's behaviour never depends on it,
+	// because an adopted index proves itself through the same content hashing as
+	// any other, and the adopting caller clears the dirty ledgers so no file is
+	// reused without being read.
+	Seed *SeedProvenance
 	// ResultTransform is a benchmark/test-only interception point after parsing
 	// and before any durable mutation. Production CLI, MCP, watch, and service
 	// composition leave it nil. Its semantic key participates in each file hash
 	// so switching a prototype profile reparses instead of reusing stale detail.
 	ResultTransform ParseResultTransform
+}
+
+// SeedProvenance describes the index a run started from when that index was
+// copied out of a sibling worktree rather than built here. It is reported so an
+// unexpectedly fast first index is explainable, and so the donor can be named
+// when its facts turn out to be wrong.
+type SeedProvenance struct {
+	// DonorRoot is the worktree whose index was copied.
+	DonorRoot string `json:"donor_root"`
+	// DonorBranch is the branch that index described.
+	DonorBranch string `json:"donor_branch,omitempty"`
+	// DonorCommit is the commit that index was last written at.
+	DonorCommit string `json:"donor_commit,omitempty"`
+	// ChangedPaths counts the tracked files differing between the donor's commit
+	// and this worktree's, which is how the donor was chosen. It is not the work
+	// the run will do: the adopting pass re-reads every file regardless.
+	ChangedPaths int `json:"changed_paths"`
 }
 
 // ParseResultTransform supports isolated fidelity experiments without adding a
@@ -128,6 +156,7 @@ type Report struct {
 	ElapsedMS                    int64              `json:"elapsed_ms"`
 	ReconcileMS                  int64              `json:"reconciliation_ms"`
 	Rebuild                      string             `json:"rebuild_reason,omitempty"`
+	Seed                         *SeedProvenance    `json:"seed,omitempty"`
 }
 
 func (r Report) MarshalJSON() ([]byte, error) {
@@ -153,7 +182,7 @@ func NewService(repository graph.IndexRepository, parsers *parserapi.Registry) *
 
 func (s *Service) Run(ctx context.Context, project Project, options Options) (report Report, runErr error) {
 	started := time.Now()
-	report = Report{Project: project, Updated: []string{}, Removed: []string{}}
+	report = Report{Project: project, Updated: []string{}, Removed: []string{}, Seed: options.Seed}
 	writeStart := writeStats(s.repository)
 	progress := newProgressEmitter(project, options.ProgressObserver, started)
 	defer func() {
@@ -183,14 +212,14 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 			}
 			refreshed, err := refreshGitSnapshot(ctx, project.gitSnapshot, runner)
 			if err != nil {
-				return Report{Project: project, Updated: []string{}, Removed: []string{}}, err
+				return Report{Project: project, Updated: []string{}, Removed: []string{}, Seed: options.Seed}, err
 			}
 			branch := refreshed.Branch
 			if branch == "(detached)" {
 				branch = refreshed.DetachedBranch
 			}
 			if branch != project.Branch {
-				return Report{Project: project, Updated: []string{}, Removed: []string{}}, fmt.Errorf("git branch changed from %q to %q; rediscover the project before indexing", project.Branch, branch)
+				return Report{Project: project, Updated: []string{}, Removed: []string{}, Seed: options.Seed}, fmt.Errorf("git branch changed from %q to %q; rediscover the project before indexing", project.Branch, branch)
 			}
 			project.gitSnapshot = refreshed
 			project.Commit = refreshed.Head
@@ -244,7 +273,7 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	if err != nil {
 		return report, fmt.Errorf("load indexed commit: %w", err)
 	}
-	previousDirtyRaw, err := s.repository.Meta(ctx, gitDirtyPathsMeta)
+	previousDirtyRaw, err := s.repository.Meta(ctx, GitDirtyPathsMeta)
 	if err != nil {
 		return report, fmt.Errorf("load dirty paths: %w", err)
 	}
@@ -252,7 +281,7 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	if indexedCommit != "" && previousDirtyRaw == "" {
 		previousDirtyValid = false
 	}
-	previousUntrackedRaw, err := s.repository.Meta(ctx, gitUntrackedPathsMeta)
+	previousUntrackedRaw, err := s.repository.Meta(ctx, GitUntrackedPathsMeta)
 	if err != nil {
 		return report, fmt.Errorf("load untracked paths: %w", err)
 	}
@@ -638,14 +667,14 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		if marshalErr != nil {
 			return report, marshalErr
 		}
-		if err := setMetaIfChanged(ctx, s.repository, gitDirtyPathsMeta, string(encoded)); err != nil {
+		if err := setMetaIfChanged(ctx, s.repository, GitDirtyPathsMeta, string(encoded)); err != nil {
 			return report, err
 		}
 		untrackedEncoded, marshalErr := json.Marshal(untrackedPaths)
 		if marshalErr != nil {
 			return report, marshalErr
 		}
-		if err := setMetaIfChanged(ctx, s.repository, gitUntrackedPathsMeta, string(untrackedEncoded)); err != nil {
+		if err := setMetaIfChanged(ctx, s.repository, GitUntrackedPathsMeta, string(untrackedEncoded)); err != nil {
 			return report, err
 		}
 	}

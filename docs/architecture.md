@@ -792,6 +792,58 @@ between generated rows and domain models.
 Run `task generate` after changing SQL. Generated code is committed so building
 Grafo does not require sqlc.
 
+## Worktree index adoption
+
+A new Git worktree starts with no index under its own `.grafo/indexes`, so its
+first pass would parse every file even though a sibling checkout usually holds a
+complete index of nearly the same content. `internal/indexseed` adopts that
+index instead.
+
+Adoption is possible because an index is addressed by repository rather than by
+directory: node and fact identifiers hash the repository identity and
+repository-relative paths, never an absolute location. Identity comes from the
+origin remote, so every worktree of a remote-backed repository agrees on it.
+A repository with no remote falls back to each worktree's own path, and adoption
+correctly finds no eligible donor — the identity check is what prevents adopting
+a graph whose identifiers belong to a different repository.
+
+`git worktree list --porcelain` enumerates candidates from the repository's
+common directory, so the main checkout is visible from inside any linked
+worktree. A candidate must inspect as compatible, which already proves the
+schema and semantic index versions, and must carry this repository's identity.
+Candidates are ranked by the number of tracked files whose blobs differ between
+the donor's commit and this worktree's, measured with a two-dot diff and bounded
+to a few candidates so discovery cost does not grow with the number of
+abandoned worktrees. The donor is copied with `VACUUM INTO` under its own write
+lock, so a donor another process is refreshing is skipped rather than copied
+mid-write.
+
+Only two stored values describe a location rather than a repository, `root` and
+`branch`, and they are corrected before the copy is published by rename. The
+repository node carries the donor's pair too, but the workspace digest covers
+those properties, so the adopting pass replaces that node itself.
+
+Correctness rests on clearing both dirty ledgers. An index carrying a commit but
+no ledger cannot prove which uncommitted files its facts came from, so the next
+pass declines to scope itself to a Git diff and instead reads, hashes, and
+content-checks every file it discovers. Facts survive only where a
+byte-identical file exists in this worktree; a donor's uncommitted edit is
+re-parsed from this worktree's content and a donor's untracked file is removed.
+Nothing is trusted from the donor's own description of its working tree.
+
+The saving is therefore proportional to how much content the two worktrees
+share. A worktree indexed at its donor's committed state reuses everything. A
+Go repository is more sensitive than that: the Go workspace semantic key digests
+every Go source in the repository and enters each file's content hash, so any
+difference in the declaration surface re-parses every Go file while non-Go files
+still reuse. Adoption is never incorrect in that case, only less profitable, and
+indexing a worktree before editing it is what realises the full saving.
+
+Every failure is a declined adoption rather than an error, and adoption runs
+before the index is opened, so a database it leaves behind faces the same
+migration and compatibility checks as any other. `--no-seed` declines for one
+invocation and `index.seed: false` in `grafo.yaml` declines for the repository.
+
 ## Extension seams
 
 - Add a language by implementing `parser.Parser` and registering it in the

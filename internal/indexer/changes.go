@@ -9,7 +9,13 @@ import (
 	"strings"
 )
 
-const gitDirtyPathsMeta = "git_dirty_paths"
+// GitDirtyPathsMeta names the stored ledger of paths that differed from HEAD
+// when the index was last written. Together with GitUntrackedPathsMeta it is the
+// evidence that lets a refresh scope itself to a precise Git diff; an index
+// carrying a commit but no ledger cannot prove which uncommitted files its facts
+// came from, so every file is re-read and content-checked instead. Clearing both
+// is therefore the supported way to demand a full, content-verified pass.
+const GitDirtyPathsMeta = "git_dirty_paths"
 
 type gitChanges struct {
 	changed     []string

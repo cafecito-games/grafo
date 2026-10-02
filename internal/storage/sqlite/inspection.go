@@ -56,14 +56,10 @@ func InspectIndex(ctx context.Context, path string) (IndexInspection, error) {
 }
 
 func inspectIndex(ctx context.Context, path string, metricsReader func(context.Context, *sql.DB) (StorageMetrics, error)) (IndexInspection, error) {
-	mode := "ro"
-	if _, err := os.Lstat(path + "-wal"); errors.Is(err, os.ErrNotExist) {
-		// Without a WAL there is no newer committed state to discover. Immutable
-		// mode prevents SQLite from creating empty WAL/SHM sidecars during a
-		// list or dry-run inspection.
-		mode = "ro-immutable"
-	}
-	db, err := openExistingIndex(ctx, path, mode)
+	// Without a WAL there is no newer committed state to discover, and immutable
+	// mode prevents SQLite from creating empty WAL/SHM sidecars during a list or
+	// dry-run inspection.
+	db, err := openExistingIndex(ctx, path, readOnlyMode(path))
 	if err != nil {
 		if ctx.Err() != nil {
 			return IndexInspection{}, ctx.Err()

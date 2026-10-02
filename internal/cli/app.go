@@ -20,6 +20,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
 	branchindexes "github.com/cafecito-games/grafo/internal/indexes"
+	"github.com/cafecito-games/grafo/internal/indexseed"
 	"github.com/cafecito-games/grafo/internal/mcpserver"
 	parserdefaults "github.com/cafecito-games/grafo/internal/parser/defaults"
 	"github.com/cafecito-games/grafo/internal/query"
@@ -105,6 +106,10 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 	}
 	if _, present := parsed.values["path-prefix"]; present && !pathPrefixCommands[parsed.command] {
 		a.fail(fmt.Errorf("--path-prefix is not supported by %s", parsed.command))
+		return 2
+	}
+	if parsed.flags["no-seed"] && !seedCommands[parsed.command] {
+		a.fail(fmt.Errorf("--no-seed is not supported by %s", parsed.command))
 		return 2
 	}
 	var runErr error
@@ -341,19 +346,61 @@ func (a *App) index(ctx context.Context, args parsedArguments) error {
 		return err
 	}
 	defer func() { _ = unlock() }()
+	// Adoption runs before the index is opened, so a database it leaves behind
+	// faces the same migration and compatibility checks as any other. That is
+	// what keeps it incapable of introducing a failure the cold path would not
+	// already handle.
+	seed := a.seedBranchIndex(ctx, project, args.flags["no-seed"])
 	repository, err := sqlite.Open(ctx, project.IndexPath)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = repository.Close() }()
-	return a.runIndex(ctx, project, repository, mode, args)
+	return a.runIndex(ctx, project, repository, mode, args, seed)
+}
+
+// seedBranchIndex adopts a sibling worktree's index when this branch has none.
+// The caller must already hold the branch index lock. A declined adoption is
+// reported on stderr and is never an error: the indexing pass that follows
+// builds the index from scratch exactly as it did before.
+func (a *App) seedBranchIndex(ctx context.Context, project indexer.Project, disabled bool) *indexer.SeedProvenance {
+	if disabled {
+		return nil
+	}
+	if _, err := os.Stat(project.IndexPath); err == nil {
+		return nil
+	}
+	result, err := indexseed.Seed(ctx, project, indexseed.Options{TryLock: service.TryDonorIndexLock})
+	if err != nil {
+		return nil
+	}
+	if !result.Seeded {
+		// A repository with a single checkout declines on every cold index, so
+		// only a decline that had something to reject is worth a line.
+		if result.Considered > 0 {
+			a.errorf("grafo: indexing from scratch: %s\n", result.Reason)
+		}
+		return nil
+	}
+	a.errorf("grafo: adopted the index of %s at %s; every file is re-read to verify it\n",
+		result.Provenance.DonorRoot, shortCommit(result.Provenance.DonorCommit))
+	return result.Provenance
+}
+
+// shortCommit abbreviates a commit for human-facing provenance without implying
+// the abbreviation is unique.
+func shortCommit(commit string) string {
+	if len(commit) <= 12 {
+		return commit
+	}
+	return commit[:12]
 }
 
 // runIndex indexes one discovered project, rendering progress on stderr so the
 // report on stdout stays machine-readable, and reporting the phase timings a
 // cancelled run already measured instead of discarding them.
 func (a *App) runIndex(ctx context.Context, project indexer.Project, repository graph.IndexRepository,
-	mode progressMode, args parsedArguments) error {
+	mode progressMode, args parsedArguments, seed *indexer.SeedProvenance) error {
 	maxSize, err := int64Option(args, "max-file-size", 5<<20)
 	if err != nil {
 		return err
@@ -368,7 +415,7 @@ func (a *App) runIndex(ctx context.Context, project indexer.Project, repository 
 	renderer := newProgressRenderer(a.stderr, mode, a.stderrIsTerminal(a.stderr), a.progressDelay)
 	report, runErr := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{
 		Force: args.flags["force"], MaxFileSize: maxSize, ReportDetail: detail,
-		ProgressObserver: nonFatalObserver(renderer.Observer()),
+		ProgressObserver: nonFatalObserver(renderer.Observer()), Seed: seed,
 	})
 	_ = renderer.Close()
 	if runErr != nil {
@@ -591,6 +638,7 @@ func (a *App) watch(ctx context.Context, args parsedArguments) error {
 			return err
 		}
 		defer func() { _ = unlock() }()
+		seed := a.seedBranchIndex(ctx, project, args.flags["no-seed"])
 		repository, err := sqlite.Open(ctx, project.IndexPath)
 		if err != nil {
 			return err
@@ -600,7 +648,7 @@ func (a *App) watch(ctx context.Context, args parsedArguments) error {
 			detail = indexer.ReportComplete
 		}
 		report, runErr := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project,
-			indexer.Options{ReportDetail: detail})
+			indexer.Options{ReportDetail: detail, Seed: seed})
 		closeErr := repository.Close()
 		if runErr != nil {
 			return runErr
@@ -2616,7 +2664,7 @@ var booleanOptions = map[string]bool{
 	"json": true, "force": true, "help": true, "source": true, "regex": true, "case-sensitive": true,
 	"list": true, "all": true, "dry-run": true, "mcp-only": true, "hooks": true, "refresh": true,
 	"repair": true, "once": true, "paused": true, "mermaid": true, "yes": true,
-	"counts": true,
+	"counts": true, "no-seed": true,
 }
 var valueOptions = map[string]bool{
 	"repo": true, "repos": true, "depth": true, "direction": true, "relation": true,
@@ -2637,6 +2685,10 @@ var valueOptions = map[string]bool{
 // commands that render it, so every other command still rejects the flag
 // before opening a repository.
 var progressCommands = map[string]bool{"index": true, "status": true, "counts": true}
+
+// seedCommands bounds --no-seed to the commands that create a branch index, so
+// every other command still rejects the flag before opening a repository.
+var seedCommands = map[string]bool{"index": true, "watch": true}
 
 // pathPrefixCommands is the adapter boundary for the one globally parsed
 // option that is intentionally available to only a bounded command set. Keep
@@ -2782,11 +2834,11 @@ Usage:
                  [--mcp-only] [--hooks] [--refresh]
   grafo uninstall [client...] [--client a,b] [--all] [--dry-run] [--json]
   grafo guidance [--repo path] [--hook pre-search|pre-edit]
-  grafo index [path] [--force] [--counts] [--json] [--progress auto|human|json|off]
+  grafo index [path] [--force] [--counts] [--no-seed] [--json] [--progress auto|human|json|off]
   grafo indexes list [path] [--json]
   grafo indexes prune [path] [--older-than duration] [--keep n] [--dry-run] [--yes] [--json]
   grafo indexes compact [path] [--dry-run] [--yes] [--json]
-  grafo watch [path] [--interval 1s] [--counts] [--json]
+  grafo watch [path] [--interval 1s] [--counts] [--no-seed] [--json]
   grafo service add [path] [--interval 10s] [--paused] [--json]
   grafo service remove [path]
   grafo service list [--json]
