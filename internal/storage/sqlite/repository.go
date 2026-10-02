@@ -18,8 +18,8 @@ import (
 	"github.com/cafecito-games/grafo/internal/semantic"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/migrations"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/sqlcgen"
+	"github.com/cafecito-games/grafo/internal/storage/sqlitedriver"
 	"github.com/pressly/goose/v3"
-	modernsqlite "modernc.org/sqlite"
 )
 
 // Repository is the SQLite adapter for graph.Repository.
@@ -52,7 +52,6 @@ const (
 	// more than the checkpoints saved. Both extremes measured worse than this.
 	reconciliationCheckpointBatches = 16
 	resolutionCacheSize             = 50_000
-	sqliteLimitVariables            = 9
 )
 
 var _ graph.Repository = (*Repository)(nil)
@@ -65,7 +64,7 @@ func Open(ctx context.Context, path string) (*Repository, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create index directory: %w", err)
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open(sqlitedriver.Name, path)
 	if err != nil {
 		return nil, fmt.Errorf("open graph: %w", err)
 	}
@@ -99,7 +98,7 @@ func Open(ctx context.Context, path string) (*Repository, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("prepare graph queries: %w", err)
 	}
-	variableLimit, err := activeVariableLimit(ctx, db)
+	variableLimit, err := sqlitedriver.VariableLimit(ctx, db)
 	if err != nil {
 		_ = queries.Close()
 		_ = db.Close()
@@ -1503,22 +1502,6 @@ func (r *Repository) inTransaction(ctx context.Context, fn func(*sqlcgen.Queries
 	addWriteStats(&r.writeStats, writer.stats())
 	r.writeStatsMu.Unlock()
 	return nil
-}
-
-func activeVariableLimit(ctx context.Context, db *sql.DB) (int, error) {
-	connection, err := db.Conn(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = connection.Close() }()
-	limit, err := modernsqlite.Limit(connection, sqliteLimitVariables, -1)
-	if err != nil {
-		return 0, err
-	}
-	if limit <= 0 {
-		return 0, fmt.Errorf("driver reported invalid limit %d", limit)
-	}
-	return limit, nil
 }
 
 func nodeParams(n graph.Node, external int64) sqlcgen.UpsertNodeParams {

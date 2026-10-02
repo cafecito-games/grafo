@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/sqlcgen"
-	modernsqlite "modernc.org/sqlite"
+	"github.com/cafecito-games/grafo/internal/storage/sqlitedriver"
 )
 
 // IndexCompatibility is the bounded compatibility state used by branch-index
@@ -174,7 +174,7 @@ func openExistingIndex(ctx context.Context, path, mode string) (*sql.DB, error) 
 	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("index path is not a regular non-symlink database file")
 	}
-	db, err := sql.Open("sqlite", sqliteFileDSN(absolute, mode))
+	db, err := sql.Open(sqlitedriver.Name, sqliteFileDSN(absolute, mode))
 	if err != nil {
 		return nil, fmt.Errorf("open index database: %w", err)
 	}
@@ -199,6 +199,11 @@ func sqliteFileDSN(absolute, mode string) string {
 		uriPath = "/" + uriPath
 	}
 	query := url.Values{}
+	// The driver otherwise applies a five-second busy timeout of its own, which
+	// blocks inside the C library and so cannot be interrupted. Query-only paths
+	// wait out contention through retrySQLiteBusy instead, which honors the
+	// caller's context; the ones that want a timeout set the pragma themselves.
+	query.Set("_busy_timeout", "0")
 	if mode == "ro-immutable" {
 		mode = "ro"
 		query.Set("immutable", "1")
@@ -229,12 +234,8 @@ func readIndexMetadata(ctx context.Context, db *sql.DB) (IndexMetadata, error) {
 
 func inspectionFailure(err error) IndexInspection {
 	compatibility := CompatibilityUnverified
-	var sqliteErr *modernsqlite.Error
-	if errors.As(err, &sqliteErr) {
-		switch sqliteErr.Code() & 0xff {
-		case 11, 26: // SQLITE_CORRUPT, SQLITE_NOTADB
-			compatibility = CompatibilityCorrupt
-		}
+	if sqlitedriver.Corrupt(err) {
+		compatibility = CompatibilityCorrupt
 	}
 	message := strings.ToLower(err.Error())
 	if compatibility != CompatibilityCorrupt && (strings.Contains(message, "malformed") || strings.Contains(message, "not a database")) {

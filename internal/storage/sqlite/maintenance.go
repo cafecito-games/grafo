@@ -10,6 +10,7 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/sqlcgen"
+	"github.com/cafecito-games/grafo/internal/storage/sqlitedriver"
 )
 
 const maxMetadataEntries = 10_000
@@ -82,7 +83,7 @@ func OpenMaintenance(ctx context.Context, path string) (MaintenanceRepository, e
 		_ = db.Close()
 		return nil, fmt.Errorf("prepare graph maintenance queries: %w", err)
 	}
-	variableLimit, err := activeVariableLimit(ctx, db)
+	variableLimit, err := sqlitedriver.VariableLimit(ctx, db)
 	if err != nil {
 		_ = queries.Close()
 		_ = db.Close()

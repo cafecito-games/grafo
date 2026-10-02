@@ -17,7 +17,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/semantic"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/migrations"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/sqlcgen"
-	modernsqlite "modernc.org/sqlite"
+	"github.com/cafecito-games/grafo/internal/storage/sqlitedriver"
 )
 
 // ReadRepository is the capability-safe SQLite adapter for existing indexes.
@@ -137,7 +137,7 @@ func OpenReadOnly(ctx context.Context, path string) (*ReadRepository, error) {
 	}
 
 	dsn := readOnlyDSN(absolute)
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open(sqlitedriver.Name, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open query-only graph: %w", err)
 	}
@@ -205,10 +205,7 @@ func retrySQLiteBusy(ctx context.Context, operation func() error) error {
 	}
 }
 
-func sqliteBusy(err error) bool {
-	var sqliteErr *modernsqlite.Error
-	return errors.As(err, &sqliteErr) && sqliteErr.Code()&0xff == 5
-}
+func sqliteBusy(err error) bool { return sqlitedriver.Busy(err) }
 
 func validateReadCompatibility(ctx context.Context, repository *Repository) error {
 	if err := validateStorageCompatibility(ctx, repository.db); err != nil {

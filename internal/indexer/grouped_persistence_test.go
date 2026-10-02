@@ -24,7 +24,7 @@ func (r *groupingRepository) ReplaceFiles(ctx context.Context, replacements []gr
 	r.groups = append(r.groups, len(replacements))
 	r.mu.Unlock()
 	for _, replacement := range replacements {
-		if err := r.recordingRepository.ReplaceFile(ctx, replacement.File, replacement.Parsed); err != nil {
+		if err := r.ReplaceFile(ctx, replacement.File, replacement.Parsed); err != nil {
 			return err
 		}
 	}
