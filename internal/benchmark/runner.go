@@ -84,6 +84,14 @@ type Corpus struct {
 	Branch string `json:"branch"`
 }
 
+// maxBenchmarkParseWorkers bounds the exposed worker count. The ceiling is a
+// multiple of the core count rather than a fixed number: it stays generous
+// enough to measure deliberate oversubscription, which is one of the things the
+// matrix is for, while a mistyped count still fails the run.
+func maxBenchmarkParseWorkers() int {
+	return 16 * runtime.NumCPU()
+}
+
 // ParseWorkers records the parse pool the run used. Requested is what the
 // caller asked for, zero meaning it asked for nothing; Resolved is the count
 // the indexer actually ran, so comparing two reports never depends on
@@ -229,11 +237,15 @@ var openRepository = func(ctx context.Context, engine, path string) (graph.Repos
 }
 
 func Run(ctx context.Context, options Options) (report Report, resultErr error) {
-	// The indexer honors a positive ParseWorkers exactly as given, so a value
-	// that cannot be a pool size is rejected here rather than silently
-	// resolving to the default and reporting a measurement of something else.
-	if options.ParseWorkers < 0 {
-		return Report{}, fmt.Errorf("parse workers must be zero for the derived default or a positive count, got %d", options.ParseWorkers)
+	// The indexer honors a positive ParseWorkers exactly as given, so this
+	// harness is what has to reject a value that cannot be a pool size. Zero
+	// means the derived default; anything else is bounded in both directions,
+	// because resolving silently would report a measurement of something other
+	// than what was asked for, and an absurd count would spawn a pool the
+	// machine cannot schedule.
+	if options.ParseWorkers < 0 || options.ParseWorkers > maxBenchmarkParseWorkers() {
+		return Report{}, fmt.Errorf("parse workers must be zero for the derived default or between 1 and %d, got %d",
+			maxBenchmarkParseWorkers(), options.ParseWorkers)
 	}
 	engine, storage, err := resolveStorage(options.Engine)
 	if err != nil {
