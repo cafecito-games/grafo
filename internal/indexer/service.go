@@ -401,7 +401,7 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		dirtyPaths, dirtyPathsValid = detectedChanges.dirty, true
 		untrackedPaths = detectedChanges.untracked
 		if !options.Force && !schemaChanged && indexedCommit != "" && previousDirtyValid && previousUntrackedValid {
-			selected = selectChangedPaths(paths, known, detectedChanges.changed, previousDirty, s.parsers)
+			selected = selectChangedPaths(project.Root, paths, known, detectedChanges.changed, previousDirty, s.parsers)
 			// grafo.yaml may intentionally be ignored by Git while remaining the
 			// authoritative control-plane input. Hash it on every selected pass so
 			// an ignore rule cannot make its indexed evidence stale.
@@ -812,7 +812,7 @@ func writeStatsDelta(after, before graph.WriteStats) graph.WriteStats {
 	}
 }
 
-func selectChangedPaths(paths []string, known map[string]graph.FileRecord, changed, previousDirty []string, parsers *parserapi.Registry) map[string]bool {
+func selectChangedPaths(root string, paths []string, known map[string]graph.FileRecord, changed, previousDirty []string, parsers *parserapi.Registry) map[string]bool {
 	selected := make(map[string]bool, len(changed)+len(previousDirty))
 	for _, path := range changed {
 		selected[path] = true
@@ -829,7 +829,7 @@ func selectChangedPaths(paths []string, known map[string]graph.FileRecord, chang
 	for path := range selected {
 		changedPaths = append(changedPaths, path)
 	}
-	for _, path := range parsers.SemanticAffectedPaths(paths, changedPaths) {
+	for _, path := range parsers.SemanticAffectedPaths(root, paths, changedPaths) {
 		selected[path] = true
 	}
 	for _, path := range paths {

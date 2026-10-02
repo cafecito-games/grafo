@@ -96,7 +96,7 @@ func (*Parser) IsSemanticInput(path string) bool { return isTypeScriptSemanticIn
 // wide. A module edit is not expanded here: anything in it that another module
 // can resolve through already changes the workspace semantic key, and therefore
 // every module's incremental cache key.
-func (*Parser) SemanticAffectedPaths(allPaths, changedPaths []string) []string {
+func (*Parser) SemanticAffectedPaths(_ string, allPaths, changedPaths []string) []string {
 	affected := false
 	for _, path := range changedPaths {
 		if isTypeScriptSemanticInput(path) && !isTypeScriptPath(path) {

@@ -80,10 +80,10 @@ func (p *Parser) SemanticKey(ctx context.Context, input parserapi.Input) (string
 	return workspaceKey + ":" + scopeKey, nil
 }
 
-// WorkspaceSemanticKey fingerprints only the repository-wide Go facts that
-// change how an otherwise untouched Go file extracts: the build context, the
-// module and vendor manifests, the Protobuf binding registry, and the
-// declaration surface of every Go source file.
+// WorkspaceSemanticKey fingerprints only the Go facts that no import edge can
+// bound: the build context, the module and vendor manifests, the Protobuf
+// binding registry, and the repository's type universe. Everything else is
+// reachable by imports and belongs to SemanticKey's package scope.
 func (p *Parser) WorkspaceSemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
 	bindingKey := ""
 	if p.bindings != nil {
@@ -108,13 +108,25 @@ func (*Parser) SemanticDependencies() []string { return semanticDependencies() }
 
 func (*Parser) IsSemanticInput(path string) bool { return isGoSemanticInput(path) }
 
-// SemanticAffectedPaths reparses the packages whose extracted evidence can
-// change. A module or vendor manifest, or a Protobuf binding input, changes the
-// load plan for the whole repository and stays conservative. A Go source edit is
-// package-scoped: the statement-level analyzers only walk their own package, and
-// anything that crosses a package boundary already changes the workspace
-// declaration surface and therefore every Go file's cache key.
-func (*Parser) SemanticAffectedPaths(allPaths, changedPaths []string) []string {
+// SemanticAffectedPaths reparses the Go files that can observe a changed file.
+//
+// A module or vendor manifest, or a Protobuf binding input, changes the load
+// plan for the whole repository and stays conservative. A Go source edit
+// reaches its own package, because the statement-level analyzers walk it, and
+// the package's transitive importers, because identifier resolution, promoted
+// method sets, and constant folding read their dependencies' declarations.
+//
+// This is the selection half of the narrowing described in semantic_model.go.
+// The keys decide whether a visited file is reparsed, but a file the indexer
+// never visits is never hashed, so narrowing the keys without widening
+// selection here would retain stale facts in a package whose dependency
+// changed. The two have to move together.
+//
+// The model consulted is the one WorkspaceSemanticKey published for this root
+// earlier in the same pass, so the import graph agrees with the keys. Without a
+// published model the graph is unknown and every Go file is offered, which is
+// what this function did unconditionally before the import graph existed.
+func (*Parser) SemanticAffectedPaths(root string, allPaths, changedPaths []string) []string {
 	wholeLanguage := false
 	directories := make(map[string]bool, len(changedPaths))
 	for _, path := range changedPaths {
@@ -128,12 +140,23 @@ func (*Parser) SemanticAffectedPaths(allPaths, changedPaths []string) []string {
 	if !wholeLanguage && len(directories) == 0 {
 		return nil
 	}
+	affected := map[string]bool{}
+	if !wholeLanguage {
+		model, ok := loadScopeModel(root)
+		if !ok {
+			wholeLanguage = true
+		} else {
+			for _, directory := range model.AffectedPackages(sortedSet(directories)) {
+				affected[directory] = true
+			}
+		}
+	}
 	result := make([]string, 0, len(allPaths))
 	for _, path := range allPaths {
 		if !isGoSourcePath(path) {
 			continue
 		}
-		if wholeLanguage || directories[goPackageDirectory(path)] {
+		if wholeLanguage || affected[goPackageDirectory(path)] {
 			result = append(result, path)
 		}
 	}

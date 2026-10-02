@@ -932,7 +932,7 @@ func TestSemanticAffectedPathsScopesTypeScriptEditsToManifests(t *testing.T) {
 		{name: "unrelated edit", changed: []string{"README.md"}, want: nil},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			got := typescriptparser.New().SemanticAffectedPaths(all, testCase.changed)
+			got := typescriptparser.New().SemanticAffectedPaths("", all, testCase.changed)
 			if len(got) == 0 && len(testCase.want) == 0 {
 				return
 			}

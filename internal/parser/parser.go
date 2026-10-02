@@ -71,8 +71,10 @@ type SemanticInputProvider interface {
 
 // SemanticChangeProvider expands incremental invalidation when a source or
 // configuration edit can change otherwise untouched parser output.
+// Root is the repository root the paths are relative to, so a provider that
+// keeps a per-repository model can look up the right one rather than guess.
 type SemanticChangeProvider interface {
-	SemanticAffectedPaths(allPaths, changedPaths []string) []string
+	SemanticAffectedPaths(root string, allPaths, changedPaths []string) []string
 }
 
 type Registry struct {
@@ -99,7 +101,7 @@ func (r *Registry) Languages() []string {
 	return result
 }
 
-func (r *Registry) SemanticAffectedPaths(paths, changed []string) []string {
+func (r *Registry) SemanticAffectedPaths(root string, paths, changed []string) []string {
 	seen := map[string]bool{}
 	for _, path := range changed {
 		seen[path] = true
@@ -109,7 +111,7 @@ func (r *Registry) SemanticAffectedPaths(paths, changed []string) []string {
 		if !ok {
 			continue
 		}
-		for _, path := range provider.SemanticAffectedPaths(paths, changed) {
+		for _, path := range provider.SemanticAffectedPaths(root, paths, changed) {
 			seen[path] = true
 		}
 	}

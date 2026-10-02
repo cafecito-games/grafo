@@ -26,7 +26,7 @@ func (*Parser) Supports(path string) bool {
 func (p *Parser) SemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
 	return p.loader.SemanticKey(ctx, input)
 }
-func (*Parser) SemanticAffectedPaths(allPaths, changedPaths []string) []string {
+func (*Parser) SemanticAffectedPaths(_ string, allPaths, changedPaths []string) []string {
 	changed := false
 	for _, path := range changedPaths {
 		if IsSemanticInput(path) {

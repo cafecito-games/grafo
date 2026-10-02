@@ -93,9 +93,13 @@ func TestWorkspaceSemanticKeyTracksVendoredDeclarations(t *testing.T) {
 			changed: true,
 		},
 		{
-			name:    "vendored package added",
+			// app does not import this package, so it cannot change how app
+			// extracts. A module that really started using it would also
+			// rewrite vendor/modules.txt, which the repository key covers in
+			// full, and app's own import list.
+			name:    "unimported vendored package added",
 			mutate:  map[string]string{"vendor/example.com/other/other.go": "package other\n\nfunc Help() {}\n"},
-			changed: true,
+			changed: false,
 		},
 		{
 			name:    "vendored source removed",
@@ -110,7 +114,9 @@ func TestWorkspaceSemanticKeyTracksVendoredDeclarations(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			root := vendoringRepository(t)
-			before := workspaceKey(t, root)
+			// app imports the vendored package, so app is what must be
+			// reparsed when vendored declarations move.
+			before := effectiveSemanticKey(t, golangparser.New(), root, "app/app.go")
 			for path, content := range testCase.mutate {
 				writeFile(t, filepath.Join(root, filepath.FromSlash(path)), content)
 			}
@@ -119,9 +125,9 @@ func TestWorkspaceSemanticKeyTracksVendoredDeclarations(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			after := workspaceKey(t, root)
+			after := effectiveSemanticKey(t, golangparser.New(), root, "app/app.go")
 			if changed := before != after; changed != testCase.changed {
-				t.Fatalf("workspace key changed = %t, want %t", changed, testCase.changed)
+				t.Fatalf("effective key of app/app.go changed = %t, want %t", changed, testCase.changed)
 			}
 		})
 	}
@@ -135,19 +141,25 @@ func TestWorkspaceSemanticKeyIgnoresAbsentVendorTree(t *testing.T) {
 	initTestRepository(t, root)
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/service\n\ngo 1.26\n")
 	writeFile(t, filepath.Join(root, "app", "app.go"), "package app\n\nfunc Run() int { return 1 }\n")
+	writeFile(t, filepath.Join(root, "consumer", "consumer.go"),
+		"package consumer\n\nimport \"example.com/service/app\"\n\nfunc Use() int { return app.Run() }\n")
 	commitTestRepository(t, root)
 
-	before := workspaceKey(t, root)
-	if again := workspaceKey(t, root); before != again {
-		t.Fatal("workspace key is not stable for an unchanged repository without a vendor tree")
+	// consumer imports app, so it is what a change to app's declarations has to
+	// reach, and what a change to app's bodies must not.
+	const subject = "consumer/consumer.go"
+	parser := golangparser.New()
+	before := effectiveSemanticKey(t, parser, root, subject)
+	if again := effectiveSemanticKey(t, parser, root, subject); before != again {
+		t.Fatal("effective key is not stable for an unchanged repository without a vendor tree")
 	}
 	writeFile(t, filepath.Join(root, "app", "app.go"), "package app\n\nfunc Run() int { return 2 }\n")
-	if after := workspaceKey(t, root); after != before {
-		t.Fatal("a body-only edit changed the workspace key")
+	if after := effectiveSemanticKey(t, parser, root, subject); after != before {
+		t.Fatal("a body-only edit in a dependency reparsed its importer")
 	}
 	writeFile(t, filepath.Join(root, "app", "app.go"), "package app\n\nfunc Run() int64 { return 1 }\n")
-	if after := workspaceKey(t, root); after == before {
-		t.Fatal("a declaration edit left the workspace key unchanged")
+	if after := effectiveSemanticKey(t, parser, root, subject); after == before {
+		t.Fatal("a declaration edit in a dependency left its importer unchanged")
 	}
 }
 
@@ -165,26 +177,27 @@ func TestWorkspaceSemanticKeyTracksGitIgnoredSiblings(t *testing.T) {
 	commitTestRepository(t, root)
 
 	generated := filepath.Join(root, "model", "schema_generated.go")
-	baseline := workspaceKey(t, root)
+	parser := golangparser.New()
+	baseline := effectiveSemanticKey(t, parser, root, "app/app.go")
 	assertGitIgnored(t, root, "model/schema_generated.go")
 
 	writeFile(t, generated, "package model\n\ntype Record struct{ ID string }\n")
-	added := workspaceKey(t, root)
+	added := effectiveSemanticKey(t, parser, root, "app/app.go")
 	if added == baseline {
-		t.Fatal("a git-ignored declaration file left the workspace key unchanged")
+		t.Fatal("a git-ignored declaration file left its importer unchanged")
 	}
 
 	writeFile(t, generated, "package model\n\ntype Record struct{ ID string }\n\ntype Second struct{}\n")
-	edited := workspaceKey(t, root)
+	edited := effectiveSemanticKey(t, parser, root, "app/app.go")
 	if edited == added {
-		t.Fatal("editing a git-ignored declaration file left the workspace key unchanged")
+		t.Fatal("editing a git-ignored declaration file left its importer unchanged")
 	}
 
 	if err := os.Remove(generated); err != nil {
 		t.Fatal(err)
 	}
-	if removed := workspaceKey(t, root); removed != baseline {
-		t.Fatal("removing a git-ignored declaration file did not restore the workspace key")
+	if removed := effectiveSemanticKey(t, parser, root, "app/app.go"); removed != baseline {
+		t.Fatal("removing a git-ignored declaration file did not restore its importer's key")
 	}
 }
 
