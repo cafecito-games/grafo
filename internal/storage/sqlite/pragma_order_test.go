@@ -134,3 +134,25 @@ func TestOpenAppliesPageSizeAndPageCache(t *testing.T) {
 		t.Fatalf("cache size = %d, want %d", cacheSize, -pageCacheKiB)
 	}
 }
+
+// TestOpenKeepsStatementJournalsInMemory pins temp_store. SQLite journals the
+// pages an upsert may have to undo, and every batched node and fact write is an
+// upsert, so letting that journal reach the filesystem turns each one into a
+// four-byte write plus a page write that is discarded immediately afterwards.
+func TestOpenKeepsStatementJournalsInMemory(t *testing.T) {
+	ctx := context.Background()
+	repository, err := Open(ctx, filepath.Join(testtemp.Dir(t), "graph.db"))
+	if err != nil {
+		t.Fatalf("open graph: %v", err)
+	}
+	defer func() { _ = repository.Close() }()
+
+	// 2 is SQLite's encoding of temp_store=MEMORY.
+	var temporaryStore int
+	if err := repository.db.QueryRowContext(ctx, "PRAGMA temp_store").Scan(&temporaryStore); err != nil {
+		t.Fatalf("read temp store: %v", err)
+	}
+	if temporaryStore != 2 {
+		t.Fatalf("temp_store = %d, want 2 (memory)", temporaryStore)
+	}
+}

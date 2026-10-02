@@ -114,6 +114,15 @@ const pageCacheKiB = 512 * 1024
 // until it is rebuilt.
 const indexPageSize = 16384
 
+// temporaryStoreMemory keeps SQLite's statement journals in memory. Every
+// batched node and fact write is an upsert, and an upsert is a statement that
+// may have to undo part of itself without rolling back its transaction, so
+// SQLite journals the pages it is about to overwrite. On disk that journal is
+// written as one four-byte page number plus one page at a time: a quarter of a
+// cold run's CPU went into those writes, for data that is discarded the moment
+// the statement succeeds.
+const temporaryStoreMemory = "PRAGMA temp_store=MEMORY"
+
 // writableConnectionPragmas configures a writable connection. busy_timeout is
 // deliberately first: it is pure connection-local lock policy that cannot
 // block, while journal_mode=WAL needs the database lock and therefore fails
@@ -124,6 +133,7 @@ var writableConnectionPragmas = []string{
 	"PRAGMA busy_timeout=5000",
 	fmt.Sprintf("PRAGMA page_size=%d", indexPageSize),
 	fmt.Sprintf("PRAGMA cache_size=-%d", pageCacheKiB),
+	temporaryStoreMemory,
 	"PRAGMA journal_mode=WAL",
 	"PRAGMA synchronous=NORMAL",
 	"PRAGMA wal_autocheckpoint=1000",
