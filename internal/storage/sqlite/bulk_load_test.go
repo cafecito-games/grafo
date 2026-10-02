@@ -209,3 +209,57 @@ func TestInterruptedBulkLoadIsRepairedOnOpen(t *testing.T) {
 		t.Fatalf("ledger after repair = %q (err %v)", ledger, err)
 	}
 }
+
+// TestBulkLoadKeepsEdgeIndexesDeferredUntilEdgesAreWritten pins the ordering the
+// saving depends on. Reconciliation is what fills the edge table, so rebuilding
+// the edge indexes before it would be the same as never deferring them, while the
+// node and fact indexes have to be back before resolution starts naming them.
+func TestBulkLoadKeepsEdgeIndexesDeferredUntilEdgesAreWritten(t *testing.T) {
+	ctx := context.Background()
+	repository := openTestRepository(t)
+	if err := repository.BeginBulkLoad(ctx); err != nil {
+		t.Fatalf("begin bulk load: %v", err)
+	}
+	deferredEdgeIndexes := 0
+	for _, index := range repository.deferredIndexes {
+		if index.Table == edgeTable {
+			deferredEdgeIndexes++
+		}
+	}
+	if deferredEdgeIndexes == 0 {
+		t.Fatal("a bulk load deferred no edge index")
+	}
+	storeBulkLoadFixture(t, repository)
+
+	// Resolution needs the node and fact indexes, so reconciliation rebuilds them
+	// first; it rebuilds the edge indexes only once its last batch has committed.
+	observed := map[string]bool{}
+	if _, err := repository.ReconcileWithStats(ctx, func(graph.ReconciliationStats) error {
+		for _, name := range secondaryIndexNames(t, repository) {
+			observed[name] = true
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	for name := range observed {
+		if name == "edges_from" || name == "edges_to" {
+			t.Errorf("%s was rebuilt before the edges were written", name)
+		}
+	}
+	if !observed["nodes_name_resolve"] || !observed["facts_target"] {
+		t.Errorf("resolution ran without the indexes it names: %v", observed)
+	}
+	present := map[string]bool{}
+	for _, name := range secondaryIndexNames(t, repository) {
+		present[name] = true
+	}
+	for _, name := range []string{"edges_from", "edges_to", "edges_kind"} {
+		if !present[name] {
+			t.Errorf("%s was never rebuilt", name)
+		}
+	}
+	if ledger, err := repository.Meta(ctx, deferredIndexesMeta); err != nil || ledger != "" {
+		t.Fatalf("ledger after reconciling = %q (err %v)", ledger, err)
+	}
+}

@@ -29,21 +29,12 @@ var bulkLoadTables = []string{"nodes", "facts", "edges"}
 // file replacement issues, which would otherwise scan tables that grow as the
 // load proceeds. facts_path is named by DeleteUnreferencedPaths in an INDEXED BY
 // clause, and SQLite rejects a query that names an index it cannot find rather
-// than planning around it.
-//
-// edges_from and edges_to are named the same way by the relation-edge read
-// queries. Dropping them would be the largest single saving here, because the
-// two of them are the widest indexes in the schema and reconciliation inserts
-// millions of edges, but a query that another process runs against a
-// half-loaded index would fail outright instead of returning partial evidence.
-// Relaxing those two hints is what deferring them waits on.
+// than planning around it, so an absent one is an error and not a slow plan.
 var bulkLoadRetainedIndexes = map[string]bool{
 	"nodes_owner": true,
 	"facts_owner": true,
 	"facts_path":  true,
 	"edges_fact":  true,
-	"edges_from":  true,
-	"edges_to":    true,
 }
 
 // repairDeferredIndexes rebuilds the indexes an interrupted bulk load left
@@ -126,10 +117,19 @@ func (r *Repository) BeginBulkLoad(ctx context.Context) error {
 	return nil
 }
 
-// EndBulkLoad rebuilds whatever BeginBulkLoad dropped. It is idempotent, and
-// reconciliation calls it on its own behalf as well, because its resolution
-// queries name several of these indexes explicitly.
+// EndBulkLoad rebuilds everything BeginBulkLoad dropped and still holds. It is
+// idempotent: reconciliation rebuilds in two steps of its own as it reaches the
+// points where it needs each group, so by the end of a normal run there is
+// usually nothing left to do here.
 func (r *Repository) EndBulkLoad(ctx context.Context) error {
+	return r.rebuildDeferredIndexes(ctx, func(deferredIndex) bool { return true })
+}
+
+// rebuildDeferredIndexes rebuilds the deferred indexes that wanted matches and
+// leaves the rest deferred. Each one is rebuilt in its own implicit transaction
+// and struck from the ledger immediately afterwards, so an interruption leaves
+// behind exactly the indexes that really are still missing.
+func (r *Repository) rebuildDeferredIndexes(ctx context.Context, wanted func(deferredIndex) bool) error {
 	deferred := r.deferredIndexes
 	if deferred == nil {
 		stored, err := r.storedDeferredIndexes(ctx)
@@ -138,26 +138,40 @@ func (r *Repository) EndBulkLoad(ctx context.Context) error {
 		}
 		deferred = stored
 	}
-	for index, deferredIndex := range deferred {
-		if _, err := r.db.ExecContext(ctx, deferredIndex.DDL); err != nil {
-			return fmt.Errorf("rebuild secondary index %s: %w", deferredIndex.Name, err)
+	remaining := make([]deferredIndex, 0, len(deferred))
+	for _, index := range deferred {
+		if !wanted(index) {
+			remaining = append(remaining, index)
 		}
-		// Each index is rebuilt in its own implicit transaction and removed from
-		// the ledger immediately, so an interruption leaves only the indexes that
-		// really are still missing to be rebuilt on the next open.
-		if err := r.recordDeferredIndexes(ctx, deferred[index+1:]); err != nil {
+	}
+	for _, index := range deferred {
+		if !wanted(index) {
+			continue
+		}
+		if _, err := r.db.ExecContext(ctx, index.DDL); err != nil {
+			return fmt.Errorf("rebuild secondary index %s: %w", index.Name, err)
+		}
+		if err := r.recordDeferredIndexes(ctx, remaining); err != nil {
 			return err
 		}
 	}
-	r.deferredIndexes = nil
+	r.deferredIndexes = remaining
+	if len(remaining) == 0 {
+		r.deferredIndexes = nil
+	}
 	return nil
 }
 
 // deferredIndex is one secondary index a bulk load is allowed to rebuild late.
 type deferredIndex struct {
-	Name string `json:"name"`
-	DDL  string `json:"ddl"`
+	Name  string `json:"name"`
+	Table string `json:"table"`
+	DDL   string `json:"ddl"`
 }
+
+// edgeTable names the table whose indexes are only written during
+// reconciliation, which is why they are the last ones rebuilt.
+const edgeTable = "edges"
 
 func (r *Repository) graphIsEmpty(ctx context.Context) (bool, error) {
 	for _, counted := range []struct {
@@ -184,7 +198,7 @@ func (r *Repository) graphIsEmpty(ctx context.Context) (bool, error) {
 // it. A new index that the load itself depends on has to join
 // bulkLoadRetainedIndexes.
 func (r *Repository) deferrableIndexDDL(ctx context.Context) ([]deferredIndex, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT name, sql FROM sqlite_master
+	rows, err := r.db.QueryContext(ctx, `SELECT name, tbl_name, sql FROM sqlite_master
 WHERE type = 'index' AND sql IS NOT NULL AND tbl_name IN (?, ?, ?) ORDER BY name`,
 		bulkLoadTables[0], bulkLoadTables[1], bulkLoadTables[2])
 	if err != nil {
@@ -194,7 +208,7 @@ WHERE type = 'index' AND sql IS NOT NULL AND tbl_name IN (?, ?, ?) ORDER BY name
 	var deferred []deferredIndex
 	for rows.Next() {
 		var index deferredIndex
-		if err := rows.Scan(&index.Name, &index.DDL); err != nil {
+		if err := rows.Scan(&index.Name, &index.Table, &index.DDL); err != nil {
 			return nil, fmt.Errorf("read secondary index: %w", err)
 		}
 		if bulkLoadRetainedIndexes[index.Name] {

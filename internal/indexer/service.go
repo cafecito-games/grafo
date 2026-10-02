@@ -611,15 +611,6 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	if err := persistGrouped(); err != nil {
 		return report, err
 	}
-	// Every file is stored, so whatever storage set aside for the load has to be
-	// back before removal, workspace evidence, or reconciliation runs against it.
-	if loader, ok := s.repository.(graph.BulkLoadRepository); ok {
-		persistenceStarted := time.Now()
-		if err := loader.EndBulkLoad(ctx); err != nil {
-			return report, fmt.Errorf("end bulk load: %w", err)
-		}
-		report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
-	}
 	if err := progress.emit(ProgressReadHash, ProgressCompleted, "files", report.Checked, 0, ""); err != nil {
 		return report, err
 	}
@@ -726,6 +717,15 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	}
 	if err := progress.emit(ProgressReconciliation, ProgressCompleted, "batches", report.ReconciliationBatches, report.ReconciliationBatches, ""); err != nil {
 		return report, err
+	}
+	// The load is over. Reconciliation restores what it needs as it goes, so this
+	// is normally nothing; it is what closes out a run that skipped reconciling.
+	if loader, ok := s.repository.(graph.BulkLoadRepository); ok {
+		persistenceStarted = time.Now()
+		if err := loader.EndBulkLoad(ctx); err != nil {
+			return report, fmt.Errorf("end bulk load: %w", err)
+		}
+		report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
 	}
 	persistenceStarted = time.Now()
 	if err := setMetaIfChanged(ctx, s.repository, "repository_id", project.ID); err != nil {

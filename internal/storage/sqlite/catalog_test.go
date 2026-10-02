@@ -461,3 +461,68 @@ func TestNameMatchingUsesUnicodeLowercase(t *testing.T) {
 		})
 	}
 }
+
+// TestRelationEdgeQueriesUseTheEdgeEndpointIndexes keeps the guarantee that the
+// queries used to state with an INDEXED BY clause. The clause had to go so that a
+// cold load can defer those two indexes, which are the widest in the schema, but
+// the plan it was protecting still has to hold: pinning it here fails if a future
+// schema or planner change starts scanning the edge table instead.
+func TestRelationEdgeQueriesUseTheEdgeEndpointIndexes(t *testing.T) {
+	repository, err := sqlite.Open(context.Background(), filepath.Join(testtemp.Dir(t), "plan.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repository.Close() })
+	for _, testCase := range []struct {
+		name   string
+		column string
+		index  string
+	}{
+		{name: "incoming", column: "to_id", index: "edges_to"},
+		{name: "outgoing", column: "from_id", index: "edges_from"},
+	} {
+		plan := queryPlan(t, repository, fmt.Sprintf(`SELECT edges.id, COALESCE(nodes.id, ''), COALESCE(facts.producer, ''),
+    COALESCE(origin_paths.path, '')
+FROM edges
+LEFT JOIN nodes ON nodes.id = edges.from_id
+LEFT JOIN facts ON facts.id = edges.fact_id
+LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id
+WHERE edges.%s = 'subject' AND edges.kind = 'calls'
+ORDER BY edges.from_id, edges.id
+LIMIT 10`, testCase.column))
+		if !strings.Contains(plan, "USING INDEX "+testCase.index) {
+			t.Errorf("%s relation edge plan does not use %s:\n%s", testCase.name, testCase.index, plan)
+		}
+		if strings.Contains(plan, "SCAN edges") {
+			t.Errorf("%s relation edge plan scans the edge table:\n%s", testCase.name, plan)
+		}
+	}
+}
+
+func queryPlan(t *testing.T, repository *sqlite.Repository, statement string) string {
+	t.Helper()
+	database, err := sql.Open("sqlite", repository.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	rows, err := database.QueryContext(context.Background(), "EXPLAIN QUERY PLAN "+statement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	var plan strings.Builder
+	for rows.Next() {
+		var selectID, order, from int
+		var detail string
+		if err := rows.Scan(&selectID, &order, &from, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan.WriteString(detail)
+		plan.WriteByte('\n')
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return plan.String()
+}

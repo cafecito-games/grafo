@@ -361,10 +361,13 @@ func (r *Repository) ReconciliationPending(ctx context.Context) (bool, error) {
 
 func (r *Repository) ReconcileWithStats(ctx context.Context, observer graph.ReconciliationObserver) (graph.ReconciliationStats, error) {
 	var stats graph.ReconciliationStats
-	// Resolution names several deferred indexes in INDEXED BY clauses, so a bulk
-	// load has to be finished before the first batch regardless of whether the
-	// caller announced the boundary itself.
-	if err := r.EndBulkLoad(ctx); err != nil {
+	// Resolution reads nodes and facts and names several of their indexes in
+	// INDEXED BY clauses, so those have to be back before the first batch. The
+	// edge indexes deliberately stay deferred: this loop is what fills the edge
+	// table, and they are the widest indexes in the schema.
+	if err := r.rebuildDeferredIndexes(ctx, func(index deferredIndex) bool {
+		return index.Table != edgeTable
+	}); err != nil {
 		return stats, err
 	}
 	if err := r.queueDirtyFacts(ctx); err != nil {
@@ -393,6 +396,12 @@ func (r *Repository) ReconcileWithStats(ctx context.Context, observer graph.Reco
 				return stats, err
 			}
 		}
+	}
+	// Every edge is written, so the edge indexes can be built in one sorted pass.
+	// The cleanup below needs them: it looks for external nodes that no edge
+	// mentions, which without them would scan the whole edge table per node.
+	if err := r.EndBulkLoad(ctx); err != nil {
+		return stats, err
 	}
 	cleanupPending, err := r.queries.ReconciliationCleanupPending(ctx)
 	if err != nil {
