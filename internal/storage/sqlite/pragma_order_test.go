@@ -3,6 +3,8 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -155,4 +157,99 @@ func TestOpenKeepsStatementJournalsInMemory(t *testing.T) {
 	if temporaryStore != 2 {
 		t.Fatalf("temp_store = %d, want 2 (memory)", temporaryStore)
 	}
+}
+
+// TestWritableConnectionLimitsTheRetainedLogAfterJournalMode pins the third
+// ordering constraint: journal_size_limit describes the write-ahead log, so it
+// has no log to apply to until the database is in WAL mode.
+func TestWritableConnectionLimitsTheRetainedLogAfterJournalMode(t *testing.T) {
+	journalModeIndex, limitIndex := -1, -1
+	for index, pragma := range writableConnectionPragmas {
+		switch {
+		case strings.Contains(pragma, "journal_size_limit"):
+			limitIndex = index
+		case strings.Contains(pragma, "journal_mode"):
+			journalModeIndex = index
+		}
+	}
+	if limitIndex < 0 {
+		t.Fatalf("writable pragmas set no journal size limit: %#v", writableConnectionPragmas)
+	}
+	if limitIndex < journalModeIndex {
+		t.Fatalf("journal_size_limit is applied before journal_mode: %#v", writableConnectionPragmas)
+	}
+}
+
+// TestCheckpointHandsBackTheLogAnOversizedTransactionGrew covers the behavior the
+// limit exists for. Nothing can checkpoint while a transaction is open, so one
+// large transaction forces the log to hold all of its pages; without a limit
+// SQLite then reuses that allocation in place and the file keeps its peak for the
+// rest of the process even though every frame has been copied out of it. The
+// space comes back when the log restarts, which is the first write after a
+// checkpoint has copied everything, so the write below stands for the next
+// reconciliation batch.
+func TestCheckpointHandsBackTheLogAnOversizedTransactionGrew(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(testtemp.Dir(t), "graph.db")
+	repository, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("open graph: %v", err)
+	}
+	defer func() { _ = repository.Close() }()
+
+	var configured int64
+	if err := repository.db.QueryRowContext(ctx, "PRAGMA journal_size_limit").Scan(&configured); err != nil {
+		t.Fatalf("read journal size limit: %v", err)
+	}
+	if want := int64(retainedLogBytes); configured != want {
+		t.Fatalf("journal size limit = %d, want %d", configured, want)
+	}
+	// The production cap is larger than a transaction this test can afford to
+	// write, so the mechanism is exercised at a size it can: the limit is the
+	// same pragma either way.
+	const limit = 16 << 20
+	if _, err := repository.db.ExecContext(ctx, fmt.Sprintf("PRAGMA journal_size_limit=%d", limit)); err != nil {
+		t.Fatalf("lower the journal size limit: %v", err)
+	}
+
+	// One transaction wide enough to push the log well past the limit.
+	transaction, err := repository.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transaction.ExecContext(ctx, "CREATE TABLE wide(id TEXT PRIMARY KEY, filler TEXT NOT NULL)"); err != nil {
+		t.Fatal(err)
+	}
+	filler := strings.Repeat("x", 1024)
+	for row := range 50_000 {
+		if _, err := transaction.ExecContext(ctx, "INSERT INTO wide(id, filler) VALUES(?, ?)",
+			fmt.Sprintf("%064d", row), filler); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := transaction.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	peak := logSize(t, path)
+	if peak <= limit {
+		t.Fatalf("log peaked at %d bytes, which the %d byte limit already covers: the fixture proves nothing", peak, limit)
+	}
+	if err := repository.checkpoint(ctx, false); err != nil {
+		t.Fatalf("checkpoint: %v", err)
+	}
+	if _, err := repository.db.ExecContext(ctx, "INSERT INTO wide(id, filler) VALUES('next', 'x')"); err != nil {
+		t.Fatalf("restart the log: %v", err)
+	}
+	if retained := logSize(t, path); retained > limit {
+		t.Fatalf("log retained %d bytes after a checkpoint, want at most %d (peak was %d)", retained, limit, peak)
+	}
+}
+
+func logSize(t *testing.T, path string) int64 {
+	t.Helper()
+	info, err := os.Stat(path + "-wal")
+	if err != nil {
+		t.Fatalf("stat write-ahead log: %v", err)
+	}
+	return info.Size()
 }
