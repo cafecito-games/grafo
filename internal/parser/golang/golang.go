@@ -563,12 +563,38 @@ func emitTransportUses(b *parserapi.Builder, semantic SemanticView, registry pro
 		} else if use.PayloadBinding != "" {
 			payloadStatus = "unknown"
 		}
-		transportapi.Emit(b, fromID, transportapi.Operation{
+		operationID := transportapi.Emit(b, fromID, transportapi.Operation{
 			Spec: use.Spec, Channel: use.Channel, ChannelStatus: use.ChannelStatus,
 			Reliability: use.Reliability, PayloadStatus: payloadStatus, Proof: "go/types",
 			WrapperDepth: use.WrapperDepth, Location: use.Location,
 			MessageID: messageID, Message: message, Binding: use.PayloadBinding,
 		})
+		emitAmbiguousPayloadCarries(b, operationID, use, projections, haveRegistry)
+	}
+}
+
+// emitAmbiguousPayloadCarries records one carries edge per payload a set of
+// conflicting wrapper summaries resolved. The operation node stays single, so
+// its callsite identity is unchanged; the edges differ by target, which is what
+// FactID keys on. Each is marked ambiguous so a consumer knows the payload is
+// one alternative of several rather than the proven payload of the call.
+func emitAmbiguousPayloadCarries(b *parserapi.Builder, operationID string, use SemanticTransportUse,
+	projections protocolProjectionIndex, haveRegistry bool,
+) {
+	if operationID == "" || !haveRegistry {
+		return
+	}
+	for _, binding := range use.PayloadAlternatives {
+		projection, count := resolveProtocolProjection(projections, binding)
+		if count != 1 || projection.CanonicalKind != graph.KindType ||
+			projection.Properties["projection"] != "message" {
+			continue
+		}
+		b.AddFact(operationID, graph.EdgeCarries, projection.CanonicalID, projection.Canonical,
+			graph.KindType, use.Location, map[string]string{
+				"protocol": use.Spec.Protocol, "proof": "go/types", "binding": binding,
+				"payload_status": "ambiguous",
+			})
 	}
 }
 
@@ -1090,6 +1116,9 @@ func emitChiEndpoints(b *parserapi.Builder, semantic SemanticView) {
 				middleware.Location.Line, middleware.Location.Column)
 			if middleware.Unresolved {
 				middlewareProperties["unresolved"] = "true"
+			}
+			if middleware.Conditional {
+				middlewareProperties["conditional"] = "true"
 			}
 			b.AddFact(endpointID, graph.EdgeUsesMiddleware, "", middleware.Target, middleware.TargetKind,
 				middleware.Location, middlewareProperties)

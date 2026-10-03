@@ -266,9 +266,21 @@ func (a *chiAnalyzer) composeRoots() {
 
 	var roots []*chiFunction
 	for object, function := range a.functions {
-		if !called[object] {
-			roots = append(roots, function)
+		if called[object] {
+			continue
 		}
+		if a.composesOnRouterParameter(function) {
+			// The router this function composes on is supplied by a caller in
+			// another package, which the package summary cannot see. Rooting it
+			// anyway would walk the body with the parameter unbound and
+			// diagnose every route as an unprovable receiver; the honest report
+			// is one diagnostic naming the boundary. Placing the routes would
+			// mean guessing the prefix the caller mounts them under.
+			a.diagnostic(semanticLocation(function.path, a.pkg.Fset, function.decl.Pos(), function.decl.End()),
+				"Chi routes compose on a router parameter no in-package caller supplies; cross-package composition omitted")
+			continue
+		}
+		roots = append(roots, function)
 	}
 	sort.Slice(roots, func(i, j int) bool { return roots[i].qualified < roots[j].qualified })
 	seen := map[string]bool{}
@@ -308,6 +320,34 @@ func (a *chiAnalyzer) composeRoots() {
 		})
 		a.views[path] = view
 	}
+}
+
+// composesOnRouterParameter reports whether function takes a Chi router as a
+// parameter and composes on a router at all. Such a function is only meaningful
+// with the argument its caller passes.
+func (a *chiAnalyzer) composesOnRouterParameter(function *chiFunction) bool {
+	signature, _ := function.object.Type().(*types.Signature)
+	if signature == nil {
+		return false
+	}
+	takesRouter := false
+	for index := 0; index < signature.Params().Len(); index++ {
+		takesRouter = takesRouter || a.isChiRouter(signature.Params().At(index).Type())
+	}
+	if !takesRouter {
+		return false
+	}
+	composes := false
+	goast.Inspect(function.decl.Body, func(node goast.Node) bool {
+		call, ok := node.(*goast.CallExpr)
+		if ok {
+			if _, isChi := a.chiMethod(call); isChi {
+				composes = true
+			}
+		}
+		return !composes
+	})
+	return composes
 }
 
 func (a *chiAnalyzer) executeFunction(execution *chiExecution, function *chiFunction, arguments []chiState, conditional bool) ([]chiState, []chiState, []bool) {
@@ -423,20 +463,26 @@ func (a *chiAnalyzer) executeBlock(execution *chiExecution, function *chiFunctio
 			if value.Init != nil {
 				a.executeBlock(execution, function, []goast.Stmt{value.Init}, environment, conditional)
 			}
+			// Every branch is executed against the environment as it stood
+			// before the statement, so one branch's middleware cannot leak into
+			// its sibling. The adoptions are applied once all of them are known.
+			var adoptions []chiMiddlewareAdoption
 			branch := cloneChiEnvironment(environment)
 			child, _ := a.executeBlock(execution, function, value.Body.List, branch, true)
-			a.diagnoseConditionalRouterMutation(function.path, value.Body, environment, branch)
+			adoptions = append(adoptions, a.conditionalAdoptions(function.path, value.Body, environment, branch)...)
 			returned = append(returned, child...)
 			if value.Else != nil {
 				branch = cloneChiEnvironment(environment)
 				child, _ = a.executeBlock(execution, function, statementList(value.Else), branch, true)
-				a.diagnoseConditionalRouterMutation(function.path, value.Else, environment, branch)
+				adoptions = append(adoptions, a.conditionalAdoptions(function.path, value.Else, environment, branch)...)
 				returned = append(returned, child...)
 			}
+			a.adoptConditionalMiddleware(environment, adoptions)
 		case *goast.ForStmt:
 			branch := cloneChiEnvironment(environment)
 			child, _ := a.executeBlock(execution, function, value.Body.List, branch, true)
-			a.diagnoseConditionalRouterMutation(function.path, value.Body, environment, branch)
+			a.adoptConditionalMiddleware(environment,
+				a.conditionalAdoptions(function.path, value.Body, environment, branch))
 			returned = append(returned, child...)
 		case *goast.RangeStmt:
 			if elements, object, ok := a.constantStringRange(value); ok {
@@ -462,38 +508,45 @@ func (a *chiAnalyzer) executeBlock(execution *chiExecution, function *chiFunctio
 			}
 			branch := cloneChiEnvironment(environment)
 			child, _ := a.executeBlock(execution, function, value.Body.List, branch, true)
-			a.diagnoseConditionalRouterMutation(function.path, value.Body, environment, branch)
+			a.adoptConditionalMiddleware(environment,
+				a.conditionalAdoptions(function.path, value.Body, environment, branch))
 			returned = append(returned, child...)
 		case *goast.SwitchStmt:
+			var adoptions []chiMiddlewareAdoption
 			for _, item := range value.Body.List {
 				clause, _ := item.(*goast.CaseClause)
 				if clause != nil {
 					branch := cloneChiEnvironment(environment)
 					child, _ := a.executeBlock(execution, function, clause.Body, branch, true)
-					a.diagnoseConditionalRouterMutation(function.path, clause, environment, branch)
+					adoptions = append(adoptions, a.conditionalAdoptions(function.path, clause, environment, branch)...)
 					returned = append(returned, child...)
 				}
 			}
+			a.adoptConditionalMiddleware(environment, adoptions)
 		case *goast.TypeSwitchStmt:
+			var adoptions []chiMiddlewareAdoption
 			for _, item := range value.Body.List {
 				clause, _ := item.(*goast.CaseClause)
 				if clause != nil {
 					branch := cloneChiEnvironment(environment)
 					child, _ := a.executeBlock(execution, function, clause.Body, branch, true)
-					a.diagnoseConditionalRouterMutation(function.path, clause, environment, branch)
+					adoptions = append(adoptions, a.conditionalAdoptions(function.path, clause, environment, branch)...)
 					returned = append(returned, child...)
 				}
 			}
+			a.adoptConditionalMiddleware(environment, adoptions)
 		case *goast.SelectStmt:
+			var adoptions []chiMiddlewareAdoption
 			for _, item := range value.Body.List {
 				clause, _ := item.(*goast.CommClause)
 				if clause != nil {
 					branch := cloneChiEnvironment(environment)
 					child, _ := a.executeBlock(execution, function, clause.Body, branch, true)
-					a.diagnoseConditionalRouterMutation(function.path, clause, environment, branch)
+					adoptions = append(adoptions, a.conditionalAdoptions(function.path, clause, environment, branch)...)
 					returned = append(returned, child...)
 				}
 			}
+			a.adoptConditionalMiddleware(environment, adoptions)
 		}
 	}
 	return returned, false
@@ -516,7 +569,7 @@ func (a *chiAnalyzer) executeCall(execution *chiExecution, function *chiFunction
 		switch name {
 		case "Use":
 			original := cloneChiState(base)
-			base.middleware = append(base.middleware, a.middleware(call.Args, "use", function.path)...)
+			base.middleware = append(base.middleware, a.middleware(call.Args, "use", function.path, conditional)...)
 			if !a.storeRouterState(selector.X, original, base, environment) {
 				a.diagnostic(a.location(function.path, selector.X),
 					"Chi router helper argument state could not be propagated; subsequent composition omitted")
@@ -524,7 +577,7 @@ func (a *chiAnalyzer) executeCall(execution *chiExecution, function *chiFunction
 			return base, true
 		case "With":
 			base.chain = new(chiChain)
-			base.middleware = append(base.middleware, a.middleware(call.Args, "with", function.path)...)
+			base.middleware = append(base.middleware, a.middleware(call.Args, "with", function.path, conditional)...)
 			return base, true
 		case "Group":
 			if len(call.Args) > 0 {
@@ -730,17 +783,85 @@ func (a *chiAnalyzer) storeRouterState(expression goast.Expr, original, state ch
 	return true
 }
 
-func (a *chiAnalyzer) diagnoseConditionalRouterMutation(path string, node goast.Node,
+// chiMiddlewareAdoption is middleware a conditional branch installed on a
+// router, to be carried out of the branch once every sibling branch has run.
+type chiMiddlewareAdoption struct {
+	object     types.Object
+	middleware []SemanticChiMiddleware
+}
+
+// conditionalAdoptions separates the two things a conditional branch can do to
+// a router it was handed. Appending middleware is real evidence -- it applies
+// whenever the branch is taken -- so it is reported for adoption and reaches
+// later endpoints marked conditional. Any other change, such as rebinding the
+// variable to a different router or moving its prefix, cannot be summarized as
+// one composition and is diagnosed instead.
+func (a *chiAnalyzer) conditionalAdoptions(path string, node goast.Node,
 	before, after map[types.Object]chiState,
-) {
-	for object, original := range before {
+) []chiMiddlewareAdoption {
+	var adoptions []chiMiddlewareAdoption
+	diagnosed := false
+	for _, object := range sortedChiObjects(before) {
 		updated, ok := after[object]
-		if !ok || sameChiState(original, updated) {
+		if !ok || sameChiState(before[object], updated) {
 			continue
 		}
-		a.diagnostic(a.location(path, node), "conditional Chi router state mutation could not be proven; subsequent composition omitted")
-		return
+		appended, isAppend := appendedChiMiddleware(before[object], updated)
+		if !isAppend {
+			if !diagnosed {
+				a.diagnostic(a.location(path, node),
+					"conditional Chi router state mutation could not be proven; that mutation is omitted")
+				diagnosed = true
+			}
+			continue
+		}
+		adoptions = append(adoptions, chiMiddlewareAdoption{object: object, middleware: appended})
 	}
+	return adoptions
+}
+
+func (a *chiAnalyzer) adoptConditionalMiddleware(environment map[types.Object]chiState, adoptions []chiMiddlewareAdoption) {
+	for _, adoption := range adoptions {
+		state, ok := environment[adoption.object]
+		if !ok {
+			continue
+		}
+		state.middleware = append(cloneMiddleware(state.middleware), adoption.middleware...)
+		environment[adoption.object] = state
+	}
+}
+
+// appendedChiMiddleware reports the middleware updated adds on top of original,
+// and whether that append is the only difference between them.
+func appendedChiMiddleware(original, updated chiState) ([]SemanticChiMiddleware, bool) {
+	if original.router != updated.router || original.chain != updated.chain || original.prefix != updated.prefix {
+		return nil, false
+	}
+	if len(updated.middleware) < len(original.middleware) {
+		return nil, false
+	}
+	for index := range original.middleware {
+		if original.middleware[index] != updated.middleware[index] {
+			return nil, false
+		}
+	}
+	return cloneMiddleware(updated.middleware[len(original.middleware):]), true
+}
+
+// sortedChiObjects orders an environment's objects by declaration position so
+// the diagnostics and adoptions a branch produces are deterministic.
+func sortedChiObjects(environment map[types.Object]chiState) []types.Object {
+	objects := make([]types.Object, 0, len(environment))
+	for object := range environment {
+		objects = append(objects, object)
+	}
+	sort.Slice(objects, func(i, j int) bool {
+		if objects[i].Pos() != objects[j].Pos() {
+			return objects[i].Pos() < objects[j].Pos()
+		}
+		return objects[i].Name() < objects[j].Name()
+	})
+	return objects
 }
 
 func (a *chiAnalyzer) materialize(router *chiRouter, outerPrefix string, outerMiddleware []SemanticChiMiddleware,
@@ -807,12 +928,13 @@ func (a *chiAnalyzer) endpointArguments(name string, arguments []goast.Expr) (st
 	}
 }
 
-func (a *chiAnalyzer) middleware(arguments []goast.Expr, form, path string) []SemanticChiMiddleware {
+func (a *chiAnalyzer) middleware(arguments []goast.Expr, form, path string, conditional bool) []SemanticChiMiddleware {
 	result := make([]SemanticChiMiddleware, 0, len(arguments))
 	for _, argument := range arguments {
 		target, kind, unresolved := a.callableEvidence(argument, path)
 		result = append(result, SemanticChiMiddleware{
-			Target: target, TargetKind: kind, Form: form, Location: a.location(path, argument), Unresolved: unresolved,
+			Target: target, TargetKind: kind, Form: form, Location: a.location(path, argument),
+			Unresolved: unresolved, Conditional: conditional,
 		})
 	}
 	return result

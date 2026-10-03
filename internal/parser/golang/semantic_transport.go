@@ -204,7 +204,11 @@ func collectTransportPackageViews(root string, pkg *packages.Package, views map[
 			for _, key := range groupKeys {
 				alternatives := grouped[key]
 				merged, conflict := mergeTransportTemplates(alternatives)
-				uses = append(uses, semanticTransportUse(function.name, merged, call.location))
+				use := semanticTransportUse(function.name, merged, call.location)
+				if conflict {
+					use.PayloadAlternatives = distinctPayloadBindings(alternatives)
+				}
+				uses = append(uses, use)
 				if conflict {
 					view := views[function.path]
 					view.Diagnostics = append(view.Diagnostics, graph.Diagnostic{Path: function.path, Line: call.location.Line,
@@ -239,6 +243,23 @@ func truncatedTransportTemplate(template transportTemplate) transportTemplate {
 	template.location = graph.Location{}
 	template.depth = maxTransportWrapperDepth
 	return template
+}
+
+// distinctPayloadBindings reports every payload binding the alternatives
+// resolved, deduplicated and ordered so the evidence is deterministic.
+func distinctPayloadBindings(alternatives []transportTemplate) []string {
+	seen := map[string]bool{}
+	var bindings []string
+	for _, alternative := range alternatives {
+		binding := alternative.payload.binding
+		if binding == "" || seen[binding] {
+			continue
+		}
+		seen[binding] = true
+		bindings = append(bindings, binding)
+	}
+	sort.Strings(bindings)
+	return bindings
 }
 
 func mergeTransportTemplates(alternatives []transportTemplate) (transportTemplate, bool) {

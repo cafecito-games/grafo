@@ -1846,6 +1846,25 @@ func TestPackageSemanticLoaderExtractsCanonicalProtobufUsage(t *testing.T) {
 	}
 }
 
+// ambiguousSendOperations returns the transport operations reached from source
+// whose payload could not be proven.
+func ambiguousSendOperations(result graph.ParseResult, source string) []string {
+	nodes := map[string]graph.Node{}
+	for _, node := range result.Nodes {
+		nodes[node.ID] = node
+	}
+	var operations []string
+	for _, fact := range result.Facts {
+		if fact.FromID != source || fact.Kind != graph.EdgeSends {
+			continue
+		}
+		if nodes[fact.TargetID].Properties["payload_status"] == "ambiguous" {
+			operations = append(operations, fact.TargetID)
+		}
+	}
+	return operations
+}
+
 func TestPackageSemanticLoaderExtractsENetTransportEvidence(t *testing.T) {
 	root := protobufUsageFixture(t)
 	writeFile(t, filepath.Join(root, "go.mod"), `module example.com/app
@@ -2047,15 +2066,39 @@ func UncertainTransport(peer *goenet.Peer, input *generated.Envelope, unknown []
 			node.Properties["channel_status"] == "ambiguous" && node.Properties["payload_status"] == "ambiguous" &&
 			node.Properties["reliability"] == "unknown" {
 			ambiguousOperation = true
-			for _, fact := range result.Facts {
-				if fact.FromID == node.ID && fact.Kind == graph.EdgeCarries {
-					t.Fatalf("ambiguous wrapper payload produced carries edge: %#v", fact)
-				}
-			}
 		}
 	}
 	if !ambiguousOperation {
 		t.Fatalf("conflicting wrapper evidence was not preserved as ambiguous: %#v", result.Nodes)
+	}
+	// Merging conflicting summaries cannot pick one payload, but an alternative
+	// that resolves is still evidence of a message the callsite carries, so it
+	// keeps a carries edge of its own marked ambiguous. UseTransport's
+	// conflicting call resolves only its left argument; UseMultiConflict passes
+	// two unmarshalled byte slices, so neither alternative resolves and that
+	// operation carries nothing.
+	multiID := nodeIDByQualified(t, result.Nodes, "example.com/app.UseMultiConflict")
+	for _, test := range []struct {
+		name   string
+		source string
+		want   map[string]string
+	}{
+		{name: "one resolvable alternative", source: useID, want: map[string]string{"acme.v1.Envelope": "ambiguous"}},
+		{name: "no resolvable alternative", source: multiID, want: map[string]string{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			carried := map[string]string{}
+			for _, operation := range ambiguousSendOperations(result, test.source) {
+				for _, fact := range result.Facts {
+					if fact.FromID == operation && fact.Kind == graph.EdgeCarries {
+						carried[fact.Target] = fact.Properties["payload_status"]
+					}
+				}
+			}
+			if !reflect.DeepEqual(carried, test.want) {
+				t.Fatalf("ambiguous payload carries = %#v, want %#v", carried, test.want)
+			}
+		})
 	}
 	if !unreliableOperation {
 		t.Fatalf("exact unreliable flags were not normalized: %#v", result.Nodes)
@@ -2815,6 +2858,15 @@ func handlerRouter() http.Handler {
 
 func plainHandler() http.Handler { return http.HandlerFunc(me) }
 
+type blobs struct{}
+
+// Mount is the cross-package shape: nothing in this package calls it, so the
+// router it composes on is supplied by a caller the package summary cannot see.
+func (blobs) Mount(r chi.Router) {
+	r.Get("/blobs", me)
+	r.Post("/blobs", login)
+}
+
 func dynamicOnly(r chi.Router) { r.Get("/hidden", me) }
 func applyHelper(r chi.Router) { r.Use(audit) }
 func dynamicMethod(r chi.Router, method string) { r.MethodFunc(method, "/dynamic-method", me) }
@@ -2844,9 +2896,6 @@ func Routes(dynamic string) chi.Router {
 	applyHelper(identity(r))
 	var fieldServer server
 	applyHelper(fieldServer.router)
-	if dynamic != "" {
-		applyHelper(r)
-	}
 	r.Get("/after-uncertain", me)
 	r.Route(api+"/auth", authRoutes)
 	r.Route("/one", authRoutes)
@@ -2882,6 +2931,26 @@ func chooseRouter(first bool, left, right chi.Router) chi.Router {
 }
 func cycleA(r chi.Router) { cycleB(r) }
 func cycleB(r chi.Router) { cycleA(r) }
+
+// ConditionalRoutes keeps the two conditional shapes in a root of their own:
+// middleware installed in a branch reaches every later endpoint as conditional
+// evidence, while rebinding the variable to another router cannot be summarized
+// and is diagnosed instead.
+func ConditionalRoutes(dynamic string) chi.Router {
+	r := chi.NewRouter()
+	r.Use(outer)
+	if dynamic != "" {
+		applyHelper(r)
+	}
+	r.Get("/maybe-audited", me)
+	if dynamic != "" {
+		rebound := chi.NewRouter()
+		r = rebound
+		r.Get("/rebound", me)
+	}
+	r.Get("/after-rebind", me)
+	return r
+}
 
 func VoidRoot() {
 	r := chi.NewRouter()
@@ -2921,6 +2990,8 @@ func NotARouter() { unrelated{}.Get("/invented", login) }
 		"GET /helper/use":           {"example.com/app.outer", "example.com/app.audit"},
 		"GET /copied-helper/use":    {"example.com/app.outer", "example.com/app.audit"},
 		"GET /after-uncertain":      {"example.com/app.outer"},
+		"GET /maybe-audited":        {"example.com/app.outer", "example.com/app.audit"},
+		"GET /after-rebind":         {"example.com/app.outer", "example.com/app.audit"},
 		"GET /void-real":            {},
 		"GET /site/pages":           {"example.com/app.outer"},
 		"GET /site/pages/{_}":       {"example.com/app.outer"},
@@ -2967,11 +3038,57 @@ func NotARouter() { unrelated{}.Get("/invented", login) }
 			t.Fatalf("endpoint %s lost its exact handler %s", name, wantHandler)
 		}
 	}
-	for _, forbidden := range []string{"POST /login", "GET /me", "GET /items", "GET /hidden", "GET /invented", "GET /ambiguous", "GET /orphan", "GET /site/computed", "GET /pages"} {
+	// Middleware installed inside a branch applies only when the branch is
+	// taken, so the edge carries it as conditional rather than losing it.
+	wantConditionalMiddleware := map[string]map[string]bool{
+		"GET /maybe-audited": {"example.com/app.outer": false, "example.com/app.audit": true},
+		"GET /after-rebind":  {"example.com/app.outer": false, "example.com/app.audit": true},
+	}
+	for name, wantConditional := range wantConditionalMiddleware {
+		endpoint, ok := endpoints[name]
+		if !ok {
+			t.Fatalf("missing endpoint %q for conditional middleware check", name)
+		}
+		seen := map[string]bool{}
+		for _, fact := range result.Facts {
+			if fact.FromID != endpoint.ID || fact.Kind != graph.EdgeKind("uses_middleware") {
+				continue
+			}
+			seen[fact.Target] = true
+			if got := fact.Properties["conditional"] == "true"; got != wantConditional[fact.Target] {
+				t.Fatalf("%s middleware %s conditional=%v, want %v", name, fact.Target, got, wantConditional[fact.Target])
+			}
+		}
+		for target := range wantConditional {
+			if !seen[target] {
+				t.Fatalf("%s lost middleware %s", name, target)
+			}
+		}
+	}
+	for _, forbidden := range []string{"POST /login", "GET /me", "GET /items", "GET /hidden", "GET /invented", "GET /ambiguous", "GET /orphan", "GET /site/computed", "GET /pages", "GET /rebound", "GET /blobs", "POST /blobs"} {
 		if _, ok := endpoints[forbidden]; ok {
 			t.Fatalf("invented or uncomposed endpoint %q: %#v", forbidden, endpoints[forbidden])
 		}
 	}
+	// A router parameter no in-package caller supplies is diagnosed once at the
+	// function, not once per route it registers. The receivers that stay
+	// unprovable are the three with no router parameter at all: a router held in
+	// a struct field, that field passed as an argument, and the ambiguous result
+	// of chooseRouter.
+	crossPackage, unprovenReceiver := 0, 0
+	for _, diagnostic := range result.Diagnostics {
+		if strings.Contains(diagnostic.Message, "no in-package caller supplies") {
+			crossPackage++
+		}
+		if strings.Contains(diagnostic.Message, "Chi router receiver could not be proven") {
+			unprovenReceiver++
+		}
+	}
+	if crossPackage != 1 || unprovenReceiver != 3 {
+		t.Fatalf("cross-package router parameter diagnosed %d times and unproven receivers %d, want 1 and 3: %#v",
+			crossPackage, unprovenReceiver, result.Diagnostics)
+	}
+
 	foundDynamicDiagnostic, foundCycleDiagnostic, foundAmbiguousDiagnostic := false, false, false
 	foundDynamicMethodDiagnostic, foundRouterReceiverDiagnostic := false, false
 	foundArgumentDiagnostic, foundReassignmentDiagnostic, foundConditionalMutationDiagnostic := false, false, false
