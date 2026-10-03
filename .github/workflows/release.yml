@@ -50,7 +50,8 @@ jobs:
             go-${{ runner.os }}-build-test-${{ hashFiles('**/go.sum') }}-
             go-${{ runner.os }}-build-test-
 
-      - run: go test -race ./...
+      # Every package runs: a release gate must not skip one. See pr-checks.yml.
+      - run: go test -race -count=1 ./...
       - run: go vet ./...
 
   goreleaser:
