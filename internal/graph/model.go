@@ -226,6 +226,10 @@ var edgeKinds = []EdgeKind{
 // EdgeKinds returns the edge vocabulary. Callers must not mutate the result.
 func EdgeKinds() []EdgeKind { return append([]EdgeKind(nil), edgeKinds...) }
 
+// Location addresses a span of source. Line and Column are one-based, and
+// EndLine is the inclusive last line the span covers, so a one-line span has
+// EndLine equal to Line. A parser whose syntax tree reports half-open ranges
+// must convert them before recording a location.
 type Location struct {
 	Path    string `json:"path,omitempty"`
 	Line    int    `json:"line,omitempty"`
