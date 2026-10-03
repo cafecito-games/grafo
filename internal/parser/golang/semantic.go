@@ -49,6 +49,9 @@ type SemanticChiMiddleware struct {
 	Form       string
 	Location   graph.Location
 	Unresolved bool
+	// Conditional marks middleware installed inside a branch, so it applies to
+	// the endpoint only when that branch is taken.
+	Conditional bool
 }
 
 // SemanticChiEndpoint is the final package-local composition of a Chi route.
@@ -120,8 +123,13 @@ type SemanticTransportUse struct {
 	Reliability    string
 	PayloadStatus  string
 	PayloadBinding string
-	WrapperDepth   int
-	Location       graph.Location
+	// PayloadAlternatives holds the distinct payload bindings of the conflicting
+	// wrapper summaries behind an ambiguous payload. Merging cannot pick one of
+	// them, but each is still evidence of a message the call site carries, so
+	// they are kept rather than discarded.
+	PayloadAlternatives []string
+	WrapperDepth        int
+	Location            graph.Location
 }
 
 type SemanticImplementation struct {
