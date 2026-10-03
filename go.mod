@@ -6,11 +6,6 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/bufbuild/protocompile v0.14.1
 	github.com/cafecito-games/gdparser v0.0.0-20261001142545-06bc15a9a672
-	// A fork of alex-pinkus/tree-sitter-swift, which publishes the generated
-	// parser sources upstream declines to commit. The fork renames the module
-	// after itself so this requirement needs no replace directive, which would
-	// make `go install github.com/cafecito-games/grafo/cmd/grafo@version` fail.
-	github.com/cafecito-games/tree-sitter-swift v0.7.3-grafo.1
 	github.com/cockroachdb/pebble/v2 v2.1.7
 	github.com/mattn/go-isatty v0.0.24
 	github.com/mattn/go-sqlite3 v1.14.52
@@ -18,10 +13,6 @@ require (
 	github.com/pganalyze/pg_query_go/v6 v6.2.2
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/sqlc-dev/meyer v0.1.2
-	github.com/tree-sitter/go-tree-sitter v0.25.0
-	github.com/tree-sitter/tree-sitter-java v0.23.5
-	github.com/tree-sitter/tree-sitter-python v0.25.0
-	github.com/tree-sitter/tree-sitter-typescript v0.23.2
 	github.com/yuin/goldmark v1.8.6
 	go.etcd.io/bbolt v1.5.0
 	golang.org/x/mod v0.39.0
@@ -51,10 +42,10 @@ require (
 	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
-	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.4 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
 	github.com/minio/minlz v1.0.1-0.20250507153514-87eb42fe8882 // indirect
+	github.com/odvcencio/gotreesitter v0.55.1
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/prometheus/client_golang v1.16.0 // indirect
 	github.com/prometheus/client_model v0.3.0 // indirect

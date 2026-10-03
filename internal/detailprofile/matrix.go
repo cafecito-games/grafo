@@ -377,10 +377,10 @@ func producerEvidence() []Evidence {
 	}{
 		{"config", "internal/parser/config/config.go", 23}, {"gdscript", "internal/parser/gdscript/gdscript.go", 33},
 		{"go", "internal/parser/golang/golang.go", 53}, {"godot", "internal/parser/godot/godot.go", 25},
-		{"java", "internal/parser/java/java.go", 21}, {"manifest", "internal/parser/manifest/manifest.go", 22},
+		{"java", "internal/parser/java/java.go", 20}, {"manifest", "internal/parser/manifest/manifest.go", 22},
 		{"markdown", "internal/parser/markdown/markdown.go", 32}, {"protobuf", "internal/parser/protobuf/protobuf.go", 24},
-		{"protobufbinding", "internal/parser/protobufbinding/parser.go", 21}, {"python", "internal/parser/python/python.go", 20},
-		{"sql", "internal/parser/sql/router.go", 76}, {"swift", "internal/parser/swift/swift.go", 21},
+		{"protobufbinding", "internal/parser/protobufbinding/parser.go", 21}, {"python", "internal/parser/python/python.go", 19},
+		{"sql", "internal/parser/sql/router.go", 76}, {"swift", "internal/parser/swift/swift.go", 20},
 		{"typescript", "internal/parser/typescript/typescript.go", 40}, {"indexer", "internal/indexer/service.go", 465},
 	}
 	result := make([]Evidence, 0, len(values))

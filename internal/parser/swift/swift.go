@@ -2,7 +2,6 @@ package swift
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -11,8 +10,8 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
-	tsswift "github.com/cafecito-games/tree-sitter-swift/bindings/go"
-	treesitter "github.com/tree-sitter/go-tree-sitter"
+	"github.com/cafecito-games/grafo/internal/parser/syntax"
+	tsswift "github.com/odvcencio/gotreesitter/grammars/swift"
 )
 
 type Parser struct{}
@@ -46,16 +45,11 @@ type extractor struct {
 
 func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseResult, error) {
 	b := parserapi.NewBuilder(input, "swift")
-	p := treesitter.NewParser()
-	defer p.Close()
-	if err := p.SetLanguage(treesitter.NewLanguage(tsswift.Language())); err != nil {
-		return b.Finish(), fmt.Errorf("load Swift grammar: %w", err)
+	tree, err := syntax.Parse(ctx, tsswift.Language(), input.Content)
+	if err != nil {
+		return b.Finish(), fmt.Errorf("parse Swift source: %w", err)
 	}
-	tree := parserapi.ParseTreeSitter(ctx, p, input.Content)
-	if tree == nil {
-		return b.Finish(), errors.New("parse Swift source: parser returned no syntax tree")
-	}
-	defer tree.Close()
+	defer tree.Release()
 	root := tree.RootNode()
 	if root.HasError() {
 		b.Diagnostic(int(root.StartPosition().Row)+1, "warning", "Swift contains syntax errors; indexed the recoverable tree")
@@ -69,7 +63,7 @@ func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseRes
 	return b.Finish(), nil
 }
 
-func (e *extractor) collectDeclarationKinds(node *treesitter.Node, container string) {
+func (e *extractor) collectDeclarationKinds(node *syntax.Node, container string) {
 	if node == nil {
 		return
 	}
@@ -100,7 +94,7 @@ func (e *extractor) collectDeclarationKinds(node *treesitter.Node, container str
 	}
 }
 
-func (e *extractor) walk(node *treesitter.Node, current scope) {
+func (e *extractor) walk(node *syntax.Node, current scope) {
 	if node == nil {
 		return
 	}
@@ -140,14 +134,14 @@ func (e *extractor) walk(node *treesitter.Node, current scope) {
 	e.walkChildren(node, current)
 }
 
-func (e *extractor) walkChildren(node *treesitter.Node, current scope) {
+func (e *extractor) walkChildren(node *syntax.Node, current scope) {
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		e.walk(node.NamedChild(i), current)
 	}
 }
 
-func (e *extractor) parseImport(node *treesitter.Node) {
-	var identifier *treesitter.Node
+func (e *extractor) parseImport(node *syntax.Node) {
+	var identifier *syntax.Node
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
 		if child.Kind() == "identifier" {
@@ -169,7 +163,7 @@ func (e *extractor) parseImport(node *treesitter.Node) {
 	e.b.AddFact(e.b.FileID(), graph.EdgeImports, "", module, graph.KindModule, e.location(node), properties)
 }
 
-func (e *extractor) parseNominalType(node *treesitter.Node, current scope) {
+func (e *extractor) parseNominalType(node *syntax.Node, current scope) {
 	name := strings.TrimSpace(e.text(node.ChildByFieldName("name")))
 	if name == "" {
 		return
@@ -200,7 +194,7 @@ func (e *extractor) parseNominalType(node *treesitter.Node, current scope) {
 	}
 }
 
-func (e *extractor) parseProtocol(node *treesitter.Node, current scope) {
+func (e *extractor) parseProtocol(node *syntax.Node, current scope) {
 	name := strings.TrimSpace(e.text(node.ChildByFieldName("name")))
 	if name == "" {
 		return
@@ -216,7 +210,7 @@ func (e *extractor) parseProtocol(node *treesitter.Node, current scope) {
 	}
 }
 
-func (e *extractor) parseInheritance(node *treesitter.Node, fromID, declarationKind string) {
+func (e *extractor) parseInheritance(node *syntax.Node, fromID, declarationKind string) {
 	index := 0
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
@@ -244,7 +238,7 @@ func (e *extractor) parseInheritance(node *treesitter.Node, fromID, declarationK
 	}
 }
 
-func (e *extractor) parseFunction(node *treesitter.Node, current scope, kind graph.NodeKind, fixedName string) {
+func (e *extractor) parseFunction(node *syntax.Node, current scope, kind graph.NodeKind, fixedName string) {
 	name := fixedName
 	if name == "" {
 		name = strings.TrimSpace(e.text(node.ChildByFieldName("name")))
@@ -275,7 +269,7 @@ func (e *extractor) parseFunction(node *treesitter.Node, current scope, kind gra
 	}
 }
 
-func (e *extractor) declareParameters(node *treesitter.Node, current scope) {
+func (e *extractor) declareParameters(node *syntax.Node, current scope) {
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		parameter := node.NamedChild(i)
 		if parameter.Kind() != "parameter" {
@@ -303,7 +297,7 @@ func (e *extractor) declareParameters(node *treesitter.Node, current scope) {
 	}
 }
 
-func (e *extractor) parseProperty(node *treesitter.Node, current scope) {
+func (e *extractor) parseProperty(node *syntax.Node, current scope) {
 	nameNode := node.ChildByFieldName("name")
 	if nameNode == nil {
 		return
@@ -349,7 +343,7 @@ func (e *extractor) parseProperty(node *treesitter.Node, current scope) {
 	}
 }
 
-func (e *extractor) parseAssignment(node *treesitter.Node, current scope) {
+func (e *extractor) parseAssignment(node *syntax.Node, current scope) {
 	target := node.ChildByFieldName("target")
 	result := node.ChildByFieldName("result")
 	if target == nil || result == nil {
@@ -365,7 +359,7 @@ func (e *extractor) parseAssignment(node *treesitter.Node, current scope) {
 	}
 }
 
-func (e *extractor) parseReturn(node *treesitter.Node, current scope) {
+func (e *extractor) parseReturn(node *syntax.Node, current scope) {
 	if !strings.HasPrefix(strings.TrimSpace(e.text(node)), "return") {
 		return
 	}
@@ -375,7 +369,7 @@ func (e *extractor) parseReturn(node *treesitter.Node, current scope) {
 	}
 }
 
-func (e *extractor) parseCall(node *treesitter.Node, current scope) {
+func (e *extractor) parseCall(node *syntax.Node, current scope) {
 	calleeNode := e.callCallee(node)
 	callee := strings.TrimSpace(e.text(calleeNode))
 	if callee == "" {
@@ -419,7 +413,7 @@ func (e *extractor) parseCall(node *treesitter.Node, current scope) {
 	e.b.AddFact(fromID, graph.EdgeCalls, "", callee, "", loc, nil)
 }
 
-func (e *extractor) parseHTTPRequest(fromID, callee, method string, arguments []*treesitter.Node, loc graph.Location, current scope) bool {
+func (e *extractor) parseHTTPRequest(fromID, callee, method string, arguments []*syntax.Node, loc graph.Location, current scope) bool {
 	if len(arguments) == 0 {
 		return false
 	}
@@ -463,7 +457,7 @@ func (e *extractor) parseHTTPRequest(fromID, callee, method string, arguments []
 	return false
 }
 
-func (e *extractor) callCallee(node *treesitter.Node) *treesitter.Node {
+func (e *extractor) callCallee(node *syntax.Node) *syntax.Node {
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
 		if child.Kind() != "call_suffix" {
@@ -473,10 +467,10 @@ func (e *extractor) callCallee(node *treesitter.Node) *treesitter.Node {
 	return nil
 }
 
-func (e *extractor) callArguments(node *treesitter.Node) []*treesitter.Node {
-	var result []*treesitter.Node
-	var visit func(*treesitter.Node)
-	visit = func(current *treesitter.Node) {
+func (e *extractor) callArguments(node *syntax.Node) []*syntax.Node {
+	var result []*syntax.Node
+	var visit func(*syntax.Node)
+	visit = func(current *syntax.Node) {
 		if current == nil {
 			return
 		}
@@ -502,7 +496,7 @@ func (e *extractor) callArguments(node *treesitter.Node) []*treesitter.Node {
 	return result
 }
 
-func (e *extractor) parseEnvironmentRead(node *treesitter.Node, current scope) {
+func (e *extractor) parseEnvironmentRead(node *syntax.Node, current scope) {
 	text := strings.TrimSpace(e.text(node))
 	const prefix = "ProcessInfo.processInfo.environment["
 	start := strings.Index(text, prefix)
@@ -525,14 +519,14 @@ func (e *extractor) parseEnvironmentRead(node *treesitter.Node, current scope) {
 	e.b.AddFact(fromID, graph.EdgeReadsConfig, "", key, graph.KindConfigKey, e.location(node), nil)
 }
 
-func (e *extractor) referencedVariables(node *treesitter.Node, symbols map[string]string) []string {
+func (e *extractor) referencedVariables(node *syntax.Node, symbols map[string]string) []string {
 	if node == nil || len(symbols) == 0 {
 		return nil
 	}
 	seen := map[string]bool{}
 	var result []string
-	var visit func(*treesitter.Node)
-	visit = func(current *treesitter.Node) {
+	var visit func(*syntax.Node)
+	visit = func(current *syntax.Node) {
 		if current == nil {
 			return
 		}
@@ -552,13 +546,13 @@ func (e *extractor) referencedVariables(node *treesitter.Node, symbols map[strin
 
 type namedNode struct {
 	name string
-	node *treesitter.Node
+	node *syntax.Node
 }
 
-func (e *extractor) simpleIdentifiers(node *treesitter.Node) []namedNode {
+func (e *extractor) simpleIdentifiers(node *syntax.Node) []namedNode {
 	var result []namedNode
-	var visit func(*treesitter.Node)
-	visit = func(current *treesitter.Node) {
+	var visit func(*syntax.Node)
+	visit = func(current *syntax.Node) {
 		if current == nil {
 			return
 		}
@@ -574,7 +568,7 @@ func (e *extractor) simpleIdentifiers(node *treesitter.Node) []namedNode {
 	return result
 }
 
-func (e *extractor) typeText(node *treesitter.Node) string {
+func (e *extractor) typeText(node *syntax.Node) string {
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
 		if child.Kind() == "type_annotation" {
@@ -588,7 +582,7 @@ func (e *extractor) typeText(node *treesitter.Node) string {
 	return ""
 }
 
-func (e *extractor) inferExpressionType(node *treesitter.Node, current scope) string {
+func (e *extractor) inferExpressionType(node *syntax.Node, current scope) string {
 	if node == nil {
 		return ""
 	}
@@ -639,7 +633,7 @@ func (e *extractor) qualifyInheritanceTarget(target string) string {
 	return target
 }
 
-func (e *extractor) declarationKind(node *treesitter.Node) string {
+func (e *extractor) declarationKind(node *syntax.Node) string {
 	if kind := node.ChildByFieldName("declaration_kind"); kind != nil {
 		return strings.TrimSpace(e.text(kind))
 	}
@@ -652,7 +646,7 @@ func (e *extractor) declarationKind(node *treesitter.Node) string {
 	return "type"
 }
 
-func (e *extractor) firstStringValue(node *treesitter.Node) (string, bool) {
+func (e *extractor) firstStringValue(node *syntax.Node) (string, bool) {
 	if value, ok := e.stringValue(node); ok {
 		return value, true
 	}
@@ -664,7 +658,7 @@ func (e *extractor) firstStringValue(node *treesitter.Node) (string, bool) {
 	return "", false
 }
 
-func (e *extractor) stringValue(node *treesitter.Node) (string, bool) {
+func (e *extractor) stringValue(node *syntax.Node) (string, bool) {
 	if node == nil {
 		return "", false
 	}
@@ -690,14 +684,14 @@ func (e *extractor) qualify(container, name string) string {
 	return e.module + "." + name
 }
 
-func (e *extractor) text(node *treesitter.Node) string {
+func (e *extractor) text(node *syntax.Node) string {
 	if node == nil {
 		return ""
 	}
 	return node.Utf8Text(e.source)
 }
 
-func (e *extractor) location(node *treesitter.Node) graph.Location {
+func (e *extractor) location(node *syntax.Node) graph.Location {
 	start, end := node.StartPosition(), node.EndPosition()
 	return graph.Location{Path: e.input.Path, Line: int(start.Row) + 1, Column: int(start.Column) + 1, EndLine: int(end.Row) + 1}
 }

@@ -2,7 +2,6 @@ package python
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -10,8 +9,8 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
-	treesitter "github.com/tree-sitter/go-tree-sitter"
-	tspython "github.com/tree-sitter/tree-sitter-python/bindings/go"
+	"github.com/cafecito-games/grafo/internal/parser/syntax"
+	tspython "github.com/odvcencio/gotreesitter/grammars/python"
 )
 
 type Parser struct{}
@@ -49,16 +48,11 @@ type extractor struct {
 
 func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseResult, error) {
 	b := parserapi.NewBuilder(input, "python")
-	p := treesitter.NewParser()
-	defer p.Close()
-	if err := p.SetLanguage(treesitter.NewLanguage(tspython.Language())); err != nil {
-		return b.Finish(), fmt.Errorf("load Python grammar: %w", err)
+	tree, err := syntax.Parse(ctx, tspython.Language(), input.Content)
+	if err != nil {
+		return b.Finish(), fmt.Errorf("parse Python source: %w", err)
 	}
-	tree := parserapi.ParseTreeSitter(ctx, p, input.Content)
-	if tree == nil {
-		return b.Finish(), errors.New("parse Python source: parser returned no syntax tree")
-	}
-	defer tree.Close()
+	defer tree.Release()
 	root := tree.RootNode()
 	if root.HasError() {
 		b.Diagnostic(int(root.StartPosition().Row)+1, "warning", "Python contains syntax errors; indexed the recoverable tree")
@@ -71,7 +65,7 @@ func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseRes
 	return b.Finish(), nil
 }
 
-func (e *extractor) walk(node *treesitter.Node, current scope) {
+func (e *extractor) walk(node *syntax.Node, current scope) {
 	if node == nil {
 		return
 	}
@@ -102,13 +96,13 @@ func (e *extractor) walk(node *treesitter.Node, current scope) {
 	e.walkChildren(node, current)
 }
 
-func (e *extractor) walkChildren(node *treesitter.Node, current scope) {
+func (e *extractor) walkChildren(node *syntax.Node, current scope) {
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		e.walk(node.NamedChild(i), current)
 	}
 }
 
-func (e *extractor) parseDecoratedDefinition(node *treesitter.Node, current scope) {
+func (e *extractor) parseDecoratedDefinition(node *syntax.Node, current scope) {
 	definition := node.ChildByFieldName("definition")
 	if definition == nil {
 		return
@@ -121,7 +115,7 @@ func (e *extractor) parseDecoratedDefinition(node *treesitter.Node, current scop
 	}
 }
 
-func (e *extractor) parseImport(node *treesitter.Node) {
+func (e *extractor) parseImport(node *syntax.Node) {
 	if node.Kind() == "import_statement" {
 		for i := uint(0); i < node.NamedChildCount(); i++ {
 			child := node.NamedChild(i)
@@ -177,7 +171,7 @@ func (e *extractor) parseImport(node *treesitter.Node) {
 	}
 }
 
-func (e *extractor) importName(node *treesitter.Node) (string, string) {
+func (e *extractor) importName(node *syntax.Node) (string, string) {
 	if node == nil {
 		return "", ""
 	}
@@ -192,7 +186,7 @@ func (e *extractor) importName(node *treesitter.Node) (string, string) {
 	}
 }
 
-func (e *extractor) addImportFact(node *treesitter.Node, module, alias, symbol string) {
+func (e *extractor) addImportFact(node *syntax.Node, module, alias, symbol string) {
 	if module == "" {
 		return
 	}
@@ -206,7 +200,7 @@ func (e *extractor) addImportFact(node *treesitter.Node, module, alias, symbol s
 	e.b.AddFact(e.b.FileID(), graph.EdgeImports, "", module, graph.KindModule, e.location(node), properties)
 }
 
-func (e *extractor) parseFunction(node *treesitter.Node, current scope, decorated *treesitter.Node) {
+func (e *extractor) parseFunction(node *syntax.Node, current scope, decorated *syntax.Node) {
 	name := strings.TrimSpace(e.text(node.ChildByFieldName("name")))
 	if name == "" {
 		return
@@ -239,7 +233,7 @@ func (e *extractor) parseFunction(node *treesitter.Node, current scope, decorate
 	}
 }
 
-func (e *extractor) parseClass(node *treesitter.Node, current scope) {
+func (e *extractor) parseClass(node *syntax.Node, current scope) {
 	name := strings.TrimSpace(e.text(node.ChildByFieldName("name")))
 	if name == "" {
 		return
@@ -264,7 +258,7 @@ func (e *extractor) parseClass(node *treesitter.Node, current scope) {
 	}
 }
 
-func (e *extractor) declareParameters(parameters *treesitter.Node, current scope, method bool) {
+func (e *extractor) declareParameters(parameters *syntax.Node, current scope, method bool) {
 	if parameters == nil {
 		return
 	}
@@ -287,7 +281,7 @@ func (e *extractor) declareParameters(parameters *treesitter.Node, current scope
 	}
 }
 
-func (e *extractor) parameterName(node *treesitter.Node) string {
+func (e *extractor) parameterName(node *syntax.Node) string {
 	if node == nil {
 		return ""
 	}
@@ -297,8 +291,8 @@ func (e *extractor) parameterName(node *treesitter.Node) string {
 	if node.Kind() == "identifier" {
 		return strings.TrimSpace(e.text(node))
 	}
-	var find func(*treesitter.Node) string
-	find = func(current *treesitter.Node) string {
+	var find func(*syntax.Node) string
+	find = func(current *syntax.Node) string {
 		if current == nil {
 			return ""
 		}
@@ -315,7 +309,7 @@ func (e *extractor) parameterName(node *treesitter.Node) string {
 	return find(node)
 }
 
-func (e *extractor) parseAssignment(node *treesitter.Node, current scope) {
+func (e *extractor) parseAssignment(node *syntax.Node, current scope) {
 	left := node.ChildByFieldName("left")
 	right := node.ChildByFieldName("right")
 	name := strings.TrimSpace(e.text(left))
@@ -378,7 +372,7 @@ func (e *extractor) parseAssignment(node *treesitter.Node, current scope) {
 	}
 }
 
-func (e *extractor) parseReassignment(node *treesitter.Node, current scope) {
+func (e *extractor) parseReassignment(node *syntax.Node, current scope) {
 	left := node.ChildByFieldName("left")
 	if left == nil {
 		left = node.ChildByFieldName("name")
@@ -396,7 +390,7 @@ func (e *extractor) parseReassignment(node *treesitter.Node, current scope) {
 	}
 }
 
-func (e *extractor) parseReturn(node *treesitter.Node, current scope) {
+func (e *extractor) parseReturn(node *syntax.Node, current scope) {
 	for _, child := range namedChildren(node) {
 		for _, sourceID := range e.referencedVariables(child, current.symbols) {
 			e.b.AddFact(sourceID, graph.EdgeReturns, current.currentID, "", "", e.location(node), nil)
@@ -404,7 +398,7 @@ func (e *extractor) parseReturn(node *treesitter.Node, current scope) {
 	}
 }
 
-func (e *extractor) parseCall(node *treesitter.Node, current scope) {
+func (e *extractor) parseCall(node *syntax.Node, current scope) {
 	calleeNode := node.ChildByFieldName("function")
 	callee := e.resolveName(strings.TrimSpace(e.text(calleeNode)), current)
 	if callee == "" {
@@ -466,7 +460,7 @@ func (e *extractor) parseCall(node *treesitter.Node, current scope) {
 	e.b.AddFact(fromID, graph.EdgeCalls, "", callee, "", loc, nil)
 }
 
-func (e *extractor) parseConfigCall(fromID, callee string, args []*treesitter.Node, loc graph.Location) bool {
+func (e *extractor) parseConfigCall(fromID, callee string, args []*syntax.Node, loc graph.Location) bool {
 	if len(args) == 0 {
 		return false
 	}
@@ -481,7 +475,7 @@ func (e *extractor) parseConfigCall(fromID, callee string, args []*treesitter.No
 	return true
 }
 
-func (e *extractor) parseEnvironmentRead(node *treesitter.Node, current scope) {
+func (e *extractor) parseEnvironmentRead(node *syntax.Node, current scope) {
 	value := e.resolveName(strings.TrimSpace(e.text(node.ChildByFieldName("value"))), current)
 	if value != "os.environ" {
 		return
@@ -497,7 +491,7 @@ func (e *extractor) parseEnvironmentRead(node *treesitter.Node, current scope) {
 	e.b.AddFact(fromID, graph.EdgeReadsConfig, "", key, graph.KindConfigKey, e.location(node), nil)
 }
 
-func (e *extractor) parseDecorators(node *treesitter.Node, functionID, qualified string) {
+func (e *extractor) parseDecorators(node *syntax.Node, functionID, qualified string) {
 	for _, child := range namedChildren(node) {
 		if child.Kind() != "decorator" {
 			continue
@@ -531,14 +525,14 @@ func (e *extractor) parseDecorators(node *treesitter.Node, functionID, qualified
 	}
 }
 
-func (e *extractor) referencedVariables(node *treesitter.Node, symbols map[string]string) []string {
+func (e *extractor) referencedVariables(node *syntax.Node, symbols map[string]string) []string {
 	if node == nil || len(symbols) == 0 {
 		return nil
 	}
 	seen := map[string]bool{}
 	var result []string
-	var visit func(*treesitter.Node)
-	visit = func(current *treesitter.Node) {
+	var visit func(*syntax.Node)
+	visit = func(current *syntax.Node) {
 		if current == nil {
 			return
 		}
@@ -556,7 +550,7 @@ func (e *extractor) referencedVariables(node *treesitter.Node, symbols map[strin
 	return result
 }
 
-func (e *extractor) inferExpressionType(node *treesitter.Node, current scope) string {
+func (e *extractor) inferExpressionType(node *syntax.Node, current scope) string {
 	if node == nil {
 		return ""
 	}
@@ -638,7 +632,7 @@ func (e *extractor) resolveName(name string, current scope) string {
 	return name
 }
 
-func (e *extractor) literalString(node *treesitter.Node) (string, bool) {
+func (e *extractor) literalString(node *syntax.Node) (string, bool) {
 	if node == nil || (node.Kind() != "string" && node.Kind() != "concatenated_string") {
 		return "", false
 	}
@@ -681,19 +675,19 @@ func (e *extractor) qualify(container, name string) string {
 	return e.module + "." + name
 }
 
-func (e *extractor) text(node *treesitter.Node) string {
+func (e *extractor) text(node *syntax.Node) string {
 	if node == nil {
 		return ""
 	}
 	return node.Utf8Text(e.source)
 }
 
-func (e *extractor) location(node *treesitter.Node) graph.Location {
+func (e *extractor) location(node *syntax.Node) graph.Location {
 	start, end := node.StartPosition(), node.EndPosition()
 	return graph.Location{Path: e.input.Path, Line: int(start.Row) + 1, Column: int(start.Column) + 1, EndLine: int(end.Row) + 1}
 }
 
-func (e *extractor) sameNode(left, right *treesitter.Node) bool {
+func (e *extractor) sameNode(left, right *syntax.Node) bool {
 	return left != nil && right != nil && left.StartByte() == right.StartByte() && left.EndByte() == right.EndByte() && left.Kind() == right.Kind()
 }
 
@@ -720,25 +714,25 @@ func joinPythonName(module, name string) string {
 	return module + "." + name
 }
 
-func namedChildren(node *treesitter.Node) []*treesitter.Node {
+func namedChildren(node *syntax.Node) []*syntax.Node {
 	if node == nil {
 		return nil
 	}
-	children := make([]*treesitter.Node, 0, node.NamedChildCount())
+	children := make([]*syntax.Node, 0, node.NamedChildCount())
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		children = append(children, node.NamedChild(i))
 	}
 	return children
 }
 
-func argumentValue(node *treesitter.Node) *treesitter.Node {
+func argumentValue(node *syntax.Node) *syntax.Node {
 	if node != nil && node.Kind() == "keyword_argument" {
 		return node.ChildByFieldName("value")
 	}
 	return node
 }
 
-func firstDescendant(node *treesitter.Node, kind string) *treesitter.Node {
+func firstDescendant(node *syntax.Node, kind string) *syntax.Node {
 	if node == nil {
 		return nil
 	}

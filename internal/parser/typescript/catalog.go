@@ -20,8 +20,9 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
-	treesitter "github.com/tree-sitter/go-tree-sitter"
-	tstypescript "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
+	"github.com/cafecito-games/grafo/internal/parser/syntax"
+	tstsx "github.com/odvcencio/gotreesitter/grammars/tsx"
+	tstypescript "github.com/odvcencio/gotreesitter/grammars/typescript"
 )
 
 // Resolution is intentionally limited to tracked repository inputs. The
@@ -440,20 +441,15 @@ func scanModuleCached(path string, content []byte) (*moduleInfo, error) {
 
 func scanModule(path string, content []byte) (*moduleInfo, error) {
 	info := &moduleInfo{path: path, name: canonicalModuleName(path), locals: map[string]symbolRef{}, methods: map[string]map[string]symbolRef{}, exports: map[string][]exportRef{}}
-	parser := treesitter.NewParser()
-	defer parser.Close()
-	language := tstypescript.LanguageTypescript()
+	language := tstypescript.Language()
 	if strings.EqualFold(filepath.Ext(path), ".tsx") {
-		language = tstypescript.LanguageTSX()
+		language = tstsx.Language()
 	}
-	if err := parser.SetLanguage(treesitter.NewLanguage(language)); err != nil {
+	tree, err := syntax.Parse(context.Background(), language, content)
+	if err != nil {
 		return nil, err
 	}
-	tree := parser.Parse(content, nil)
-	if tree == nil {
-		return nil, fmt.Errorf("parser returned no syntax tree")
-	}
-	defer tree.Close()
+	defer tree.Release()
 	collectModuleDeclarations(tree.RootNode(), content, info, "")
 	collectModuleExports(info, string(content))
 	collectAnonymousDefaultExports(tree.RootNode(), content, info)
@@ -511,7 +507,7 @@ func collectModuleExports(info *moduleInfo, text string) {
 	}
 }
 
-func collectAnonymousDefaultExports(node *treesitter.Node, source []byte, info *moduleInfo) {
+func collectAnonymousDefaultExports(node *syntax.Node, source []byte, info *moduleInfo) {
 	if node == nil {
 		return
 	}
@@ -526,7 +522,7 @@ func collectAnonymousDefaultExports(node *treesitter.Node, source []byte, info *
 	}
 }
 
-func anonymousDefaultLocal(export *treesitter.Node, source []byte) string {
+func anonymousDefaultLocal(export *syntax.Node, source []byte) string {
 	if export == nil || export.Kind() != "export_statement" || !strings.Contains(nodeText(export, source), "default") {
 		return ""
 	}
@@ -542,7 +538,7 @@ func anonymousDefaultLocal(export *treesitter.Node, source []byte) string {
 	return ""
 }
 
-func collectModuleDeclarations(node *treesitter.Node, source []byte, info *moduleInfo, container string) {
+func collectModuleDeclarations(node *syntax.Node, source []byte, info *moduleInfo, container string) {
 	if node == nil {
 		return
 	}
@@ -602,7 +598,7 @@ func collectModuleDeclarations(node *treesitter.Node, source []byte, info *modul
 	}
 }
 
-func nodeText(node *treesitter.Node, source []byte) string {
+func nodeText(node *syntax.Node, source []byte) string {
 	if node == nil {
 		return ""
 	}
