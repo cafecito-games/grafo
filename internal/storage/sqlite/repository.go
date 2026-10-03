@@ -43,8 +43,50 @@ type Repository struct {
 	deferredIndexes []deferredIndex
 }
 
+// reconciliationBatchSize is how many dirty facts one reconciliation transaction
+// materializes into edges.
+//
+// Node, fact, and edge identities are content hashes, so index entries arrive in
+// random page order and one b-tree page is touched by many rows. In WAL mode a
+// commit spools every page it dirtied into the log, so a page touched across N
+// commits is written N times and across one commit is written once. The batch
+// size therefore sets write amplification, not just how often the commit
+// overhead is paid, which is why raising it is worth far more than the commit
+// count alone suggests.
+//
+// Measured on a cold index of cafecito-games/uzir at 63664458a (11,845 indexed
+// files, 634,245 nodes, 2,439,451 facts, 2,521,694 edges) on a 12-core machine,
+// moving this together with maxGroupedFiles and maxGroupedRows in
+// internal/indexer/service.go by the same factor:
+//
+//	factor   batch size   runs    wall      sd      sys   peak RSS
+//	     1       10,000       3   184.6s    3.2s   58.2s   2.42 GiB
+//	     4       40,000       2   126.0s    2.3s   26.7s   2.61 GiB
+//	     8       80,000       4   114.6s    2.6s   20.2s   2.89 GiB
+//	    16      160,000       3   110.4s    3.2s   17.4s   3.02 GiB
+//
+// Eight is the knee rather than an arbitrary stop: the step from eight to
+// sixteen is 4.2s against a 2.6-3.2s standard deviation, for a further 0.13 GiB.
+// The system time falling with the batch size, by two thirds across the range,
+// is the write amplification being removed: it tracks bytes handed to the
+// kernel. Every one of these twelve runs produced an identical graph.
+//
+// The run-to-run spread above is also the honest noise floor for this workload.
+// The 14.8s recorded on maxParseWorkers in internal/indexer/pipeline.go predates
+// the parse pool and the persisted Go view cache, and treating it as current
+// hides effects this size.
+//
+// Peak RSS rises 19% in exchange, which is the cost of holding a larger
+// transaction's dirty pages and a larger group's parsed evidence. That is inside
+// the 20% gate the storage spike predeclared but it pushes directly on #182, so
+// a future bound on resident memory has to treat this as one of the knobs it
+// trades against.
+//
+// It is a variable so a test can lower it and observe more than one batch
+// without generating a production-sized fact set.
+var reconciliationBatchSize int64 = 80_000
+
 const (
-	reconciliationBatchSize = 10_000
 	// reconciliationCheckpointBatches is how many batches share one WAL
 	// checkpoint. Checkpointing after every batch copied the same hot index pages
 	// into the database file again and again, and both that and never

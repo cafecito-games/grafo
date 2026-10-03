@@ -161,6 +161,10 @@ func TestRepositoryReconcilesMoreThanOneBatchAndTruncatesWAL(t *testing.T) {
 	}
 	defer func() { _ = repository.Close() }()
 
+	// Lowered so the two-batch path is covered without materializing a
+	// production-sized fact set; the boundary behavior is the same at any size.
+	sqlite.SetReconciliationBatchSizeForTest(t, 10_000)
+
 	caller := graph.Node{ID: "caller", Kind: graph.KindFunction, Name: "Caller",
 		QualifiedName: "sample.Caller", OwnerFile: "large.go"}
 	target := graph.Node{ID: "target", Kind: graph.KindFunction, Name: "Target",
