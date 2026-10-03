@@ -2636,6 +2636,27 @@ func test_shadowed_name_resolves_nothing() -> void:
 	var made := _make.call()
 	made.handle()
 `)
+	overriding := []byte(`extends GutTest
+
+class Base:
+	func build() -> Coordinator:
+		return Coordinator.new()
+
+class Derived extends Base:
+	func build() -> Lane:
+		return Lane.new()
+
+	func use() -> void:
+		var made := build()
+		made.handle()
+
+static func make_static() -> Coordinator:
+	return Coordinator.new()
+
+func test_static_receiver() -> void:
+	var made := make_static()
+	made.handle()
+`)
 	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
 		Path: "tests/coordinator_test.gd", Content: content, Repository: "sample", RepoID: "repo",
 	})
@@ -2659,6 +2680,33 @@ func test_shadowed_name_resolves_nothing() -> void:
 				refused, sortedKeys(targets))
 		}
 	}
+
+	// A subclass that overrides a method with a different return type resolves
+	// through its own declaration, and a static method resolves like any other
+	// method the file declares.
+	overrideTargets := gdCallTargets(t, "tests/override_test.gd", overriding)
+	for _, want := range []string{"Lane.handle", "Coordinator.handle"} {
+		if !overrideTargets[want] {
+			t.Errorf("missing resolved call to %s; calls = %v", want, sortedKeys(overrideTargets))
+		}
+	}
+}
+
+func gdCallTargets(t *testing.T, path string, content []byte) map[string]bool {
+	t.Helper()
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: path, Content: content, Repository: "sample", RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets := map[string]bool{}
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeCalls {
+			targets[fact.Target] = true
+		}
+	}
+	return targets
 }
 
 func sortedKeys(values map[string]bool) []string {
