@@ -476,6 +476,13 @@ func unloadedSemanticView(root, path, buildContext string) SemanticView {
 	if err == nil && !included {
 		return SemanticView{Available: true, Included: false, BuildContext: buildContext}
 	}
+	if withinTestdata(path) {
+		// Every module plan loads ./..., which the Go tool never expands into a
+		// testdata directory, so these sources can never gain a semantic view.
+		// Syntax evidence is the ceiling here and saying so on every run would
+		// report a property of the pattern rather than a problem to fix.
+		return SemanticView{Included: true, BuildContext: buildContext}
+	}
 	message := "Go semantic package omitted source; using syntax evidence"
 	if err != nil {
 		message += ": " + err.Error()
@@ -484,6 +491,17 @@ func unloadedSemanticView(root, path, buildContext string) SemanticView {
 		Included: true, BuildContext: buildContext,
 		Diagnostics: []graph.Diagnostic{{Path: path, Level: "warning", Message: message}},
 	}
+}
+
+// withinTestdata reports whether a repository-relative path has a testdata
+// directory element.
+func withinTestdata(path string) bool {
+	for _, element := range strings.Split(filepath.ToSlash(path), "/") {
+		if element == "testdata" {
+			return true
+		}
+	}
+	return false
 }
 
 func matchesBuildContext(root, path string) (bool, error) {

@@ -2791,6 +2791,30 @@ func childRoutes() chi.Router {
 	return r
 }
 
+func pageRoutes(r chi.Router) {
+	for _, route := range []string{"/pages", "/pages/{slug}"} {
+		r.Get(route, me)
+	}
+	for index, route := range []string{"/skipped"} {
+		_ = index
+		r.Get(route, me)
+	}
+	for _, route := range []string{"/dynamic-element", dynamicRoute} {
+		r.Get(route, me)
+	}
+}
+
+var dynamicRoute = "/computed"
+
+func handlerRouter() http.Handler {
+	h := chi.NewRouter()
+	h.Use(childUse)
+	h.Get("/items", list)
+	return h
+}
+
+func plainHandler() http.Handler { return http.HandlerFunc(me) }
+
 func dynamicOnly(r chi.Router) { r.Get("/hidden", me) }
 func applyHelper(r chi.Router) { r.Use(audit) }
 func dynamicMethod(r chi.Router, method string) { r.MethodFunc(method, "/dynamic-method", me) }
@@ -2833,6 +2857,9 @@ func Routes(dynamic string) chi.Router {
 		admin.Get("/scoped", me)
 		admin.Mount("/admin", childRoutes())
 	})
+	r.Route("/site", pageRoutes)
+	r.Mount("/handler", handlerRouter())
+	r.Mount("/plain", plainHandler())
 	r.Mount("/child", childRoutes())
 	factory := childRoutes
 	r.Mount("/factory", factory())
@@ -2877,24 +2904,29 @@ func NotARouter() { unrelated{}.Get("/invented", login) }
 	}
 
 	wantMiddleware := map[string][]string{
-		"POST /v1/auth/login":    {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
-		"POST /v1/auth/alias":    {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
-		"GET /v1/auth/me":        {"example.com/app.outer", "example.com/app.authUse"},
-		"GET /v1/auth/plain":     {"example.com/app.outer", "example.com/app.authUse"},
-		"POST /one/login":        {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
-		"POST /two/login":        {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
-		"GET /admin/items":       {"example.com/app.outer", "example.com/app.adminUse", "example.com/app.childUse"},
-		"GET /captured-outer":    {"example.com/app.outer"},
-		"GET /scoped":            {"example.com/app.outer", "example.com/app.adminUse"},
-		"GET /child/items":       {"example.com/app.outer", "example.com/app.childUse"},
-		"GET /factory/items":     {"example.com/app.outer", "example.com/app.childUse"},
-		"PATCH /method":          {"example.com/app.outer"},
-		"ANY /any":               {"example.com/app.outer"},
-		"GET /conditional":       {"example.com/app.outer"},
-		"GET /helper/use":        {"example.com/app.outer", "example.com/app.audit"},
-		"GET /copied-helper/use": {"example.com/app.outer", "example.com/app.audit"},
-		"GET /after-uncertain":   {"example.com/app.outer"},
-		"GET /void-real":         {},
+		"POST /v1/auth/login":       {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
+		"POST /v1/auth/alias":       {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
+		"GET /v1/auth/me":           {"example.com/app.outer", "example.com/app.authUse"},
+		"GET /v1/auth/plain":        {"example.com/app.outer", "example.com/app.authUse"},
+		"POST /one/login":           {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
+		"POST /two/login":           {"example.com/app.outer", "example.com/app.authUse", "example.com/app.audit"},
+		"GET /admin/items":          {"example.com/app.outer", "example.com/app.adminUse", "example.com/app.childUse"},
+		"GET /captured-outer":       {"example.com/app.outer"},
+		"GET /scoped":               {"example.com/app.outer", "example.com/app.adminUse"},
+		"GET /child/items":          {"example.com/app.outer", "example.com/app.childUse"},
+		"GET /factory/items":        {"example.com/app.outer", "example.com/app.childUse"},
+		"PATCH /method":             {"example.com/app.outer"},
+		"ANY /any":                  {"example.com/app.outer"},
+		"GET /conditional":          {"example.com/app.outer"},
+		"GET /helper/use":           {"example.com/app.outer", "example.com/app.audit"},
+		"GET /copied-helper/use":    {"example.com/app.outer", "example.com/app.audit"},
+		"GET /after-uncertain":      {"example.com/app.outer"},
+		"GET /void-real":            {},
+		"GET /site/pages":           {"example.com/app.outer"},
+		"GET /site/pages/{_}":       {"example.com/app.outer"},
+		"GET /site/skipped":         {"example.com/app.outer"},
+		"GET /site/dynamic-element": {"example.com/app.outer"},
+		"GET /handler/items":        {"example.com/app.outer", "example.com/app.childUse"},
 	}
 	endpoints := map[string]graph.Node{}
 	for _, node := range result.Nodes {
@@ -2935,7 +2967,7 @@ func NotARouter() { unrelated{}.Get("/invented", login) }
 			t.Fatalf("endpoint %s lost its exact handler %s", name, wantHandler)
 		}
 	}
-	for _, forbidden := range []string{"POST /login", "GET /me", "GET /items", "GET /hidden", "GET /invented", "GET /ambiguous", "GET /orphan"} {
+	for _, forbidden := range []string{"POST /login", "GET /me", "GET /items", "GET /hidden", "GET /invented", "GET /ambiguous", "GET /orphan", "GET /site/computed", "GET /pages"} {
 		if _, ok := endpoints[forbidden]; ok {
 			t.Fatalf("invented or uncomposed endpoint %q: %#v", forbidden, endpoints[forbidden])
 		}
@@ -3853,4 +3885,52 @@ func effectiveSemanticKey(t *testing.T, parser *golangparser.Parser, root, path 
 		t.Fatal(err)
 	}
 	return fileKey
+}
+
+// A testdata directory is unreachable from the ./... pattern every module plan
+// loads, so a source inside one can never gain a semantic view and warning
+// about it on every indexing run reports a fact of the Go tool, not a problem.
+func TestPackageSemanticLoaderDoesNotWarnForUnreachableTestdata(t *testing.T) {
+	root := testtemp.Dir(t)
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/fixtures\n\ngo 1.26\n")
+	writeFile(t, filepath.Join(root, "loaded.go"), "package fixtures\n")
+	content := []byte("package sample\n")
+	tests := []struct {
+		name     string
+		path     string
+		onDisk   bool
+		wantWarn bool
+	}{
+		{name: "testdata package", path: "testdata/sample/fixture.go", onDisk: true},
+		{name: "testdata test file", path: "testdata/sample/fixture_test.go", onDisk: true},
+		{name: "nested testdata", path: "internal/extract/testdata/sample/fixture.go", onDisk: true},
+		// A source the plan could have covered but did not still has to warn, so
+		// the suppression stays scoped to testdata rather than to every
+		// unloaded view.
+		{name: "reachable source the load missed", path: "fresh/fresh.go", wantWarn: true},
+	}
+	for _, test := range tests {
+		if test.onDisk {
+			writeFile(t, filepath.Join(root, filepath.FromSlash(test.path)), string(content))
+		}
+	}
+
+	parser := golangparser.New()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := parser.Parse(context.Background(), parserapi.Input{
+				Root: root, Path: test.path, Content: content, Repository: "fixtures", RepoID: "repo",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			warned := false
+			for _, diagnostic := range result.Diagnostics {
+				warned = warned || strings.Contains(diagnostic.Message, "omitted source")
+			}
+			if warned != test.wantWarn {
+				t.Fatalf("omitted-source warning present=%v, want %v: %#v", warned, test.wantWarn, result.Diagnostics)
+			}
+		})
+	}
 }
