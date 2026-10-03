@@ -935,10 +935,11 @@ grafo indexes list . --json
 The inventory reports each primary database and its exact WAL/SHM sidecar
 bytes, stored branch/commit/repository metadata, compatibility, current-index
 status, SQLite page/freelist estimates, and deterministic totals. A compaction
-recommendation appears only when estimated reclaimable freelist space is both
-at least 20% of the primary database and at least 256 MiB. WAL/SHM bytes are
-separate and are not counted as freelist space. It examines only direct regular
-`.grafo/indexes/*.sqlite` entries and never follows symlinks.
+recommendation appears when estimated reclaimable freelist space is both at
+least 20% of the primary database and at least 256 MiB, or when the index was
+created with a smaller page size than the 16 KiB this version uses. WAL/SHM
+bytes are separate and are not counted as freelist space. It examines only
+direct regular `.grafo/indexes/*.sqlite` entries and never follows symlinks.
 
 Pruning always requires at least one explicit retention selector. Preview first;
 a dry run does not lock, checkpoint, rename, or delete any index file:
@@ -956,7 +957,8 @@ identity-mismatched, future-dated, or symlinked candidates. Each deleted index
 is rebuildable from source with `grafo index`, but the next switch to that
 branch pays the full rebuild cost. Advisory `.lock` anchors remain in place.
 
-Compaction addresses free pages inside the current branch database; it does not
+Compaction addresses free pages inside the current branch database and brings
+its SQLite page size up to the 16 KiB a new index is created with; it does not
 remove live graph data or stale branch databases. Preview the current estimate,
 then compact explicitly:
 
@@ -968,7 +970,18 @@ grafo indexes compact . --yes
 Compaction takes the same exclusive index lock as indexing, checkpoints the
 WAL, and runs SQLite `VACUUM`. It can require temporary disk space comparable to
 the live database and future queries wait while it runs. An empty freelist is a
-successful zero-byte no-op. Use source include/exclude settings to reduce live
+successful zero-byte no-op when the page size already matches.
+
+An index created before the 16 KiB page size cannot adopt it in place, because
+SQLite ignores `PRAGMA page_size` for a database in WAL mode. Compaction
+therefore rewrites such an index into a sibling file at the target page size,
+proves that file intact and compatible, switches it to WAL, and only then
+renames it over the original. The rename is atomic and the original is read-only
+until it happens, so an interruption at any point leaves a readable WAL index
+behind: either the untouched original or the finished rewrite. The rewrite needs
+room for a second copy of the database while it runs, and an abandoned
+`*.sqlite.rewrite` file from an interrupted attempt is removed by the next
+compaction. Use source include/exclude settings to reduce live
 graph scope, and `indexes prune` to remove whole non-current branch databases.
 
 ## Development

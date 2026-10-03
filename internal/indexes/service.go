@@ -353,10 +353,7 @@ func (m *manager) compact(ctx context.Context, root string, policy CompactPolicy
 		return report, err
 	}
 	report.After = &CompactState{Sizes: afterSizes, Metrics: compaction.After}
-	report.Reclaimed = reclaimedSizes(report.Before.Sizes, afterSizes)
-	if report.Before.Metrics.ReclaimableBytes == 0 {
-		report.Reclaimed = Sizes{}
-	}
+	report.Reclaimed = compactionReclaimed(report.Before.Sizes, afterSizes, compaction)
 	return report, nil
 }
 
@@ -412,7 +409,15 @@ func (m *manager) indexSizes(path string) (Sizes, error) {
 }
 
 func recommendCompaction(primaryBytes int64, metrics sqlite.StorageMetrics) bool {
-	if primaryBytes <= 0 || metrics.ReclaimableBytes < compactMinBytes {
+	if primaryBytes <= 0 {
+		return false
+	}
+	// An index from before the current page size cannot adopt it without being
+	// rewritten, and compaction is the only thing that rewrites it in place.
+	if metrics.PageSize > 0 && metrics.PageSize < sqlite.TargetPageSize {
+		return true
+	}
+	if metrics.ReclaimableBytes < compactMinBytes {
 		return false
 	}
 	threshold := primaryBytes / 5
@@ -420,6 +425,17 @@ func recommendCompaction(primaryBytes int64, metrics sqlite.StorageMetrics) bool
 		threshold++
 	}
 	return metrics.ReclaimableBytes >= threshold
+}
+
+// compactionReclaimed reports what compaction handed back. With no freelist to
+// release and no new page size to adopt there was nothing for it to reclaim, so
+// any difference in file size came from the sidecars rather than from the
+// rewrite; a page size upgrade rewrites every page and is reported as measured.
+func compactionReclaimed(before, after Sizes, compaction sqlite.CompactionResult) Sizes {
+	if compaction.Before.ReclaimableBytes == 0 && compaction.Before.PageSize == compaction.After.PageSize {
+		return Sizes{}
+	}
+	return reclaimedSizes(before, after)
 }
 
 func reclaimedSizes(before, after Sizes) Sizes {

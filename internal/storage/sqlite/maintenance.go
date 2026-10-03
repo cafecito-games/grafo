@@ -3,8 +3,11 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 
@@ -50,6 +53,14 @@ type MaintenanceRepository interface {
 // OpenMaintenance opens an existing compatible index for bounded maintenance.
 // It never creates the file, runs migrations, or changes compatibility metadata.
 func OpenMaintenance(ctx context.Context, path string) (MaintenanceRepository, error) {
+	repository, err := openMaintenanceRepository(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	return repository, nil
+}
+
+func openMaintenanceRepository(ctx context.Context, path string) (*Repository, error) {
 	db, err := openExistingIndex(ctx, path, "rw")
 	if err != nil {
 		return nil, err
@@ -123,8 +134,9 @@ func (r *Repository) Metadata(ctx context.Context) ([]MetadataEntry, error) {
 	return entries, nil
 }
 
-// Compact performs a strict in-place VACUUM and proves compatibility, metadata,
-// graph counts, integrity, and connection settings are unchanged.
+// Compact rewrites the index at TargetPageSize and proves compatibility,
+// metadata, graph counts, integrity, and connection settings are unchanged. An
+// index already at that page size is compacted by a strict in-place VACUUM.
 func (r *Repository) Compact(ctx context.Context) (CompactionResult, error) {
 	var result CompactionResult
 	if err := ctx.Err(); err != nil {
@@ -156,8 +168,12 @@ func (r *Repository) Compact(ctx context.Context) (CompactionResult, error) {
 	if err := strictCheckpoint(ctx, r.db); err != nil {
 		return result, err
 	}
-	if _, err := r.db.ExecContext(ctx, "VACUUM"); err != nil {
-		return result, fmt.Errorf("vacuum SQLite index: %w", err)
+	if result.Before.PageSize == TargetPageSize {
+		if _, err := r.db.ExecContext(ctx, "VACUUM"); err != nil {
+			return result, fmt.Errorf("vacuum SQLite index: %w", err)
+		}
+	} else if err := r.upgradePageSize(ctx); err != nil {
+		return result, err
 	}
 	if err := strictCheckpoint(ctx, r.db); err != nil {
 		return result, fmt.Errorf("checkpoint compacted index: %w", err)
@@ -193,8 +209,131 @@ func (r *Repository) Compact(ctx context.Context) (CompactionResult, error) {
 	if err != nil {
 		return result, err
 	}
+	if result.After.PageSize != TargetPageSize {
+		return result, fmt.Errorf("compacted index page size is %d, want %d", result.After.PageSize, TargetPageSize)
+	}
 	result.Counts = countsAfter
 	return result, nil
+}
+
+// upgradePageSize rebuilds the index at TargetPageSize. SQLite honors
+// PRAGMA page_size only for an empty database or across a VACUUM, and ignores
+// it entirely for an in-place VACUUM of a database in WAL mode, so the rewrite
+// goes to a sibling file that VACUUM INTO creates at the requested page size
+// and that then replaces the original.
+//
+// The sibling is proved intact and switched to WAL before the rename, and the
+// rename itself is atomic, so an interruption at any point leaves a readable
+// WAL index in place: either the untouched original or the finished rewrite.
+func (r *Repository) upgradePageSize(ctx context.Context) error {
+	replacement, err := r.writeReplacementAtTargetPageSize(ctx)
+	if err != nil {
+		return err
+	}
+	// The original has to be closed before it is replaced, and its checkpointed
+	// sidecars have to go with it: a stale -wal or -shm left beside the
+	// replacement would describe the file the rename is about to unlink.
+	if err := errors.Join(r.queries.Close(), r.db.Close()); err != nil {
+		_ = removeIndexFiles(replacement)
+		return fmt.Errorf("close the index being upgraded: %w", err)
+	}
+	if err := removeIndexSidecars(r.path); err != nil {
+		_ = removeIndexFiles(replacement)
+		return err
+	}
+	if err := os.Rename(replacement, r.path); err != nil {
+		_ = removeIndexFiles(replacement)
+		return fmt.Errorf("replace the index with its rewrite: %w", err)
+	}
+	upgraded, err := openMaintenanceRepository(ctx, r.path)
+	if err != nil {
+		return fmt.Errorf("reopen the upgraded index: %w", err)
+	}
+	r.db, r.queries, r.limits = upgraded.db, upgraded.queries, upgraded.limits
+	return nil
+}
+
+// writeReplacementAtTargetPageSize copies the open index into a sibling file at
+// TargetPageSize and returns that file, already verified and in WAL mode. The
+// original is only read, so a failure here leaves nothing to undo but the
+// sibling itself.
+func (r *Repository) writeReplacementAtTargetPageSize(ctx context.Context) (string, error) {
+	replacement := replacementIndexPath(r.path)
+	// VACUUM INTO refuses to write a file that already exists, so an abandoned
+	// earlier attempt has to go first.
+	if err := removeIndexFiles(replacement); err != nil {
+		return "", err
+	}
+	if _, err := r.db.ExecContext(ctx, fmt.Sprintf("PRAGMA page_size=%d", TargetPageSize)); err != nil {
+		return "", fmt.Errorf("request the target index page size: %w", err)
+	}
+	if _, err := r.db.ExecContext(ctx, "VACUUM INTO ?", replacement); err != nil {
+		_ = removeIndexFiles(replacement)
+		return "", fmt.Errorf("rewrite index at the target page size: %w", err)
+	}
+	if err := prepareReplacementIndex(ctx, replacement); err != nil {
+		_ = removeIndexFiles(replacement)
+		return "", err
+	}
+	// Closing the replacement drops the sidecars its WAL switch created, so this
+	// only proves the rename has nothing left to carry across.
+	if err := removeIndexSidecars(replacement); err != nil {
+		_ = removeIndexFiles(replacement)
+		return "", err
+	}
+	return replacement, nil
+}
+
+// prepareReplacementIndex proves a rewritten index carries the target page size
+// and an intact, compatible graph, then persists WAL journal mode in its header
+// and closes it cleanly so it has no sidecars of its own to carry across the
+// rename.
+func prepareReplacementIndex(ctx context.Context, path string) (resultErr error) {
+	db, err := openExistingIndex(ctx, path, "rw")
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, db.Close()) }()
+	var pageSize int64
+	if err := db.QueryRowContext(ctx, "PRAGMA page_size").Scan(&pageSize); err != nil {
+		return fmt.Errorf("read rewritten index page size: %w", err)
+	}
+	if pageSize != TargetPageSize {
+		return fmt.Errorf("rewritten index page size is %d, want %d", pageSize, TargetPageSize)
+	}
+	if err := integrityCheck(ctx, db); err != nil {
+		return err
+	}
+	if err := validateReadCompatibility(ctx, &Repository{db: db, queries: sqlcgen.New(db), path: path}); err != nil {
+		return fmt.Errorf("validate rewritten index compatibility: %w", err)
+	}
+	var mode string
+	if err := db.QueryRowContext(ctx, "PRAGMA journal_mode=WAL").Scan(&mode); err != nil {
+		return fmt.Errorf("enable WAL on the rewritten index: %w", err)
+	}
+	if !strings.EqualFold(mode, "wal") {
+		return fmt.Errorf("rewritten index journal mode is %q, want WAL", mode)
+	}
+	return nil
+}
+
+func replacementIndexPath(path string) string { return path + ".rewrite" }
+
+func removeIndexFiles(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove %s: %w", filepath.Base(path), err)
+	}
+	return removeIndexSidecars(path)
+}
+
+func removeIndexSidecars(path string) error {
+	for _, suffix := range []string{"-wal", "-shm"} {
+		sidecar := path + suffix
+		if err := os.Remove(sidecar); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove %s: %w", filepath.Base(sidecar), err)
+		}
+	}
+	return nil
 }
 
 func readStorageMetrics(ctx context.Context, db *sql.DB) (StorageMetrics, error) {
