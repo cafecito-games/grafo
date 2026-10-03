@@ -74,6 +74,7 @@ func indexCorpusWith(t testing.TB, root string, registry *parserapi.Registry) in
 // call, so without these counters a refresh cannot be attributed between fixed
 // semantic cost and per-file parse cost.
 func TestReportCarriesGoSemanticLoadMetrics(t *testing.T) {
+	t.Parallel()
 	report := indexCorpus(t, semanticMetricsCorpus(t))
 
 	metrics, reported := report.Semantic["go"]
@@ -98,6 +99,7 @@ func TestReportCarriesGoSemanticLoadMetrics(t *testing.T) {
 // comment claims. Reporting the semantic figures is only meaningful if they are
 // the part of ParseNS the reader is meant to be able to subtract.
 func TestSemanticPhasesAreASubsetOfParse(t *testing.T) {
+	t.Parallel()
 	report := indexCorpus(t, semanticMetricsCorpus(t))
 
 	if report.Phases.SemanticNS <= 0 {
@@ -117,6 +119,7 @@ func TestSemanticPhasesAreASubsetOfParse(t *testing.T) {
 // profile this instrumentation exists for is read from `grafo index --json`,
 // not from Go structs.
 func TestSemanticMetricsReachTheJSONReport(t *testing.T) {
+	t.Parallel()
 	report := indexCorpus(t, semanticMetricsCorpus(t))
 
 	encoded, err := json.Marshal(report)
@@ -150,6 +153,7 @@ func TestSemanticMetricsReachTheJSONReport(t *testing.T) {
 // nothing" from "this language has no semantic loader", which is absence.
 // Indexing must not depend on any of it.
 func TestNonGoRepositoryReportsIdleSemanticMetrics(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	write(t, filepath.Join(root, "README.md"), "# No Go here\n\nJust prose.\n")
@@ -186,6 +190,7 @@ func keysOf(metrics map[string]parserapi.SemanticLoadMetrics) []string {
 // counters attributes an earlier run's semantic time to a later one — and makes
 // SemanticNS exceed the ParseNS it is documented as a subset of.
 func TestReusedRegistryReportsOnlyItsOwnRunsWork(t *testing.T) {
+	t.Parallel()
 	registry := parserdefaults.NewRegistry()
 	first := indexCorpusWith(t, semanticMetricsCorpus(t), registry)
 	if first.Phases.SemanticNS <= 0 {

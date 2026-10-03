@@ -13,6 +13,7 @@ import (
 )
 
 func TestDiscoverProjectUsesSeparateIndexPerBranch(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("sample\n"), 0o644); err != nil {
@@ -42,6 +43,7 @@ func TestDiscoverProjectUsesSeparateIndexPerBranch(t *testing.T) {
 }
 
 func TestDiscoverProjectPreservesDetachedHeadAndRejectsRemoteIdentityChange(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("sample\n"), 0o644); err != nil {

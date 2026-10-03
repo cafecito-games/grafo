@@ -25,6 +25,7 @@ import (
 // identity and ordering. Each run uses a fresh database and a fresh parser, so
 // the second one sees exactly what a second grafo process would.
 func TestGoViewCacheProducesIdenticalGraphAcrossProcesses(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
@@ -72,6 +73,7 @@ func Drive(runner contract.Runner) error { return runner.Run() }
 // end: a corrupt cache leaves indexing with the same graph it would have built
 // without one, never a graph missing its cross-file edges.
 func TestGoViewCacheRecoversFromCorruptPayload(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
@@ -117,6 +119,7 @@ func (Worker) Run() error { return nil }
 // keys have been narrowed: a cold build, an incremental refresh over an edit,
 // and a forced full rebuild. All three must agree on the graph.
 func TestGoViewCacheKeepsRefreshAndForceIdentical(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")

@@ -27,6 +27,7 @@ import (
 // only its own package, one that reaches importers, and one that reaches the
 // whole repository through interface satisfaction.
 func TestIncrementalEditsMatchAColdIndexRowForRow(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name  string
 		files map[string]string
@@ -119,6 +120,7 @@ func TestIncrementalEditsMatchAColdIndexRowForRow(t *testing.T) {
 // of the same contract. Equivalence alone is satisfied by reparsing everything,
 // which is what this change exists to stop.
 func TestDeclarationEditDoesNotReparseUnreachablePackages(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := equivalenceCorpus(t)
 	project, err := indexer.DiscoverProject(ctx, root)

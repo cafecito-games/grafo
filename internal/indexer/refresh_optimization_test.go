@@ -56,6 +56,7 @@ func (s *indexRepositorySpy) ReconciliationPending(ctx context.Context) (bool, e
 }
 
 func TestServiceProvenUnchangedRefreshSkipsGraphWritesAndCounts(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
@@ -127,6 +128,7 @@ func (r *noStatusRepository) Reconcile(ctx context.Context) error {
 }
 
 func TestServiceRepositoryWithoutCleanProofReconciles(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "README.md"), "# Sample\n")
@@ -153,6 +155,7 @@ func TestServiceRepositoryWithoutCleanProofReconciles(t *testing.T) {
 }
 
 func TestServiceCorruptPriorGitEvidenceFailsClosedAndRepairs(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
@@ -195,6 +198,7 @@ func TestServiceCorruptPriorGitEvidenceFailsClosedAndRepairs(t *testing.T) {
 }
 
 func TestServiceRejectsRemoteIdentityChangeBeforeMutation(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
@@ -248,6 +252,7 @@ func TestServiceRejectsRemoteIdentityChangeBeforeMutation(t *testing.T) {
 }
 
 func TestServiceTrackedTypechangeUsesSafeSymlinkDiscovery(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
@@ -289,6 +294,7 @@ func TestServiceTrackedTypechangeUsesSafeSymlinkDiscovery(t *testing.T) {
 }
 
 func TestServiceGitSnapshotConvergesAcrossMembershipAndHeadChanges(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
@@ -358,6 +364,7 @@ func TestServiceGitSnapshotConvergesAcrossMembershipAndHeadChanges(t *testing.T)
 }
 
 func TestServiceMissingWorkspaceDigestUsesSafePathOnce(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("# Sample\n"), 0o644); err != nil {

@@ -17,6 +17,7 @@ import (
 )
 
 func TestOptionalLockStatusMatchesDefaultPorcelainEvidence(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	snapshotRunGit(t, root, "init", "-b", "main")
 	if err := os.WriteFile(filepath.Join(root, "staged.snap"), []byte("one"), 0o644); err != nil {
@@ -89,6 +90,7 @@ func (r *scriptedGitRunner) Run(_ context.Context, directory string, arguments .
 }
 
 func TestDiscoverProjectSnapshotUsesThreeBoundedGitCommands(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	config := filepath.Join(root, "config")
 	if err := os.WriteFile(config, []byte("fixture"), 0o644); err != nil {
@@ -124,6 +126,7 @@ func TestDiscoverProjectSnapshotUsesThreeBoundedGitCommands(t *testing.T) {
 }
 
 func TestDiscoverProjectReusesUnchangedRemoteIdentity(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	config := filepath.Join(root, "config")
 	if err := os.WriteFile(config, []byte("fixture"), 0o644); err != nil {
@@ -152,6 +155,7 @@ func TestDiscoverProjectReusesUnchangedRemoteIdentity(t *testing.T) {
 }
 
 func TestParseGitStatusPorcelainV2CoversPathKinds(t *testing.T) {
+	t.Parallel()
 	raw := []byte("# branch.oid aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\x00" +
 		"# branch.head feature/work\x00" +
 		"1 M. N... 100644 100644 100644 abc def staged.go\x00" +
@@ -177,6 +181,7 @@ func TestParseGitStatusPorcelainV2CoversPathKinds(t *testing.T) {
 }
 
 func TestParseGitStatusPorcelainV2FailsClosed(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name string
 		raw  []byte
@@ -194,6 +199,7 @@ func TestParseGitStatusPorcelainV2FailsClosed(t *testing.T) {
 }
 
 func TestParseGitStatusPorcelainV2TreatsTypechangeAsMembershipChange(t *testing.T) {
+	t.Parallel()
 	snapshot, err := parseGitStatusPorcelainV2([]byte(
 		"# branch.oid aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\x00# branch.head main\x00" +
 			"1 .T N... 100644 100644 120000 abc def linked.snap\x00"))
@@ -206,6 +212,7 @@ func TestParseGitStatusPorcelainV2TreatsTypechangeAsMembershipChange(t *testing.
 }
 
 func TestDiscoverProjectFallsBackToRootForEmptyRemote(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	config := filepath.Join(root, "config")
 	if err := os.WriteFile(config, []byte("fixture"), 0o644); err != nil {
@@ -226,6 +233,7 @@ func TestDiscoverProjectFallsBackToRootForEmptyRemote(t *testing.T) {
 }
 
 func TestDiscoverProjectRejectsMalformedRemoteOrigin(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	runner := &scriptedGitRunner{outputs: [][]byte{[]byte(root + "\n"), []byte("malformed")}}
 	if _, err := discoverProject(context.Background(), root, runner); err == nil {
@@ -234,6 +242,7 @@ func TestDiscoverProjectRejectsMalformedRemoteOrigin(t *testing.T) {
 }
 
 func TestDiscoverProjectUsesGitDetachedAbbreviation(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	runner := &scriptedGitRunner{
 		outputs: [][]byte{
@@ -257,6 +266,7 @@ func TestDiscoverProjectUsesGitDetachedAbbreviation(t *testing.T) {
 }
 
 func TestDiscoverProjectPropagatesCanceledGitProbe(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	runner := &scriptedGitRunner{
 		outputs: [][]byte{[]byte(root + "\n"), nil, nil},
@@ -268,6 +278,7 @@ func TestDiscoverProjectPropagatesCanceledGitProbe(t *testing.T) {
 }
 
 func TestDetectGitChangesUsesOneExactHeadDiff(t *testing.T) {
+	t.Parallel()
 	runner := &scriptedGitRunner{outputs: [][]byte{[]byte("committed.go\x00")}}
 	snapshot := &GitSnapshot{
 		Root: "/repository", Head: "new-head", Branch: "main",
@@ -290,6 +301,7 @@ func TestDetectGitChangesUsesOneExactHeadDiff(t *testing.T) {
 }
 
 func TestDiscoverFilesUsesInjectedExactMembershipCommand(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "file.snap"), []byte("fixture"), 0o644); err != nil {
 		t.Fatal(err)
@@ -310,6 +322,7 @@ func TestDiscoverFilesUsesInjectedExactMembershipCommand(t *testing.T) {
 }
 
 func TestDiscoverFilesExcludesManagedWorktrees(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	for _, path := range []string{"kept.snap", ".worktrees/other/ignored.snap"} {
 		fullPath := filepath.Join(root, filepath.FromSlash(path))
@@ -332,6 +345,7 @@ func TestDiscoverFilesExcludesManagedWorktrees(t *testing.T) {
 }
 
 func TestDiscoverFilesDiagnosesGitMembershipFallback(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "fallback.snap"), []byte("fixture"), 0o644); err != nil {
 		t.Fatal(err)
@@ -351,6 +365,7 @@ func TestDiscoverFilesDiagnosesGitMembershipFallback(t *testing.T) {
 }
 
 func TestDiscoverFilesRejectsSymlinkedAncestorTraversal(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	outside := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(outside, "outside.snap"), []byte("outside"), 0o644); err != nil {

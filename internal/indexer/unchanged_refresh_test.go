@@ -97,6 +97,7 @@ func openUnchangedRefreshIndex(t *testing.T, ctx context.Context, root string) *
 // root, so a run mutates a path inside the tree it just indexed and must still
 // not select anything on the next pass.
 func TestServiceUnchangedRefreshReadsNoFilesWithGoSources(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	writeUnchangedRefreshCorpus(t, root, false)
@@ -132,6 +133,7 @@ func TestServiceUnchangedRefreshReadsNoFilesWithGoSources(t *testing.T) {
 // file may still cost a read: an ignored grafo.yaml reaches neither Git diff nor
 // the untracked list, so hashing it is the only proof it has not changed.
 func TestServiceUnchangedRefreshHashesConfigGitIgnores(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	writeUnchangedRefreshCorpus(t, root, true)
@@ -161,6 +163,7 @@ func TestServiceUnchangedRefreshHashesConfigGitIgnores(t *testing.T) {
 // anyway. The test exists because that is the evidence the skipped content check
 // now leans on, and nothing else states it.
 func TestServiceUnchangedRefreshNoticesConfigEditGitFiltersAway(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	writeUnchangedRefreshCorpus(t, root, false)
@@ -191,6 +194,7 @@ func TestServiceUnchangedRefreshNoticesConfigEditGitFiltersAway(t *testing.T) {
 // report modifications to it, so being in the index is not on its own proof that
 // a diff would have caught an edit.
 func TestServiceUnchangedRefreshHashesConfigGitStoppedReporting(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	writeUnchangedRefreshCorpus(t, root, false)

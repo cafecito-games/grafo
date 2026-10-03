@@ -29,6 +29,7 @@ func (progressParser) Parse(_ context.Context, input parserapi.Input) (graph.Par
 }
 
 func TestServiceProgressObserverIsOrderedAndObservational(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "sample.progress"), []byte("safe source bytes"), 0o644); err != nil {
@@ -132,6 +133,7 @@ func TestServiceProgressObserverIsOrderedAndObservational(t *testing.T) {
 }
 
 func TestServiceProgressObserverFailureIsTerminalAndFailClosed(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "sample.progress"), []byte("work"), 0o644); err != nil {
@@ -168,6 +170,7 @@ func TestServiceProgressObserverFailureIsTerminalAndFailClosed(t *testing.T) {
 }
 
 func TestServiceProgressCancellationIsTerminalAndRetryable(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "sample.progress"), []byte("work"), 0o644); err != nil {
@@ -203,6 +206,7 @@ func TestServiceProgressCancellationIsTerminalAndRetryable(t *testing.T) {
 }
 
 func TestServiceTerminalProgressRedactsRepositoryPaths(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	path := filepath.Join(root, "sample.progress")
@@ -242,6 +246,7 @@ func TestServiceTerminalProgressRedactsRepositoryPaths(t *testing.T) {
 }
 
 func TestProgressErrorMessageIsActionableBoundedAndPathFree(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	nested := filepath.Join(root, "nested", "file.go")
 	message := indexer.ProgressErrorMessage(errors.New("open "+nested+": permission denied\n"+strings.Repeat("界", 600)), root)
@@ -254,6 +259,7 @@ func TestProgressErrorMessageIsActionableBoundedAndPathFree(t *testing.T) {
 }
 
 func TestProgressErrorMessageDoesNotReplaceShortRelativeProseOrItsPlaceholder(t *testing.T) {
+	t.Parallel()
 	for _, relative := range []string{"e", "it"} {
 		absolute, err := filepath.Abs(relative)
 		if err != nil {
@@ -268,6 +274,7 @@ func TestProgressErrorMessageDoesNotReplaceShortRelativeProseOrItsPlaceholder(t 
 }
 
 func TestServiceReportCapturesPendingReconciliationAtStart(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "sample.progress"), []byte("work"), 0o644); err != nil {

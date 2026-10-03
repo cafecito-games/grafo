@@ -52,7 +52,8 @@ func helper%d() string { return %q }
 // bound, because it scales with files rather than with directories.
 //
 // This test reads process-wide counters, so it cannot run in parallel with
-// another that does.
+// another that does: it must observe only its own index's derivations. It is
+// one of the two serial tests in this package; see parallelism_policy_test.go.
 func TestColdIndexDerivesEachScopeKeyOncePerFile(t *testing.T) {
 	root, goFiles, packageDirectories := scopeKeyCorpus(t)
 	ctx := context.Background()
