@@ -61,6 +61,15 @@ type Options struct {
 	// path-ordered at every worker count, so the indexed graph never depends on
 	// this value.
 	ParseWorkers int
+	// ParseBudget meters how many files this run may read, hash, and parse at
+	// once against every other pool sharing the same budget. Nil selects the
+	// process-wide budget, which is what every production caller wants: it is
+	// what keeps concurrently indexing roots from summing their pools into an
+	// oversubscribed machine. Naming a budget is for measurement harnesses and
+	// tests, and UnboundedParseBudget opts a run out of metering entirely. A run
+	// never sees a different graph for its budget, exactly as it never sees one
+	// for its worker count.
+	ParseBudget *ParseBudget
 	// Seed records that this index was adopted from another worktree immediately
 	// before the run, so the report can explain where its starting facts came
 	// from. It is provenance only: the run's behaviour never depends on it,
