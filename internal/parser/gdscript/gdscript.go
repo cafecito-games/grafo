@@ -2053,8 +2053,8 @@ func (e *extractor) addArgumentEvidence(arguments []gdast.Expression, fromID, ta
 		for _, sourceID := range e.referencedVariables(argument, current) {
 			e.b.AddFact(sourceID, graph.EdgePasses, targetID, target, "", loc, map[string]string{"argument": index})
 		}
+		e.addMethodValueArgument(argument, position, fromID, target, current, loc)
 	}
-	e.addMethodValueArguments(arguments, fromID, target, current, loc)
 }
 
 // addMethodValueArguments records every method an argument list names as a
@@ -2063,12 +2063,16 @@ func (e *extractor) addArgumentEvidence(arguments []gdast.Expression, fromID, ta
 // routing a signal to it.
 func (e *extractor) addMethodValueArguments(arguments []gdast.Expression, fromID, target string, current scope, loc graph.Location) {
 	for position, argument := range arguments {
-		extra := map[string]string{"argument": strconv.Itoa(position)}
-		if target != "" {
-			extra["passed_to"] = target
-		}
-		e.addMethodValueReferences(argument, fromID, current, loc, extra)
+		e.addMethodValueArgument(argument, position, fromID, target, current, loc)
 	}
+}
+
+func (e *extractor) addMethodValueArgument(argument gdast.Expression, position int, fromID, target string, current scope, loc graph.Location) {
+	extra := map[string]string{"argument": strconv.Itoa(position)}
+	if target != "" {
+		extra["passed_to"] = target
+	}
+	e.addMethodValueReferences(argument, fromID, current, loc, extra)
 }
 
 func (e *extractor) symbolID(expression gdast.Expression, current scope) string {
