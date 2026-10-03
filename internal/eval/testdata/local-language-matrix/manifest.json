@@ -3408,6 +3408,75 @@
           "kind": "method",
           "qualified_name": "Player.load_scene"
         },
+        "relation": "references",
+        "to": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.on_finished"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 7,
+          "column": 2
+        },
+        "properties": {
+          "argument": "0",
+          "form": "method_value",
+          "passed_to": "finished.connect"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.on_finished"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 8,
+          "column": 5
+        },
+        "properties": {
+          "argument": "0",
+          "form": "method_value",
+          "passed_to": "finished.is_connected"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.on_finished"
+        },
+        "source": {
+          "path": "scripts/player.gd",
+          "line": 9,
+          "column": 3
+        },
+        "properties": {
+          "argument": "0",
+          "form": "method_value",
+          "passed_to": "finished.disconnect"
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "method",
+          "qualified_name": "Player.load_scene"
+        },
         "relation": "uses_group",
         "to": {
           "repo": "matrix",

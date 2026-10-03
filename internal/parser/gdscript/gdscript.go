@@ -1167,6 +1167,10 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 	if _, ok := signalOperations[method]; ok {
 		if member, ok := node.Callee.(*gdast.MemberExpression); ok {
 			if e.addSignalOperation(node, member, fromID, method, current, loc) {
+				// A signal operation returns before the ordinary argument
+				// evidence, so the method a disconnect or is_connected names
+				// would otherwise leave no trace of the line that named it.
+				e.addMethodValueArguments(node.Arguments, fromID, callee, current, loc)
 				e.addConfiguredOrdinaryCall(configuredCall, fromID, callee, loc)
 				return
 			}
@@ -1846,17 +1850,13 @@ func (e *extractor) handlerNode(qualified string) string {
 // and a name shadowed by a local, parameter, or field names that declaration
 // rather than the method it is spelled like.
 func (e *extractor) handlerMethod(arguments []gdast.Expression, index int, current scope) string {
-	if index >= len(arguments) {
+	if index < 0 || index >= len(arguments) {
 		return ""
 	}
-	identifier, ok := arguments[index].(*gdast.Identifier)
-	if !ok {
-		return ""
-	}
-	if _, shadowed := current.symbols[identifier.Name]; shadowed {
-		return ""
-	}
-	return e.methods[qualify(current.receiver, identifier.Name)]
+	// A handler names a method exactly when any other expression does, so both
+	// the bare and the self. spelling are accepted here and both refuse a
+	// shadowed name, a lambda, and a Callable bound to another object.
+	return e.methodValueName(arguments[index], current)
 }
 
 // addSignalHandler names the method a literal connect routes a signal to. Only a
@@ -2071,12 +2071,26 @@ func (e *extractor) addArgumentEvidence(arguments []gdast.Expression, fromID, ta
 		for _, sourceID := range e.referencedVariables(argument, current) {
 			e.b.AddFact(sourceID, graph.EdgePasses, targetID, target, "", loc, map[string]string{"argument": index})
 		}
-		extra := map[string]string{"argument": index}
-		if target != "" {
-			extra["passed_to"] = target
-		}
-		e.addMethodValueReferences(argument, fromID, current, loc, extra)
+		e.addMethodValueArgument(argument, position, fromID, target, current, loc)
 	}
+}
+
+// addMethodValueArguments records every method an argument list names as a
+// value. It is the half of the argument evidence a signal operation also needs,
+// because a disconnect or is_connected names a method without the engine ever
+// routing a signal to it.
+func (e *extractor) addMethodValueArguments(arguments []gdast.Expression, fromID, target string, current scope, loc graph.Location) {
+	for position, argument := range arguments {
+		e.addMethodValueArgument(argument, position, fromID, target, current, loc)
+	}
+}
+
+func (e *extractor) addMethodValueArgument(argument gdast.Expression, position int, fromID, target string, current scope, loc graph.Location) {
+	extra := map[string]string{"argument": strconv.Itoa(position)}
+	if target != "" {
+		extra["passed_to"] = target
+	}
+	e.addMethodValueReferences(argument, fromID, current, loc, extra)
 }
 
 func (e *extractor) symbolID(expression gdast.Expression, current scope) string {

@@ -2761,3 +2761,60 @@ func teardown() -> void:
 		}
 	}
 }
+
+// TestParserRecordsEveryLineThatHandsAMethodToTheSignalSystem covers the
+// completeness gap a method's report had: connect recorded a handler, but
+// disconnect and is_connected recorded nothing, and the self. spelling of a
+// handler recorded nothing anywhere.
+func TestParserRecordsEveryLineThatHandsAMethodToTheSignalSystem(t *testing.T) {
+	content := []byte(`class_name Player
+extends Node
+
+signal finished(value: int)
+
+func wire() -> void:
+	finished.connect(on_finished)
+	finished.disconnect(on_finished)
+	if finished.is_connected(on_finished):
+		pass
+
+func wire_through_self() -> void:
+	finished.connect(self.on_finished)
+	finished.disconnect(self.on_finished)
+
+func wire_refusals(handler: Callable) -> void:
+	finished.connect(func(_value: int): pass)
+	finished.disconnect(handler)
+	finished.connect(other.on_finished)
+
+func on_finished(_value: int) -> void:
+	pass
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "scripts/player.gd", Content: content, RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var referenced, handled []int
+	for _, fact := range result.Facts {
+		switch {
+		case fact.Kind == graph.EdgeReferences && fact.Properties["form"] == "method_value" &&
+			fact.Target == "Player.on_finished":
+			referenced = append(referenced, fact.Location.Line)
+		case fact.Kind == graph.EdgeHandledBy && fact.Target == "Player.on_finished":
+			handled = append(handled, fact.Location.Line)
+		}
+	}
+	sort.Ints(referenced)
+	sort.Ints(handled)
+	// Every line that names the method as a value, and nothing else: the lambda,
+	// the shadowed parameter, and the Callable bound to another object each prove
+	// no method.
+	if want := []int{7, 8, 9, 13, 14}; !slices.Equal(referenced, want) {
+		t.Errorf("method-value reference lines = %v, want %v", referenced, want)
+	}
+	if want := []int{7, 13}; !slices.Equal(handled, want) {
+		t.Errorf("handled_by lines = %v, want %v", handled, want)
+	}
+}

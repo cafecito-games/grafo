@@ -767,7 +767,9 @@ Script resolution is literal-only. A computed action or group name produces no
 edge at all, a group dispatch keeps its method name as evidence without ever
 resolving a handler, and a signal name that several declarations could own stays
 unresolved rather than fanning out to all of them. `disconnect` and
-`is_connected` are recorded as routing evidence, not as subscriptions.
+`is_connected` are recorded as routing evidence, not as subscriptions, and each
+of them also names the method it was handed, so a method's report lists every
+line that passes it to the signal system.
 
 ## Configuration
 
