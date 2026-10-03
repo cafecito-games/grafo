@@ -8,14 +8,14 @@ github.com/RaduBerinde/btreemap v0.0.0-20250419174037-3d62b7205d54 h1:bsU8Tzxr/P
 github.com/RaduBerinde/btreemap v0.0.0-20250419174037-3d62b7205d54/go.mod h1:0tr7FllbE9gJkHq7CVeeDDFAFKQVy5RnCSSNBOvdqbc=
 github.com/aclements/go-perfevent v0.0.0-20240301234650-f7843625020f h1:JjxwchlOepwsUWcQwD2mLUAGE9aCp0/ehy6yCHFBOvo=
 github.com/aclements/go-perfevent v0.0.0-20240301234650-f7843625020f/go.mod h1:tMDTce/yLLN/SK8gMOxQfnyeMeCg8KGzp0D1cbECEeo=
-github.com/alex-pinkus/tree-sitter-swift v0.0.0-20260601004120-31d17fe7e818 h1:oNZZFKvqDFHCSg+Ard8elsRqDKsstebWlzXNrgrApOM=
-github.com/alex-pinkus/tree-sitter-swift v0.0.0-20260601004120-31d17fe7e818/go.mod h1:nMZLtsEtko+0F2g09G5Tm16uRdDoczLZDE5O207ruYQ=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
 github.com/bufbuild/protocompile v0.14.1 h1:iA73zAf/fyljNjQKwYzUHD6AD4R8KMasmwa/FBatYVw=
 github.com/bufbuild/protocompile v0.14.1/go.mod h1:ppVdAIhbr2H8asPk6k4pY7t9zB1OU5DoEw9xY/FUi1c=
 github.com/cafecito-games/gdparser v0.0.0-20261001142545-06bc15a9a672 h1:mih9+i5k8yR971W06rqJDVXaAob9V2KTp0k0tdcf2ng=
 github.com/cafecito-games/gdparser v0.0.0-20261001142545-06bc15a9a672/go.mod h1:ekj7tvE0utDBNw+DJyE58HVla7zLuWzGERgTLBC0dFI=
+github.com/cafecito-games/tree-sitter-swift v0.7.3-grafo.1 h1:sVKXsJwiYb8GWxtLTBXIlGTzVo/ab3wB6LCUh0E6I6M=
+github.com/cafecito-games/tree-sitter-swift v0.7.3-grafo.1/go.mod h1:OCEnca7KB29/0JakVlDZJvWC1Xx8W1tp8bBn1NbEA74=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/cockroachdb/crlib v0.0.0-20241112164430-1264a2edc35b h1:SHlYZ/bMx7frnmeqCu+xm0TCxXLzX3jQIVuFbnFGtFU=
