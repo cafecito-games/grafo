@@ -163,12 +163,18 @@ type Report struct {
 	// ScopedOut counts supported candidate paths rejected by configuration.
 	// Scope is intentionally evaluated before stat/symlink/read work, so a
 	// rejected candidate is classified here rather than as an unsafe/read skip.
-	ScopedOut       int                `json:"scoped_out"`
-	Checked         int                `json:"content_checked"`
-	Diagnostics     []graph.Diagnostic `json:"diagnostics,omitempty"`
-	Counts          graph.Counts       `json:"-"`
-	CountsCollected bool               `json:"counts_collected"`
-	Phases          PhaseDurations     `json:"phases"`
+	ScopedOut int `json:"scoped_out"`
+	Checked   int `json:"content_checked"`
+	// EvidenceUnchanged counts the paths in Updated that produced the evidence
+	// the index already held, so their rows were not rewritten. They stay in
+	// Updated because the run acted on them and callers read it to prove
+	// invalidation reached a file; this is how many of those writes the index
+	// turned out not to need.
+	EvidenceUnchanged int                `json:"evidence_unchanged"`
+	Diagnostics       []graph.Diagnostic `json:"diagnostics,omitempty"`
+	Counts            graph.Counts       `json:"-"`
+	CountsCollected   bool               `json:"counts_collected"`
+	Phases            PhaseDurations     `json:"phases"`
 	// Semantic reports each language's semantic loader counters, keyed by
 	// language. A language whose parser keeps none is absent rather than zero.
 	Semantic                     map[string]parserapi.SemanticLoadMetrics `json:"semantic,omitempty"`
@@ -487,6 +493,10 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	}
 	current := make(map[string]bool, len(paths))
 	graphDirtied := false
+	// A repository without this capability rewrites evidence exactly as before,
+	// so the elision is a storage ability rather than a change to what the
+	// graph contains.
+	fileRecorder, _ := s.repository.(graph.FileRecordRepository)
 	scopeMutationStarted := false
 	markScopeMutation := func() error {
 		if scopeMutationStarted {
@@ -538,17 +548,35 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 			return nil
 		}
 		replacements := make([]graph.FileReplacement, 0, len(grouped))
+		var recordOnly []graph.FileRecord
 		for _, outcome := range grouped {
+			// A file whose evidence the index already holds needs its inputs
+			// recorded and nothing else. It travels in the group so the report
+			// stays in path order.
+			if outcome.kind == outcomeEvidenceUnchanged {
+				recordOnly = append(recordOnly, outcome.record)
+				continue
+			}
 			replacements = append(replacements, graph.FileReplacement{File: outcome.record, Parsed: outcome.parsed})
 		}
 		persistenceStarted := time.Now()
-		if err := grouping.ReplaceFiles(ctx, replacements); err != nil {
-			return fmt.Errorf("store %d files from %s: %w", len(grouped), grouped[0].path, err)
+		if len(replacements) > 0 {
+			if err := grouping.ReplaceFiles(ctx, replacements); err != nil {
+				return fmt.Errorf("store %d files from %s: %w", len(replacements), grouped[0].path, err)
+			}
+			graphDirtied = true
 		}
-		graphDirtied = true
+		for _, record := range recordOnly {
+			if err := fileRecorder.UpdateFileRecord(ctx, record); err != nil {
+				return fmt.Errorf("record %s: %w", record.Path, err)
+			}
+		}
 		report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
 		for _, outcome := range grouped {
 			report.Updated = append(report.Updated, outcome.path)
+			if outcome.kind == outcomeEvidenceUnchanged {
+				report.EvidenceUnchanged++
+			}
 			if err := progress.emit(ProgressPersistence, ProgressProgress, "files", len(report.Updated), 0, ""); err != nil {
 				return err
 			}
@@ -631,6 +659,40 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		outcome.record.IndexedAt = graph.NowUTC()
 		if err := markScopeMutation(); err != nil {
 			return err
+		}
+		if outcome.kind == outcomeEvidenceUnchanged && fileRecorder == nil {
+			// Without the capability the evidence is rewritten exactly as
+			// before, so the rest of the writer treats it as any parsed file.
+			outcome.kind = outcomeParsed
+		}
+		if outcome.kind == outcomeEvidenceUnchanged && !groupable {
+			// The inputs that selected this file still have to be recorded, or
+			// its stale hash reselects and reparses it on every later run. Only
+			// the evidence write and the dirty fan-out are skipped, which is why
+			// graphDirtied stays as it is: nothing was written for the
+			// reconciler to resolve.
+			//
+			// The file still counts as updated. Updated reports the paths this
+			// run acted on, and callers use it to prove invalidation reached a
+			// file; EvidenceUnchanged reports how many of those writes the index
+			// turned out not to need.
+			persistenceStarted := time.Now()
+			if err := fileRecorder.UpdateFileRecord(ctx, outcome.record); err != nil {
+				return fmt.Errorf("record %s: %w", outcome.path, err)
+			}
+			report.Phases.PersistenceNS += time.Since(persistenceStarted).Nanoseconds()
+			report.EvidenceUnchanged++
+			report.Updated = append(report.Updated, outcome.path)
+			if err := progress.emit(ProgressPersistence, ProgressProgress, "files", len(report.Updated), 0, ""); err != nil {
+				return err
+			}
+			report.Diagnostics = append(report.Diagnostics, outcome.parsed.Diagnostics...)
+			if options.Boundary != nil {
+				if err := options.Boundary(Boundary{Kind: BoundaryFilePersisted, Path: outcome.path, Completed: len(report.Updated)}); err != nil {
+					return fmt.Errorf("file persistence boundary %s: %w", outcome.path, err)
+				}
+			}
+			return nil
 		}
 		if groupable {
 			grouped = append(grouped, outcome)

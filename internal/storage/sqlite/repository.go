@@ -229,7 +229,8 @@ func (r *Repository) Files(ctx context.Context) (map[string]graph.FileRecord, er
 	result := make(map[string]graph.FileRecord, len(rows))
 	for _, row := range rows {
 		result[row.Path] = graph.FileRecord{Path: row.Path, Hash: row.Hash, Language: row.Language,
-			Size: row.Size, ModifiedNS: row.ModifiedNs, IndexedAt: row.IndexedAt}
+			Size: row.Size, ModifiedNS: row.ModifiedNs, IndexedAt: row.IndexedAt,
+			EvidenceDigest: row.EvidenceDigest}
 	}
 	return result, nil
 }
@@ -276,8 +277,7 @@ func replaceFile(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter,
 	if err := q.DeleteNodesByOwner(ctx, file.Path); err != nil {
 		return err
 	}
-	if err := q.UpsertFile(ctx, sqlcgen.UpsertFileParams{Path: file.Path, Hash: file.Hash,
-		Language: file.Language, Size: file.Size, ModifiedNs: file.ModifiedNS, IndexedAt: file.IndexedAt}); err != nil {
+	if err := upsertFileRecord(ctx, q, file); err != nil {
 		return err
 	}
 	return insertParseResult(ctx, q, writer, parsed)
@@ -340,6 +340,27 @@ func (r *Repository) RemoveFiles(ctx context.Context, paths []string) error {
 	// Pruning can delete a row whose key the shared cache still remembers.
 	r.pathKeys.discard()
 	return nil
+}
+
+func upsertFileRecord(ctx context.Context, q *sqlcgen.Queries, file graph.FileRecord) error {
+	return q.UpsertFile(ctx, sqlcgen.UpsertFileParams{Path: file.Path, Hash: file.Hash,
+		Language: file.Language, Size: file.Size, ModifiedNs: file.ModifiedNS,
+		IndexedAt: file.IndexedAt, EvidenceDigest: file.EvidenceDigest})
+}
+
+// UpdateFileRecord records a file's inputs without touching the evidence it
+// already contributed. It exists for a file that was reparsed and produced the
+// evidence the index already holds: the inputs that selected it did change and
+// must be recorded, or the file is reselected and reparsed on every later run,
+// while its rows and its reconciliation fan-out are left alone.
+//
+// It deliberately does not call markOwnerDirty. The caller has established that
+// this file's evidence is unchanged, so there is nothing for the reconciler to
+// resolve on its behalf.
+func (r *Repository) UpdateFileRecord(ctx context.Context, file graph.FileRecord) error {
+	return r.inTransaction(ctx, func(q *sqlcgen.Queries, _ *batchWriter) error {
+		return upsertFileRecord(ctx, q, file)
+	})
 }
 
 func insertParseResult(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter, parsed graph.ParseResult) error {
