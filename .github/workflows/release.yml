@@ -35,7 +35,20 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          cache: true
+          # Restored below from the caches PR Checks saves on main, so a release
+          # does not recompile the world. Restore only: a release must not write
+          # an entry the pull request jobs would then read.
+          cache: false
+
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-build-test-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-build-test-${{ hashFiles('**/go.sum') }}-
+            go-${{ runner.os }}-build-test-
 
       - run: go test -race ./...
       - run: go vet ./...

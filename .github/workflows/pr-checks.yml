@@ -26,7 +26,25 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          cache: true
+          # The Go caches are handled below instead of here. setup-go derives one
+          # key from the OS, Go version and go.sum hash, so every job on this
+          # runner shares it, and the first job to finish its post step wins the
+          # save. The job that compiles nothing won, which pinned a 7 KiB entry
+          # that every later job hit and therefore never replaced.
+          cache: false
+
+      # Restored on every run, saved only from main: a pull request reuses the
+      # default branch's warm caches without spending the repository's cache
+      # budget on an entry nobody else will read.
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-build-test-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-build-test-${{ hashFiles('**/go.sum') }}-
+            go-${{ runner.os }}-build-test-
 
       - uses: go-task/setup-task@v2
         with:
@@ -55,6 +73,19 @@ jobs:
       - name: Test (race)
         run: go test -race ./...
 
+      # The key carries the commit, so each push to main writes a fresh entry
+      # rather than hitting its own primary key and keeping a stale one forever.
+      # always() so a failing test still publishes the compilation it paid for.
+      - uses: actions/cache/save@v4
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        # A key another run already reserved must never fail main's checks.
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-build-test-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -65,12 +96,33 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          cache: true
+          # Keyed per job below, for the reason given in build-test.
+          cache: false
+
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-lint-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-lint-${{ hashFiles('**/go.sum') }}-
+            go-${{ runner.os }}-lint-
 
       - uses: j178/prek-action@4e14d07f9231acabce116ccfca13b13dd9755ece # v3.0.0
         with:
           prek-version: "0.5.3"
           extra-args: golangci-lint-full --all-files
+
+      - uses: actions/cache/save@v4
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        # A key another run already reserved must never fail main's checks.
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-lint-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
 
   generated:
     name: Generated Code Up To Date
@@ -82,7 +134,10 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-          cache: true
+          # This job runs sqlc and a git diff; it compiles no Go, so it has no
+          # build cache worth keeping and must not write one. Sharing setup-go's
+          # single key is what let this job pin an empty cache for the others.
+          cache: false
 
       - uses: sqlc-dev/setup-sqlc@v5
         with:
