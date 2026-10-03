@@ -184,7 +184,12 @@ type ImpactReport struct {
 	Data            []ImpactRelation     `json:"data_relations"`
 	Events          []ImpactRelation     `json:"event_relations"`
 	Sources         []SourceExcerpt      `json:"sources,omitempty"`
-	Truncated       bool                 `json:"truncated"`
+	// Members is the bounded member expansion a type-level root was answered
+	// through, absent for a root that answers for itself. Its own truncation
+	// flag is independent of each section's, so an incomplete member list is
+	// never hidden behind a complete traversal.
+	Members   *MemberAggregation `json:"members,omitempty"`
+	Truncated bool               `json:"truncated"`
 }
 
 // Impact resolves the selector and returns a deterministic bidirectional
@@ -197,11 +202,20 @@ func (s *Service) Impact(ctx context.Context, selector string, options ImpactOpt
 	}
 	options = options.withDefaults()
 
-	upstream, err := s.impactSection(ctx, root, Upstream, options.UpstreamDepth, options.UpstreamLimit)
+	// A type declaration is a natural root for "what breaks if I change this
+	// type?", but the callers and tests that answer it reach its methods. Bound
+	// the member list by the wider of the two section limits so one expansion
+	// serves both directions and neither silently sees fewer members.
+	members, membersTruncated, err := s.declaredMembers(ctx, root, max(options.UpstreamLimit, options.DownstreamLimit))
 	if err != nil {
 		return ImpactReport{}, err
 	}
-	downstream, err := s.impactSection(ctx, root, Downstream, options.DownstreamDepth, options.DownstreamLimit)
+
+	upstream, err := s.impactSection(ctx, root, members, Upstream, options.UpstreamDepth, options.UpstreamLimit)
+	if err != nil {
+		return ImpactReport{}, err
+	}
+	downstream, err := s.impactSection(ctx, root, members, Downstream, options.DownstreamDepth, options.DownstreamLimit)
 	if err != nil {
 		return ImpactReport{}, err
 	}
@@ -215,7 +229,8 @@ func (s *Service) Impact(ctx context.Context, selector string, options ImpactOpt
 		Config:          []ImpactRelation{},
 		Data:            []ImpactRelation{},
 		Events:          []ImpactRelation{},
-		Truncated:       upstream.Truncated || downstream.Truncated,
+		Members:         memberAggregation(members, membersTruncated),
+		Truncated:       upstream.Truncated || downstream.Truncated || membersTruncated,
 	}
 	sections := []ImpactSection{upstream, downstream}
 	report.ImpactedFiles = impactedFiles(sections)
@@ -252,14 +267,14 @@ func (o ImpactOptions) withDefaults() ImpactOptions {
 
 // impactSection reuses the shared Neighborhood traversal so impact reports,
 // callers/callees, and generic traversal all agree on ordering and bounds.
-func (s *Service) impactSection(ctx context.Context, root graph.Node, direction ImpactDirection, depth, limit int) (ImpactSection, error) {
+func (s *Service) impactSection(ctx context.Context, root graph.Node, members []declaredMember, direction ImpactDirection, depth, limit int) (ImpactSection, error) {
 	traversalDirection := Incoming
 	relations := UpstreamRelations()
 	if direction == Downstream {
 		traversalDirection = Outgoing
 		relations = DownstreamRelations()
 	}
-	traversal, err := s.Neighborhood(ctx, root.ID, "", depth, traversalDirection, relations, limit)
+	traversal, err := s.neighborhood(ctx, root, members, depth, traversalDirection, relations, limit)
 	if err != nil {
 		return ImpactSection{}, err
 	}

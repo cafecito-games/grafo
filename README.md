@@ -356,6 +356,12 @@ Upstream and downstream depth and node limits are bounded independently and
 each section reports its own truncation. Source excerpts are opt-in and read
 through the same bounded reader `grafo source` uses.
 
+A class, type, or interface selector is answered through the members it
+declares, because the callers that answer "what breaks if I change this type?"
+reach its methods. Those members appear one hop from the root with the
+`declares` edge that proves each membership, and the member list carries its own
+truncation flag.
+
 ### Failure flow
 
 `grafo failure-flow` (MCP `get_failure_flow`) reports a callable's typed error
@@ -614,6 +620,11 @@ local `calls` or `references` edge to a production declaration. Bounded query
 expansion may cross methods or functions explicitly classified as test helpers
 or lifecycle hooks. External, ambiguous, and unsupported targets fail closed;
 cycles, depth exhaustion, and size exhaustion are reported as truncated.
+
+A class, type, or interface selector also returns the structural tests of the
+members it declares. Each aggregated match names the member it covers and keeps
+the depth and direct-or-helper-expanded designation the member query returns,
+and the aggregated member list reports its own truncation.
 
 ```sh
 grafo find-tests example.com/shop.Charge --json
@@ -1197,6 +1208,13 @@ reference matching scene nodes when the name is unambiguous. GUT-style `test_*`
 methods are first-class tests only when their class structurally extends
 `GutTest` or a validated [configured base](#configuration); lifecycle and helper
 methods remain explicit support nodes.
+
+A `ClassName.new(...)` callsite is recorded as construction of that class, so a
+construction site is reachable from the type it builds. Only a receiver that is
+knowably a type qualifies - a bare class name, or a local or parameter declared
+as that class. A receiver bound to an untyped value in scope keeps producing an
+ordinary call, and a class name the index cannot resolve uniquely stays one
+explicit unresolved boundary rather than a guessed edge.
 
 </details>
 

@@ -1326,14 +1326,19 @@ func (a *App) testCoverage(ctx context.Context, args parsedArguments, find bool)
 		return writeJSON(a.stdout, report)
 	}
 	a.printf("%s [%s] · structural evidence only (not runtime coverage)\n", report.Root.QualifiedName, report.Root.Kind)
+	a.printMemberAggregation(report.Members)
 	for _, match := range report.Matches {
 		label := "helper-expanded"
 		if match.Direct {
 			label = "direct"
 		}
 		if find {
-			a.printf("%s [%s] · %s · depth %d · %s\n", match.Test.QualifiedName, match.Test.Kind, label, match.Depth,
-				formatLocation(match.Test.Location))
+			via := ""
+			if match.Target.ID != report.Root.ID {
+				via = " · covers " + match.Target.QualifiedName
+			}
+			a.printf("%s [%s] · %s · depth %d%s · %s\n", match.Test.QualifiedName, match.Test.Kind, label, match.Depth,
+				via, formatLocation(match.Test.Location))
 		} else {
 			a.printf("%s [%s] · %s · depth %d · %s\n", match.Target.QualifiedName, match.Target.Kind, label, match.Depth,
 				formatLocation(match.Target.Location))
@@ -1692,6 +1697,7 @@ func interactionCategories(args parsedArguments) ([]query.GodotInteractionCatego
 
 func (a *App) printImpactReport(report query.ImpactReport) {
 	a.printf("%s [%s]\n", report.Root.QualifiedName, report.Root.Kind)
+	a.printMemberAggregation(report.Members)
 	for _, section := range []query.ImpactSection{report.Upstream, report.Downstream} {
 		label := "depends on this"
 		if section.Direction == query.Downstream {
@@ -1754,6 +1760,21 @@ func (a *App) printImpactReport(report query.ImpactReport) {
 			a.println("… truncated")
 		}
 	}
+}
+
+// printMemberAggregation states that a type-level answer was reached through
+// the members the root declares, and whether that member list itself was cut
+// short. Without it a bounded member list would be indistinguishable from a
+// type that declares nothing.
+func (a *App) printMemberAggregation(aggregation *query.MemberAggregation) {
+	if aggregation == nil {
+		return
+	}
+	a.printf("aggregated %d declared members via %s", len(aggregation.Members), aggregation.Relation)
+	if aggregation.Truncated {
+		a.print(" · truncated")
+	}
+	a.println()
 }
 
 func prefixRepository(name string) string {

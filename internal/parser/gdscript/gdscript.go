@@ -1142,7 +1142,60 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 			e.b.AddFact(sourceID, graph.EdgePasses, "", callee, "", loc, map[string]string{"argument": strconv.Itoa(position)})
 		}
 	}
+	if constructed, ok := e.constructedType(node.Callee, current); ok {
+		e.b.AddFact(fromID, graph.EdgeCalls, "", constructed, graph.KindClass, loc,
+			map[string]string{"form": "construction", "constructor": "new"})
+		return
+	}
 	e.b.AddFact(fromID, graph.EdgeCalls, "", callee, "", loc, nil)
+}
+
+// constructedType names the class a ClassName.new(...) callsite constructs.
+// Construction is the one call whose callee names a type rather than a member,
+// so recording it against the type is what makes a construction site reachable
+// from the class it builds; spelling it as a call to a "new" member instead
+// leaves an unresolved boundary node that no type-level question can recover.
+//
+// Only a receiver that is knowably a type qualifies. A receiver bound to a
+// value in this scope is a different object whose type this parser cannot
+// prove, so its .new() stays an ordinary call rather than becoming a guessed
+// construction edge. The returned name may still fail to resolve, in which case
+// reconciliation keeps one explicit unresolved class boundary.
+func (e *extractor) constructedType(callee gdast.Expression, current scope) (string, bool) {
+	member, ok := callee.(*gdast.MemberExpression)
+	if !ok || member.Property != "new" {
+		return "", false
+	}
+	identifier, ok := member.Object.(*gdast.Identifier)
+	if !ok || identifier.Name == "self" {
+		return "", false
+	}
+	// A declared type is proof regardless of spelling: a typed local or
+	// parameter holding a script constructs that script's class.
+	if resolved := current.types[identifier.Name]; resolved != "" {
+		return resolved, true
+	}
+	if _, local := current.symbols[identifier.Name]; local {
+		return "", false
+	}
+	if _, field := current.fieldSymbols[identifier.Name]; field {
+		return "", false
+	}
+	if !startsUppercase(identifier.Name) {
+		return "", false
+	}
+	return identifier.Name, true
+}
+
+// startsUppercase reports whether a name follows the GDScript convention that
+// distinguishes a type from a value. It is the only remaining signal that an
+// unbound receiver names a class, and a lowercase receiver therefore yields no
+// construction evidence rather than an unresolved class boundary per callsite.
+func startsUppercase(name string) bool {
+	for _, letter := range name {
+		return unicode.IsUpper(letter)
+	}
+	return false
 }
 
 func (e *extractor) configuredCallEffects(expression gdast.Expression, callee string, current scope, loc graph.Location) ([]calleffect.Effect, bool) {

@@ -67,7 +67,12 @@ type TestCoverageReport struct {
 	Depth       int                 `json:"depth"`
 	Limit       int                 `json:"limit"`
 	Matches     []TestCoverageMatch `json:"matches"`
-	Truncated   bool                `json:"truncated"`
+	// Members is the bounded member expansion a type-level root was answered
+	// through, absent for a root that answers for itself. Each match it
+	// produced names the member as its target, so a type-level answer carries
+	// the same evidence a member query returns rather than a summary of it.
+	Members   *MemberAggregation `json:"members,omitempty"`
+	Truncated bool               `json:"truncated"`
 }
 
 // TestCoverage reports production targets structurally reached by one test.
@@ -100,7 +105,12 @@ func (s *Service) FindTests(ctx context.Context, selector string, options TestCo
 }
 
 type testCoverageState struct {
-	node     graph.Node
+	node graph.Node
+	// target is the production declaration this branch of the walk answers for:
+	// the root itself, or one member a type-level root was expanded into. It
+	// stays fixed while helper expansion moves node away from it, so direct
+	// evidence is judged against the declaration it actually names.
+	target   graph.Node
 	nodes    []graph.Node
 	edges    []graph.Edge
 	ancestry map[string]bool
@@ -117,10 +127,32 @@ func (s *Service) testCoverage(ctx context.Context, root graph.Node, outgoing bo
 	if !ok {
 		return TestCoverageReport{}, fmt.Errorf("repository does not support bounded structural test evidence")
 	}
-	queue := []testCoverageState{{node: root, nodes: []graph.Node{root}, ancestry: map[string]bool{root.ID: true}}}
+	queue := []testCoverageState{{node: root, target: root, nodes: []graph.Node{root},
+		ancestry: map[string]bool{root.ID: true}}}
 	seenMatches := map[string]bool{}
 	work := 0
 	discovered := 1
+	// A type declaration carries no test edges of its own; the tests that cover
+	// it reach its methods. Expand them as additional targets so a type-level
+	// question returns the member evidence instead of a complete-looking empty
+	// answer. A test root is asked what it covers, which needs no expansion.
+	if !outgoing {
+		members, membersTruncated, err := s.declaredMembers(ctx, root, options.Limit)
+		if err != nil {
+			return TestCoverageReport{}, err
+		}
+		report.Members = memberAggregation(members, membersTruncated)
+		report.Truncated = report.Truncated || membersTruncated
+		for _, member := range members {
+			if discovered >= options.Limit {
+				report.Truncated = true
+				break
+			}
+			discovered++
+			queue = append(queue, testCoverageState{node: member.node, target: member.node,
+				nodes: []graph.Node{member.node}, ancestry: map[string]bool{root.ID: true, member.node.ID: true}})
+		}
+	}
 	for len(queue) > 0 {
 		state := queue[0]
 		queue = queue[1:]
@@ -146,7 +178,7 @@ func (s *Service) testCoverage(ctx context.Context, root graph.Node, outgoing bo
 			continue
 		}
 		authoritativeDirect := map[string]bool{}
-		if state.node.ID == root.ID {
+		if state.node.ID == state.target.ID {
 			for _, item := range page.Items {
 				if item.Edge.Kind == graph.EdgeTests {
 					authoritativeDirect[item.Counterpart.ID] = true
@@ -158,10 +190,10 @@ func (s *Service) testCoverage(ctx context.Context, root graph.Node, outgoing bo
 			edges := append(append([]graph.Edge(nil), state.edges...), item.Edge)
 			nodes := append(append([]graph.Node(nil), state.nodes...), next)
 			if item.Edge.Kind == graph.EdgeTests {
-				if (outgoing && state.node.ID == root.ID && next.External) || (!outgoing && next.Kind != graph.KindTest) {
+				if (outgoing && state.node.ID == state.target.ID && next.External) || (!outgoing && next.Kind != graph.KindTest) {
 					continue
 				}
-				match := coverageMatch(root, next, nodes, edges, outgoing, true)
+				match := coverageMatch(state.target, next, nodes, edges, outgoing, true)
 				appendCoverageMatch(&report, seenMatches, match, options.Limit)
 				continue
 			}
@@ -186,10 +218,10 @@ func (s *Service) testCoverage(ctx context.Context, root graph.Node, outgoing bo
 				// persisted tests edge. A uniquely projected federated call/reference
 				// has no local tests edge to derive, so retain that explicit evidence.
 				if !graph.IsTestSupportNode(next) &&
-					(state.node.ID != root.ID ||
+					(state.node.ID != state.target.ID ||
 						(item.Edge.Properties["federated"] == "true" && !authoritativeDirect[next.ID])) {
-					appendCoverageMatch(&report, seenMatches, coverageMatch(root, next, nodes, edges, true,
-						state.node.ID == root.ID), options.Limit)
+					appendCoverageMatch(&report, seenMatches, coverageMatch(state.target, next, nodes, edges, true,
+						state.node.ID == state.target.ID), options.Limit)
 				}
 				continue
 			}
@@ -198,10 +230,10 @@ func (s *Service) testCoverage(ctx context.Context, root graph.Node, outgoing bo
 				// test reached after at least one support node is helper-expanded.
 				// Federated raw evidence is direct because no member can persist a
 				// tests edge to a declaration that was external during indexing.
-				if state.node.ID != root.ID ||
+				if state.node.ID != state.target.ID ||
 					(item.Edge.Properties["federated"] == "true" && !authoritativeDirect[next.ID]) {
-					appendCoverageMatch(&report, seenMatches, coverageMatch(root, next, nodes, edges, false,
-						state.node.ID == root.ID), options.Limit)
+					appendCoverageMatch(&report, seenMatches, coverageMatch(state.target, next, nodes, edges, false,
+						state.node.ID == state.target.ID), options.Limit)
 				}
 				continue
 			}
@@ -245,16 +277,16 @@ func testCoverageNext(state testCoverageState, next graph.Node, nodes []graph.No
 		ancestry[id] = true
 	}
 	ancestry[next.ID] = true
-	return testCoverageState{node: next, nodes: nodes, edges: edges, ancestry: ancestry}
+	return testCoverageState{node: next, target: state.target, nodes: nodes, edges: edges, ancestry: ancestry}
 }
 
-func coverageMatch(root, counterpart graph.Node, nodes []graph.Node, edges []graph.Edge, outgoing, direct bool) TestCoverageMatch {
+func coverageMatch(target, counterpart graph.Node, nodes []graph.Node, edges []graph.Edge, outgoing, direct bool) TestCoverageMatch {
 	match := TestCoverageMatch{Direct: direct, Depth: len(edges), Designation: "structural"}
 	if outgoing {
-		match.Test, match.Target, match.Nodes, match.Edges = root, counterpart, nodes, edges
+		match.Test, match.Target, match.Nodes, match.Edges = target, counterpart, nodes, edges
 		return match
 	}
-	match.Test, match.Target = counterpart, root
+	match.Test, match.Target = counterpart, target
 	match.Nodes = reversedNodes(nodes)
 	match.Edges = reversedCoverageEdges(edges)
 	return match
