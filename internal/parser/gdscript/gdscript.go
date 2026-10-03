@@ -179,6 +179,11 @@ type extractor struct {
 	input   parserapi.Input
 	module  string
 	methods map[string]string
+	// callableDeclarations holds the node ID of every field, parameter, and
+	// local this file declares as a Callable. It is keyed by node ID rather
+	// than by name so it needs no per-scope copy: the scope that owns a name
+	// already resolves it to the declaration a shadowed spelling means.
+	callableDeclarations map[string]bool
 	// project holds the autoload vocabulary of the Godot project that owns
 	// this script. Only exact declarations appear in it, so an autoload name
 	// that is declared twice or malformed resolves nothing here.
@@ -244,7 +249,7 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 	}
 	protobufAPIs, protobufAmbiguous, protobufTypes := gdscriptProtobufBindings(registry)
 	e := &extractor{b: b, input: input, module: parserapi.ModuleName(input.Path),
-		methods: map[string]string{}, autoloads: map[gdast.Node]bool{},
+		methods: map[string]string{}, callableDeclarations: map[string]bool{}, autoloads: map[gdast.Node]bool{},
 		projectKnown: true, bases: map[string]string{}, protobufAPIs: protobufAPIs,
 		protobufAmbiguous: protobufAmbiguous, protobufTypes: protobufTypes,
 		protobufEnabled: protobufEnabled, protobufWarned: map[string]bool{},
@@ -438,6 +443,11 @@ func (e *extractor) prepareClassSymbols(statements []gdast.Statement, current sc
 			value, valueOK := e.scalarString(node.Value, current)
 			qualified := qualify(current.container, node.Name)
 			fieldID := graph.NodeID(graph.KindField, qualified, e.input.RepoID, e.input.Path)
+			// A method body may invoke a Callable field declared later in the
+			// class, so the annotation is recorded with the rest of the
+			// forward-declared class vocabulary rather than when the
+			// declaration statement is walked.
+			e.noteCallableDeclaration(fieldID, node.Type)
 			current.symbols[node.Name] = fieldID
 			current.fieldSymbols[node.Name] = fieldID
 			current.fieldLocked[node.Name] = node.Type != ""
@@ -734,6 +744,7 @@ func (e *extractor) parseFunction(node *gdast.FunctionDeclaration, current scope
 		}
 		parameterID := e.b.Declare(id, graph.Node{Kind: graph.KindParameter, Name: parameter.Name,
 			QualifiedName: qualified + "." + parameter.Name, Location: e.location(node), Properties: parameterProperties})
+		e.noteCallableDeclaration(parameterID, parameter.Type)
 		functionScope.symbols[parameter.Name] = parameterID
 		functionScope.locked[parameter.Name] = parameter.Type != ""
 		delete(functionScope.types, parameter.Name)
@@ -824,6 +835,7 @@ func (e *extractor) parseVariable(node *gdast.VariableDeclaration, current scope
 	} else {
 		id = e.b.Declare(current.currentID, graphNode)
 	}
+	e.noteCallableDeclaration(id, node.Type)
 	constant, constantStatus := e.transportConstant(node.Value, current)
 	value, valueOK := e.scalarString(node.Value, current)
 	current.symbols[node.Name] = id
@@ -866,6 +878,7 @@ func (e *extractor) parseVariable(node *gdast.VariableDeclaration, current scope
 			e.b.AddFact(sourceID, graph.EdgeAssigns, id, "", kind, loc, nil)
 		}
 	}
+	e.addMethodValueReferences(node.Value, current.currentID, current, loc, nil)
 	e.walkExpression(node.Value, current)
 	e.walkStatements(node.Getter, current)
 	if node.Setter != nil {
@@ -883,6 +896,7 @@ func (e *extractor) declareLocal(name, typeName string, loc graph.Location, curr
 	}
 	id := e.b.Declare(current.currentID, graph.Node{Kind: graph.KindVariable, Name: name,
 		QualifiedName: fmt.Sprintf("%s.%s@%d", current.container, name, loc.Line), Location: loc, Properties: properties})
+	e.noteCallableDeclaration(id, typeName)
 	current.symbols[name] = id
 	current.locked[name] = typeName != ""
 	delete(current.types, name)
@@ -900,6 +914,7 @@ func (e *extractor) parseAssignment(node *gdast.Assignment, current scope) {
 			e.b.AddFact(sourceID, graph.EdgeAssigns, targetID, "", graph.KindVariable, e.location(node), nil)
 		}
 	}
+	e.addMethodValueReferences(node.Value, current.currentID, current, e.location(node), nil)
 	targetName, selfField := "", false
 	if target, ok := node.Target.(*gdast.Identifier); ok {
 		targetName = target.Name
@@ -956,6 +971,7 @@ func (e *extractor) parseReturn(node *gdast.ReturnStatement, current scope) {
 	for _, sourceID := range e.referencedVariables(node.Value, current) {
 		e.b.AddFact(sourceID, graph.EdgeReturns, current.currentID, "", "", e.location(node), nil)
 	}
+	e.addMethodValueReferences(node.Value, current.currentID, current, e.location(node), nil)
 	e.walkExpression(node.Value, current)
 }
 
@@ -1137,11 +1153,17 @@ func (e *extractor) parseCall(node *gdast.CallExpression, current scope) {
 			}
 		}
 	}
-	for position, argument := range node.Arguments {
-		for _, sourceID := range e.referencedVariables(argument, current) {
-			e.b.AddFact(sourceID, graph.EdgePasses, "", callee, "", loc, map[string]string{"argument": strconv.Itoa(position)})
-		}
+	// A call through a stored callable runs whatever that declaration holds.
+	// Recording it against the declaration keeps the invocation reachable from
+	// the field or parameter the callable lives in, where a call to a "call"
+	// member only ever resolved to an unresolved boundary node per callsite.
+	if callable := e.invokedCallable(node.Callee, current); callable != "" {
+		e.b.AddFact(fromID, graph.EdgeCalls, callable, "", "", loc,
+			map[string]string{"form": "callable_invocation", "invoke": method})
+		e.addArgumentEvidence(node.Arguments, fromID, callable, "", current, loc)
+		return
 	}
+	e.addArgumentEvidence(node.Arguments, fromID, "", callee, current, loc)
 	if constructed, ok := e.constructedType(node.Callee, current); ok {
 		e.b.AddFact(fromID, graph.EdgeCalls, "", constructed, graph.KindClass, loc,
 			map[string]string{"form": "construction", "constructor": "new"})
@@ -1888,6 +1910,149 @@ func (e *extractor) referencedVariables(expression gdast.Expression, current sco
 		return true
 	})
 	return ids
+}
+
+// callableTypeName is the GDScript type whose declarations hold a callable
+// value rather than an object.
+const callableTypeName = "Callable"
+
+// callableInvocationMethods are the Callable members that run the stored
+// callable. bind and unbind are excluded: they derive a new callable rather
+// than invoking the one they are called on, so recording them as an invocation
+// would claim the stored callable ran at a line where it did not.
+var callableInvocationMethods = map[string]bool{
+	"call": true, "callv": true, "call_deferred": true,
+}
+
+// noteCallableDeclaration records a declaration that holds a callable value.
+// Only an explicit Callable annotation counts: an untyped or inferred binding
+// cannot prove that a later .call(...) runs a stored callable rather than
+// dispatching a method name on an object, and a guessed invocation edge is
+// worse than none.
+func (e *extractor) noteCallableDeclaration(id, typeName string) {
+	if id == "" || strings.TrimSpace(typeName) != callableTypeName {
+		return
+	}
+	e.callableDeclarations[id] = true
+}
+
+// invokedCallable returns the declaration a Callable invocation runs through,
+// or "" when the callsite proves none. The receiver must resolve to a field,
+// parameter, or local this file declares as a Callable; an untyped receiver
+// keeps producing an ordinary call, because .call(...) is also how a method
+// name is dispatched dynamically on an object.
+//
+// The edge points at the callable declaration rather than at a method, which
+// is what keeps the flow honest: a stored callable assigned from more than one
+// source, or from an expression whose origin this parser cannot prove, resolves
+// to the same explicit declaration instead of a guessed target.
+func (e *extractor) invokedCallable(callee gdast.Expression, current scope) string {
+	member, ok := callee.(*gdast.MemberExpression)
+	if !ok || !callableInvocationMethods[member.Property] {
+		return ""
+	}
+	id := e.symbolID(member.Object, current)
+	if id == "" || !e.callableDeclarations[id] {
+		return ""
+	}
+	return id
+}
+
+// referencedMethodValues returns the qualified names of the methods this file
+// declares that an expression names as a value, in source order. A method used
+// as a value is a higher-order dependency that no other fact records: the
+// callsite naming it is what breaks when the method changes, yet the method is
+// never called there, so without this the method reports no consumers at all.
+//
+// Only a bare name or a self member that resolves to a declared method of the
+// current receiver qualifies, and a name shadowed by a local, parameter, or
+// field names that declaration instead. A nested call is skipped entirely: it
+// hands over its result, not the method, and its own arguments are evidence of
+// that callsite rather than of the enclosing one.
+func (e *extractor) referencedMethodValues(expression gdast.Expression, current scope) []string {
+	seen := map[string]bool{}
+	var names []string
+	var visit func(node gdast.Expression)
+	visit = func(node gdast.Expression) {
+		if node == nil {
+			return
+		}
+		if name := e.methodValueName(node, current); name != "" {
+			if !seen[name] {
+				seen[name] = true
+				names = append(names, name)
+			}
+			return
+		}
+		if _, ok := node.(*gdast.CallExpression); ok {
+			return
+		}
+		for _, child := range gdast.Children(node) {
+			if childExpression, ok := child.(gdast.Expression); ok {
+				visit(childExpression)
+			}
+		}
+	}
+	visit(expression)
+	return names
+}
+
+// methodValueName returns the qualified name of the method an expression names
+// as a value, or "" when it names something else. A member expression on
+// anything but self names a method on a receiver whose declarations this file
+// does not hold, so it proves nothing about which method a value carries.
+func (e *extractor) methodValueName(expression gdast.Expression, current scope) string {
+	switch node := expression.(type) {
+	case *gdast.Identifier:
+		if _, shadowed := current.symbols[node.Name]; shadowed {
+			return ""
+		}
+		return e.methods[qualify(current.receiver, node.Name)]
+	case *gdast.MemberExpression:
+		if object, ok := node.Object.(*gdast.Identifier); !ok || object.Name != "self" {
+			return ""
+		}
+		if _, shadowed := current.fieldSymbols[node.Property]; shadowed {
+			return ""
+		}
+		return e.methods[qualify(current.receiver, node.Property)]
+	}
+	return ""
+}
+
+// addMethodValueReferences records every method an expression names as a value
+// against the declaration that names it. The reference runs from the naming
+// declaration to the method so the method's own report answers "who depends on
+// this?" with the callsites that hand it around.
+func (e *extractor) addMethodValueReferences(expression gdast.Expression, fromID string, current scope, loc graph.Location, extra map[string]string) {
+	if fromID == "" {
+		return
+	}
+	for _, method := range e.referencedMethodValues(expression, current) {
+		properties := map[string]string{"form": "method_value"}
+		for key, value := range extra {
+			properties[key] = value
+		}
+		e.b.AddFact(fromID, graph.EdgeReferences, "", method, graph.KindMethod, loc, properties)
+	}
+}
+
+// addArgumentEvidence records what a callsite hands to its callee: the
+// variables it passes, and the methods it names as callable values. A target
+// ID names a resolved declaration, such as the stored callable an invocation
+// runs through; a target name is resolved by storage instead.
+func (e *extractor) addArgumentEvidence(arguments []gdast.Expression, fromID, targetID, target string, current scope, loc graph.Location) {
+	for position, argument := range arguments {
+		index := strconv.Itoa(position)
+		for _, sourceID := range e.referencedVariables(argument, current) {
+			e.b.AddFact(sourceID, graph.EdgePasses, targetID, target, "", loc, map[string]string{"argument": index})
+		}
+		extra := map[string]string{"argument": index}
+		if target != "" {
+			extra["passed_to"] = target
+		}
+		e.addMethodValueReferences(argument, fromID, current, loc, extra)
+	}
 }
 
 func (e *extractor) symbolID(expression gdast.Expression, current scope) string {

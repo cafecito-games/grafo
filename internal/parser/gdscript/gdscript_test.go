@@ -2374,3 +2374,185 @@ func _build_container_runtime(factory, typed: TradeModule) -> void:
 		}
 	}
 }
+
+// TestParserRecordsMethodValuesHandedToCallsites proves a method named as a
+// callable value is recorded against the declaration that names it, in every
+// shape a value can take, and that a name which proves no method - a shadowing
+// parameter, a nested call's callee, or a member of a foreign receiver - records
+// nothing rather than a guessed reference.
+func TestParserRecordsMethodValuesHandedToCallsites(t *testing.T) {
+	content := []byte(`class_name InGameSessionCoordinator
+extends Node
+
+var _modules: Array = []
+
+func _build_container_runtime(reconcile) -> void:
+	_modules.append(ActionRejectionFeedbackModule.new(_reconcile_rejected_request))
+	_install(self._world_feedback_has_world)
+	_install(reconcile)
+	_install(_world_feedback_has_world())
+	_install(other._reconcile_rejected_request)
+
+func _install(_handler) -> void:
+	pass
+
+func _reconcile_rejected_request(_request_id: int, _reason: String) -> void:
+	pass
+
+func _world_feedback_has_world() -> bool:
+	return true
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "session/in_game_session_coordinator.gd", Content: content, RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := map[string]graph.Fact{}
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeReferences && fact.Properties["form"] == "method_value" {
+			values[fact.Target] = fact
+		}
+	}
+	for _, expected := range []struct {
+		target, passedTo, argument string
+	}{
+		{"InGameSessionCoordinator._reconcile_rejected_request", "ActionRejectionFeedbackModule.new", "0"},
+		{"InGameSessionCoordinator._world_feedback_has_world", "InGameSessionCoordinator._install", "0"},
+	} {
+		fact, ok := values[expected.target]
+		if !ok {
+			t.Fatalf("missing method value reference to %q: %#v", expected.target, values)
+		}
+		if fact.TargetKind != graph.KindMethod || fact.Properties["passed_to"] != expected.passedTo ||
+			fact.Properties["argument"] != expected.argument || fact.Location.Line == 0 {
+			t.Fatalf("method value reference lost its evidence: %#v", fact)
+		}
+	}
+	// A shadowing parameter, a nested call's callee, and a member of a receiver
+	// this file does not declare each prove no method value.
+	if len(values) != 2 {
+		t.Fatalf("method value references = %#v", values)
+	}
+}
+
+// TestParserRecordsCallableInvocationAgainstItsDeclaration proves a call
+// through a stored Callable is recorded against the declaration that holds it,
+// that the declaration keeps every assignment into it as explicit evidence
+// rather than resolving to a guessed method, and that an untyped receiver keeps
+// producing an ordinary call.
+func TestParserRecordsCallableInvocationAgainstItsDeclaration(t *testing.T) {
+	content := []byte(`class_name ActionRejectionFeedbackModule
+extends Node
+
+var _reconcile_rejected_request: Callable
+var _dispatch
+
+func _init(reconcile_rejected_request: Callable) -> void:
+	_reconcile_rejected_request = reconcile_rejected_request
+
+func _on_action_rejected(request_id: int, reason: String) -> void:
+	_reconcile_rejected_request.call(request_id, reason)
+	self._reconcile_rejected_request.call_deferred(request_id)
+	_dispatch.call(request_id)
+
+func _rebind() -> void:
+	_reconcile_rejected_request = _local_reconcile
+	_reconcile_rejected_request = _local_report
+
+func _local_reconcile(_request_id: int, _reason: String) -> void:
+	pass
+
+func _local_report(_request_id: int, _reason: String) -> void:
+	pass
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "modules/action_rejection_feedback_module.gd", Content: content, RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	field := gdNodeNamed(t, result.Nodes, "_reconcile_rejected_request")
+	invocations := map[string]bool{}
+	for _, fact := range result.Facts {
+		if fact.Kind != graph.EdgeCalls || fact.Properties["form"] != "callable_invocation" {
+			continue
+		}
+		if fact.TargetID != field.ID || fact.Target != "" {
+			t.Fatalf("callable invocation did not name the stored declaration: %#v", fact)
+		}
+		invocations[fact.Properties["invoke"]] = true
+	}
+	// Both the bare and the self spelling of the field invoke the same stored
+	// declaration; an untyped receiver proves nothing and stays an ordinary call.
+	if len(invocations) != 2 || !invocations["call"] || !invocations["call_deferred"] {
+		t.Fatalf("callable invocations = %#v", invocations)
+	}
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "_dispatch.call")
+
+	// A field reassigned from two methods keeps both as explicit evidence, so
+	// no invocation resolves to a guessed one of them.
+	rebound := map[string]bool{}
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeReferences && fact.Properties["form"] == "method_value" {
+			rebound[fact.Target] = true
+		}
+	}
+	for _, method := range []string{
+		"ActionRejectionFeedbackModule._local_reconcile",
+		"ActionRejectionFeedbackModule._local_report",
+	} {
+		if !rebound[method] {
+			t.Fatalf("missing method value reference to %q: %#v", method, rebound)
+		}
+	}
+	// The constructor parameter reaches the field it is stored into.
+	parameter := gdNodeNamed(t, result.Nodes, "reconcile_rejected_request")
+	stored := false
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeAssigns && fact.FromID == parameter.ID && fact.TargetID == field.ID {
+			stored = true
+		}
+	}
+	if !stored {
+		t.Fatalf("constructor parameter does not reach the field it is stored into: %#v", result.Facts)
+	}
+}
+
+// TestParserRefusesCallableInvocationWithoutProvenDeclaration proves the
+// Callable invocation rule needs a declaration it can see: a malformed or
+// absent annotation, an inferred binding, and a receiver declared elsewhere
+// each keep producing an ordinary call rather than a guessed invocation edge.
+func TestParserRefusesCallableInvocationWithoutProvenDeclaration(t *testing.T) {
+	for _, testCase := range []struct {
+		name, source, callee string
+	}{
+		{"untyped field", "var _handler\n", "_handler.call"},
+		{"inferred from a method value", "var _handler = _target\n", "_handler.call"},
+		{"foreign type", "var _handler: Node\n", "Node.call"},
+		{"lowercase lookalike type", "var _handler: callable\n", "callable.call"},
+		{"undeclared name", "", "_handler.call"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			content := []byte("class_name Holder\nextends Node\n\n" + testCase.source + `
+func run() -> void:
+	_handler.call(1)
+
+func _target(_value: int) -> void:
+	pass
+`)
+			result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+				Path: "modules/holder.gd", Content: content, RepoID: "repo:sample",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, fact := range result.Facts {
+				if fact.Properties["form"] == "callable_invocation" {
+					t.Fatalf("unproven receiver produced a callable invocation: %#v", fact)
+				}
+			}
+			assertHasFact(t, result.Facts, graph.EdgeCalls, testCase.callee)
+		})
+	}
+}

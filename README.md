@@ -1218,6 +1218,20 @@ as that class. A receiver bound to an untyped value in scope keeps producing an
 ordinary call, and a class name the index cannot resolve uniquely stays one
 explicit unresolved boundary rather than a guessed edge.
 
+A method named as a value rather than called - handed to a constructor or any
+other callsite, stored, or returned - is recorded as a reference from the
+declaration that names it to the method, carrying the argument position and the
+callee it was handed to. A call through a declaration annotated `Callable` is
+recorded against that declaration, so the invocation is reachable from the
+field, parameter, or local the callable lives in. Both rules need proof: a name
+shadowed by a local, a nested call's callee, a member of a receiver declared
+elsewhere, and an untyped or inferred receiver each keep their existing meaning.
+The invocation edge names the stored declaration, never a method, so a callable
+reassigned from several sources keeps every assignment as explicit evidence
+instead of resolving to a guessed target. Binding the arguments of a callable
+(`bind`, `unbind`) derives a new value rather than running the stored one, so it
+is not recorded as an invocation.
+
 </details>
 
 <details>
