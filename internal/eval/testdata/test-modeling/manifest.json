@@ -33,6 +33,11 @@
       },
       {
         "repo": "model",
+        "kind": "event",
+        "qualified_name": "Player.finished"
+      },
+      {
+        "repo": "model",
         "kind": "external",
         "qualified_name": "testing.common.Fatal",
         "external": true
@@ -95,6 +100,11 @@
       },
       {
         "repo": "model",
+        "kind": "method",
+        "qualified_name": "PlayerSpec.on_finished"
+      },
+      {
+        "repo": "model",
         "kind": "module",
         "qualified_name": "example.com/testmodel"
       },
@@ -113,6 +123,11 @@
         "kind": "module",
         "qualified_name": "testing",
         "external": true
+      },
+      {
+        "repo": "model",
+        "kind": "parameter",
+        "qualified_name": "PlayerSpec.on_finished._value"
       },
       {
         "repo": "model",
@@ -147,6 +162,11 @@
       {
         "repo": "model",
         "kind": "test",
+        "qualified_name": "PlayerSpec.test_signal_lifecycle_on_an_inferred_receiver"
+      },
+      {
+        "repo": "model",
+        "kind": "test",
         "qualified_name": "PlayerSpec.test_through_inferred_receiver"
       },
       {
@@ -158,6 +178,11 @@
         "repo": "model",
         "kind": "test",
         "qualified_name": "example.com/testmodel.TestProduce"
+      },
+      {
+        "repo": "model",
+        "kind": "variable",
+        "qualified_name": "PlayerSpec.test_signal_lifecycle_on_an_inferred_receiver.player@21"
       },
       {
         "repo": "model",
@@ -175,12 +200,30 @@
         "relation": "declares",
         "to": {
           "repo": "model",
+          "kind": "event",
+          "qualified_name": "Player.finished"
+        },
+        "source": {
+          "path": "player.gd",
+          "line": 4,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "class",
+          "qualified_name": "Player"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
           "kind": "method",
           "qualified_name": "Player.damage"
         },
         "source": {
           "path": "player.gd",
-          "line": 4,
+          "line": 6,
           "column": 1
         }
       },
@@ -248,6 +291,24 @@
         "relation": "declares",
         "to": {
           "repo": "model",
+          "kind": "method",
+          "qualified_name": "PlayerSpec.on_finished"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 27,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "class",
+          "qualified_name": "PlayerSpec"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
           "kind": "test",
           "qualified_name": "PlayerSpec.test_damage"
         },
@@ -272,6 +333,24 @@
         "source": {
           "path": "player_spec.gd",
           "line": 7,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "class",
+          "qualified_name": "PlayerSpec"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "PlayerSpec.test_signal_lifecycle_on_an_inferred_receiver"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 20,
           "column": 1
         }
       },
@@ -310,6 +389,29 @@
           "path": "player_spec.gd",
           "line": 2,
           "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "event",
+          "qualified_name": "Player.finished"
+        },
+        "relation": "handled_by",
+        "to": {
+          "repo": "model",
+          "kind": "method",
+          "qualified_name": "PlayerSpec.on_finished"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 22,
+          "column": 2
+        },
+        "properties": {
+          "form": "connect",
+          "receiver": "PlayerSpec",
+          "signal": "Player.finished"
         }
       },
       {
@@ -586,6 +688,48 @@
       {
         "from": {
           "repo": "model",
+          "kind": "method",
+          "qualified_name": "PlayerSpec.on_finished"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "parameter",
+          "qualified_name": "PlayerSpec.on_finished._value"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 27,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "method",
+          "qualified_name": "PlayerSpec.on_finished"
+        },
+        "relation": "subscribes",
+        "to": {
+          "repo": "model",
+          "kind": "event",
+          "qualified_name": "Player.finished"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 22,
+          "column": 2
+        },
+        "properties": {
+          "form": "connect",
+          "handler": "PlayerSpec.on_finished",
+          "signal": "Player.finished",
+          "site": "PlayerSpec.test_signal_lifecycle_on_an_inferred_receiver"
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
           "kind": "module",
           "qualified_name": "player"
         },
@@ -787,6 +931,205 @@
           "coverage": "structural",
           "evidence_edge_id": "e:f01de1c57a5c741ca559",
           "evidence_relation": "calls"
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "PlayerSpec.test_signal_lifecycle_on_an_inferred_receiver"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "model",
+          "kind": "method",
+          "qualified_name": "PlayerSpec._make_player"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 21,
+          "column": 16
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "PlayerSpec.test_signal_lifecycle_on_an_inferred_receiver"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "variable",
+          "qualified_name": "PlayerSpec.test_signal_lifecycle_on_an_inferred_receiver.player@21"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 21,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "PlayerSpec.test_signal_lifecycle_on_an_inferred_receiver"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "model",
+          "kind": "event",
+          "qualified_name": "Player.finished"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 23,
+          "column": 2
+        },
+        "properties": {
+          "form": "signal_disconnect",
+          "signal": "Player.finished"
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "PlayerSpec.test_signal_lifecycle_on_an_inferred_receiver"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "model",
+          "kind": "event",
+          "qualified_name": "Player.finished"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 24,
+          "column": 5
+        },
+        "properties": {
+          "form": "signal_connection_test",
+          "signal": "Player.finished"
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "PlayerSpec.test_signal_lifecycle_on_an_inferred_receiver"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "model",
+          "kind": "method",
+          "qualified_name": "PlayerSpec.on_finished"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 22,
+          "column": 2
+        },
+        "properties": {
+          "argument": "0",
+          "form": "method_value",
+          "passed_to": "Player.finished.connect"
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "PlayerSpec.test_signal_lifecycle_on_an_inferred_receiver"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "model",
+          "kind": "method",
+          "qualified_name": "PlayerSpec.on_finished"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 23,
+          "column": 2
+        },
+        "properties": {
+          "argument": "0",
+          "form": "method_value",
+          "passed_to": "Player.finished.disconnect"
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "PlayerSpec.test_signal_lifecycle_on_an_inferred_receiver"
+        },
+        "relation": "references",
+        "to": {
+          "repo": "model",
+          "kind": "method",
+          "qualified_name": "PlayerSpec.on_finished"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 24,
+          "column": 5
+        },
+        "properties": {
+          "argument": "0",
+          "form": "method_value",
+          "passed_to": "Player.finished.is_connected"
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "PlayerSpec.test_signal_lifecycle_on_an_inferred_receiver"
+        },
+        "relation": "tests",
+        "to": {
+          "repo": "model",
+          "kind": "event",
+          "qualified_name": "Player.finished"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 23,
+          "column": 2
+        },
+        "properties": {
+          "coverage": "structural",
+          "evidence_edge_id": "e:2fda66ebc2310736a55b",
+          "evidence_relation": "references",
+          "form": "signal_disconnect",
+          "signal": "Player.finished"
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "PlayerSpec.test_signal_lifecycle_on_an_inferred_receiver"
+        },
+        "relation": "tests",
+        "to": {
+          "repo": "model",
+          "kind": "event",
+          "qualified_name": "Player.finished"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 24,
+          "column": 5
+        },
+        "properties": {
+          "coverage": "structural",
+          "evidence_edge_id": "e:a0be2d4f98529a51ad05",
+          "evidence_relation": "references",
+          "form": "signal_connection_test",
+          "signal": "Player.finished"
         }
       },
       {
