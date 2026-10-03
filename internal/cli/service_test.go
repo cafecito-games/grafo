@@ -16,7 +16,9 @@ import (
 
 // isolateConfiguration points every configuration lookup at throwaway
 // directories and empties PATH, so no test can read or write the developer's
-// real client configuration or probe installed clients.
+// real client configuration or probe installed clients. It does that through
+// t.Setenv, so a test that calls it cannot also call t.Parallel: the variables
+// are process-wide and the testing package refuses the combination.
 func isolateConfiguration(t *testing.T) string {
 	t.Helper()
 	home := testtemp.Dir(t)
@@ -36,6 +38,7 @@ func runCLI(t *testing.T, arguments ...string) (int, string) {
 }
 
 func TestParseArgumentsAcceptsServiceAndDoctorOptions(t *testing.T) {
+	t.Parallel()
 	parsed, err := parseArguments([]string{"service", "add", ".", "--interval", "10s", "--paused", "--json"})
 	if err != nil {
 		t.Fatal(err)
@@ -173,6 +176,7 @@ func TestUninstallCLIRefusesFileBackedTargetOutsideUserRoots(t *testing.T) {
 }
 
 func TestHelpDocumentsServiceAndDoctor(t *testing.T) {
+	t.Parallel()
 	_, output := runCLI(t, "help")
 	for _, want := range []string{"grafo service add", "grafo service install", "grafo doctor [--repair]"} {
 		if !strings.Contains(output, want) {

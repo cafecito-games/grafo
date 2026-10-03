@@ -12,7 +12,9 @@ import (
 )
 
 // shortIndexLockWait keeps contention observable without waiting out the
-// production budget.
+// production budget. It replaces a package-level variable every index path
+// reads, so a test that calls it cannot also call t.Parallel: the substitution
+// would decide the lock budget of whatever else was running.
 func shortIndexLockWait(t *testing.T, wait time.Duration) {
 	t.Helper()
 	previous := foregroundIndexLockWait
@@ -73,6 +75,7 @@ func TestOpenExistingWaitsForTheIndexLock(t *testing.T) {
 // path: a query command drops the writable handle, reopens the index
 // query-only, and must not leak the lock to the rest of the process.
 func TestOpenReadReleasesTheIndexLockOnTheReadOnlyPath(t *testing.T) {
+	t.Parallel()
 	root := indexedRepository(t)
 	ctx := context.Background()
 	args, err := parseArguments([]string{"find", "Charge", "--repo", root})
@@ -102,6 +105,7 @@ func TestOpenReadReleasesTheIndexLockOnTheReadOnlyPath(t *testing.T) {
 // race as writers and die on SQLITE_BUSY or a half-applied migration. They now
 // queue behind the lock, so every invocation answers.
 func TestConcurrentQueryCommandsSerializeOnOneIndex(t *testing.T) {
+	t.Parallel()
 	root := indexedRepository(t)
 	const invocations = 4
 	codes := make([]int, invocations)

@@ -20,6 +20,7 @@ import (
 )
 
 func TestStatusProgressModesKeepStdoutMachineReadable(t *testing.T) {
+	t.Parallel()
 	root := indexedRepository(t)
 	tests := []struct {
 		name         string
@@ -69,6 +70,7 @@ func TestStatusProgressModesKeepStdoutMachineReadable(t *testing.T) {
 }
 
 func TestAutoProgressPublishesCachedPhaseAndStopsBeforeReturn(t *testing.T) {
+	t.Parallel()
 	var stderr bytes.Buffer
 	renderer := newProgressRenderer(&stderr, progressAuto, true, 10*time.Millisecond)
 	event := indexer.ProgressEvent{Schema: indexer.ProgressSchemaV1, RepositoryName: "sample", Phase: indexer.ProgressParse, State: indexer.ProgressStarted}
@@ -94,6 +96,7 @@ type failWriter struct{ err error }
 func (writer failWriter) Write([]byte) (int, error) { return 0, writer.err }
 
 func TestStatusProgressWriteFailurePreventsSuccessAndRetryConverges(t *testing.T) {
+	t.Parallel()
 	root := indexedRepository(t)
 	sentinel := errors.New("stderr failed")
 	var stdout bytes.Buffer
@@ -115,6 +118,7 @@ func TestStatusProgressWriteFailurePreventsSuccessAndRetryConverges(t *testing.T
 }
 
 func TestStatusProgressOptionIsPositionIndependentAndValidatedBeforeOpen(t *testing.T) {
+	t.Parallel()
 	for _, arguments := range [][]string{
 		{"status", "--progress=json", "/missing"},
 		{"--progress", "human", "counts", "/missing"},
@@ -135,6 +139,7 @@ func TestStatusProgressOptionIsPositionIndependentAndValidatedBeforeOpen(t *test
 }
 
 func TestStatusAndCountsAcceptGlobalJSONWithSameProgressContract(t *testing.T) {
+	t.Parallel()
 	root := indexedRepository(t)
 	for _, command := range []string{"status", "counts"} {
 		var stdout, stderr bytes.Buffer
@@ -150,6 +155,7 @@ func TestStatusAndCountsAcceptGlobalJSONWithSameProgressContract(t *testing.T) {
 }
 
 func TestStatusReportsSemanticRebuildInHumanAndJSONCompletion(t *testing.T) {
+	t.Parallel()
 	root := indexedRepository(t)
 	project, err := indexer.DiscoverProject(context.Background(), root)
 	if err != nil {
@@ -177,6 +183,7 @@ func TestStatusReportsSemanticRebuildInHumanAndJSONCompletion(t *testing.T) {
 }
 
 func TestFederatedStatusRefreshSummariesFollowCanonicalProjectsAndDeduplicatePaths(t *testing.T) {
+	t.Parallel()
 	left, right := indexedRepository(t), indexedRepository(t)
 	var stdout, stderr bytes.Buffer
 	code := New(&stdout, &stderr).Run(context.Background(), []string{
@@ -200,6 +207,7 @@ func TestFederatedStatusRefreshSummariesFollowCanonicalProjectsAndDeduplicatePat
 }
 
 func TestStatusJSONProgressOwnsTerminalError(t *testing.T) {
+	t.Parallel()
 	root := indexedRepository(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -219,6 +227,7 @@ func TestStatusJSONProgressOwnsTerminalError(t *testing.T) {
 }
 
 func TestStatusProgressErrorsArePathFreeAndHumanErrorsAreNotDuplicated(t *testing.T) {
+	t.Parallel()
 	missing := testtemp.Dir(t)
 	var stdout, stderr bytes.Buffer
 	code := New(&stdout, &stderr).Run(context.Background(), []string{"status", "--progress=json", missing})
@@ -260,6 +269,7 @@ func indexableRepository(t *testing.T) string {
 }
 
 func TestIndexProgressModesKeepStdoutMachineReadable(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		mode         string
@@ -320,6 +330,7 @@ func TestIndexProgressModesKeepStdoutMachineReadable(t *testing.T) {
 }
 
 func TestIndexProgressOffMatchesTheUnflaggedRun(t *testing.T) {
+	t.Parallel()
 	var flagged, flaggedErr bytes.Buffer
 	app := New(&flagged, &flaggedErr)
 	app.stderrIsTerminal = func(io.Writer) bool { return false }
@@ -345,6 +356,7 @@ func TestIndexProgressOffMatchesTheUnflaggedRun(t *testing.T) {
 }
 
 func TestIndexProgressWriteFailureStillCompletesTheIndex(t *testing.T) {
+	t.Parallel()
 	root := indexableRepository(t)
 	var stdout bytes.Buffer
 	app := New(&stdout, failWriter{err: errors.New("stderr failed")})
@@ -392,6 +404,7 @@ func (writer *cancelingWriter) interrupted() bool {
 }
 
 func TestCanceledIndexReportsAccumulatedPhasesAndFails(t *testing.T) {
+	t.Parallel()
 	root := indexableRepository(t)
 	runInterrupted := func(t *testing.T, arguments ...string) (string, *cancelingWriter) {
 		t.Helper()
@@ -437,6 +450,7 @@ func TestCanceledIndexReportsAccumulatedPhasesAndFails(t *testing.T) {
 }
 
 func TestIndexAcceptsProgressOptionAndRejectsUnknownMode(t *testing.T) {
+	t.Parallel()
 	args, err := parseArguments([]string{"index", "--progress=json", "/repo"})
 	if err != nil || args.values["progress"] != "json" {
 		t.Fatalf("parse index --progress = %#v, %v", args, err)

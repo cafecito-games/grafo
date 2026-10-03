@@ -15,6 +15,7 @@ import (
 )
 
 func TestTopologyKeepsFederatedHTTPAmbiguityAndEventLinksExplicit(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	workspace := testtemp.Dir(t)
 	roots := map[string]string{}

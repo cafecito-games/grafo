@@ -7,6 +7,7 @@ import (
 )
 
 func TestGeneratedFromFederationRequiresCanonicalProtobufDeclaration(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		node graph.Node
@@ -27,6 +28,7 @@ func TestGeneratedFromFederationRequiresCanonicalProtobufDeclaration(t *testing.
 }
 
 func TestProtocolUsageFederationRequiresCanonicalProtobufDeclaration(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		relation graph.EdgeKind
 		node     graph.Node
@@ -46,6 +48,7 @@ func TestProtocolUsageFederationRequiresCanonicalProtobufDeclaration(t *testing.
 }
 
 func TestTransportFederationRequiresOperationAndCanonicalPayload(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		relation graph.EdgeKind
 		node     graph.Node
@@ -63,6 +66,7 @@ func TestTransportFederationRequiresOperationAndCanonicalPayload(t *testing.T) {
 }
 
 func TestMiddlewareFederationRequiresCallableDeclaration(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		kind graph.NodeKind
 		want bool

@@ -31,7 +31,10 @@ func (f *recordingFeed) LatestRelease(context.Context) (string, error) {
 }
 
 // updateApp builds an app whose release check is fully in memory: a stub feed, a
-// temporary cache and a terminal stderr.
+// temporary cache and a terminal stderr. It sets the two environment variables
+// the advisory consults, so no test in this file calls t.Parallel: t.Setenv
+// restores a process-wide value on cleanup, which the testing package refuses to
+// let a parallel test do.
 func updateApp(t *testing.T, feed updatecheck.Feed, current string) (*App, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}

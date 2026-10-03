@@ -12,6 +12,7 @@ import (
 // TestPrintIndexReportSeparatesSuppressedAndUnavailableCounts keeps a failed
 // count query from being reported as a summary the caller never asked for.
 func TestPrintIndexReportSeparatesSuppressedAndUnavailableCounts(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name            string
 		report          indexer.Report

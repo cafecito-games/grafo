@@ -19,6 +19,7 @@ import (
 // interrupted. Rendering the cause blamed an embedding provider or an HTTP
 // endpoint for an interruption neither of them caused.
 func TestRunReportsInterruptionInsteadOfTheWrappedCause(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	for _, testCase := range []struct {
 		name        string
@@ -54,6 +55,7 @@ func TestRunReportsInterruptionInsteadOfTheWrappedCause(t *testing.T) {
 // decision that only the rendered text changes: an interrupted run is still a
 // run that produced no answer, and callers already branch on a nonzero status.
 func TestRunKeepsTheFailureExitStatusForInterruptions(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	var stdout, stderr bytes.Buffer
@@ -66,6 +68,7 @@ func TestRunKeepsTheFailureExitStatusForInterruptions(t *testing.T) {
 // consulted: os/signal cancels with a cause that reports the signal, and that
 // cause does not unwrap to context.Canceled.
 func TestRunCanceledConsultsTheContextForOpaqueCauses(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancelCause(context.Background())
 	cancel(errors.New("interrupt signal received"))
 	wrapped := fmt.Errorf("embed candidates: call Ollama at http://localhost:11434: %w", context.Cause(ctx))

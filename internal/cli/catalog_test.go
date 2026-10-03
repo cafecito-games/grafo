@@ -15,6 +15,7 @@ import (
 )
 
 func TestCatalogCommandsReportUsageAndOrphans(t *testing.T) {
+	t.Parallel()
 	root := catalogFixture(t)
 	run(t, "index", root)
 
@@ -107,6 +108,7 @@ func TestCatalogCommandsReportUsageAndOrphans(t *testing.T) {
 }
 
 func TestCatalogResultsSurviveIncrementalIndexing(t *testing.T) {
+	t.Parallel()
 	root := catalogFixture(t)
 	run(t, "index", root)
 	write(t, filepath.Join(root, "schema.sql"), `CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT);
@@ -139,6 +141,7 @@ INSERT INTO orders (customer) VALUES ('ada');
 }
 
 func TestCatalogCommandsRejectUnsupportedFilters(t *testing.T) {
+	t.Parallel()
 	root := catalogFixture(t)
 	run(t, "index", root)
 	if code, _, stderr := execute(t, "data-resources", "--repo", root, "--kind", "function"); code == 0 {
@@ -170,6 +173,7 @@ func TestCatalogCommandsRejectUnsupportedFilters(t *testing.T) {
 }
 
 func TestCatalogRefusesAMixedFreshnessFederation(t *testing.T) {
+	t.Parallel()
 	indexed := catalogFixture(t)
 	run(t, "index", indexed)
 	unindexed := catalogFixture(t)

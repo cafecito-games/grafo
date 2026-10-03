@@ -15,10 +15,24 @@ import (
 	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
+// isolateEmbedCache points the embedding cache at a throwaway path under the
+// given directory names, so no test reads or writes the developer's real cache.
+// It does that through t.Setenv, so a test that calls it cannot also call
+// t.Parallel: the variable is process-wide and the testing package refuses the
+// combination.
+func isolateEmbedCache(t *testing.T, directories ...string) string {
+	t.Helper()
+	// The first append owns its result, so naming the cache file cannot write
+	// into the caller's backing array.
+	parts := append([]string{testtemp.Dir(t)}, directories...)
+	path := filepath.Join(append(parts, "embeddings.sqlite")...)
+	t.Setenv(embeddingcache.EnvPath, path)
+	return path
+}
+
 func TestEmbedCacheStatusAndPruneJSON(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(testtemp.Dir(t), "embeddings.sqlite")
-	t.Setenv(embeddingcache.EnvPath, path)
+	path := isolateEmbedCache(t)
 	store, err := embeddingcache.Open(ctx, path)
 	if err != nil {
 		t.Fatal(err)
@@ -94,8 +108,7 @@ func TestEmbedCacheStatusAndPruneJSON(t *testing.T) {
 }
 
 func TestEmbedCachePruneValidatesBeforeOpeningWritableCache(t *testing.T) {
-	path := filepath.Join(testtemp.Dir(t), "missing", "embeddings.sqlite")
-	t.Setenv(embeddingcache.EnvPath, path)
+	path := isolateEmbedCache(t, "missing")
 	var stdout, stderr bytes.Buffer
 	code := New(&stdout, &stderr).Run(context.Background(), []string{"embed-cache", "prune", "--older-than", "yesterday", "--yes"})
 	if code == 0 || !strings.Contains(stderr.String(), "--older-than") {
@@ -108,8 +121,7 @@ func TestEmbedCachePruneValidatesBeforeOpeningWritableCache(t *testing.T) {
 
 func TestEmbedCacheRejectsUnsupportedOptionsBeforePruning(t *testing.T) {
 	ctx := context.Background()
-	path := filepath.Join(testtemp.Dir(t), "embeddings.sqlite")
-	t.Setenv(embeddingcache.EnvPath, path)
+	path := isolateEmbedCache(t)
 	var stdout, stderr bytes.Buffer
 	code := New(&stdout, &stderr).Run(ctx, []string{"embed-cache", "status", "--keep", "1"})
 	if code == 0 || !strings.Contains(stderr.String(), "--keep is not supported by grafo embed-cache status") {
@@ -152,8 +164,7 @@ func TestEmbedCacheRejectsUnsupportedOptionsBeforePruning(t *testing.T) {
 }
 
 func TestEmbedCacheStatusDoesNotCreateMissingCache(t *testing.T) {
-	path := filepath.Join(testtemp.Dir(t), "typo", "embeddings.sqlite")
-	t.Setenv(embeddingcache.EnvPath, path)
+	path := isolateEmbedCache(t, "typo")
 	var stdout, stderr bytes.Buffer
 	code := New(&stdout, &stderr).Run(context.Background(), []string{"embed-cache", "status"})
 	if code == 0 || !strings.Contains(stderr.String(), "inspect embedding cache path") {
@@ -165,6 +176,7 @@ func TestEmbedCacheStatusDoesNotCreateMissingCache(t *testing.T) {
 }
 
 func TestParseEmbedCacheOptions(t *testing.T) {
+	t.Parallel()
 	parsed, err := parseArguments([]string{"embed-cache", "prune", "--older-than", "24h", "--max-bytes", "1024", "--yes"})
 	if err != nil {
 		t.Fatal(err)

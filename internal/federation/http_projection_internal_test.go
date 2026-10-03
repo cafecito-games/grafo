@@ -19,6 +19,7 @@ type countingHTTPRepository struct {
 }
 
 func TestHTTPProjectionRanksExactMethodOverANYAndExcludesHost(t *testing.T) {
+	t.Parallel()
 	candidates := []federatedHTTPCandidate{
 		{scoped: graph.ScopedNode{Node: graph.Node{ID: "any"}}, match: httpmodel.EndpointCandidate{Method: "ANY", Route: mustHTTPRoute(t, "/items/42")}},
 		{scoped: graph.ScopedNode{Node: graph.Node{ID: "get-a"}}, match: httpmodel.EndpointCandidate{Method: "GET", Route: mustHTTPRoute(t, "/items/{id}")}},
@@ -53,6 +54,7 @@ func TestHTTPProjectionRanksExactMethodOverANYAndExcludesHost(t *testing.T) {
 }
 
 func TestHTTPProjectionPreservesCaseSensitiveRequestMethods(t *testing.T) {
+	t.Parallel()
 	candidates := []federatedHTTPCandidate{
 		{scoped: graph.ScopedNode{Node: graph.Node{ID: "lower"}}, match: httpmodel.EndpointCandidate{Method: "get", Route: mustHTTPRoute(t, "/case")}},
 		{scoped: graph.ScopedNode{Node: graph.Node{ID: "upper"}}, match: httpmodel.EndpointCandidate{Method: "GET", Route: mustHTTPRoute(t, "/case")}},
@@ -93,6 +95,7 @@ func (r *countingHTTPRepository) ExternalRequestEdges(ctx context.Context, after
 }
 
 func TestHTTPProjectionLoadsEachMemberSnapshotOnce(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	dir := testtemp.Dir(t)
 	client := openHTTPProjectionMember(t, ctx, filepath.Join(dir, "client.sqlite"), filepath.Join(dir, "client"))

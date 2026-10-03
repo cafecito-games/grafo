@@ -19,6 +19,7 @@ var _ graph.CatalogRepository = (*federation.Repository)(nil)
 var _ graph.CanonicalMessageRepository = (*federation.Repository)(nil)
 
 func TestFederatedCanonicalMessagesPreserveRepositoryQualifiedCollisions(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	workspace := testtemp.Dir(t)
 	roots := []string{filepath.Join(workspace, "alpha"), filepath.Join(workspace, "beta")}
@@ -79,6 +80,7 @@ func TestFederatedCanonicalMessagesPreserveRepositoryQualifiedCollisions(t *test
 }
 
 func TestCatalogSharesOneContractAcrossRepositories(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	workspace := testtemp.Dir(t)
 	producerRoot := filepath.Join(workspace, "producer")
@@ -196,6 +198,7 @@ type Bus interface{ Subscribe(string) }
 }
 
 func TestFederatedRelationEdgesProjectThenApplyGlobalBounds(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	workspace := testtemp.Dir(t)
 	producerRoot := filepath.Join(workspace, "producer")
@@ -281,6 +284,7 @@ func TestFederatedRelationEdgesProjectThenApplyGlobalBounds(t *testing.T) {
 }
 
 func TestFederatedGodotInteractionsPreserveAndEnforceProducer(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	workspace := testtemp.Dir(t)
 	declarationsRoot := filepath.Join(workspace, "declarations")
