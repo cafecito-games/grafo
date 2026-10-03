@@ -11,6 +11,7 @@ import (
 // A profile is reached for when a command is expensive, so the one command worth
 // proving it against is a real index rather than a stub.
 func TestIndexWritesEveryRequestedProfile(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module sample\n\ngo 1.26\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -44,6 +45,7 @@ func TestIndexWritesEveryRequestedProfile(t *testing.T) {
 // An unwritable profile path has to be refused before the command runs, because
 // the run it was asked to measure is the expensive part.
 func TestProfilingRefusesAnUnwritablePathBeforeTheCommandRuns(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	blocker := filepath.Join(testtemp.Dir(t), "blocker")
 	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
@@ -61,6 +63,7 @@ func TestProfilingRefusesAnUnwritablePathBeforeTheCommandRuns(t *testing.T) {
 // Profiling is universal, so no command may reject the options the way the
 // per-command ones are rejected.
 func TestProfilingOptionsAreAcceptedByEveryCommand(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"cpu-profile", "memory-profile", "block-profile", "mutex-profile", "trace-profile"} {
 		t.Run(name, func(t *testing.T) {
 			args, err := parseArguments([]string{"find", "Charge", "--" + name, "out"})
@@ -75,6 +78,7 @@ func TestProfilingOptionsAreAcceptedByEveryCommand(t *testing.T) {
 }
 
 func TestProfilingOptionsReadEveryPath(t *testing.T) {
+	t.Parallel()
 	args, err := parseArguments([]string{"index",
 		"--cpu-profile", "c", "--memory-profile", "m", "--block-profile", "b",
 		"--mutex-profile", "x", "--trace-profile", "t"})

@@ -13,6 +13,7 @@ import (
 // edit-distance matches, and a command that resembles nothing falls back to the
 // help text alone.
 func TestUnknownCommandSuggestsNearMatches(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		command string
@@ -82,6 +83,7 @@ func TestUnknownCommandSuggestsNearMatches(t *testing.T) {
 // that is close to everything still names only a few alternatives, in a
 // deterministic order.
 func TestUnknownCommandSuggestionsAreBounded(t *testing.T) {
+	t.Parallel()
 	suggestions := suggestCommands("find")
 	if len(suggestions) > maximumSuggestions {
 		t.Fatalf("got %d suggestions, want at most %d: %v", len(suggestions), maximumSuggestions, suggestions)
@@ -96,6 +98,7 @@ func TestUnknownCommandSuggestionsAreBounded(t *testing.T) {
 // dispatch table from drifting apart, since a command missing from the
 // vocabulary is invisible to suggestions.
 func TestCommandVocabularyMatchesDispatch(t *testing.T) {
+	t.Parallel()
 	if !slices.IsSorted(commandVocabulary) {
 		t.Fatalf("vocabulary must be sorted for deterministic suggestions: %v", commandVocabulary)
 	}

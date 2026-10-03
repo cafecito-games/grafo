@@ -165,6 +165,7 @@ func TestEmbedCacheStatusDoesNotCreateMissingCache(t *testing.T) {
 }
 
 func TestParseEmbedCacheOptions(t *testing.T) {
+	t.Parallel()
 	parsed, err := parseArguments([]string{"embed-cache", "prune", "--older-than", "24h", "--max-bytes", "1024", "--yes"})
 	if err != nil {
 		t.Fatal(err)

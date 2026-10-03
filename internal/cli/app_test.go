@@ -14,6 +14,7 @@ import (
 )
 
 func TestOpenReadUsesCapabilitySafeRepositoryAfterRefresh(t *testing.T) {
+	t.Parallel()
 	root := indexedRepository(t)
 	args, err := parseArguments([]string{"find", "Charge", "--repo", root})
 	if err != nil {
@@ -37,6 +38,7 @@ func TestOpenReadUsesCapabilitySafeRepositoryAfterRefresh(t *testing.T) {
 }
 
 func TestMCPUsesCoordinatorRootsAndNotWritableOpenRead(t *testing.T) {
+	t.Parallel()
 	single, err := parseArguments([]string{"mcp", "--repo", "/tmp/one"})
 	if err != nil {
 		t.Fatal(err)
@@ -59,6 +61,7 @@ func TestMCPUsesCoordinatorRootsAndNotWritableOpenRead(t *testing.T) {
 }
 
 func TestParseArgumentsAccumulatesRepeatablePathPrefixes(t *testing.T) {
+	t.Parallel()
 	args, err := parseArguments([]string{"events", "--path-prefix", "internal/app", "--path-prefix=cmd,web"})
 	if err != nil {
 		t.Fatal(err)
@@ -86,6 +89,7 @@ func TestParseArgumentsAccumulatesRepeatablePathPrefixes(t *testing.T) {
 }
 
 func TestRunRejectsPathPrefixForEveryUnsupportedCommandBeforeWork(t *testing.T) {
+	t.Parallel()
 	for _, arguments := range [][]string{
 		{"index", "--path-prefix", "internal"},
 		{"path", "From", "To", "--path-prefix", "internal"},
@@ -101,6 +105,7 @@ func TestRunRejectsPathPrefixForEveryUnsupportedCommandBeforeWork(t *testing.T) 
 }
 
 func TestOpenReadUsesReadOnlyGraphForReusableAlias(t *testing.T) {
+	t.Parallel()
 	root := indexedRepository(t)
 	args, err := parseArguments([]string{"find-reusable-code", "payment helper", "--repo", root})
 	if err != nil {
@@ -120,6 +125,7 @@ func TestOpenReadUsesReadOnlyGraphForReusableAlias(t *testing.T) {
 }
 
 func TestParseArgumentsAcceptsNewOptions(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		arguments []string
@@ -189,6 +195,7 @@ func TestParseArgumentsAcceptsNewOptions(t *testing.T) {
 }
 
 func TestInstallTargetsMergesPositionalsAndFlag(t *testing.T) {
+	t.Parallel()
 	args, err := parseArguments([]string{"install", "claude", "--client", "cursor"})
 	if err != nil {
 		t.Fatal(err)
@@ -240,6 +247,7 @@ func output(t *testing.T, arguments ...string) (string, string, int) {
 }
 
 func TestImpactReportsBothDirections(t *testing.T) {
+	t.Parallel()
 	root := indexedRepository(t)
 	stdout, stderr, code := output(t, "impact", "sample.Charge", "--repo", root, "--depth", "2")
 	if code != 0 {
@@ -281,6 +289,7 @@ func TestImpactReportsBothDirections(t *testing.T) {
 }
 
 func TestFailureFlowReportsTypedEscapes(t *testing.T) {
+	t.Parallel()
 	root := indexedRepository(t)
 	stdout, stderr, code := output(t, "failure-flow", "sample.Checkout", "--repo", root)
 	if code != 0 {
@@ -294,6 +303,7 @@ func TestFailureFlowReportsTypedEscapes(t *testing.T) {
 }
 
 func TestTestCoverageCommandsExposeStructuralEvidence(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	write := func(name, content string) {
 		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
@@ -322,6 +332,7 @@ func helper() { Charge() }
 }
 
 func TestSearchFindsIndexedContentOnly(t *testing.T) {
+	t.Parallel()
 	root := indexedRepository(t)
 
 	stdout, stderr, code := output(t, "search", "settles a payment", "--repo", root)
@@ -364,6 +375,7 @@ func TestSearchFindsIndexedContentOnly(t *testing.T) {
 }
 
 func TestHelpDocumentsNewCommands(t *testing.T) {
+	t.Parallel()
 	stdout, _, code := output(t, "help")
 	if code != 0 {
 		t.Fatalf("help exited with %d", code)
@@ -376,12 +388,14 @@ func TestHelpDocumentsNewCommands(t *testing.T) {
 }
 
 func TestUnknownCommandStillFails(t *testing.T) {
+	t.Parallel()
 	if code := run(t, "nope"); code != 1 {
 		t.Fatalf("unknown command should exit 1, got %d", code)
 	}
 }
 
 func TestInstallOptionsSelectArtifactKinds(t *testing.T) {
+	t.Parallel()
 	args, err := parseArguments([]string{"install", "--all", "--mcp-only", "--hooks", "--refresh"})
 	if err != nil {
 		t.Fatal(err)
@@ -406,6 +420,7 @@ func TestInstallOptionsSelectArtifactKinds(t *testing.T) {
 }
 
 func TestGuidancePrintsCanonicalTextAndIndexStatus(t *testing.T) {
+	t.Parallel()
 	root := indexedRepository(t)
 	stdout, _, code := output(t, "guidance", "--repo", root)
 	if code != 0 {
@@ -419,6 +434,7 @@ func TestGuidancePrintsCanonicalTextAndIndexStatus(t *testing.T) {
 }
 
 func TestGuidanceReportsMissingIndex(t *testing.T) {
+	t.Parallel()
 	stdout, _, code := output(t, "guidance", "--repo", testtemp.Dir(t))
 	if code != 0 {
 		t.Fatalf("guidance exited with %d", code)
@@ -429,6 +445,7 @@ func TestGuidanceReportsMissingIndex(t *testing.T) {
 }
 
 func TestGuidanceHooksAlwaysSucceed(t *testing.T) {
+	t.Parallel()
 	// Advisory hooks must fail open: even an unindexed or unknown path, and an
 	// unknown phase, exit 0 with usable context.
 	for _, phase := range []string{"pre-search", "pre-edit", "unknown-phase"} {
@@ -443,6 +460,7 @@ func TestGuidanceHooksAlwaysSucceed(t *testing.T) {
 }
 
 func TestHelpDocumentsGuidanceInstallation(t *testing.T) {
+	t.Parallel()
 	stdout, _, code := output(t, "help")
 	if code != 0 {
 		t.Fatalf("help exited with %d", code)
@@ -458,6 +476,7 @@ func TestHelpDocumentsGuidanceInstallation(t *testing.T) {
 // resolution: an ambiguous selector must fail with a non-zero status and list the
 // candidates, and --kind must make it resolvable without guessing.
 func TestShowReportsAmbiguityAndHonorsKind(t *testing.T) {
+	t.Parallel()
 	root := indexedRepository(t)
 	if err := os.WriteFile(filepath.Join(root, "request.go"),
 		[]byte("package sample\n\ntype Request struct {\n\tCharge int\n}\n"), 0o644); err != nil {
@@ -498,6 +517,7 @@ func TestShowReportsAmbiguityAndHonorsKind(t *testing.T) {
 // name extends it, and the selector must name the table rather than reporting them
 // as rivals. The column stays reachable by kind and by qualified name.
 func TestShowPrefersTableOverItsOwnColumn(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	// The statement is valid in both dialects, so name the dialect explicitly
 	// rather than letting the router report ambiguous syntax.
@@ -545,6 +565,7 @@ func TestShowPrefersTableOverItsOwnColumn(t *testing.T) {
 // can reference by name, so the selector must be ambiguous rather than silently
 // resolving to the parent.
 func TestShowReportsAmbiguousSceneNodeHierarchy(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	if err := os.MkdirAll(filepath.Join(root, "scenes"), 0o755); err != nil {
 		t.Fatal(err)

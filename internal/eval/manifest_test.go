@@ -10,6 +10,7 @@ import (
 )
 
 func TestLoadManifestRejectsUnknownFieldsBeforeIndexing(t *testing.T) {
+	t.Parallel()
 	_, err := LoadManifest("case/manifest.json", strings.NewReader(`{
   "schema_version": 2,
   "case_id": "sample",
@@ -23,6 +24,7 @@ func TestLoadManifestRejectsUnknownFieldsBeforeIndexing(t *testing.T) {
 }
 
 func TestMessageFlowSnapshotPreservesHandlersAndChannelMismatch(t *testing.T) {
+	t.Parallel()
 	resource := func(id, name string, kind graph.NodeKind) query.Resource {
 		return query.Resource{Repository: "app", ID: id, Kind: kind, QualifiedName: name}
 	}
@@ -53,6 +55,7 @@ func TestMessageFlowSnapshotPreservesHandlersAndChannelMismatch(t *testing.T) {
 }
 
 func TestLoadManifestRejectsDuplicateKeysBeforeIndexing(t *testing.T) {
+	t.Parallel()
 	_, err := LoadManifest("case/manifest.json", strings.NewReader(`{
   "schema_version": 2,
   "case_id": "first",
@@ -66,6 +69,7 @@ func TestLoadManifestRejectsDuplicateKeysBeforeIndexing(t *testing.T) {
 }
 
 func TestLoadManifestValidatesSchemaKindsAndRelations(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name, replace, want string
 	}{
@@ -102,6 +106,7 @@ func TestLoadManifestValidatesSchemaKindsAndRelations(t *testing.T) {
 }
 
 func TestValidateManifestsRejectsDuplicateCaseIDs(t *testing.T) {
+	t.Parallel()
 	manifest := Manifest{SchemaVersion: 2, CaseID: "duplicate", Repositories: []RepositorySpec{{ID: "app", Path: "repos/app"}}}
 	err := ValidateManifests([]LoadedManifest{{Path: "a/manifest.json", Manifest: manifest}, {Path: "b/manifest.json", Manifest: manifest}})
 	if err == nil || !strings.Contains(err.Error(), `duplicate case_id "duplicate"`) || !strings.Contains(err.Error(), "a/manifest.json") || !strings.Contains(err.Error(), "b/manifest.json") {
@@ -110,6 +115,7 @@ func TestValidateManifestsRejectsDuplicateCaseIDs(t *testing.T) {
 }
 
 func TestLoadManifestRejectsUnsafeAndDuplicateRepositories(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name, repositories, want string
 	}{
@@ -129,6 +135,7 @@ func TestLoadManifestRejectsUnsafeAndDuplicateRepositories(t *testing.T) {
 }
 
 func TestSnapshotsTreatNullAndEmptyCollectionsEqually(t *testing.T) {
+	t.Parallel()
 	manifest, err := LoadManifest("manifest.json", strings.NewReader(`{
   "schema_version": 2,
   "case_id": "queryless",

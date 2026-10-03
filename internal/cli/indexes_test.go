@@ -16,6 +16,7 @@ import (
 )
 
 func TestIndexesOptionsAndUsageFailBeforeRepositoryAccess(t *testing.T) {
+	t.Parallel()
 	args, err := parseArguments([]string{"indexes", "prune", "/tmp/repo", "--older-than", "24h", "--keep=3", "--dry-run", "--yes", "--json"})
 	if err != nil {
 		t.Fatal(err)
@@ -46,6 +47,7 @@ func TestIndexesOptionsAndUsageFailBeforeRepositoryAccess(t *testing.T) {
 }
 
 func TestIndexesListAndPruneTextJSONParity(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	if code := run(t, "index", root); code != 0 {
 		t.Fatalf("index exited with %d", code)

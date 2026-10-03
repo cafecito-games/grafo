@@ -36,6 +36,7 @@ func runCLI(t *testing.T, arguments ...string) (int, string) {
 }
 
 func TestParseArgumentsAcceptsServiceAndDoctorOptions(t *testing.T) {
+	t.Parallel()
 	parsed, err := parseArguments([]string{"service", "add", ".", "--interval", "10s", "--paused", "--json"})
 	if err != nil {
 		t.Fatal(err)
@@ -173,6 +174,7 @@ func TestUninstallCLIRefusesFileBackedTargetOutsideUserRoots(t *testing.T) {
 }
 
 func TestHelpDocumentsServiceAndDoctor(t *testing.T) {
+	t.Parallel()
 	_, output := runCLI(t, "help")
 	for _, want := range []string{"grafo service add", "grafo service install", "grafo doctor [--repair]"} {
 		if !strings.Contains(output, want) {

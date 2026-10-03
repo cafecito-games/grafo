@@ -25,6 +25,7 @@ import (
 )
 
 func TestRefreshReportsAreCanonicalAndFailureReturnsNoSuccessSet(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	left, right := testtemp.Dir(t), testtemp.Dir(t)
 	write(t, filepath.Join(left, "go.mod"), "module example.com/left\n\ngo 1.26\n")
@@ -80,6 +81,7 @@ func TestRefreshReportsAreCanonicalAndFailureReturnsNoSuccessSet(t *testing.T) {
 }
 
 func TestRepositoryResolvesHTTPAcrossIndexes(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	clientRoot := testtemp.Dir(t)
 	serverRoot := testtemp.Dir(t)
@@ -205,6 +207,7 @@ func Routes() { router := chi.NewRouter(); router.Get("/charge", Handler) }
 }
 
 func TestOpenReadOnlyFederatesCompatibleIndexesWithoutWriteCapabilities(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	clientRoot := testtemp.Dir(t)
 	serverRoot := testtemp.Dir(t)
@@ -255,6 +258,7 @@ func Routes() { router := chi.NewRouter(); router.Get("/charge", Handler) }
 }
 
 func TestSemanticCacheDeduplicatesEqualDocumentsAcrossRepositories(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	left, right := testtemp.Dir(t), testtemp.Dir(t)
 	for _, root := range []string{left, right} {
@@ -304,6 +308,7 @@ func TestSemanticCacheDeduplicatesEqualDocumentsAcrossRepositories(t *testing.T)
 }
 
 func TestRepositoryProjectsCrossRepositoryTestCoverage(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	testRoot := testtemp.Dir(t)
 	productionRoot := testtemp.Dir(t)
@@ -408,6 +413,7 @@ func write(t *testing.T, path, content string) {
 // attachment whose target lives in another indexed repository resolve across
 // the boundary and stay marked as federated.
 func TestRepositoryResolvesGodotCompositionAcrossIndexes(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	gameRoot := testtemp.Dir(t)
 	sharedRoot := testtemp.Dir(t)

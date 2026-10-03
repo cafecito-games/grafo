@@ -11,6 +11,7 @@ import (
 )
 
 func TestTopologyCommandsExposeEndpointsRequestsHandlersAndServices(t *testing.T) {
+	t.Parallel()
 	root := topologyFixture(t)
 	run(t, "index", root)
 
@@ -56,6 +57,7 @@ func TestTopologyCommandsExposeEndpointsRequestsHandlersAndServices(t *testing.T
 }
 
 func TestTopologyCommandsValidateFiltersAndBounds(t *testing.T) {
+	t.Parallel()
 	root := topologyFixture(t)
 	run(t, "index", root)
 	if code, _, stderr := execute(t, "service-topology", "--repo", root, "--direction", "sideways"); code == 0 {
@@ -79,6 +81,7 @@ func TestTopologyCommandsValidateFiltersAndBounds(t *testing.T) {
 }
 
 func TestServiceTopologyCommandFiltersByIndexedComponent(t *testing.T) {
+	t.Parallel()
 	root := componentTopologyFixture(t)
 	run(t, "index", root)
 
@@ -105,6 +108,7 @@ func TestServiceTopologyCommandFiltersByIndexedComponent(t *testing.T) {
 }
 
 func TestTopologyRefusesAMixedFreshnessFederation(t *testing.T) {
+	t.Parallel()
 	indexed := topologyFixture(t)
 	run(t, "index", indexed)
 	unindexed := topologyFixture(t)

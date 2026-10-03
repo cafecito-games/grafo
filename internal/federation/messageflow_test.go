@@ -13,6 +13,7 @@ import (
 )
 
 func TestMessageFlowRetainsFederatedRepositoryAndComponentEvidence(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	workspace := testtemp.Dir(t)
 	schemaRoot, clientRoot, gammaRoot := filepath.Join(workspace, "schema"), filepath.Join(workspace, "client"), filepath.Join(workspace, "gamma")

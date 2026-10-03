@@ -36,6 +36,22 @@ type caseResult struct {
 	snapshot Snapshot
 }
 
+// LoadCorpus validates every manifest in a corpus root and returns the cases it
+// holds. A case owns its own temporary workspace and database, so a caller may
+// verify the cases concurrently; RunCorpus is the sequential form that can also
+// rewrite expectations.
+func LoadCorpus(root string) ([]LoadedManifest, error) { return loadCorpus(root) }
+
+// VerifyCase runs one loaded case through initial, unchanged-incremental, and
+// fresh-database evaluation and compares the result with the expectations its
+// manifest records.
+func VerifyCase(ctx context.Context, loaded LoadedManifest) error {
+	if _, err := runCase(ctx, loaded, false); err != nil {
+		return fmt.Errorf("case %s: %w", loaded.Manifest.CaseID, err)
+	}
+	return nil
+}
+
 // RunCorpus validates every manifest before indexing, then runs every case
 // through initial, unchanged-incremental, and fresh-database evaluation.
 func RunCorpus(ctx context.Context, root string, update bool) error {

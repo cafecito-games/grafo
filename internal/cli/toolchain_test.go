@@ -11,6 +11,7 @@ import (
 // subcommand, reports the full command name in that subcommand's own usage, and
 // refuses a missing or unknown subcommand without touching an index.
 func TestToolchainCommandRouting(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		arguments []string
@@ -58,6 +59,7 @@ func TestToolchainCommandRouting(t *testing.T) {
 // TestToolchainNamespacesAreConsistent keeps the usage order and the handler
 // table from drifting apart, since usage is rendered from the order alone.
 func TestToolchainNamespacesAreConsistent(t *testing.T) {
+	t.Parallel()
 	for command, namespace := range toolchainNamespaces {
 		if namespace.name != command {
 			t.Errorf("namespace %q is registered under %q", namespace.name, command)

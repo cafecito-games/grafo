@@ -15,6 +15,7 @@ import (
 // so they run only when the invocation asked for them, and a suppressed summary
 // is reported as uncollected rather than as zero totals.
 func TestIndexCollectsFullGraphCountsOnlyWhenRequested(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	write := func(name, content string) {
 		t.Helper()
@@ -65,6 +66,7 @@ func TestIndexCollectsFullGraphCountsOnlyWhenRequested(t *testing.T) {
 // TestIndexHumanReportDistinguishesSuppressedCounts keeps the text report from
 // printing fabricated zero totals when counts were not collected.
 func TestIndexHumanReportDistinguishesSuppressedCounts(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module sample\n\ngo 1.26\n"), 0o644); err != nil {
 		t.Fatal(err)

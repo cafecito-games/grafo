@@ -12,6 +12,7 @@ import (
 )
 
 func TestMessageFlowCommandsShareStructuredCoverageSemantics(t *testing.T) {
+	t.Parallel()
 	root := copyMessageFlowFixture(t)
 	run(t, "index", root)
 

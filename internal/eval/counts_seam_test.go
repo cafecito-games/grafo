@@ -56,6 +56,11 @@ func fixtureProject(t *testing.T) indexer.Project {
 	return project
 }
 
+// Neither test below calls t.Parallel: both reach indexOnce, which resolves the
+// package-level openIndexRepository that withIndexRepositoryWrapper replaces, so
+// running them concurrently would let one test's wrapper decide the other's
+// storage.
+
 // TestIndexOnceRejectsUnverifiableUnchangedRefresh pins the guard that the
 // unchanged-refresh comparison reads indexed file totals, so a summary the run
 // could not collect is reported rather than compared against zero.
