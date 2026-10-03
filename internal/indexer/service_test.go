@@ -3000,3 +3000,120 @@ func copyTree(t *testing.T, from, to string) error {
 		return os.WriteFile(target, content, 0o644)
 	})
 }
+
+// TestServiceAnswersGDScriptClassRootsThroughMembersAndConstruction is the
+// regression for issue #213: a class root used to report no upstream callers
+// and no structural tests even though the index held exact member edges, and a
+// ClassName.new(...) callsite resolved to nothing a type-level question could
+// recover. The fixture carries all three construction shapes the report named -
+// a coordinator, a test fixture, and a test - plus a test calling one member.
+func TestServiceAnswersGDScriptClassRootsThroughMembersAndConstruction(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	root := testtemp.Dir(t)
+	runGit(t, root, "init", "-b", "main")
+	write(t, filepath.Join(root, "grafo.yaml"), "tests:\n  gdscript_bases: [SpecBase]\n")
+	write(t, filepath.Join(root, "trade_module.gd"), `class_name TradeModule
+extends Node
+
+func _init(container) -> void:
+	pass
+
+func install(registry) -> void:
+	registry.add(self)
+`)
+	write(t, filepath.Join(root, "in_game_session_coordinator.gd"), `class_name InGameSessionCoordinator
+extends Node
+
+func _build_container_runtime(container) -> void:
+	var module: TradeModule = TradeModule.new(container)
+	module.install(container)
+`)
+	write(t, filepath.Join(root, "trade_test_fixture.gd"), `class_name TradeTestFixture
+extends RefCounted
+
+func build_module() -> TradeModule:
+	return TradeModule.new(null)
+`)
+	write(t, filepath.Join(root, "trade_module_test.gd"), `class_name TradeModuleTest
+extends SpecBase
+
+func test_installs_into_registry() -> void:
+	var module: TradeModule = TradeModule.new(null)
+	module.install(null)
+`)
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(gdscriptparser.New(), configparser.New()))
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	queries := query.NewService(repository)
+
+	report, err := queries.Impact(ctx, "TradeModule", query.ImpactOptions{Kind: graph.KindClass})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Members == nil || report.Members.Truncated {
+		t.Fatalf("class root reported no member aggregation: %#v", report.Members)
+	}
+	if names := memberNames(report.Members.Members); !slices.Equal(names, []string{"TradeModule._init", "TradeModule.install"}) {
+		t.Fatalf("aggregated members = %#v", names)
+	}
+	upstream := reachedDepths(report.Upstream)
+	for name, depth := range map[string]int{
+		"TradeModule.install": 1,
+		// Every construction site reaches the class itself, so a coordinator, a
+		// fixture, and a test all answer "who builds this type?".
+		"InGameSessionCoordinator._build_container_runtime": 1,
+		"TradeTestFixture.build_module":                     1,
+		"TradeModuleTest.test_installs_into_registry":       1,
+	} {
+		if upstream[name] != depth {
+			t.Fatalf("upstream reached %s at depth %d, want %d: %#v", name, upstream[name], depth, upstream)
+		}
+	}
+	if report.Upstream.Truncated || len(report.Upstream.Nodes) < 5 {
+		t.Fatalf("upstream section = %#v", report.Upstream)
+	}
+
+	tests, err := queries.FindTests(ctx, "TradeModule", query.TestCoverageOptions{Kind: graph.KindClass})
+	if err != nil {
+		t.Fatal(err)
+	}
+	covered := map[string]bool{}
+	for _, match := range tests.Matches {
+		if match.Test.QualifiedName != "TradeModuleTest.test_installs_into_registry" || !match.Direct {
+			t.Fatalf("unexpected structural match: %#v", match)
+		}
+		covered[match.Target.QualifiedName] = true
+	}
+	if !covered["TradeModule"] || !covered["TradeModule.install"] {
+		t.Fatalf("class root omitted construction or member test evidence: %#v", tests)
+	}
+}
+
+func memberNames(nodes []graph.Node) []string {
+	names := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		names = append(names, node.QualifiedName)
+	}
+	return names
+}
+
+func reachedDepths(section query.ImpactSection) map[string]int {
+	depths := map[string]int{}
+	for _, reached := range section.Nodes {
+		depths[reached.Node.QualifiedName] = reached.Depth
+	}
+	return depths
+}

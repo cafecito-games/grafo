@@ -325,6 +325,14 @@ func (s *Service) Neighborhood(ctx context.Context, selector string, kind graph.
 	if err != nil {
 		return Traversal{}, err
 	}
+	return s.neighborhood(ctx, root, nil, depth, direction, relations, limit)
+}
+
+// neighborhood walks from an already resolved root. seeds are additional
+// starting points recorded at depth 1 together with the edge that proves they
+// belong to the root, which lets a type-level report reach the evidence its
+// members carry without widening the traversed relation vocabulary.
+func (s *Service) neighborhood(ctx context.Context, root graph.Node, seeds []declaredMember, depth int, direction Direction, relations []graph.EdgeKind, limit int) (Traversal, error) {
 	if depth < 1 {
 		depth = 1
 	}
@@ -345,8 +353,29 @@ func (s *Service) Neighborhood(ctx context.Context, selector string, kind graph.
 	visited := map[string]bool{root.ID: true}
 	frontier := []string{root.ID}
 	edgeSeen := map[string]bool{}
-	for level := 1; level <= depth && len(frontier) > 0; level++ {
-		var next []string
+	// Seeds join the frontier the root's own neighbors join, so a member and a
+	// direct neighbor of the root are both one hop away and everything reached
+	// through either is counted from the root.
+	var seeded []string
+	for _, seed := range seeds {
+		if visited[seed.node.ID] {
+			continue
+		}
+		if len(visited) >= limit {
+			result.Truncated = true
+			break
+		}
+		visited[seed.node.ID] = true
+		result.Nodes = append(result.Nodes, ReachedNode{Depth: 1, Node: seed.node})
+		if !edgeSeen[seed.edge.ID] {
+			result.Edges = append(result.Edges, seed.edge)
+			edgeSeen[seed.edge.ID] = true
+		}
+		seeded = append(seeded, seed.node.ID)
+	}
+	for level := 1; level <= depth && (len(frontier) > 0 || len(seeded) > 0); level++ {
+		next := seeded
+		seeded = nil
 		for _, id := range frontier {
 			edges, err := s.edges(ctx, id, direction, relationSet)
 			if err != nil {

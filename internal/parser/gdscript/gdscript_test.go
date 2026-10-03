@@ -2326,3 +2326,51 @@ func keys() -> Dictionary:
 		}
 	}
 }
+
+// TestParserRecordsClassConstructionFromNew proves ClassName.new(...) is
+// recorded against the class it constructs, so a construction site is
+// reachable from the type, and that a receiver bound to a value in scope keeps
+// producing an ordinary call instead of a guessed construction edge.
+func TestParserRecordsClassConstructionFromNew(t *testing.T) {
+	content := []byte(`class_name InGameSessionCoordinator
+extends Node
+
+var _modules: Array = []
+
+func _build_container_runtime(factory, typed: TradeModule) -> void:
+	_modules.append(TradeModule.new(self))
+	_modules.append(typed.new())
+	_modules.append(factory.new())
+	_modules.append(loader.new())
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "session/in_game_session_coordinator.gd", Content: content, RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	construction := 0
+	for _, fact := range result.Facts {
+		if fact.Kind != graph.EdgeCalls || fact.Properties["form"] != "construction" {
+			continue
+		}
+		construction++
+		if fact.Target != "TradeModule" || fact.TargetKind != graph.KindClass ||
+			fact.Properties["constructor"] != "new" || fact.Location.Line == 0 {
+			t.Fatalf("construction fact lost its evidence: %#v", fact)
+		}
+	}
+	// The bare class name and the parameter declared as that class are both
+	// proof of construction; the untyped local and the unbound lowercase
+	// receiver are not.
+	if construction != 2 {
+		t.Fatalf("construction facts = %d, want 2", construction)
+	}
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "factory.new")
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "loader.new")
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeCalls && fact.Target == "TradeModule.new" {
+			t.Fatalf("construction still spelled as a call to a new member: %#v", fact)
+		}
+	}
+}

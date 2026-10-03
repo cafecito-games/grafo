@@ -1153,6 +1153,28 @@
         "relation": "calls",
         "to": {
           "repo": "bindings",
+          "kind": "class",
+          "qualified_name": "AcmeV1EnvelopeEnvelope"
+        },
+        "source": {
+          "path": "client.gd",
+          "line": 13,
+          "column": 16
+        },
+        "properties": {
+          "constructor": "new",
+          "form": "construction"
+        }
+      },
+      {
+        "from": {
+          "repo": "bindings",
+          "kind": "method",
+          "qualified_name": "Client.make_envelope"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "bindings",
           "kind": "method",
           "qualified_name": "AcmeV1EnvelopeEnvelope.from_bytes"
         },
@@ -1196,24 +1218,6 @@
           "path": "client.gd",
           "line": 15,
           "column": 5
-        }
-      },
-      {
-        "from": {
-          "repo": "bindings",
-          "kind": "method",
-          "qualified_name": "Client.make_envelope"
-        },
-        "relation": "calls",
-        "to": {
-          "repo": "bindings",
-          "kind": "method",
-          "qualified_name": "AcmeV1EnvelopeEnvelope.new"
-        },
-        "source": {
-          "path": "client.gd",
-          "line": 13,
-          "column": 16
         }
       },
       {

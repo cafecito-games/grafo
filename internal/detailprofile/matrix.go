@@ -406,8 +406,8 @@ func operationEvidence() []Operation {
 		{"neighbors", []Capability{CapabilityStructural}, "internal/query/service.go", 323},
 		{"callers", []Capability{CapabilityStructural}, "internal/query/service.go", 323},
 		{"callees", []Capability{CapabilityStructural}, "internal/query/service.go", 323},
-		{"path", []Capability{CapabilityStructural}, "internal/query/service.go", 398},
-		{"impact", []Capability{CapabilityImpactDataflow}, "internal/query/impact.go", 193},
+		{"path", []Capability{CapabilityStructural}, "internal/query/service.go", 427},
+		{"impact", []Capability{CapabilityImpactDataflow}, "internal/query/impact.go", 198},
 		{"failure-flow", []Capability{CapabilityFailureFlow}, "internal/query/failureflow.go", 57},
 		{"godot-composition", []Capability{CapabilityGodotComposition}, "internal/query/godot.go", 69},
 		{"godot-interactions", []Capability{CapabilityGodotInteraction}, "internal/query/godotinteractions.go", 130},
@@ -423,8 +423,8 @@ func operationEvidence() []Operation {
 		{"service-topology", []Capability{CapabilityCatalogTopology}, "internal/query/topology.go", 1262},
 		{"message-flow", []Capability{CapabilityMessageFieldFlow, CapabilityTransportFlow}, "internal/query/messageflow.go", 155},
 		{"message-coverage", []Capability{CapabilityMessageFieldFlow, CapabilityTransportFlow}, "internal/query/messageflow.go", 358},
-		{"find-tests", []Capability{CapabilityTestCoverage}, "internal/query/testcoverage.go", 87},
-		{"test-coverage", []Capability{CapabilityTestCoverage}, "internal/query/testcoverage.go", 74},
+		{"find-tests", []Capability{CapabilityTestCoverage}, "internal/query/testcoverage.go", 92},
+		{"test-coverage", []Capability{CapabilityTestCoverage}, "internal/query/testcoverage.go", 79},
 		{"semantic-reuse", []Capability{CapabilitySemanticReuse}, "internal/semantic/search.go", 156},
 	}
 	result := make([]Operation, 0, len(values))

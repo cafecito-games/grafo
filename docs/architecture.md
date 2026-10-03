@@ -299,6 +299,21 @@ derived from the edges already traversed. No new node or edge vocabulary is
 introduced, and an unresolved or external target is never reported as a
 confirmed dependency.
 
+A class, type, or interface root is answered through the members it declares.
+The callers and dependencies that answer "what breaks if I change this type?"
+reach its methods rather than its declaration, so the traversal seeds those
+members one hop from the root together with the `declares` edge that proves each
+membership. `declares` stays out of the traversed relation set, so the expansion
+cannot widen into every sibling of the root; the member list is bounded by the
+wider of the two section limits and reports its own truncation separately, so an
+incomplete member list is never hidden behind a complete traversal. Depth is
+counted from the root, so a member sits at depth 1 and its own callers at depth
+2; a seeded section reports `declares` in its own relation vocabulary, because
+that vocabulary names the edge kinds the section reports rather than only those
+the walk expanded. The same expansion answers structural test queries, where
+each aggregated match names the member it covers and keeps the depth and direct
+designation the member query returns.
+
 Impacted files are keyed by repository identity plus canonical relative path and
 retain every node and edge that caused inclusion, so a diagram or summary is
 never the only evidence. Optional source excerpts arrive through a narrow
