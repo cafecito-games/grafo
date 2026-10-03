@@ -134,15 +134,24 @@ type BoundaryHook func(Boundary) error
 // several goroutines and can exceed TotalNS when more than one parse worker is
 // active; TotalNS alone is wall clock.
 type PhaseDurations struct {
-	GitProbeNS       int64 `json:"git_probe_ns"`
-	MembershipNS     int64 `json:"membership_ns"`
-	ChangeProbeNS    int64 `json:"change_probe_ns"`
-	DiscoveryNS      int64 `json:"discovery_ns"`
-	ReadHashNS       int64 `json:"read_hash_ns"`
-	ParseNS          int64 `json:"parse_ns"`
-	PersistenceNS    int64 `json:"persistence_ns"`
-	ReconciliationNS int64 `json:"reconciliation_ns"`
-	TotalNS          int64 `json:"total_ns"`
+	GitProbeNS    int64 `json:"git_probe_ns"`
+	MembershipNS  int64 `json:"membership_ns"`
+	ChangeProbeNS int64 `json:"change_probe_ns"`
+	DiscoveryNS   int64 `json:"discovery_ns"`
+	ReadHashNS    int64 `json:"read_hash_ns"`
+	ParseNS       int64 `json:"parse_ns"`
+	// SemanticNS is the time a language's semantic loader spent on
+	// whole-workspace loads, and SemanticDerivationNS the part of that spent
+	// deriving views rather than waiting on the language toolchain. Both are a
+	// subset of ParseNS: one invalidated package forces a whole-workspace load,
+	// and it happens inside the Parse call for whichever file reached the
+	// loader first. Reporting them is what makes the fixed cost of an edit
+	// separable from the per-file parse cost it is bundled with.
+	SemanticNS           int64 `json:"semantic_ns"`
+	SemanticDerivationNS int64 `json:"semantic_derivation_ns"`
+	PersistenceNS        int64 `json:"persistence_ns"`
+	ReconciliationNS     int64 `json:"reconciliation_ns"`
+	TotalNS              int64 `json:"total_ns"`
 }
 
 type Report struct {
@@ -154,20 +163,23 @@ type Report struct {
 	// ScopedOut counts supported candidate paths rejected by configuration.
 	// Scope is intentionally evaluated before stat/symlink/read work, so a
 	// rejected candidate is classified here rather than as an unsafe/read skip.
-	ScopedOut                    int                `json:"scoped_out"`
-	Checked                      int                `json:"content_checked"`
-	Diagnostics                  []graph.Diagnostic `json:"diagnostics,omitempty"`
-	Counts                       graph.Counts       `json:"-"`
-	CountsCollected              bool               `json:"counts_collected"`
-	Phases                       PhaseDurations     `json:"phases"`
-	Writes                       graph.WriteStats   `json:"writes"`
-	ReconciliationBatches        int                `json:"reconciliation_batches"`
-	ReconciliationPendingAtStart bool               `json:"reconciliation_pending_at_start"`
-	GitCommands                  int                `json:"git_commands"`
-	ElapsedMS                    int64              `json:"elapsed_ms"`
-	ReconcileMS                  int64              `json:"reconciliation_ms"`
-	Rebuild                      string             `json:"rebuild_reason,omitempty"`
-	Seed                         *SeedProvenance    `json:"seed,omitempty"`
+	ScopedOut       int                `json:"scoped_out"`
+	Checked         int                `json:"content_checked"`
+	Diagnostics     []graph.Diagnostic `json:"diagnostics,omitempty"`
+	Counts          graph.Counts       `json:"-"`
+	CountsCollected bool               `json:"counts_collected"`
+	Phases          PhaseDurations     `json:"phases"`
+	// Semantic reports each language's semantic loader counters, keyed by
+	// language. A language whose parser keeps none is absent rather than zero.
+	Semantic                     map[string]parserapi.SemanticLoadMetrics `json:"semantic,omitempty"`
+	Writes                       graph.WriteStats                         `json:"writes"`
+	ReconciliationBatches        int                                      `json:"reconciliation_batches"`
+	ReconciliationPendingAtStart bool                                     `json:"reconciliation_pending_at_start"`
+	GitCommands                  int                                      `json:"git_commands"`
+	ElapsedMS                    int64                                    `json:"elapsed_ms"`
+	ReconcileMS                  int64                                    `json:"reconciliation_ms"`
+	Rebuild                      string                                   `json:"rebuild_reason,omitempty"`
+	Seed                         *SeedProvenance                          `json:"seed,omitempty"`
 }
 
 func (r Report) MarshalJSON() ([]byte, error) {
@@ -191,13 +203,39 @@ func NewService(repository graph.IndexRepository, parsers *parserapi.Registry) *
 	return &Service{repository: repository, parsers: parsers}
 }
 
+// semanticSince reduces lifetime loader counters to the work one run performed.
+// A language absent from the baseline is reported whole: its parser kept no
+// counters when the run started, so everything it counted since belongs to it.
+func semanticSince(current, baseline map[string]parserapi.SemanticLoadMetrics) map[string]parserapi.SemanticLoadMetrics {
+	if current == nil {
+		return nil
+	}
+	delta := make(map[string]parserapi.SemanticLoadMetrics, len(current))
+	for language, metrics := range current {
+		delta[language] = metrics.Since(baseline[language])
+	}
+	return delta
+}
+
 func (s *Service) Run(ctx context.Context, project Project, options Options) (report Report, runErr error) {
 	started := time.Now()
 	report = Report{Project: project, Updated: []string{}, Removed: []string{}, Seed: options.Seed}
 	writeStart := writeStats(s.repository)
+	// A parser registry outlives one run — federation indexes every member
+	// through one registry, and the MCP freshness coordinator keeps one for the
+	// session — so the loader's counters are lifetime totals and this run's
+	// share is the difference.
+	semanticStart := s.parsers.SemanticLoadMetrics()
 	progress := newProgressEmitter(project, options.ProgressObserver, started)
 	defer func() {
 		report.Writes = writeStatsDelta(writeStats(s.repository), writeStart)
+		// Collected in the deferred block so a failed or cancelled run still
+		// reports the semantic work it had already paid for.
+		report.Semantic = semanticSince(s.parsers.SemanticLoadMetrics(), semanticStart)
+		for _, metrics := range report.Semantic {
+			report.Phases.SemanticNS += metrics.LoadNS
+			report.Phases.SemanticDerivationNS += metrics.DerivationNS
+		}
 		report.Phases.TotalNS = time.Since(started).Nanoseconds()
 		report.ElapsedMS = time.Since(started).Milliseconds()
 		progress.rebuild = report.Rebuild

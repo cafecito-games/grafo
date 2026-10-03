@@ -57,6 +57,66 @@ type ScopeKeyer interface {
 	ScopeKey(context.Context, Input) (string, error)
 }
 
+// SemanticLoadMetrics reports a semantic loader's own counters for one process.
+// They exist so a refresh can be attributed without a bespoke build: the
+// whole-workspace load and the per-package view derivation both happen inside a
+// single Parse call, so without these they are indistinguishable from per-file
+// parse time.
+//
+// The counters are reporting-only. Nothing may branch on them, and a loader
+// that does not keep them reports zeroes rather than failing a run.
+type SemanticLoadMetrics struct {
+	// Loads counts whole-workspace loads, CacheHits the views served from the
+	// in-process cache without one.
+	Loads     int64 `json:"loads"`
+	CacheHits int64 `json:"cache_hits"`
+	// PersistedHits counts workspace entries adopted from the cross-process
+	// view cache, and PersistedSaves the entries written to it.
+	PersistedHits  int64 `json:"persisted_hits"`
+	PersistedSaves int64 `json:"persisted_saves"`
+	// PersistedDecodes counts the package segments decoded from an adopted
+	// entry, and PersistedSegmentWrites the segments re-encoded by a save.
+	PersistedDecodes       int64 `json:"persisted_decodes"`
+	PersistedSegmentWrites int64 `json:"persisted_segment_writes"`
+	// PeakConcurrent and LastDurationMS are observations rather than totals:
+	// the highest concurrency seen and the duration of the most recent load.
+	// Since leaves them as observed, so in a per-run report they describe the
+	// loader's whole lifetime.
+	PeakConcurrent int64 `json:"peak_concurrent"`
+	LastDurationMS int64 `json:"last_duration_ms"`
+	// LoadNS is the time spent in whole-workspace loads and DerivationNS the
+	// part of it spent deriving views from what was loaded. DerivationNS is a
+	// subset of LoadNS.
+	LoadNS       int64 `json:"load_ns"`
+	DerivationNS int64 `json:"derivation_ns"`
+}
+
+// Since returns the work counted after baseline. A loader lives as long as its
+// parser, and a parser registry is reused across runs by federation and by the
+// MCP freshness coordinator, so the counters are lifetime totals and a per-run
+// report has to subtract. Only the cumulative fields subtract; the two
+// observations above are carried as they stand.
+func (m SemanticLoadMetrics) Since(baseline SemanticLoadMetrics) SemanticLoadMetrics {
+	return SemanticLoadMetrics{
+		Loads:                  m.Loads - baseline.Loads,
+		CacheHits:              m.CacheHits - baseline.CacheHits,
+		PersistedHits:          m.PersistedHits - baseline.PersistedHits,
+		PersistedSaves:         m.PersistedSaves - baseline.PersistedSaves,
+		PersistedDecodes:       m.PersistedDecodes - baseline.PersistedDecodes,
+		PersistedSegmentWrites: m.PersistedSegmentWrites - baseline.PersistedSegmentWrites,
+		PeakConcurrent:         m.PeakConcurrent,
+		LastDurationMS:         m.LastDurationMS,
+		LoadNS:                 m.LoadNS - baseline.LoadNS,
+		DerivationNS:           m.DerivationNS - baseline.DerivationNS,
+	}
+}
+
+// SemanticLoadMetricsReporter is a parser that keeps the counters above. The
+// indexer reports what it finds here and never recounts.
+type SemanticLoadMetricsReporter interface {
+	SemanticLoadMetrics() SemanticLoadMetrics
+}
+
 // WorkspaceSemanticKeyer marks a semantic key that is shared by every source
 // file in one indexing run, allowing the indexer to compute it once.
 type WorkspaceSemanticKeyer interface {
@@ -105,6 +165,25 @@ func (r *Registry) For(path string) (Parser, bool) {
 		}
 	}
 	return nil, false
+}
+
+// SemanticLoadMetrics collects each parser's loader counters, keyed by
+// language. A parser that keeps no counters is absent from the map; a parser
+// that keeps them but did no work this run reports zeroes, so "this language has
+// no semantic loader" stays distinguishable from "its loader did nothing".
+func (r *Registry) SemanticLoadMetrics() map[string]SemanticLoadMetrics {
+	var collected map[string]SemanticLoadMetrics
+	for _, languageParser := range r.parsers {
+		reporter, ok := languageParser.(SemanticLoadMetricsReporter)
+		if !ok {
+			continue
+		}
+		if collected == nil {
+			collected = map[string]SemanticLoadMetrics{}
+		}
+		collected[languageParser.Language()] = reporter.SemanticLoadMetrics()
+	}
+	return collected
 }
 
 func (r *Registry) Languages() []string {

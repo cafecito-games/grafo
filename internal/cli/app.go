@@ -2633,6 +2633,12 @@ func (a *App) printInterruptedIndexReport(report indexer.Report, asJSON bool) {
 	a.printf("read+hash %s · parse %s · persistence %s · reconciliation %s\n",
 		formatPhaseDuration(phases.ReadHashNS), formatPhaseDuration(phases.ParseNS),
 		formatPhaseDuration(phases.PersistenceNS), formatPhaseDuration(phases.ReconciliationNS))
+	if phases.SemanticNS > 0 {
+		// Printed as a share of parse rather than beside it, because it is part
+		// of the parse figure above and not an additional phase.
+		a.printf("  of which semantic load %s · view derivation %s\n",
+			formatPhaseDuration(phases.SemanticNS), formatPhaseDuration(phases.SemanticDerivationNS))
+	}
 	a.printf("%d updated · %d unchanged · %d removed · %d file contents checked\n",
 		len(report.Updated), report.Unchanged, len(report.Removed), report.Checked)
 }
