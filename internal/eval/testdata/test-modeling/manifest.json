@@ -86,6 +86,11 @@
       {
         "repo": "model",
         "kind": "method",
+        "qualified_name": "PlayerSpec._make_player"
+      },
+      {
+        "repo": "model",
+        "kind": "method",
         "qualified_name": "PlayerSpec.assert_damage"
       },
       {
@@ -142,12 +147,22 @@
       {
         "repo": "model",
         "kind": "test",
+        "qualified_name": "PlayerSpec.test_through_inferred_receiver"
+      },
+      {
+        "repo": "model",
+        "kind": "test",
         "qualified_name": "example.com/testmodel.TestDirect"
       },
       {
         "repo": "model",
         "kind": "test",
         "qualified_name": "example.com/testmodel.TestProduce"
+      },
+      {
+        "repo": "model",
+        "kind": "variable",
+        "qualified_name": "PlayerSpec.test_through_inferred_receiver.player@14"
       }
     ],
     "edges": [
@@ -185,6 +200,24 @@
         "source": {
           "path": "player.gd",
           "line": 2,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "class",
+          "qualified_name": "PlayerSpec"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "method",
+          "qualified_name": "PlayerSpec._make_player"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 17,
           "column": 1
         }
       },
@@ -239,6 +272,24 @@
         "source": {
           "path": "player_spec.gd",
           "line": 7,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "class",
+          "qualified_name": "PlayerSpec"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "PlayerSpec.test_through_inferred_receiver"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 13,
           "column": 1
         }
       },
@@ -496,6 +547,28 @@
         "from": {
           "repo": "model",
           "kind": "method",
+          "qualified_name": "PlayerSpec._make_player"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "model",
+          "kind": "class",
+          "qualified_name": "Player"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 18,
+          "column": 9
+        },
+        "properties": {
+          "constructor": "new",
+          "form": "construction"
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "method",
           "qualified_name": "PlayerSpec.assert_damage"
         },
         "relation": "calls",
@@ -713,6 +786,83 @@
         "properties": {
           "coverage": "structural",
           "evidence_edge_id": "e:f01de1c57a5c741ca559",
+          "evidence_relation": "calls"
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "PlayerSpec.test_through_inferred_receiver"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "model",
+          "kind": "method",
+          "qualified_name": "Player.damage"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 15,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "PlayerSpec.test_through_inferred_receiver"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "model",
+          "kind": "method",
+          "qualified_name": "PlayerSpec._make_player"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 14,
+          "column": 16
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "PlayerSpec.test_through_inferred_receiver"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "model",
+          "kind": "variable",
+          "qualified_name": "PlayerSpec.test_through_inferred_receiver.player@14"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 14,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "model",
+          "kind": "test",
+          "qualified_name": "PlayerSpec.test_through_inferred_receiver"
+        },
+        "relation": "tests",
+        "to": {
+          "repo": "model",
+          "kind": "method",
+          "qualified_name": "Player.damage"
+        },
+        "source": {
+          "path": "player_spec.gd",
+          "line": 15,
+          "column": 2
+        },
+        "properties": {
+          "coverage": "structural",
+          "evidence_edge_id": "e:7151637e0d5c0b861159",
           "evidence_relation": "calls"
         }
       },
@@ -1093,6 +1243,35 @@
                   "repo": "model",
                   "kind": "test",
                   "qualified_name": "PlayerSpec.test_direct"
+                },
+                {
+                  "repo": "model",
+                  "kind": "method",
+                  "qualified_name": "Player.damage"
+                }
+              ],
+              "relations": [
+                "tests"
+              ]
+            },
+            {
+              "test": {
+                "repo": "model",
+                "kind": "test",
+                "qualified_name": "PlayerSpec.test_through_inferred_receiver"
+              },
+              "target": {
+                "repo": "model",
+                "kind": "method",
+                "qualified_name": "Player.damage"
+              },
+              "direct": true,
+              "depth": 1,
+              "path": [
+                {
+                  "repo": "model",
+                  "kind": "test",
+                  "qualified_name": "PlayerSpec.test_through_inferred_receiver"
                 },
                 {
                   "repo": "model",

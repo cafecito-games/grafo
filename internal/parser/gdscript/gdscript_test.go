@@ -2600,6 +2600,131 @@ func on_finished(_value: int) -> void:
 	}
 }
 
+func TestParserResolvesCallsThroughADeclaredReturnTypeAndRefusesWithoutOne(t *testing.T) {
+	content := []byte(`extends GutTest
+
+class Fixture:
+	func reset() -> void:
+		pass
+
+func _make() -> Coordinator:
+	return Coordinator.new()
+
+func _make_fixture() -> Fixture:
+	return Fixture.new()
+
+func _make_untyped():
+	return Coordinator.new()
+
+func test_inferred_local() -> void:
+	var made := _make()
+	made.handle()
+
+func test_inferred_through_self() -> void:
+	var made := self._make()
+	made.handle()
+
+func test_inferred_inner_class() -> void:
+	var fixture := _make_fixture()
+	fixture.reset()
+
+func test_unannotated_return_resolves_nothing() -> void:
+	var made := _make_untyped()
+	made.handle()
+
+func test_shadowed_name_resolves_nothing() -> void:
+	var _make := func(): return Coordinator.new()
+	var made := _make.call()
+	made.handle()
+`)
+	overriding := []byte(`extends GutTest
+
+class Base:
+	func build() -> Coordinator:
+		return Coordinator.new()
+
+class Derived extends Base:
+	func build() -> Lane:
+		return Lane.new()
+
+	func use() -> void:
+		var made := build()
+		made.handle()
+
+static func make_static() -> Coordinator:
+	return Coordinator.new()
+
+func test_static_receiver() -> void:
+	var made := make_static()
+	made.handle()
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "tests/coordinator_test.gd", Content: content, Repository: "sample", RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets := map[string]bool{}
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeCalls {
+			targets[fact.Target] = true
+		}
+	}
+	for _, want := range []string{"Coordinator.handle", "tests/coordinator_test.Fixture.reset"} {
+		if !targets[want] {
+			t.Errorf("missing resolved call to %s; calls = %v", want, sortedKeys(targets))
+		}
+	}
+	for _, refused := range []string{"made.handle"} {
+		if !targets[refused] {
+			t.Errorf("expected the unresolved receiver %s to stay unresolved; calls = %v",
+				refused, sortedKeys(targets))
+		}
+	}
+
+	// A subclass that overrides a method with a different return type resolves
+	// through its own declaration, and a static method resolves like any other
+	// method the file declares.
+	overrideTargets := gdCallTargets(t, "tests/override_test.gd", overriding)
+	// The whole set is pinned, not just the two expected members, so a future
+	// change that walked the local inheritance chain and resolved Derived.use
+	// through Base as well would be caught rather than hidden by the static
+	// path's own Coordinator.handle.
+	wantOverride := []string{
+		"Coordinator", "Coordinator.handle", "Lane", "Lane.handle",
+		"tests/override_test.Derived.build", "tests/override_test.make_static",
+	}
+	if got := sortedKeys(overrideTargets); !slices.Equal(got, wantOverride) {
+		t.Errorf("override and static calls = %v, want %v", got, wantOverride)
+	}
+}
+
+func gdCallTargets(t *testing.T, path string, content []byte) map[string]bool {
+	t.Helper()
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: path, Content: content, Repository: "sample", RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets := map[string]bool{}
+	for _, fact := range result.Facts {
+		if fact.Kind == graph.EdgeCalls {
+			targets[fact.Target] = true
+		}
+	}
+	return targets
+}
+
+func sortedKeys(values map[string]bool) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func TestDeclarationExtentsEndOnTheirOwnLastLine(t *testing.T) {
 	content := []byte(`extends Node
 
