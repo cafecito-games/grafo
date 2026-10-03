@@ -239,7 +239,16 @@ func (stage *fileStage) prepare(ctx context.Context, path string) fileOutcome {
 	// The digest is computed on the worker rather than on the writer: it is the
 	// one piece of per-file work the elision decision needs, and the writer is
 	// the stage's serial point.
-	evidenceDigest := graph.EvidenceDigest(parsed)
+	//
+	// SemanticIndexVersion is part of the stored value, not just of the content
+	// hash. A version bump exists to change how evidence is extracted or
+	// resolved, and a file whose extraction is unaffected would otherwise digest
+	// equal, elide its write, skip its dirty marks, and keep edges resolved
+	// under the previous version's rules while the run stamped the new version
+	// and reported the rebuild as done. Carrying the version here makes every
+	// stored digest from another version a mismatch, so a bump rewrites
+	// everything exactly as it did before elision existed.
+	evidenceDigest := SemanticIndexVersion + "|" + graph.EvidenceDigest(parsed)
 	kind := outcomeParsed
 	// An empty recorded digest is what an index written before this existed
 	// carries, and no digest can equal it, so such a file is written once more

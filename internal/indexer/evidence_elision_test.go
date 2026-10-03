@@ -2,6 +2,7 @@ package indexer_test
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -234,5 +235,84 @@ func TestElidedRefreshMatchesAColdIndexRowForRow(t *testing.T) {
 			missing, extra := rowDifference(incrementalRows, coldRows)
 			t.Fatalf("%s differs after an elided refresh; missing %v, extra %v", table, missing, extra)
 		}
+	}
+}
+
+// TestForceSuppressesElision pins the user's escape hatch. `--force` exists for
+// a suspect index, so it must rewrite evidence even where the digest matches.
+func TestForceSuppressesElision(t *testing.T) {
+	ctx := context.Background()
+	root := equivalenceCorpus(t)
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runEquivalenceIndex(t, ctx, project, project.IndexPath)
+
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := repository.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	forced, err := indexer.NewService(repository, parserdefaults.NewRegistry()).
+		Run(ctx, project, indexer.Options{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forced.EvidenceUnchanged != 0 {
+		t.Fatalf("a forced run elided %d writes; force exists to rewrite a suspect index",
+			forced.EvidenceUnchanged)
+	}
+	if len(forced.Updated) == 0 {
+		t.Fatal("a forced run wrote nothing")
+	}
+}
+
+// TestEvidenceDigestIsScopedToTheSemanticVersion is the regression guard for a
+// stale-graph hole: a semantic version bump exists to change how evidence is
+// extracted or resolved, so a file whose extraction happens to be unaffected
+// must still be rewritten. Without the version in the stored digest it would
+// digest equal, elide its write, skip its dirty marks, and keep edges resolved
+// under the old version's rules — while the run stamped the new version and
+// reported the rebuild as complete, removing the only signal that one was owed.
+func TestEvidenceDigestIsScopedToTheSemanticVersion(t *testing.T) {
+	ctx := context.Background()
+	root := equivalenceCorpus(t)
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runEquivalenceIndex(t, ctx, project, project.IndexPath)
+
+	// Strip the version scope from every stored digest, leaving the evidence
+	// digest alone, and move the input hashes so the files are reselected. This
+	// is the exact state that makes the hole observable: a stored value that
+	// collides with what a later version derives from unchanged extraction. A
+	// stored digest merely carrying a *different* version would mismatch under
+	// either implementation and so would prove nothing.
+	database, err := sql.Open("sqlite", project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx,
+		`UPDATE files SET evidence_digest = substr(evidence_digest, instr(evidence_digest, '|') + 1),
+		 hash = hash || 'x'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	report := runEquivalenceIndex(t, ctx, project, project.IndexPath)
+	if len(report.Updated) == 0 {
+		t.Fatal("a digest from another semantic version did not force a reparse")
+	}
+	if report.EvidenceUnchanged != 0 {
+		t.Fatalf("%d writes were elided against digests from another semantic version, "+
+			"so their edges would stay resolved under the old rules", report.EvidenceUnchanged)
 	}
 }

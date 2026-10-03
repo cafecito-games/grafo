@@ -562,7 +562,9 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		persistenceStarted := time.Now()
 		if len(replacements) > 0 {
 			if err := grouping.ReplaceFiles(ctx, replacements); err != nil {
-				return fmt.Errorf("store %d files from %s: %w", len(replacements), grouped[0].path, err)
+				// Named after the first file this call actually carried: a group
+				// may also hold elided files, which contribute no replacement.
+				return fmt.Errorf("store %d files from %s: %w", len(replacements), replacements[0].File.Path, err)
 			}
 			graphDirtied = true
 		}
@@ -595,7 +597,7 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		// only mutation point, keeps a vanished file out of the graph and out of
 		// membership at every worker count rather than leaving the outcome to how
 		// far the read-ahead had progressed.
-		if outcome.kind == outcomeParsed {
+		if outcome.kind == outcomeParsed || outcome.kind == outcomeEvidenceUnchanged {
 			_, statErr := os.Stat(filepath.Join(project.Root, filepath.FromSlash(outcome.path)))
 			// Only a path that no longer resolves may discard parsed evidence. A
 			// permission or I/O failure on a file that still exists is not proof
