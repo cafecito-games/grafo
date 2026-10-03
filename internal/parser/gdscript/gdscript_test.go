@@ -2724,3 +2724,40 @@ func sortedKeys(values map[string]bool) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+func TestDeclarationExtentsEndOnTheirOwnLastLine(t *testing.T) {
+	content := []byte(`extends Node
+
+class Inner:
+	var held := 1
+
+
+func install(connection: int) -> void:
+	_wire(connection)
+
+
+func teardown() -> void:
+	super()
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "scripts/module.gd", Content: content, Repository: "sample", RepoID: "repo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		name string
+		line int
+		end  int
+	}{
+		{name: "Inner", line: 3, end: 4},
+		{name: "install", line: 7, end: 8},
+		{name: "teardown", line: 11, end: 12},
+	} {
+		node := gdNodeNamed(t, result.Nodes, want.name)
+		if node.Location.Line != want.line || node.Location.EndLine != want.end {
+			t.Errorf("%s extent = %d-%d, want %d-%d", want.name,
+				node.Location.Line, node.Location.EndLine, want.line, want.end)
+		}
+	}
+}

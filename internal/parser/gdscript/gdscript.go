@@ -10,6 +10,7 @@ import (
 
 	"github.com/cafecito-games/gdparser"
 	gdast "github.com/cafecito-games/gdparser/ast"
+	"github.com/cafecito-games/gdparser/token"
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/httpmodel"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
@@ -1020,7 +1021,7 @@ func (e *extractor) parseEnum(node *gdast.EnumDeclaration, current scope) {
 
 func (e *extractor) addEnumMember(ownerID, container string, member gdast.EnumMember, loc graph.Location) {
 	if span := member.Span(); span.Start.Line > 0 {
-		loc = graph.Location{Path: e.input.Path, Line: span.Start.Line, Column: span.Start.Column, EndLine: span.End.Line}
+		loc = e.spanLocation(span)
 	}
 	id := e.b.AddNode(graph.Node{Kind: graph.KindField, Name: member.Name,
 		QualifiedName: qualify(container, member.Name), Location: loc, Properties: map[string]string{"enum_member": "true"}})
@@ -2213,8 +2214,42 @@ func (e *extractor) resolveExpression(expression gdast.Expression, current scope
 }
 
 func (e *extractor) location(node gdast.Node) graph.Location {
-	span := node.Span()
-	return graph.Location{Path: e.input.Path, Line: span.Start.Line, Column: span.Start.Column, EndLine: span.End.Line}
+	return e.spanLocation(node.Span())
+}
+
+func (e *extractor) spanLocation(span token.Span) graph.Location {
+	return graph.Location{Path: e.input.Path, Line: span.Start.Line,
+		Column: span.Start.Column, EndLine: e.endLine(span)}
+}
+
+// endLine converts a half-open gdparser span into the inclusive last source
+// line a node occupies. A block ends where the next token begins, so reporting
+// span.End.Line directly hands a declaration the following declaration's
+// signature, or a line past the end of the file. Trailing blank lines belong to
+// no declaration either, so the extent ends on the last line the node writes
+// something on.
+func (e *extractor) endLine(span token.Span) int {
+	start, end := span.Start.Offset, span.End.Offset
+	if end > len(e.input.Content) {
+		end = len(e.input.Content)
+	}
+	if start < 0 || start >= end {
+		return span.Start.Line
+	}
+	line := span.End.Line
+	for last := end - 1; last >= start; last-- {
+		switch e.input.Content[last] {
+		case '\n':
+			line--
+		case ' ', '\t', '\r', '\v', '\f':
+		default:
+			if line < span.Start.Line {
+				return span.Start.Line
+			}
+			return line
+		}
+	}
+	return span.Start.Line
 }
 
 func expressionName(expression gdast.Expression) string {
