@@ -452,13 +452,29 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		if !options.Force && !schemaChanged && indexedCommit != "" && previousDirtyValid && previousUntrackedValid {
 			selected = selectChangedPaths(project.Root, paths, known, detectedChanges.changed, previousDirty, s.parsers)
 			// grafo.yaml may intentionally be ignored by Git while remaining the
-			// authoritative control-plane input. Hash it on every selected pass so
-			// an ignore rule cannot make its indexed evidence stale.
+			// authoritative control-plane input, and an ignored path reaches
+			// neither diff nor the untracked list, so nothing else in this pass
+			// would notice it changing. An ordinary tracked control file needs no
+			// separate proof: a committed edit lands in the indexed-commit diff
+			// and an uncommitted one in the working-tree diff. Hash only the cases
+			// Git cannot account for, so an unchanged refresh of a repository that
+			// tracks its control file reads no files at all. A failed probe hashes
+			// the file, because an unanswered question about the control plane is
+			// not proof that it is current.
 			for _, path := range paths {
-				if path == projectconfig.FileName {
-					selected[path] = true
-					break
+				if path != projectconfig.FileName {
+					continue
 				}
+				tracked, gitCommands, trackErr := gitTracksChangesTo(ctx, project.Root, path, project.gitSnapshot)
+				report.GitCommands += gitCommands
+				if trackErr != nil {
+					report.Diagnostics = append(report.Diagnostics, graph.Diagnostic{Path: path, Level: "warning",
+						Message: "probe Git's coverage of " + path + ": " + trackErr.Error() + "; content-checking it instead"})
+				}
+				if trackErr != nil || !tracked {
+					selected[path] = true
+				}
+				break
 			}
 		}
 	}
