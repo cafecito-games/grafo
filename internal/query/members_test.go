@@ -3,6 +3,7 @@ package query_test
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -57,6 +58,22 @@ func TestImpactAggregatesClassMemberCallers(t *testing.T) {
 	if !hasEdge(report.Upstream.Edges, "declares-install") || !hasEdge(report.Upstream.Edges, "calls-install") {
 		t.Fatalf("upstream edges do not spell the class-to-caller path: %#v", report.Upstream.Edges)
 	}
+	// A section reports the edge kinds it carries, so a consumer validating
+	// Edges against Relations cannot be made to reject the membership edge.
+	for _, section := range []query.ImpactSection{report.Upstream, report.Downstream} {
+		declared := map[graph.EdgeKind]bool{}
+		for _, relation := range section.Relations {
+			declared[relation] = true
+		}
+		if !declared[graph.EdgeDeclares] {
+			t.Fatalf("%s section omits declares from its relation vocabulary: %#v", section.Direction, section.Relations)
+		}
+		for _, edge := range section.Edges {
+			if !declared[edge.Kind] {
+				t.Fatalf("%s section reports edge kind %q outside its vocabulary", section.Direction, edge.Kind)
+			}
+		}
+	}
 	// Containment must stay one level outward from the root: a sibling of the
 	// class in the same declaring module is not part of its blast radius.
 	for _, reached := range report.Upstream.Nodes {
@@ -103,6 +120,14 @@ func TestImpactLeavesMemberlessRootsAlone(t *testing.T) {
 		}
 		if report.Members != nil {
 			t.Fatalf("%s reported a member section: %#v", selector, report.Members)
+		}
+		// A root with nothing to aggregate keeps the unchanged impact
+		// vocabulary, so containment stays out of a report that never seeded a
+		// member.
+		for _, section := range []query.ImpactSection{report.Upstream, report.Downstream} {
+			if slices.Contains(section.Relations, graph.EdgeDeclares) {
+				t.Fatalf("%s widened its relation vocabulary without members: %#v", selector, section.Relations)
+			}
 		}
 	}
 }

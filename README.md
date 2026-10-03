@@ -360,7 +360,9 @@ A class, type, or interface selector is answered through the members it
 declares, because the callers that answer "what breaks if I change this type?"
 reach its methods. Those members appear one hop from the root with the
 `declares` edge that proves each membership, and the member list carries its own
-truncation flag.
+truncation flag. Depth is therefore counted from the type: a member sits at
+depth 1 and its own callers at depth 2, so `--depth 1` on a type returns its
+members without their callers.
 
 ### Failure flow
 

@@ -278,10 +278,20 @@ func (s *Service) impactSection(ctx context.Context, root graph.Node, members []
 	if err != nil {
 		return ImpactSection{}, err
 	}
+	reported := relations
+	if len(members) > 0 {
+		// A member expansion carries the declaration edge that proves each
+		// membership into Edges, so the section's own vocabulary has to name it.
+		// Relations describes the edge kinds this section reports, and a
+		// consumer that validates Edges against it would otherwise reject the
+		// one edge that connects the root to its members. The traversal itself
+		// is unchanged: membership is followed once, outward from the root.
+		reported = append(append([]graph.EdgeKind(nil), relations...), memberRelation)
+	}
 	return ImpactSection{
 		Direction: direction,
 		Depth:     depth,
-		Relations: relations,
+		Relations: reported,
 		Nodes:     traversal.Nodes,
 		Edges:     traversal.Edges,
 		Truncated: traversal.Truncated,
