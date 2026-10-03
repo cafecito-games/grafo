@@ -50,12 +50,13 @@ type Fact struct {
 }
 
 type File struct {
-	Path       string `json:"path"`
-	Hash       string `json:"hash"`
-	Language   string `json:"language"`
-	Size       int64  `json:"size"`
-	ModifiedNs int64  `json:"modified_ns"`
-	IndexedAt  string `json:"indexed_at"`
+	Path           string `json:"path"`
+	Hash           string `json:"hash"`
+	Language       string `json:"language"`
+	Size           int64  `json:"size"`
+	ModifiedNs     int64  `json:"modified_ns"`
+	IndexedAt      string `json:"indexed_at"`
+	EvidenceDigest string `json:"evidence_digest"`
 }
 
 type Meta struct {

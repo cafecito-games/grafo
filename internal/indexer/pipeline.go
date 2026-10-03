@@ -98,6 +98,12 @@ const (
 	outcomeUnchanged
 	// outcomeParsed means the file parsed and is ready to persist.
 	outcomeParsed
+	// outcomeEvidenceUnchanged means the file was selected and reparsed because
+	// its inputs moved, and produced the evidence the index already holds. Its
+	// file record still has to be written, or the stale input hash reselects it
+	// on every later run, but its rows and its reconciliation fan-out are left
+	// as they are.
+	outcomeEvidenceUnchanged
 	// outcomeFailed means this path failed the run as a whole.
 	outcomeFailed
 )
@@ -230,9 +236,30 @@ func (stage *fileStage) prepare(ctx context.Context, path string) fileOutcome {
 		FromID: stage.project.ID, Kind: graph.EdgeContains, Producer: graph.ProducerIndexer, TargetID: fileID,
 		Location: graph.Location{Path: path, Line: 1, Column: 1}, OwnerFile: path,
 	})
-	return fileOutcome{path: path, kind: outcomeParsed, readHashNS: readHashNS, parseNS: parseNS,
+	// The digest is computed on the worker rather than on the writer: it is the
+	// one piece of per-file work the elision decision needs, and the writer is
+	// the stage's serial point.
+	//
+	// SemanticIndexVersion is part of the stored value, not just of the content
+	// hash. A version bump exists to change how evidence is extracted or
+	// resolved, and a file whose extraction is unaffected would otherwise digest
+	// equal, elide its write, skip its dirty marks, and keep edges resolved
+	// under the previous version's rules while the run stamped the new version
+	// and reported the rebuild as done. Carrying the version here makes every
+	// stored digest from another version a mismatch, so a bump rewrites
+	// everything exactly as it did before elision existed.
+	evidenceDigest := SemanticIndexVersion + "|" + graph.EvidenceDigest(parsed)
+	kind := outcomeParsed
+	// An empty recorded digest is what an index written before this existed
+	// carries, and no digest can equal it, so such a file is written once more
+	// and records its digest as it goes.
+	if previous, exists := stage.known[path]; exists && previous.EvidenceDigest != "" &&
+		previous.EvidenceDigest == evidenceDigest && !stage.options.Force {
+		kind = outcomeEvidenceUnchanged
+	}
+	return fileOutcome{path: path, kind: kind, readHashNS: readHashNS, parseNS: parseNS,
 		record: graph.FileRecord{Path: path, Hash: hash, Language: languageParser.Language(),
-			Size: info.Size(), ModifiedNS: info.ModTime().UnixNano()},
+			Size: info.Size(), ModifiedNS: info.ModTime().UnixNano(), EvidenceDigest: evidenceDigest},
 		parsed: parsed,
 	}
 }

@@ -42,6 +42,19 @@ type BulkLoadRepository interface {
 	EndBulkLoad(context.Context) error
 }
 
+// FileRecordRepository optionally records a file's inputs without rewriting the
+// evidence it already contributed. A file can be reparsed because its inputs
+// changed and still produce the evidence the index holds; this lets the indexer
+// record why it was selected without reproducing rows that are already there,
+// and without enqueueing reconciliation work for them.
+//
+// A repository that does not offer it has its evidence rewritten exactly as
+// before, so the capability changes how much is written, never what the graph
+// ends up containing.
+type FileRecordRepository interface {
+	UpdateFileRecord(context.Context, FileRecord) error
+}
+
 // ReconciliationStats describes durable work completed during reconciliation.
 type ReconciliationStats struct {
 	Batches int        `json:"batches"`
@@ -309,6 +322,10 @@ type FileRecord struct {
 	Size       int64  `json:"size"`
 	ModifiedNS int64  `json:"modified_ns"`
 	IndexedAt  string `json:"indexed_at"`
+	// EvidenceDigest is what this file's nodes and facts digested to when they
+	// were last written. An empty value means no digest is recorded, which no
+	// real digest can equal, so the evidence is written rather than elided.
+	EvidenceDigest string `json:"evidence_digest,omitempty"`
 }
 
 type Counts struct {

@@ -30,7 +30,7 @@ func (q *Queries) DeleteFile(ctx context.Context, path string) error {
 }
 
 const listFiles = `-- name: ListFiles :many
-SELECT path, hash, language, size, modified_ns, indexed_at FROM files ORDER BY path
+SELECT path, hash, language, size, modified_ns, indexed_at, evidence_digest FROM files ORDER BY path
 `
 
 func (q *Queries) ListFiles(ctx context.Context) ([]File, error) {
@@ -49,6 +49,7 @@ func (q *Queries) ListFiles(ctx context.Context) ([]File, error) {
 			&i.Size,
 			&i.ModifiedNs,
 			&i.IndexedAt,
+			&i.EvidenceDigest,
 		); err != nil {
 			return nil, err
 		}
@@ -64,23 +65,25 @@ func (q *Queries) ListFiles(ctx context.Context) ([]File, error) {
 }
 
 const upsertFile = `-- name: UpsertFile :exec
-INSERT INTO files(path, hash, language, size, modified_ns, indexed_at)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO files(path, hash, language, size, modified_ns, indexed_at, evidence_digest)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(path) DO UPDATE SET
     hash = excluded.hash,
     language = excluded.language,
     size = excluded.size,
     modified_ns = excluded.modified_ns,
-    indexed_at = excluded.indexed_at
+    indexed_at = excluded.indexed_at,
+    evidence_digest = excluded.evidence_digest
 `
 
 type UpsertFileParams struct {
-	Path       string `json:"path"`
-	Hash       string `json:"hash"`
-	Language   string `json:"language"`
-	Size       int64  `json:"size"`
-	ModifiedNs int64  `json:"modified_ns"`
-	IndexedAt  string `json:"indexed_at"`
+	Path           string `json:"path"`
+	Hash           string `json:"hash"`
+	Language       string `json:"language"`
+	Size           int64  `json:"size"`
+	ModifiedNs     int64  `json:"modified_ns"`
+	IndexedAt      string `json:"indexed_at"`
+	EvidenceDigest string `json:"evidence_digest"`
 }
 
 func (q *Queries) UpsertFile(ctx context.Context, arg UpsertFileParams) error {
@@ -91,6 +94,7 @@ func (q *Queries) UpsertFile(ctx context.Context, arg UpsertFileParams) error {
 		arg.Size,
 		arg.ModifiedNs,
 		arg.IndexedAt,
+		arg.EvidenceDigest,
 	)
 	return err
 }
