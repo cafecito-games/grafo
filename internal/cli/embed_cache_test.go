@@ -22,7 +22,10 @@ import (
 // combination.
 func isolateEmbedCache(t *testing.T, directories ...string) string {
 	t.Helper()
-	path := filepath.Join(append([]string{testtemp.Dir(t)}, append(directories, "embeddings.sqlite")...)...)
+	// The first append owns its result, so naming the cache file cannot write
+	// into the caller's backing array.
+	parts := append([]string{testtemp.Dir(t)}, directories...)
+	path := filepath.Join(append(parts, "embeddings.sqlite")...)
 	t.Setenv(embeddingcache.EnvPath, path)
 	return path
 }
