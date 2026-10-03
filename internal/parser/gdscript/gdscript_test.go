@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -2685,10 +2686,16 @@ func test_static_receiver() -> void:
 	// through its own declaration, and a static method resolves like any other
 	// method the file declares.
 	overrideTargets := gdCallTargets(t, "tests/override_test.gd", overriding)
-	for _, want := range []string{"Lane.handle", "Coordinator.handle"} {
-		if !overrideTargets[want] {
-			t.Errorf("missing resolved call to %s; calls = %v", want, sortedKeys(overrideTargets))
-		}
+	// The whole set is pinned, not just the two expected members, so a future
+	// change that walked the local inheritance chain and resolved Derived.use
+	// through Base as well would be caught rather than hidden by the static
+	// path's own Coordinator.handle.
+	wantOverride := []string{
+		"Coordinator", "Coordinator.handle", "Lane", "Lane.handle",
+		"tests/override_test.Derived.build", "tests/override_test.make_static",
+	}
+	if got := sortedKeys(overrideTargets); !slices.Equal(got, wantOverride) {
+		t.Errorf("override and static calls = %v, want %v", got, wantOverride)
 	}
 }
 
