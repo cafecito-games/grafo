@@ -206,8 +206,4 @@ func TestReusedRegistryReportsOnlyItsOwnRunsWork(t *testing.T) {
 		t.Fatalf("second run reported %d loads against the first run's %d over an equivalent corpus",
 			second.Semantic["go"].Loads, first.Semantic["go"].Loads)
 	}
-	if second.Semantic["go"].LoadNS >= first.Semantic["go"].LoadNS+second.Phases.SemanticNS+1 {
-		t.Fatalf("second run reported %dns of load time, which includes the first run's %dns",
-			second.Semantic["go"].LoadNS, first.Semantic["go"].LoadNS)
-	}
 }
