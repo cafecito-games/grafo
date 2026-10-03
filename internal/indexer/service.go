@@ -41,9 +41,18 @@ const SemanticIndexVersion = indexversion.Semantic
 // of paying for each one per file. The row bound keeps the memory held ahead of
 // the commit proportional to evidence rather than to file count, so a handful of
 // very large files flushes early.
+//
+// What a larger group mostly buys is not the amortized commit overhead but the
+// write amplification it removes: every commit spools the b-tree pages it
+// dirtied into the WAL, and a page that a hash-ordered insert set touches once
+// per commit is written once per commit. The measured sweep, and why these are
+// eight times what they were, is recorded on reconciliationBatchSize in
+// internal/storage/sqlite/repository.go; the three move together and were
+// measured together, so changing one alone leaves that table describing
+// something nothing runs.
 const (
-	maxGroupedFiles = 64
-	maxGroupedRows  = 25_000
+	maxGroupedFiles = 512
+	maxGroupedRows  = 200_000
 )
 
 type Options struct {
