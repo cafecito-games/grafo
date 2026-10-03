@@ -6,6 +6,11 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/bufbuild/protocompile v0.14.1
 	github.com/cafecito-games/gdparser v0.0.0-20261001142545-06bc15a9a672
+	// A fork of alex-pinkus/tree-sitter-swift, which publishes the generated
+	// parser sources upstream declines to commit. The fork renames the module
+	// after itself so this requirement needs no replace directive, which would
+	// make `go install github.com/cafecito-games/grafo/cmd/grafo@version` fail.
+	github.com/cafecito-games/tree-sitter-swift v0.7.3-grafo.1
 	github.com/cockroachdb/pebble/v2 v2.1.7
 	github.com/mattn/go-isatty v0.0.24
 	github.com/mattn/go-sqlite3 v1.14.52
@@ -16,7 +21,6 @@ require (
 	github.com/tree-sitter/go-tree-sitter v0.25.0
 	github.com/tree-sitter/tree-sitter-java v0.23.5
 	github.com/tree-sitter/tree-sitter-python v0.25.0
-	github.com/tree-sitter/tree-sitter-swift v0.0.0-20260601004120-31d17fe7e818
 	github.com/tree-sitter/tree-sitter-typescript v0.23.2
 	github.com/yuin/goldmark v1.8.6
 	go.etcd.io/bbolt v1.5.0
@@ -68,6 +72,3 @@ require (
 	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 )
-
-// The maintained fork publishes generated parser sources from release branches.
-replace github.com/tree-sitter/tree-sitter-swift => github.com/alex-pinkus/tree-sitter-swift v0.0.0-20260601004120-31d17fe7e818

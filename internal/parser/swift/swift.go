@@ -11,8 +11,8 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	tsswift "github.com/cafecito-games/tree-sitter-swift/bindings/go"
 	treesitter "github.com/tree-sitter/go-tree-sitter"
-	tsswift "github.com/tree-sitter/tree-sitter-swift/bindings/go"
 )
 
 type Parser struct{}
