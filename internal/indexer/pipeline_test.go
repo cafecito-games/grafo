@@ -348,6 +348,7 @@ func runSelectedPassObservation(t *testing.T, workers int) pipelineObservation {
 }
 
 func TestServiceParseWorkerCountsProduceIdenticalSelectedPasses(t *testing.T) {
+	t.Parallel()
 	var baseline []byte
 	for _, workers := range []int{1, 2, runtime.NumCPU() + 2} {
 		encoded, err := json.Marshal(runSelectedPassObservation(t, workers))
@@ -386,6 +387,7 @@ func (v vanishingTransform) Transform(_ context.Context, input parserapi.Input, 
 }
 
 func TestServiceDropsFileThatVanishesAfterParsing(t *testing.T) {
+	t.Parallel()
 	for _, workers := range []int{1, 4} {
 		ctx := context.Background()
 		root := testtemp.Dir(t)
@@ -422,6 +424,7 @@ func TestServiceDropsFileThatVanishesAfterParsing(t *testing.T) {
 }
 
 func TestServiceParseWorkerCountsProduceIdenticalRuns(t *testing.T) {
+	t.Parallel()
 	counts := []int{1, 2, runtime.NumCPU() + 2}
 	var baseline []byte
 	for _, workers := range counts {
@@ -442,6 +445,7 @@ func TestServiceParseWorkerCountsProduceIdenticalRuns(t *testing.T) {
 }
 
 func TestServiceParseWorkerCountDefaultsToBoundedPool(t *testing.T) {
+	t.Parallel()
 	if runtime.NumCPU() < 2 {
 		t.Skip("the derived worker count is one on a single-core machine, so parses cannot overlap")
 	}
@@ -527,6 +531,7 @@ func (f failingTransform) Transform(_ context.Context, input parserapi.Input, pa
 }
 
 func TestServiceParseStagePropagatesTransformFailure(t *testing.T) {
+	t.Parallel()
 	for _, workers := range []int{1, 4} {
 		ctx := context.Background()
 		root := testtemp.Dir(t)
@@ -581,6 +586,7 @@ func (p *cancelingParser) Parse(_ context.Context, input parserapi.Input) (graph
 // report success, because the membership the stage collected is truncated and
 // would drive removal and digest publication.
 func TestServiceParseStageFailsCancelledRunWithoutRepositorySupport(t *testing.T) {
+	t.Parallel()
 	for _, workers := range []int{1, 4} {
 		ctx, cancel := context.WithCancel(context.Background())
 		root := testtemp.Dir(t)
@@ -607,6 +613,7 @@ func TestServiceParseStageFailsCancelledRunWithoutRepositorySupport(t *testing.T
 }
 
 func TestServiceParseStageStopsOnCancellation(t *testing.T) {
+	t.Parallel()
 	for _, workers := range []int{1, 4} {
 		ctx, cancel := context.WithCancel(context.Background())
 		root := testtemp.Dir(t)
@@ -649,6 +656,7 @@ func TestServiceParseStageStopsOnCancellation(t *testing.T) {
 }
 
 func TestServiceParseStageDropsFileRemovedBeforePersistence(t *testing.T) {
+	t.Parallel()
 	for _, workers := range []int{1, 4} {
 		ctx := context.Background()
 		root := testtemp.Dir(t)

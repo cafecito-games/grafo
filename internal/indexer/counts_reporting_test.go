@@ -27,6 +27,7 @@ func (f failingCountsRepository) Counts(ctx context.Context) (graph.Counts, erro
 // failed count query reports counts as uncollected and never fabricates totals,
 // while the indexing run itself still succeeds because the graph is durable.
 func TestCountsFailureLeavesIndexRunSuccessful(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "README.md"), "# Sample\n")

@@ -82,6 +82,7 @@ func (legacyVerbEndpointParser) Parse(_ context.Context, input parserapi.Input) 
 }
 
 func TestServiceHTTPAuthorityResolutionConvergesIncrementalAndClean(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "go.mod"), "module example.com/service\n\ngo 1.26\n")
@@ -205,6 +206,7 @@ func assertIndexedRequestResolution(t *testing.T, ctx context.Context, repositor
 }
 
 func TestServiceIncrementallyRemovesLegacyVerbOnlyEndpoint(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "go.mod"), "module example.com/client\n\ngo 1.26\n")
@@ -250,6 +252,7 @@ func TestServiceIncrementallyRemovesLegacyVerbOnlyEndpoint(t *testing.T) {
 }
 
 func TestServiceSemanticRebuildRemovesLegacyHeaderRequest(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "go.mod"), "module example.com/client\n\ngo 1.26\n")
@@ -321,6 +324,7 @@ func Run(request *http.Request) {
 }
 
 func TestServiceNormalizesProducerBeforePersistence(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "forged.forge"), "untrusted parser output")
@@ -369,6 +373,7 @@ func TestServiceNormalizesProducerBeforePersistence(t *testing.T) {
 }
 
 func TestServiceLinksDocumentationSectionsToCode(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "README.md"), "# Runtime flow\nThe function `Serve` delegates to class `Checkout` through endpoint `GET /orders`.\nSee [the implementation](server.ts).\n")
@@ -409,6 +414,7 @@ func TestServiceLinksDocumentationSectionsToCode(t *testing.T) {
 }
 
 func TestServiceReconcilesTypeScriptBindingsAfterBarrelAndConfigEdits(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
@@ -481,6 +487,7 @@ export function execute() { const service = new Service(); service.run(); }
 }
 
 func TestServiceReconcilesTypeScriptFetchMethodsAndTopology(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "server.ts"), `
@@ -593,6 +600,7 @@ func assertTypeScriptFetchTopology(t *testing.T, ctx context.Context, repository
 }
 
 func TestServiceIndexesOnlyChangedFiles(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "go.mod"), "module example.com/sample\n\ngo 1.26\n")
@@ -643,6 +651,9 @@ func TestServiceIndexesOnlyChangedFiles(t *testing.T) {
 	}
 }
 
+// TestServiceReindexesGoDependentsWhenTypeEvidenceChanges is the one test in
+// this package that must not call t.Parallel: it mutates GOOS for the whole
+// process. See parallelism_policy_test.go.
 func TestServiceReindexesGoDependentsWhenTypeEvidenceChanges(t *testing.T) {
 	ctx := context.Background()
 	root := testtemp.Dir(t)
@@ -706,6 +717,7 @@ func TestServiceReindexesGoDependentsWhenTypeEvidenceChanges(t *testing.T) {
 }
 
 func TestServiceFailureFlowEditsConvergeWithCleanRebuild(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "go.mod"), "module example.com/failureedit\n\ngo 1.26\n")
@@ -771,6 +783,7 @@ func Run() error {
 }
 
 func TestServiceSurfacesTrackedSymlinksWithoutFollowingThem(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
@@ -803,6 +816,7 @@ func TestServiceSurfacesTrackedSymlinksWithoutFollowingThem(t *testing.T) {
 }
 
 func TestServiceIndexesAndLinksGodotProjectSources(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "project.godot"), "config_version=5\n\n[application]\nrun/main_scene=\"res://scenes/main.tscn\"\n")
@@ -855,6 +869,7 @@ func TestServiceIndexesAndLinksGodotProjectSources(t *testing.T) {
 }
 
 func TestServiceReindexesSQLWhenDialectConfigurationChanges(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "schema.sql"), "CREATE TABLE events (id bigint PRIMARY KEY);\n")
@@ -907,6 +922,7 @@ func TestServiceReindexesSQLWhenDialectConfigurationChanges(t *testing.T) {
 }
 
 func TestServiceReconcilesProtobufBindingSchemaAndConfigurationChanges(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "buf.gen.yaml"), `version: v2
@@ -1068,6 +1084,7 @@ func assertBindingQualifiedContains(t *testing.T, ctx context.Context, repositor
 }
 
 func TestServiceTracksGitDirtyPathsAcrossRestore(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
@@ -1111,6 +1128,7 @@ func TestServiceTracksGitDirtyPathsAcrossRestore(t *testing.T) {
 }
 
 func TestServicePropagatesGitConfigurationChanges(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
@@ -1142,6 +1160,7 @@ func TestServicePropagatesGitConfigurationChanges(t *testing.T) {
 }
 
 func TestServiceResumesSemanticRebuildWithoutReplacingCompletedFiles(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "main.go"), "package sample\nfunc Value() int { return 1 }\n")
@@ -1172,6 +1191,7 @@ func TestServiceResumesSemanticRebuildWithoutReplacingCompletedFiles(t *testing.
 }
 
 func TestServiceIndexesExplicitComponentsWithExactEligibleMembership(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	for _, directory := range []string{"client", "client-old", "web/ui", "apps/server", "node_modules/client"} {
@@ -1242,6 +1262,7 @@ func TestServiceIndexesExplicitComponentsWithExactEligibleMembership(t *testing.
 }
 
 func TestServiceReconcilesComponentConfigurationWithoutReparsingSources(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	if err := os.MkdirAll(filepath.Join(root, "app"), 0o755); err != nil {
@@ -1295,6 +1316,7 @@ func TestServiceReconcilesComponentConfigurationWithoutReparsingSources(t *testi
 }
 
 func TestServiceRejectsInvalidComponentEditBeforeMutation(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	if err := os.MkdirAll(filepath.Join(root, "app"), 0o755); err != nil {
@@ -1338,6 +1360,7 @@ func TestServiceRejectsInvalidComponentEditBeforeMutation(t *testing.T) {
 }
 
 func TestServiceReconcilesGDScriptHTTPRequestConfigurationAndRejectsInvalidEditBeforeMutation(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
@@ -1425,6 +1448,7 @@ func send(api: AuthAPI) -> void:
 }
 
 func TestServiceReconcilesConfiguredGDScriptEventEffectsAndPreservesInvalidEdit(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
@@ -1547,6 +1571,7 @@ func assertEventConsumption(t *testing.T, ctx context.Context, repository graph.
 }
 
 func TestServiceReconcilesFirstClassTestsAcrossConfigInheritanceAndRenameEdits(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
@@ -1671,6 +1696,7 @@ func assertHTTPRequestSet(t *testing.T, ctx context.Context, repository graph.To
 }
 
 func TestServiceIndexesServeMuxRoutesForAuthorityAwareTopology(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "go.mod"), "module example.com/uzir\n\ngo 1.26\n")
@@ -1768,6 +1794,7 @@ func Call() {
 }
 
 func TestServiceDoesNotPersistMembershipForFileLostAfterDiscovery(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	if err := os.MkdirAll(filepath.Join(root, "app"), 0o755); err != nil {
@@ -1843,6 +1870,7 @@ func assertOutgoingQualifiedSet(t *testing.T, ctx context.Context, repository gr
 // it, including the sibling file its evidence is attributed to, and the
 // resulting graph still equals a forced clean rebuild.
 func TestServiceScopesGoBodyEditToItsPackage(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "go.mod"), "module example.com/service\n\ngo 1.26\n")
@@ -1940,6 +1968,7 @@ func assertRequestedRoute(t *testing.T, ctx context.Context, repository *sqlite.
 // closed half of the contract: an exported declaration can change how any
 // package extracts, so every Go file is reparsed.
 func TestServiceReparsesEveryGoFileForCrossPackageDeclarations(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	write(t, filepath.Join(root, "go.mod"), "module example.com/service\n\ngo 1.26\n")
@@ -2061,6 +2090,7 @@ func assertNoOutgoingTarget(t *testing.T, ctx context.Context, repository graph.
 // unchanged project is a no-op, and that editing an autoload target reconciles
 // to exactly the clean-rebuild result.
 func TestServiceModelsGodotCompositionAcrossFiles(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	writeGodotProject(t, root, "res://scripts/game.gd")
@@ -2240,6 +2270,7 @@ func assertComposition(t *testing.T, relations []query.GodotRelation, qualified 
 // concept: a stale index row that still models a scene as a module and a scene
 // node as a variable is replaced, not joined, by the new vocabulary.
 func TestServiceRebuildReplacesLegacyGodotRepresentations(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	writeGodotProject(t, root, "res://scripts/game.gd")
@@ -2305,6 +2336,7 @@ func assertNodeKinds(t *testing.T, repository graph.ReadRepository, qualified st
 // sibling projects that both declare an autoload named Game must stay
 // independently addressable instead of colliding.
 func TestServiceScopesGodotProjectsNestedInOneRepository(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	for _, project := range []string{"client", "tools/probe"} {
@@ -2401,6 +2433,7 @@ func mkdirFor(t *testing.T, root, name string) string {
 // declares produces a diagnostic and no composition edge, and repairing the
 // path resolves it on the next incremental run.
 func TestServiceKeepsContradictedGodotUIDsUnresolved(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	write(t, mkdirFor(t, root, "project.godot"), "config_version=5\n")
@@ -2489,6 +2522,7 @@ func TestServiceKeepsContradictedGodotUIDsUnresolved(t *testing.T) {
 }
 
 func TestServiceBoundsGodotAliasesToGitMembership(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
@@ -2587,6 +2621,7 @@ func TestServiceBoundsGodotAliasesToGitMembership(t *testing.T) {
 // autoload's singleton marker must still reach the scripts whose resolution it
 // changes, even though those scripts are untouched and unstaged.
 func TestServiceReparsesScriptsWhenAutoloadEnablementChangesUnderGit(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
@@ -2646,6 +2681,7 @@ func TestServiceReparsesScriptsWhenAutoloadEnablementChangesUnderGit(t *testing.
 // declared group and an unresolved boundary node, and each incremental state must
 // equal what a clean rebuild of the same tree produces.
 func TestServiceReconcilesGodotInteractionsAfterProjectEdits(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	write(t, mkdirFor(t, root, "project.godot"),
@@ -2691,6 +2727,7 @@ func TestServiceReconcilesGodotInteractionsAfterProjectEdits(t *testing.T) {
 }
 
 func TestServiceProducerProvenanceConvergesAcrossForcedAndCleanIndexing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	write(t, mkdirFor(t, root, "project.godot"),
@@ -2747,6 +2784,7 @@ func godotProducerSnapshot(t *testing.T, ctx context.Context, repository graph.R
 }
 
 func TestServiceReconcilesCrossFileSignalHandlers(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	write(t, mkdirFor(t, root, "backend.gd"), "class_name Backend extends Node\nsignal sign_in_success\n")

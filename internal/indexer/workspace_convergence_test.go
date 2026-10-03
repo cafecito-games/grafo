@@ -102,6 +102,7 @@ func observed(kinds []indexer.BoundaryKind, want indexer.BoundaryKind) bool {
 // batches, and repeating it never discovers residual work. A boundary hook only
 // observes durable work, so installing one must not change what a run performs.
 func TestUnchangedRefreshConvergesInOnePass(t *testing.T) {
+	t.Parallel()
 	for _, testCase := range []struct {
 		name         string
 		withBoundary bool
@@ -142,6 +143,7 @@ func TestUnchangedRefreshConvergesInOnePass(t *testing.T) {
 // did not turn the digest into a reason to miss a real workspace change: adding
 // a component must still persist the workspace and report its boundary.
 func TestChangedWorkspaceStillPersistsUnderBoundaryHook(t *testing.T) {
+	t.Parallel()
 	root := componentCorpus(t)
 	indexOnce(t, root, true)
 	write(t, filepath.Join(root, "grafo.yaml"), `components:

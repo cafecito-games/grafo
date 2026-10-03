@@ -17,6 +17,7 @@ import (
 // invalidates and reparses `middle` — but `middle` never names the new
 // declaration, so its evidence is unchanged and its rows must not be rewritten.
 func TestUnusedDeclarationElidesImporterWrites(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := equivalenceCorpus(t)
 	project, err := indexer.DiscoverProject(ctx, root)
@@ -54,6 +55,7 @@ func TestUnusedDeclarationElidesImporterWrites(t *testing.T) {
 // if the elided path skipped the file row too, the stale hash would reselect
 // and reparse it on every later run.
 func TestElidedWriteStillRecordsTheFile(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := equivalenceCorpus(t)
 	project, err := indexer.DiscoverProject(ctx, root)
@@ -85,6 +87,7 @@ func TestElidedWriteStillRecordsTheFile(t *testing.T) {
 // run accounted for, so an elided file that is not accounted for is deleted
 // from the graph.
 func TestElidedFileStaysInMembership(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := equivalenceCorpus(t)
 	project, err := indexer.DiscoverProject(ctx, root)
@@ -114,6 +117,7 @@ func TestElidedFileStaysInMembership(t *testing.T) {
 // that triggered when the evidence had actually changed would leave a stale
 // graph, so an importer that names the new declaration must be rewritten.
 func TestEvidenceChangingEditIsStillWritten(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := equivalenceCorpus(t)
 	project, err := indexer.DiscoverProject(ctx, root)
@@ -155,6 +159,7 @@ func TestEvidenceChangingEditIsStillWritten(t *testing.T) {
 type recordBlindRepository struct{ graph.IndexRepository }
 
 func TestRepositoryWithoutTheCapabilityWritesEverything(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := equivalenceCorpus(t)
 	project, err := indexer.DiscoverProject(ctx, root)
@@ -207,6 +212,7 @@ func TestRepositoryWithoutTheCapabilityWritesEverything(t *testing.T) {
 // elision safe to ship: the graph after an elided incremental refresh must be
 // indistinguishable from a cold index of the same tree.
 func TestElidedRefreshMatchesAColdIndexRowForRow(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := equivalenceCorpus(t)
 	project, err := indexer.DiscoverProject(ctx, root)
@@ -241,6 +247,7 @@ func TestElidedRefreshMatchesAColdIndexRowForRow(t *testing.T) {
 // TestForceSuppressesElision pins the user's escape hatch. `--force` exists for
 // a suspect index, so it must rewrite evidence even where the digest matches.
 func TestForceSuppressesElision(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := equivalenceCorpus(t)
 	project, err := indexer.DiscoverProject(ctx, root)
@@ -280,6 +287,7 @@ func TestForceSuppressesElision(t *testing.T) {
 // under the old version's rules — while the run stamped the new version and
 // reported the rebuild as complete, removing the only signal that one was owed.
 func TestEvidenceDigestIsScopedToTheSemanticVersion(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := equivalenceCorpus(t)
 	project, err := indexer.DiscoverProject(ctx, root)

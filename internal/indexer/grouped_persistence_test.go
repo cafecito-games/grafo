@@ -61,6 +61,7 @@ func runGroupedCorpus(t *testing.T, repository graph.IndexRepository, boundary i
 // transactions a run opens, never which evidence it stores or the order the
 // report records it in.
 func TestGroupedPersistenceMatchesPerFilePersistence(t *testing.T) {
+	t.Parallel()
 	perFile := newRecordingRepository()
 	perFileReport := runGroupedCorpus(t, perFile, nil)
 	grouping := &groupingRepository{recordingRepository: newRecordingRepository()}
@@ -98,6 +99,7 @@ func TestGroupedPersistenceMatchesPerFilePersistence(t *testing.T) {
 // corpus has to reach storage in fewer durable steps than it has files, and
 // every persisted file has to be accounted for by exactly one of them.
 func TestGroupedPersistenceSharesOneCommit(t *testing.T) {
+	t.Parallel()
 	grouping := &groupingRepository{recordingRepository: newRecordingRepository()}
 	report := runGroupedCorpus(t, grouping, nil)
 	groups := grouping.groupSizes()
@@ -121,6 +123,7 @@ func TestGroupedPersistenceSharesOneCommit(t *testing.T) {
 // safe to add: a boundary observer is promised one durable boundary per
 // persisted file, so a run that installs one keeps its commit per file.
 func TestBoundaryObserverOptsOutOfGrouping(t *testing.T) {
+	t.Parallel()
 	grouping := &groupingRepository{recordingRepository: newRecordingRepository()}
 	var persisted int
 	report := runGroupedCorpus(t, grouping, func(boundary indexer.Boundary) error {

@@ -71,6 +71,7 @@ func (p scopedFreshnessParser) WorkspaceSemanticKey(_ context.Context, input par
 func (scopedFreshnessParser) SemanticDependencies() []string { return []string{"project.godot"} }
 
 func TestFreshnessHonorsConfiguredIndexScope(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	for path, content := range map[string]string{
@@ -111,6 +112,7 @@ func TestFreshnessHonorsConfiguredIndexScope(t *testing.T) {
 }
 
 func TestFreshnessIgnoresProjectsOutsideGitMembership(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("ignored/\n.godot/\n"), 0o644); err != nil {
@@ -160,6 +162,7 @@ func TestFreshnessIgnoresProjectsOutsideGitMembership(t *testing.T) {
 }
 
 func TestFreshnessProbeDetectsSamePathSameSizeAndSemanticChanges(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
@@ -239,6 +242,7 @@ func TestFreshnessProbeDetectsSamePathSameSizeAndSemanticChanges(t *testing.T) {
 }
 
 func TestFreshnessProbeFallsBackForNonGitAndHonorsCancellation(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	registry := parserapi.NewRegistry(freshnessParser{})
 	probe, err := indexer.ProbeFreshness(context.Background(), root, registry, indexer.FreshnessOptions{})
@@ -257,6 +261,7 @@ func TestFreshnessProbeFallsBackForNonGitAndHonorsCancellation(t *testing.T) {
 }
 
 func TestFreshnessReprobeCachesKeysOnlyWhileExternalEvidenceAndGitInputsMatch(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	if err := os.WriteFile(filepath.Join(root, "sample.snap"), []byte("first"), 0o644); err != nil {
@@ -316,6 +321,7 @@ func TestFreshnessReprobeCachesKeysOnlyWhileExternalEvidenceAndGitInputsMatch(t 
 }
 
 func TestFreshnessProbeRejectsOversizedDirtyInput(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
@@ -339,6 +345,7 @@ func TestFreshnessProbeRejectsOversizedDirtyInput(t *testing.T) {
 }
 
 func TestFreshnessReprobeHashesRepeatedTypeScriptSemanticInput(t *testing.T) {
+	t.Parallel()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	if err := os.WriteFile(filepath.Join(root, "sample.ts"), []byte("export const value = 1\n"), 0o644); err != nil {
@@ -392,6 +399,7 @@ func TestFreshnessReprobeHashesRepeatedTypeScriptSemanticInput(t *testing.T) {
 }
 
 func TestFreshnessReprobeDetectsIgnoredVendorSemanticInputs(t *testing.T) {
+	t.Parallel()
 	for _, vendorPath := range []string{"vendor", "cmd/vendor"} {
 		t.Run(vendorPath, func(t *testing.T) {
 			root := testtemp.Dir(t)
@@ -442,6 +450,7 @@ func TestFreshnessReprobeDetectsIgnoredVendorSemanticInputs(t *testing.T) {
 }
 
 func TestFreshnessReprobeIgnoresRootModulesTxtInVendorNamedCheckout(t *testing.T) {
+	t.Parallel()
 	root := filepath.Join(testtemp.Dir(t), "vendor")
 	if err := os.Mkdir(root, 0o755); err != nil {
 		t.Fatal(err)
@@ -481,6 +490,7 @@ func TestFreshnessReprobeIgnoresRootModulesTxtInVendorNamedCheckout(t *testing.T
 }
 
 func TestFreshnessProbeTracksBranchCommitStatusAndRemoteIdentity(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
@@ -544,6 +554,7 @@ func TestFreshnessProbeTracksBranchCommitStatusAndRemoteIdentity(t *testing.T) {
 }
 
 func TestFreshnessProbeIgnoresUnrelatedAndTracksRenameAndSymlinkStates(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")

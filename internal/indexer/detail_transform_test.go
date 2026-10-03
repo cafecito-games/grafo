@@ -16,6 +16,7 @@ import (
 )
 
 func TestBenchmarkTransformSwitchesProfilesAndConverges(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "app.profile"), []byte("fixture"), 0o644); err != nil {

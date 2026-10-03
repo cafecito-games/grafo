@@ -20,6 +20,7 @@ import (
 )
 
 func TestServiceScopeNarrowingAndBroadeningConvergeWithoutChangingHead(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	for _, relative := range []string{"app/main.py", "internal/eval/testdata/fixture.py"} {
@@ -149,6 +150,7 @@ func TestServiceScopeNarrowingAndBroadeningConvergeWithoutChangingHead(t *testin
 }
 
 func TestServiceInterruptedRemovalThenScopeRevertRediscoversMissingFiles(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	for _, relative := range []string{"app/main.py", "fixtures/sample.py"} {
@@ -264,6 +266,7 @@ func TestServiceInterruptedRemovalThenScopeRevertRediscoversMissingFiles(t *test
 }
 
 func TestServiceScopeIncludeCannotReenableUnsafeOrUnsupportedFiles(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	root := testtemp.Dir(t)
 	for _, relative := range []string{"safe.py", "vendor/hidden.py", "node_modules/hidden.py"} {
