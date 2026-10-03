@@ -48,16 +48,18 @@ import (
 //
 // The cap matters most in service mode, where several repositories index at
 // once and each one brings its own pool: this bounds one pool, not their sum.
-// On this 12-core machine the supervisor's default concurrency of four roots
-// means 4 x 8 = 32 parse workers plus four writers. Issue #185 owns that
-// aggregate; do not raise this constant without reading it.
+// Their sum is bounded by processParseBudget below, which is this same number
+// applied once per process, so raising this constant raises both bounds and the
+// rationale recorded there is part of this one.
 const maxParseWorkers = 8
 
 // ResolveParseWorkers selects how many goroutines read, hash, and parse files
 // ahead of the ordered writer. A resolved count of one runs the stage inline on
-// the writer goroutine, which is byte-for-byte the historical sequential path.
-// It is exported so a caller that reports the count it ran under derives it
-// here rather than reimplementing the derivation.
+// the writer goroutine, which produces byte-for-byte what the historical
+// sequential path produced; it is metered by the process-wide ParseBudget like
+// any other pool, which changes when its preparations run and never what they
+// yield. It is exported so a caller that reports the count it ran under derives
+// it here rather than reimplementing the derivation.
 func ResolveParseWorkers(requested int) int {
 	if requested > 0 {
 		return requested
@@ -70,6 +72,144 @@ func ResolveParseWorkers(requested int) int {
 		workers = 1
 	}
 	return workers
+}
+
+// ParseBudget bounds how many files are being read, hashed, and parsed at the
+// same time, summed across every parse pool sharing the budget. One budget per
+// process is what composes the pools of concurrently indexing roots into a
+// single ceiling.
+type ParseBudget struct {
+	// A nil channel admits every caller, so the unbounded budget needs no
+	// special case at the acquisition site.
+	permits chan struct{}
+}
+
+// UnboundedParseBudget applies no bound at all. A caller measuring one pool in
+// isolation, such as the benchmark harness that produced the table above, uses
+// it so a process-wide ceiling cannot silently cap the pool size it asked for.
+var UnboundedParseBudget = &ParseBudget{}
+
+// NewParseBudget returns a budget admitting limit preparations at once. A limit
+// below one has no bound to enforce and yields UnboundedParseBudget.
+func NewParseBudget(limit int) *ParseBudget {
+	if limit < 1 {
+		return UnboundedParseBudget
+	}
+	return &ParseBudget{permits: make(chan struct{}, limit)}
+}
+
+// Limit reports how many preparations the budget admits at once. Zero means
+// unbounded.
+func (budget *ParseBudget) Limit() int {
+	if budget == nil {
+		return 0
+	}
+	return cap(budget.permits)
+}
+
+// processParseBudget is the budget every run shares unless its Options name
+// another one.
+//
+// Why it is exactly ResolveParseWorkers(0), the same number as a single pool's
+// derived size: the per-pool cap above was measured as the point where a cold
+// index of one repository stops gaining wall clock while its summed CPU and its
+// peak memory keep climbing. That measurement is a statement about the machine,
+// not about one repository, so the same number is the right ceiling for the
+// machine as a whole. Applying it once per process instead of once per pool is
+// the whole of this policy: one root indexing alone still resolves a pool of
+// min(NumCPU, maxParseWorkers) workers and holds that many permits, so it is
+// bounded by exactly what bounded it before; N roots indexing at once share the
+// same permits instead of each claiming a full pool's worth.
+//
+// The two bounds therefore compose by construction rather than by coincidence,
+// and raising maxParseWorkers raises both. They are deliberately the same
+// constant: a process-wide number smaller than the per-pool cap would slow a
+// lone root, and a larger one would admit the oversubscription this exists to
+// prevent.
+//
+// Permits are held only across one file's preparation, never across the ordered
+// writer, so the budget throttles work rather than resizing pools. That is what
+// keeps a lone root unaffected: with as many permits as workers, no worker ever
+// waits. It is also the limit of what this bounds. Each pool still runs its own
+// goroutines and still reserves one hand-off slot per worker, so the parsed
+// results held in memory ahead of the writers remain proportional to root count
+// rather than to the permits. Bounding that, together with the per-writer page
+// cache and temp_store, is issue #182; this budget bounds concurrent parse work
+// and nothing else.
+//
+// The ceiling is also per process, because that is where the oversubscription
+// it was reported for lives: service mode indexes every root from one
+// supervisor. Two separate `grafo index` invocations still each get their own,
+// which is the same bound a user running two builds at once would get, and
+// bounding across processes would need shared state no indexing run has.
+//
+// Measured on a 12-core machine (6 performance cores) with two roots of 7,625
+// and 7,546 indexed files indexed cold and concurrently by one `grafo service
+// run --once` pass, three runs per configuration, interleaved so drift could
+// not land on one of them:
+//
+//	                      parse workers   root A   root B   peak RSS
+//	one pool per root                16   334.5s   331.2s   6.10 GiB
+//	one process-wide budget           8   336.2s   336.9s   6.16 GiB
+//
+// Read those against the run-to-run spread, as with the per-pool table above.
+// Per-root standard deviation was 8.5s and 10.2s with a pool each, 23.9s and
+// 22.1s under the budget, and peak RSS varied by 0.20 GiB and 0.39 GiB. Halving
+// the parse workers that actually run at once therefore costs nothing
+// measurable: the ~2s of wall clock and 0.06 GiB separating the two
+// configurations sit an order of magnitude inside that spread.
+//
+// It also buys nothing measurable at two roots, which is the honest reading:
+// the oversubscription is not what made these two roots slow, and this is a
+// bound rather than a demonstrated speedup. What the bound is worth grows with
+// root count, which is exactly what was not measured here. The supervisor's
+// default concurrency of four roots would have run 4 x 8 = 32 parse workers on
+// this machine and now runs eight, and four roots were not measured.
+//
+// A lone root was measured the same way, two runs per configuration, for the
+// criterion that the budget must not slow it down:
+//
+//	                      parse workers     wall   peak RSS
+//	one pool per root                 8   259.7s   5.05 GiB
+//	one process-wide budget           8   258.6s   4.99 GiB
+//
+// Standard deviations 0.6s and 9.3s. There is nothing for a lone root to wait
+// on, because it resolves the pool it always resolved and the budget holds a
+// permit for every worker in it;
+// TestParseBudgetLeavesALoneRootAtItsFullPoolSize asserts that directly rather
+// than leaving it to two runs of a noisy measurement.
+var processParseBudget = NewParseBudget(ResolveParseWorkers(0))
+
+// ProcessParseBudget returns the process-wide budget that a run uses when its
+// Options do not name another. It is exported so a caller that reports the
+// ceiling it ran under reads it here rather than rederiving it.
+func ProcessParseBudget() *ParseBudget { return processParseBudget }
+
+// resolveParseBudget picks the budget a run is metered by. Nil Options select
+// the process-wide one, which is what every production caller does; naming a
+// budget is for measurement harnesses and tests.
+func resolveParseBudget(requested *ParseBudget) *ParseBudget {
+	if requested != nil {
+		return requested
+	}
+	return processParseBudget
+}
+
+// acquire blocks until the budget admits one file preparation and returns the
+// release for it. A cancelled context stops the wait and returns an unmetered
+// release: the stage still owes an outcome to every hand-off slot it reserved,
+// so abandoning the protocol to honor the ceiling would hang the writer, and
+// the preparations it still performs all observe the cancelled context anyway.
+func (budget *ParseBudget) acquire(ctx context.Context) func() {
+	if budget == nil || budget.permits == nil {
+		return func() {}
+	}
+	select {
+	case budget.permits <- struct{}{}:
+		return func() { <-budget.permits }
+	case <-ctx.Done():
+		return func() {}
+	}
 }
 
 // fileOutcomeKind classifies what the read/hash/parse stage established about
@@ -132,6 +272,14 @@ type fileStage struct {
 	selected              map[string]bool
 	known                 map[string]graph.FileRecord
 	workspaceSemanticKeys map[string]string
+}
+
+// prepareWithin prepares one path while holding a permit from budget, so the
+// preparation work of every pool in the process is metered by one ceiling.
+func (stage *fileStage) prepareWithin(ctx context.Context, budget *ParseBudget, path string) fileOutcome {
+	release := budget.acquire(ctx)
+	defer release()
+	return stage.prepare(ctx, path)
 }
 
 // prepare performs every step of the per-file pipeline that has no durable side
@@ -267,16 +415,20 @@ func (stage *fileStage) prepare(ctx context.Context, path string) fileOutcome {
 // run drives the stage over every path and hands each outcome to apply in the
 // original path order. With more than one worker the preparation runs on a fixed
 // pool while a dispatcher reserves one ordered hand-off slot per path; the slot
-// channel's capacity is what bounds how many parsed results exist at once. The
-// first error from apply stops dispatching and is returned unchanged, so the run
-// fails at the same path it would have failed at sequentially.
+// channel's capacity is what bounds how many parsed results exist at once. Every
+// preparation, pooled or inline, holds a permit from the run's ParseBudget for
+// its duration, which is what bounds the parse work of concurrently indexing
+// roots by the machine rather than by their number. The first error from apply
+// stops dispatching and is returned unchanged, so the run fails at the same path
+// it would have failed at sequentially.
 func (stage *fileStage) run(ctx context.Context, workers int, apply func(fileOutcome) error) error {
+	budget := resolveParseBudget(stage.options.ParseBudget)
 	if workers <= 1 {
 		for _, path := range stage.paths {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if err := apply(stage.prepare(ctx, path)); err != nil {
+			if err := apply(stage.prepareWithin(ctx, budget, path)); err != nil {
 				return err
 			}
 		}
@@ -297,7 +449,7 @@ func (stage *fileStage) run(ctx context.Context, workers int, apply func(fileOut
 			defer running.Done()
 			for job := range jobs {
 				// The slot is buffered, so a worker never waits on the writer.
-				job.slot <- stage.prepare(stageCtx, job.path)
+				job.slot <- stage.prepareWithin(stageCtx, budget, job.path)
 			}
 		}()
 	}

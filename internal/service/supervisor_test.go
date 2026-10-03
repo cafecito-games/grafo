@@ -23,6 +23,8 @@ type fakeRunner struct {
 	failFor map[string]error
 	report  indexer.Report
 	details []indexer.ReportDetail
+	budgets []*indexer.ParseBudget
+	workers []int
 }
 
 func (f *fakeRunner) Index(_ context.Context, project indexer.Project, options indexer.Options) (indexer.Report, error) {
@@ -31,6 +33,8 @@ func (f *fakeRunner) Index(_ context.Context, project indexer.Project, options i
 	f.calls = append(f.calls, project)
 	f.forced = append(f.forced, options.Force)
 	f.details = append(f.details, options.ReportDetail)
+	f.budgets = append(f.budgets, options.ParseBudget)
+	f.workers = append(f.workers, options.ParseWorkers)
 	if err, ok := f.failFor[project.Root]; ok {
 		return indexer.Report{}, err
 	}
@@ -441,5 +445,41 @@ func TestSupervisorNeverRequestsFullGraphCounts(t *testing.T) {
 	defer runner.mutex.Unlock()
 	if len(runner.details) != 1 || runner.details[0] != indexer.ReportWithoutCounts {
 		t.Fatalf("supervisor report detail = %#v, want only %q", runner.details, indexer.ReportWithoutCounts)
+	}
+}
+
+// TestSupervisorMetersEveryRootAgainstTheProcessWideParseBudget keeps the
+// supervisor out of the parse budget's business. It schedules several roots at
+// once, so its runs are exactly the ones that would oversubscribe the machine if
+// each pool resolved its own worker count in isolation; leaving ParseWorkers and
+// ParseBudget unset is what puts every root under the one process-wide ceiling
+// in internal/indexer.
+func TestSupervisorMetersEveryRootAgainstTheProcessWideParseBudget(t *testing.T) {
+	runner := &fakeRunner{}
+	supervisor, store := newTestSupervisor(t, runner, func(_ context.Context, root string) (indexer.Project, error) {
+		return fakeProject(root, "main"), nil
+	})
+	for range 3 {
+		if _, _, err := store.Add(testtemp.Dir(t), Settings{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := supervisor.Once(context.Background()); err != nil {
+		t.Fatalf("Once: %v", err)
+	}
+	runner.mutex.Lock()
+	defer runner.mutex.Unlock()
+	if len(runner.budgets) != 3 {
+		t.Fatalf("supervisor made %d runs, want one per registered root", len(runner.budgets))
+	}
+	for index, budget := range runner.budgets {
+		if budget != nil {
+			t.Fatalf("run %d named its own parse budget of %d, which exempts it from the process-wide ceiling",
+				index, budget.Limit())
+		}
+		if runner.workers[index] != 0 {
+			t.Fatalf("run %d requested %d parse workers, which bypasses the derived pool size",
+				index, runner.workers[index])
+		}
 	}
 }

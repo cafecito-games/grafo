@@ -543,7 +543,11 @@ func executeScenarioRun(ctx context.Context, engine string, scenario ScenarioRep
 		return nil
 	}
 	indexed, runErr := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project,
-		indexer.Options{Boundary: wrappedHook, ParseWorkers: parseWorkers})
+		indexer.Options{Boundary: wrappedHook, ParseWorkers: parseWorkers,
+			// The benchmark measures one pool in isolation and reports the pool
+			// size it ran under, so the process-wide budget must not silently cap
+			// the worker count it was asked to measure.
+			ParseBudget: indexer.UnboundedParseBudget})
 	if !indexed.CountsCollected {
 		// Scenario comparisons read graph totals, so a summary the run did not
 		// collect is recounted directly instead of compared as zeros.
