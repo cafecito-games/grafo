@@ -353,10 +353,7 @@ func (m *manager) compact(ctx context.Context, root string, policy CompactPolicy
 		return report, err
 	}
 	report.After = &CompactState{Sizes: afterSizes, Metrics: compaction.After}
-	report.Reclaimed = reclaimedSizes(report.Before.Sizes, afterSizes)
-	if report.Before.Metrics.ReclaimableBytes == 0 {
-		report.Reclaimed = Sizes{}
-	}
+	report.Reclaimed = compactionReclaimed(report.Before.Sizes, afterSizes, compaction)
 	return report, nil
 }
 
@@ -412,7 +409,15 @@ func (m *manager) indexSizes(path string) (Sizes, error) {
 }
 
 func recommendCompaction(primaryBytes int64, metrics sqlite.StorageMetrics) bool {
-	if primaryBytes <= 0 || metrics.ReclaimableBytes < compactMinBytes {
+	if primaryBytes <= 0 {
+		return false
+	}
+	// An index from before the current page size cannot adopt it without being
+	// rewritten, and compaction is the only thing that rewrites it in place.
+	if metrics.PageSize > 0 && metrics.PageSize < sqlite.TargetPageSize {
+		return true
+	}
+	if metrics.ReclaimableBytes < compactMinBytes {
 		return false
 	}
 	threshold := primaryBytes / 5
@@ -420,6 +425,17 @@ func recommendCompaction(primaryBytes int64, metrics sqlite.StorageMetrics) bool
 		threshold++
 	}
 	return metrics.ReclaimableBytes >= threshold
+}
+
+// compactionReclaimed reports what compaction handed back. With no freelist to
+// release and no new page size to adopt there was nothing for it to reclaim, so
+// any difference in file size came from the sidecars rather than from the
+// rewrite; a page size upgrade rewrites every page and is reported as measured.
+func compactionReclaimed(before, after Sizes, compaction sqlite.CompactionResult) Sizes {
+	if compaction.Before.ReclaimableBytes == 0 && compaction.Before.PageSize == compaction.After.PageSize {
+		return Sizes{}
+	}
+	return reclaimedSizes(before, after)
 }
 
 func reclaimedSizes(before, after Sizes) Sizes {
@@ -572,32 +588,38 @@ type removalTarget struct {
 
 func (m *manager) removalTargets(primary string) ([]removalTarget, error) {
 	directory := filepath.Dir(primary)
-	paths := []string{primary, primary + "-wal", primary + "-shm"}
+	// Only the primary has to exist. The rewrite sibling is a whole second copy
+	// of the database that an interrupted page size upgrade can leave behind, and
+	// once this branch index is gone nothing else would ever reclaim it: the
+	// inventory lists only '.sqlite' entries and only a compaction of this same
+	// index clears its own leftover.
+	paths := []struct {
+		path   string
+		assign func(*Sizes, int64)
+	}{
+		{path: primary, assign: func(sizes *Sizes, size int64) { sizes.Database = size }},
+		{path: primary + "-wal", assign: func(sizes *Sizes, size int64) { sizes.WAL = size }},
+		{path: primary + "-shm", assign: func(sizes *Sizes, size int64) { sizes.SHM = size }},
+		{path: sqlite.ReplacementIndexPath(primary), assign: func(sizes *Sizes, size int64) { sizes.Database = size }},
+	}
 	targets := make([]removalTarget, 0, len(paths))
-	for index, path := range paths {
-		if !containedPath(directory, path) {
+	for index, target := range paths {
+		if !containedPath(directory, target.path) {
 			return nil, fmt.Errorf("deletion target escapes index directory")
 		}
-		info, err := m.lstat(path)
+		info, err := m.lstat(target.path)
 		if errors.Is(err, os.ErrNotExist) && index > 0 {
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("inspect deletion target %s: %w", filepath.Base(path), err)
+			return nil, fmt.Errorf("inspect deletion target %s: %w", filepath.Base(target.path), err)
 		}
 		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("deletion target %s is not a regular non-symlink file", filepath.Base(path))
+			return nil, fmt.Errorf("deletion target %s is not a regular non-symlink file", filepath.Base(target.path))
 		}
 		sizes := Sizes{Total: info.Size()}
-		switch index {
-		case 0:
-			sizes.Database = info.Size()
-		case 1:
-			sizes.WAL = info.Size()
-		case 2:
-			sizes.SHM = info.Size()
-		}
-		targets = append(targets, removalTarget{path: path, sizes: sizes})
+		target.assign(&sizes, info.Size())
+		targets = append(targets, removalTarget{path: target.path, sizes: sizes})
 	}
 	return targets, nil
 }

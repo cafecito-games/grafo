@@ -128,13 +128,13 @@ func Open(ctx context.Context, path string) (*Repository, error) {
 // approaches the limit.
 const pageCacheKiB = 512 * 1024
 
-// indexPageSize is the page size of a newly created index. Larger pages hold
-// more index entries per read and turn the random b-tree traffic above into
-// fewer, larger I/O operations. SQLite only honors the pragma while the
-// database is empty and not yet in WAL mode, so it applies to indexes this
-// version creates; one created by an earlier version keeps its own page size
-// until it is rebuilt.
-const indexPageSize = 16384
+// TargetPageSize is the page size every index is expected to carry. Larger
+// pages hold more index entries per read and turn the random b-tree traffic
+// above into fewer, larger I/O operations. SQLite only honors the pragma while
+// the database is empty and not yet in WAL mode, so a newly created index
+// adopts it directly; one created by an earlier version carries its own page
+// size until compaction rewrites it.
+const TargetPageSize = 16384
 
 // temporaryStoreMemory keeps SQLite's statement journals in memory. Every
 // batched node and fact write is an upsert, and an upsert is a statement that
@@ -170,7 +170,7 @@ const retainedLogBytes = 256 << 20
 // database that is already in WAL mode.
 var writableConnectionPragmas = []string{
 	"PRAGMA busy_timeout=5000",
-	fmt.Sprintf("PRAGMA page_size=%d", indexPageSize),
+	fmt.Sprintf("PRAGMA page_size=%d", TargetPageSize),
 	fmt.Sprintf("PRAGMA cache_size=-%d", pageCacheKiB),
 	temporaryStoreMemory,
 	"PRAGMA journal_mode=WAL",

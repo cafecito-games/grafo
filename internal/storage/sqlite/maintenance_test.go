@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
 	"github.com/cafecito-games/grafo/internal/testtemp"
 )
@@ -297,4 +299,239 @@ func openMaintenanceFixture(t *testing.T, path string) *Repository {
 		t.Fatal(err)
 	}
 	return repository
+}
+
+func TestCompactUpgradesALegacyPageSizeAndPreservesEvidence(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(testtemp.Dir(t), "legacy.sqlite")
+	openLegacyPageSizeFixture(t, path)
+	maintenance, err := OpenMaintenance(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := maintenance.(*Repository)
+	defer func() { _ = repository.Close() }()
+	metadataBefore, err := repository.Metadata(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	countsBefore, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := repository.Compact(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Before.PageSize != legacyPageSize || result.After.PageSize != TargetPageSize {
+		t.Fatalf("page size went from %d to %d, want %d to %d",
+			result.Before.PageSize, result.After.PageSize, legacyPageSize, TargetPageSize)
+	}
+	metadataAfter, err := repository.Metadata(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	countsAfter, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(metadataBefore, metadataAfter) || !reflect.DeepEqual(countsBefore, countsAfter) {
+		t.Fatalf("upgrade changed evidence: metadata=%t counts=%t",
+			reflect.DeepEqual(metadataBefore, metadataAfter), reflect.DeepEqual(countsBefore, countsAfter))
+	}
+	if err := integrityCheck(ctx, repository.db); err != nil {
+		t.Fatalf("upgraded index failed its integrity check: %v", err)
+	}
+	settings, err := readMaintenanceSettings(ctx, repository.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ToLower(settings.JournalMode) != "wal" {
+		t.Fatalf("upgraded index journal mode = %q, want WAL", settings.JournalMode)
+	}
+	if value, err := repository.Meta(ctx, "opaque_future_key"); err != nil || value != "opaque-value" {
+		t.Fatalf("opaque metadata = %q, %v", value, err)
+	}
+	assertNoReplacementLeftBehind(t, path)
+}
+
+func TestCompactLeavesAnIndexAlreadyAtTheTargetPageSizeInPlace(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(testtemp.Dir(t), "current.sqlite")
+	repository := openMaintenanceFixture(t, path)
+	defer func() { _ = repository.Close() }()
+	if err := repository.SetMeta(ctx, "opaque_future_key", "opaque-value"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := repository.Compact(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Before.PageSize != TargetPageSize || result.After.PageSize != TargetPageSize {
+		t.Fatalf("page size went from %d to %d, want %d throughout",
+			result.Before.PageSize, result.After.PageSize, TargetPageSize)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("compaction replaced an index that was already at the target page size")
+	}
+	assertNoReplacementLeftBehind(t, path)
+}
+
+func TestPageSizeUpgradeIsReadableInWALModeOnEitherSideOfTheReplacement(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(testtemp.Dir(t), "interrupted.sqlite")
+	openLegacyPageSizeFixture(t, path)
+	maintenance, err := OpenMaintenance(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := maintenance.(*Repository)
+	defer func() { _ = repository.Close() }()
+	countsBefore, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	replacement, err := repository.writeReplacementAtTargetPageSize(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// An interruption before the replacement is renamed into place leaves the
+	// original exactly as maintenance found it.
+	assertReadableWALIndex(t, path, legacyPageSize, countsBefore)
+	// An interruption after it is renamed into place leaves that file, which is
+	// already a WAL index at the target page size.
+	assertReadableWALIndex(t, replacement, TargetPageSize, countsBefore)
+
+	// A later compaction clears the abandoned replacement instead of failing on it.
+	reopened, err := OpenMaintenance(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retried := reopened.(*Repository)
+	defer func() { _ = retried.Close() }()
+	result, err := retried.Compact(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.After.PageSize != TargetPageSize {
+		t.Fatalf("retried upgrade page size = %d, want %d", result.After.PageSize, TargetPageSize)
+	}
+	if !reflect.DeepEqual(result.Counts, countsBefore) {
+		t.Fatalf("retried upgrade counts = %#v, want %#v", result.Counts, countsBefore)
+	}
+	assertNoReplacementLeftBehind(t, path)
+}
+
+const legacyPageSize = 4096
+
+// openLegacyPageSizeFixture writes an index the way a version before the 16 KiB
+// default would have left it: populated, in WAL mode, and at SQLite's old
+// default page size.
+func openLegacyPageSizeFixture(t *testing.T, path string) {
+	t.Helper()
+	ctx := context.Background()
+	repository := openMaintenanceFixture(t, path)
+	if err := repository.SetMeta(ctx, "opaque_future_key", "opaque-value"); err != nil {
+		_ = repository.Close()
+		t.Fatal(err)
+	}
+	if _, err := repository.db.ExecContext(ctx, "CREATE TABLE legacy_fixture(id INTEGER PRIMARY KEY, payload BLOB)"); err != nil {
+		_ = repository.Close()
+		t.Fatal(err)
+	}
+	if _, err := repository.db.ExecContext(ctx, `WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x < 512) INSERT INTO legacy_fixture(payload) SELECT zeroblob(4096) FROM n`); err != nil {
+		_ = repository.Close()
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	database, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	database.SetMaxOpenConns(1)
+	var mode string
+	if err := database.QueryRowContext(ctx, "PRAGMA journal_mode=DELETE").Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, fmt.Sprintf("PRAGMA page_size=%d", legacyPageSize)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "VACUUM"); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRowContext(ctx, "PRAGMA journal_mode=WAL").Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	var pageSize int64
+	if err := database.QueryRowContext(ctx, "PRAGMA page_size").Scan(&pageSize); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if pageSize != legacyPageSize || strings.ToLower(mode) != "wal" {
+		t.Fatalf("legacy fixture is page_size=%d journal_mode=%q", pageSize, mode)
+	}
+}
+
+func assertReadableWALIndex(t *testing.T, path string, wantPageSize int64, wantCounts graph.Counts) {
+	t.Helper()
+	ctx := context.Background()
+	walMode, err := hasWALJournalHeader(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !walMode {
+		t.Fatalf("%s does not carry a WAL journal header", filepath.Base(path))
+	}
+	maintenance, err := OpenMaintenance(ctx, path)
+	if err != nil {
+		t.Fatalf("open %s: %v", filepath.Base(path), err)
+	}
+	repository := maintenance.(*Repository)
+	defer func() { _ = repository.Close() }()
+	var pageSize int64
+	if err := repository.db.QueryRowContext(ctx, "PRAGMA page_size").Scan(&pageSize); err != nil {
+		t.Fatal(err)
+	}
+	if pageSize != wantPageSize {
+		t.Fatalf("%s page size = %d, want %d", filepath.Base(path), pageSize, wantPageSize)
+	}
+	if err := integrityCheck(ctx, repository.db); err != nil {
+		t.Fatalf("%s failed its integrity check: %v", filepath.Base(path), err)
+	}
+	counts, err := repository.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(counts, wantCounts) {
+		t.Fatalf("%s counts = %#v, want %#v", filepath.Base(path), counts, wantCounts)
+	}
+}
+
+func assertNoReplacementLeftBehind(t *testing.T, path string) {
+	t.Helper()
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		leftover := ReplacementIndexPath(path) + suffix
+		if _, err := os.Lstat(leftover); !os.IsNotExist(err) {
+			t.Fatalf("%s was left behind: %v", filepath.Base(leftover), err)
+		}
+	}
 }

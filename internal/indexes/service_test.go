@@ -89,9 +89,72 @@ func TestRecommendCompactionRequiresBothThresholds(t *testing.T) {
 		{name: "larger", primary: 2 << 30, reclaimable: 512 * mib, want: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			metrics := sqlite.StorageMetrics{ReclaimableBytes: test.reclaimable}
+			metrics := sqlite.StorageMetrics{PageSize: sqlite.TargetPageSize, ReclaimableBytes: test.reclaimable}
 			if got := recommendCompaction(test.primary, metrics); got != test.want {
 				t.Fatalf("recommendCompaction(%d, %d) = %t, want %t", test.primary, test.reclaimable, got, test.want)
+			}
+		})
+	}
+}
+
+func TestCompactionReclaimedReportsAPageSizeUpgradeAsMeasured(t *testing.T) {
+	before := Sizes{Database: 2800, WAL: 16, SHM: 4, Total: 2820}
+	after := Sizes{Database: 2130, WAL: 0, SHM: 4, Total: 2134}
+	emptyFreelist := sqlite.StorageMetrics{PageSize: legacyPageSize}
+	for _, test := range []struct {
+		name       string
+		compaction sqlite.CompactionResult
+		want       Sizes
+	}{
+		{
+			name: "nothing to reclaim and no new page size",
+			compaction: sqlite.CompactionResult{
+				Before: sqlite.StorageMetrics{PageSize: sqlite.TargetPageSize},
+				After:  sqlite.StorageMetrics{PageSize: sqlite.TargetPageSize},
+			},
+			want: Sizes{},
+		},
+		{
+			name: "page size upgraded with an empty freelist",
+			compaction: sqlite.CompactionResult{
+				Before: emptyFreelist,
+				After:  sqlite.StorageMetrics{PageSize: sqlite.TargetPageSize},
+			},
+			want: Sizes{Database: 670, WAL: 16, SHM: 0, Total: 686},
+		},
+		{
+			name: "freelist released",
+			compaction: sqlite.CompactionResult{
+				Before: sqlite.StorageMetrics{PageSize: sqlite.TargetPageSize, ReclaimableBytes: 1},
+				After:  sqlite.StorageMetrics{PageSize: sqlite.TargetPageSize},
+			},
+			want: Sizes{Database: 670, WAL: 16, SHM: 0, Total: 686},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := compactionReclaimed(before, after, test.compaction); got != test.want {
+				t.Fatalf("compactionReclaimed = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestRecommendCompactionForALegacyPageSizeRegardlessOfFreelist(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		pageSize int64
+		want     bool
+	}{
+		{name: "legacy default", pageSize: legacyPageSize, want: true},
+		{name: "one below target", pageSize: sqlite.TargetPageSize / 2, want: true},
+		{name: "target", pageSize: sqlite.TargetPageSize},
+		{name: "above target", pageSize: 2 * sqlite.TargetPageSize},
+		{name: "unknown", pageSize: 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			metrics := sqlite.StorageMetrics{PageSize: test.pageSize}
+			if got := recommendCompaction(1<<30, metrics); got != test.want {
+				t.Fatalf("recommendCompaction(page_size=%d) = %t, want %t", test.pageSize, got, test.want)
 			}
 		})
 	}
@@ -144,6 +207,99 @@ func TestCompactDryRunIsReadOnlyAndRealRunReportsCurrentIndex(t *testing.T) {
 	}
 	if _, err := os.Stat(project.IndexPath + ".lock"); err != nil {
 		t.Fatalf("compaction removed lock anchor: %v", err)
+	}
+}
+
+func TestCompactUpgradesALegacyPageSizeAndKeepsTheBranchIdentity(t *testing.T) {
+	ctx := context.Background()
+	root := testtemp.Dir(t)
+	project := discoverTestProject(t, root)
+	repository := seedIndex(t, project.IndexPath, project, project.Branch, time.Now().UTC())
+	closeRepositories(t, repository)
+	rewriteAtLegacyPageSize(t, project.IndexPath)
+	beforeInventory, err := List(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(beforeInventory.Indexes) != 1 || !beforeInventory.Indexes[0].CompactRecommended {
+		t.Fatalf("legacy page size was not flagged for compaction: %#v", beforeInventory.Indexes)
+	}
+
+	report, err := Compact(ctx, root, CompactPolicy{Confirm: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.After == nil {
+		t.Fatalf("report = %#v", report)
+	}
+	if report.Before.Metrics.PageSize != legacyPageSize || report.After.Metrics.PageSize != sqlite.TargetPageSize {
+		t.Fatalf("page size went from %d to %d, want %d to %d",
+			report.Before.Metrics.PageSize, report.After.Metrics.PageSize, legacyPageSize, sqlite.TargetPageSize)
+	}
+	onDisk, err := os.Stat(project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.After.Sizes.Database != onDisk.Size() {
+		t.Fatalf("reported database size %d, on disk %d", report.After.Sizes.Database, onDisk.Size())
+	}
+	if _, err := os.Stat(project.IndexPath + ".lock"); err != nil {
+		t.Fatalf("compaction removed lock anchor: %v", err)
+	}
+	afterInventory, err := List(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(afterInventory.Indexes) != 1 {
+		t.Fatalf("inventory after upgrade = %#v", afterInventory.Indexes)
+	}
+	upgraded := afterInventory.Indexes[0]
+	legacy := beforeInventory.Indexes[0]
+	if upgraded.Compatibility != CompatibilityCompatible || !upgraded.Verified || upgraded.CompactRecommended {
+		t.Fatalf("upgraded index = %#v", upgraded)
+	}
+	identity := func(index Index) [5]string {
+		return [5]string{index.Filename, index.Root, index.RepositoryID, index.Branch, index.Commit}
+	}
+	if identity(upgraded) != identity(legacy) || upgraded.IndexedAt != legacy.IndexedAt {
+		t.Fatalf("upgrade changed branch identity: before=%#v after=%#v", legacy, upgraded)
+	}
+}
+
+const legacyPageSize = 4096
+
+// rewriteAtLegacyPageSize leaves an index the way a version before the 16 KiB
+// default would have: in WAL mode at SQLite's old default page size.
+func rewriteAtLegacyPageSize(t *testing.T, path string) {
+	t.Helper()
+	ctx := context.Background()
+	database, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	database.SetMaxOpenConns(1)
+	var mode string
+	if err := database.QueryRowContext(ctx, "PRAGMA journal_mode=DELETE").Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "PRAGMA page_size=4096"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "VACUUM"); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRowContext(ctx, "PRAGMA journal_mode=WAL").Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	var pageSize int64
+	if err := database.QueryRowContext(ctx, "PRAGMA page_size").Scan(&pageSize); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if pageSize != legacyPageSize || !strings.EqualFold(mode, "wal") {
+		t.Fatalf("legacy fixture is page_size=%d journal_mode=%q", pageSize, mode)
 	}
 }
 
@@ -415,6 +571,42 @@ func TestPruneIntersectsSelectorsAndDryRunIsNonMutating(t *testing.T) {
 	replay, err := Prune(ctx, root, Policy{OlderThan: &olderThan, Keep: &keep, Confirm: true, Now: now})
 	if err != nil || len(selectedFilenames(replay)) != 0 {
 		t.Fatalf("idempotent replay = %#v, %v", replay, err)
+	}
+}
+
+func TestPruneReclaimsAnAbandonedPageSizeRewrite(t *testing.T) {
+	ctx := context.Background()
+	root := testtemp.Dir(t)
+	project := discoverTestProject(t, root)
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	current := seedIndex(t, project.IndexPath, project, project.Branch, now.Add(-time.Hour))
+	stalePath := filepath.Join(filepath.Dir(project.IndexPath), "stale.sqlite")
+	stale := seedIndex(t, stalePath, project, "stale", now.Add(-72*time.Hour))
+	closeRepositories(t, current, stale)
+	// An interrupted page size upgrade of the stale branch left a whole copy of
+	// its database behind.
+	rewritePath := sqlite.ReplacementIndexPath(stalePath)
+	rewrite := make([]byte, 64*1024)
+	if err := os.WriteFile(rewritePath, rewrite, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	olderThan := 24 * time.Hour
+	report, err := Prune(ctx, root, Policy{OlderThan: &olderThan, Confirm: true, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := selectedFilenames(report); !reflect.DeepEqual(got, []string{"stale.sqlite"}) {
+		t.Fatalf("selection = %q; report %#v", got, report.Results)
+	}
+	if _, err := os.Stat(rewritePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("abandoned rewrite survived the prune: %v", err)
+	}
+	if report.Reclaimed.Database < int64(len(rewrite)) {
+		t.Fatalf("reclaimed %#v did not account for the %d-byte rewrite", report.Reclaimed, len(rewrite))
+	}
+	if _, err := os.Stat(project.IndexPath); err != nil {
+		t.Fatalf("current index: %v", err)
 	}
 }
 

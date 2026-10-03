@@ -125,8 +125,8 @@ func TestOpenAppliesPageSizeAndPageCache(t *testing.T) {
 	if err := repository.db.QueryRowContext(ctx, "PRAGMA page_size").Scan(&pageSize); err != nil {
 		t.Fatalf("read page size: %v", err)
 	}
-	if pageSize != indexPageSize {
-		t.Fatalf("page size = %d, want %d", pageSize, indexPageSize)
+	if pageSize != TargetPageSize {
+		t.Fatalf("page size = %d, want %d", pageSize, TargetPageSize)
 	}
 	var cacheSize int
 	if err := repository.db.QueryRowContext(ctx, "PRAGMA cache_size").Scan(&cacheSize); err != nil {
