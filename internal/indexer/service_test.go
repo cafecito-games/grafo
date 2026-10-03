@@ -3117,3 +3117,84 @@ func reachedDepths(section query.ImpactSection) map[string]int {
 	}
 	return depths
 }
+
+// TestServiceRetainsGDScriptCallableFlowUpstream is the regression for issue
+// #215: a method handed to another object as a callable value, stored in a
+// typed Callable field, and later invoked through Callable.call had no upstream
+// path at all, so impact reported a non-truncated empty result that read as
+// proof the method has no consumers. The fixture carries the full chain the
+// report described - the method value at the construction site, the constructor
+// parameter stored into the field, and the later invocation.
+func TestServiceRetainsGDScriptCallableFlowUpstream(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	root := testtemp.Dir(t)
+	runGit(t, root, "init", "-b", "main")
+	write(t, filepath.Join(root, "action_rejection_feedback_module.gd"), `class_name ActionRejectionFeedbackModule
+extends Node
+
+var _reconcile_rejected_request: Callable
+
+func _init(reconcile_rejected_request: Callable) -> void:
+	_reconcile_rejected_request = reconcile_rejected_request
+
+func _on_action_rejected(request_id: int, reason: String) -> void:
+	_reconcile_rejected_request.call(request_id, reason)
+`)
+	write(t, filepath.Join(root, "in_game_session_coordinator.gd"), `class_name InGameSessionCoordinator
+extends Node
+
+func _build_container_runtime() -> void:
+	var module := ActionRejectionFeedbackModule.new(_reconcile_rejected_request)
+	module.install()
+
+func _reconcile_rejected_request(request_id: int, reason: String) -> void:
+	pass
+`)
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(gdscriptparser.New(), configparser.New()))
+	if _, err := service.Run(ctx, project, indexer.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	queries := query.NewService(repository)
+
+	// The method value at the construction site is what makes the method
+	// reachable from the object that will run it.
+	report, err := queries.Impact(ctx, "InGameSessionCoordinator._reconcile_rejected_request",
+		query.ImpactOptions{Kind: graph.KindMethod})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := reachedDepths(report.Upstream)
+	if upstream["InGameSessionCoordinator._build_container_runtime"] != 1 {
+		t.Fatalf("construction site missing from upstream: %#v", upstream)
+	}
+
+	// The constructor parameter reaches the field it is stored into, and the
+	// field reaches the method that invokes it through Callable.call.
+	stored, err := queries.Impact(ctx, "ActionRejectionFeedbackModule._reconcile_rejected_request",
+		query.ImpactOptions{Kind: graph.KindField})
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedUpstream := reachedDepths(stored.Upstream)
+	for name, depth := range map[string]int{
+		"ActionRejectionFeedbackModule._init.reconcile_rejected_request": 1,
+		"ActionRejectionFeedbackModule._on_action_rejected":              1,
+	} {
+		if storedUpstream[name] != depth {
+			t.Fatalf("stored callable upstream reached %s at depth %d, want %d: %#v",
+				name, storedUpstream[name], depth, storedUpstream)
+		}
+	}
+}
