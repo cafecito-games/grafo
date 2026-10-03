@@ -981,7 +981,7 @@ until it happens, so an interruption at any point leaves a readable WAL index
 behind: either the untouched original or the finished rewrite. The rewrite needs
 room for a second copy of the database while it runs, and an abandoned
 `*.sqlite.rewrite` file from an interrupted attempt is removed by the next
-compaction. Use source include/exclude settings to reduce live
+compaction of that index, or by `indexes prune` if the branch goes stale first. Use source include/exclude settings to reduce live
 graph scope, and `indexes prune` to remove whole non-current branch databases.
 
 ## Development

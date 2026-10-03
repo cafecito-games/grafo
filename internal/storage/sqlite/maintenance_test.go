@@ -529,7 +529,7 @@ func assertReadableWALIndex(t *testing.T, path string, wantPageSize int64, wantC
 func assertNoReplacementLeftBehind(t *testing.T, path string) {
 	t.Helper()
 	for _, suffix := range []string{"", "-wal", "-shm"} {
-		leftover := replacementIndexPath(path) + suffix
+		leftover := ReplacementIndexPath(path) + suffix
 		if _, err := os.Lstat(leftover); !os.IsNotExist(err) {
 			t.Fatalf("%s was left behind: %v", filepath.Base(leftover), err)
 		}

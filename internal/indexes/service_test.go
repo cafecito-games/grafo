@@ -574,6 +574,42 @@ func TestPruneIntersectsSelectorsAndDryRunIsNonMutating(t *testing.T) {
 	}
 }
 
+func TestPruneReclaimsAnAbandonedPageSizeRewrite(t *testing.T) {
+	ctx := context.Background()
+	root := testtemp.Dir(t)
+	project := discoverTestProject(t, root)
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	current := seedIndex(t, project.IndexPath, project, project.Branch, now.Add(-time.Hour))
+	stalePath := filepath.Join(filepath.Dir(project.IndexPath), "stale.sqlite")
+	stale := seedIndex(t, stalePath, project, "stale", now.Add(-72*time.Hour))
+	closeRepositories(t, current, stale)
+	// An interrupted page size upgrade of the stale branch left a whole copy of
+	// its database behind.
+	rewritePath := sqlite.ReplacementIndexPath(stalePath)
+	rewrite := make([]byte, 64*1024)
+	if err := os.WriteFile(rewritePath, rewrite, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	olderThan := 24 * time.Hour
+	report, err := Prune(ctx, root, Policy{OlderThan: &olderThan, Confirm: true, Now: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := selectedFilenames(report); !reflect.DeepEqual(got, []string{"stale.sqlite"}) {
+		t.Fatalf("selection = %q; report %#v", got, report.Results)
+	}
+	if _, err := os.Stat(rewritePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("abandoned rewrite survived the prune: %v", err)
+	}
+	if report.Reclaimed.Database < int64(len(rewrite)) {
+		t.Fatalf("reclaimed %#v did not account for the %d-byte rewrite", report.Reclaimed, len(rewrite))
+	}
+	if _, err := os.Stat(project.IndexPath); err != nil {
+		t.Fatalf("current index: %v", err)
+	}
+}
+
 func TestPruneProtectsCurrentAndRejectsUnverifiedFutureAndLockedCandidates(t *testing.T) {
 	ctx := context.Background()
 	root := testtemp.Dir(t)

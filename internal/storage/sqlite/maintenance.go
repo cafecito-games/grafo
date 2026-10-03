@@ -258,7 +258,7 @@ func (r *Repository) upgradePageSize(ctx context.Context) error {
 // original is only read, so a failure here leaves nothing to undo but the
 // sibling itself.
 func (r *Repository) writeReplacementAtTargetPageSize(ctx context.Context) (string, error) {
-	replacement := replacementIndexPath(r.path)
+	replacement := ReplacementIndexPath(r.path)
 	// VACUUM INTO refuses to write a file that already exists, so an abandoned
 	// earlier attempt has to go first.
 	if err := removeIndexFiles(replacement); err != nil {
@@ -317,7 +317,10 @@ func prepareReplacementIndex(ctx context.Context, path string) (resultErr error)
 	return nil
 }
 
-func replacementIndexPath(path string) string { return path + ".rewrite" }
+// ReplacementIndexPath names the sibling a page size upgrade rewrites an index
+// into. An interrupted upgrade can leave the file behind, so index lifecycle
+// orchestration has to know about it as well.
+func ReplacementIndexPath(path string) string { return path + ".rewrite" }
 
 func removeIndexFiles(path string) error {
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
