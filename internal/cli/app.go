@@ -23,6 +23,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/indexseed"
 	"github.com/cafecito-games/grafo/internal/mcpserver"
 	parserdefaults "github.com/cafecito-games/grafo/internal/parser/defaults"
+	"github.com/cafecito-games/grafo/internal/profiling"
 	"github.com/cafecito-games/grafo/internal/query"
 	"github.com/cafecito-games/grafo/internal/search"
 	"github.com/cafecito-games/grafo/internal/semantic"
@@ -117,6 +118,29 @@ func (a *App) Run(ctx context.Context, arguments []string) int {
 		a.fail(fmt.Errorf("--no-seed is not supported by %s", parsed.command))
 		return 2
 	}
+	// Profiling wraps the dispatch rather than one command, and starts only once
+	// the invocation is known to be one that will do work: a rejected one would
+	// otherwise leave behind a profile of nothing.
+	profiles, profileErr := profiling.Start(profilingOptions(parsed))
+	if profileErr != nil {
+		a.fail(profileErr)
+		return 2
+	}
+	code := a.dispatch(ctx, parsed)
+	if err := profiles.Stop(); err != nil {
+		a.fail(err)
+		// The command's own result stands, but an invocation that was asked for a
+		// profile and produced none did not do what it was told, so a successful
+		// one still reports failure.
+		if code == 0 {
+			code = 1
+		}
+	}
+	return code
+}
+
+// dispatch runs the selected command and renders whatever it failed with.
+func (a *App) dispatch(ctx context.Context, parsed parsedArguments) int {
 	updateLookup := a.startUpdateCheck(ctx, parsed)
 	defer a.reportUpdate(ctx, updateLookup)
 	var runErr error
@@ -2698,6 +2722,10 @@ var valueOptions = map[string]bool{
 	"package": true, "message": true, "oneof": true, "status": true,
 	"progress": true, "older-than": true, "max-bytes": true, "keep": true,
 	"budget": true,
+	// Profiling applies to every command rather than to one, so these are not
+	// in any per-command support table below.
+	"cpu-profile": true, "memory-profile": true, "block-profile": true,
+	"mutex-profile": true, "trace-profile": true,
 }
 
 // progressCommands bounds the globally parsed --progress option to the
@@ -2771,6 +2799,19 @@ func parseArguments(arguments []string) (parsedArguments, error) {
 		}
 	}
 	return result, nil
+}
+
+// profilingOptions reads the profiles this run was asked to write. They are
+// spelled with a -profile suffix, including the execution trace, so that one
+// prefix names the whole group in help and in shell completion.
+func profilingOptions(args parsedArguments) profiling.Options {
+	return profiling.Options{
+		CPUPath:    args.values["cpu-profile"],
+		MemoryPath: args.values["memory-profile"],
+		BlockPath:  args.values["block-profile"],
+		MutexPath:  args.values["mutex-profile"],
+		TracePath:  args.values["trace-profile"],
+	}
 }
 
 // nodeKindOption reads the optional --kind filter shared by every command that
@@ -3012,4 +3053,15 @@ canonical template compatibility, event filters are literal fragments, and
 unresolved or ambiguous destinations remain explicit.
 Service-topology JSON contains the endpoint/event node IDs and edge evidence;
 --mermaid renders that same result without replacing the structured evidence.
+
+Every command accepts --cpu-profile, --memory-profile, --block-profile,
+--mutex-profile and --trace-profile, each taking a file path. The first four are
+read with 'go tool pprof' and the last with 'go tool trace'. All are off unless
+asked for, and an unwritable path fails before the command runs rather than
+after. The CPU and trace profiles sample the whole run; the block and mutex
+profiles make the runtime record every contention event, as
+'go test -blockprofile' and -mutexprofile do, which distorts the run's timings in
+exchange for showing where goroutines wait rather than work. An execution trace
+grows by roughly 6 MB per second of wall clock, so prefer it on a short run or a
+reproduction rather than on a cold index of a large repository.
 `
