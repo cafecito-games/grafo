@@ -203,16 +203,35 @@ func NewService(repository graph.IndexRepository, parsers *parserapi.Registry) *
 	return &Service{repository: repository, parsers: parsers}
 }
 
+// semanticSince reduces lifetime loader counters to the work one run performed.
+// A language absent from the baseline is reported whole: its parser kept no
+// counters when the run started, so everything it counted since belongs to it.
+func semanticSince(current, baseline map[string]parserapi.SemanticLoadMetrics) map[string]parserapi.SemanticLoadMetrics {
+	if current == nil {
+		return nil
+	}
+	delta := make(map[string]parserapi.SemanticLoadMetrics, len(current))
+	for language, metrics := range current {
+		delta[language] = metrics.Since(baseline[language])
+	}
+	return delta
+}
+
 func (s *Service) Run(ctx context.Context, project Project, options Options) (report Report, runErr error) {
 	started := time.Now()
 	report = Report{Project: project, Updated: []string{}, Removed: []string{}, Seed: options.Seed}
 	writeStart := writeStats(s.repository)
+	// A parser registry outlives one run — federation indexes every member
+	// through one registry, and the MCP freshness coordinator keeps one for the
+	// session — so the loader's counters are lifetime totals and this run's
+	// share is the difference.
+	semanticStart := s.parsers.SemanticLoadMetrics()
 	progress := newProgressEmitter(project, options.ProgressObserver, started)
 	defer func() {
 		report.Writes = writeStatsDelta(writeStats(s.repository), writeStart)
 		// Collected in the deferred block so a failed or cancelled run still
 		// reports the semantic work it had already paid for.
-		report.Semantic = s.parsers.SemanticLoadMetrics()
+		report.Semantic = semanticSince(s.parsers.SemanticLoadMetrics(), semanticStart)
 		for _, metrics := range report.Semantic {
 			report.Phases.SemanticNS += metrics.LoadNS
 			report.Phases.SemanticDerivationNS += metrics.DerivationNS

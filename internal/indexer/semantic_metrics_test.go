@@ -43,6 +43,11 @@ func Run(reader store.Reader) string { return reader.Get("a") }
 
 func indexCorpus(t testing.TB, root string) indexer.Report {
 	t.Helper()
+	return indexCorpusWith(t, root, parserdefaults.NewRegistry())
+}
+
+func indexCorpusWith(t testing.TB, root string, registry *parserapi.Registry) indexer.Report {
+	t.Helper()
 	ctx := context.Background()
 	project, err := indexer.DiscoverProject(ctx, root)
 	if err != nil {
@@ -57,7 +62,7 @@ func indexCorpus(t testing.TB, root string) indexer.Report {
 			t.Fatal(err)
 		}
 	}()
-	report, err := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{})
+	report, err := indexer.NewService(repository, registry).Run(ctx, project, indexer.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,8 +129,8 @@ func TestSemanticMetricsReachTheJSONReport(t *testing.T) {
 			SemanticDerivationNS int64 `json:"semantic_derivation_ns"`
 		} `json:"phases"`
 		Semantic map[string]struct {
-			Loads  int64 `json:"Loads"`
-			LoadNS int64 `json:"LoadNS"`
+			Loads  int64 `json:"loads"`
+			LoadNS int64 `json:"load_ns"`
 		} `json:"semantic"`
 	}
 	if err := json.Unmarshal(encoded, &decoded); err != nil {
@@ -139,11 +144,12 @@ func TestSemanticMetricsReachTheJSONReport(t *testing.T) {
 	}
 }
 
-// TestNonGoRepositoryReportsNoSemanticMetrics is the fail-closed half: a
-// repository with no Go sources must report no semantic metrics rather than a
-// zeroed entry, so "no loader ran" is distinguishable from "a loader did
-// nothing", and indexing must not depend on the counters existing.
-func TestNonGoRepositoryReportsNoSemanticMetrics(t *testing.T) {
+// TestNonGoRepositoryReportsIdleSemanticMetrics is the fail-closed half. The Go
+// parser always keeps counters, so a repository with no Go sources reports a
+// zeroed entry rather than no entry: that is what distinguishes "its loader did
+// nothing" from "this language has no semantic loader", which is absence.
+// Indexing must not depend on any of it.
+func TestNonGoRepositoryReportsIdleSemanticMetrics(t *testing.T) {
 	root := testtemp.Dir(t)
 	runGit(t, root, "init", "-b", "main")
 	write(t, filepath.Join(root, "README.md"), "# No Go here\n\nJust prose.\n")
@@ -153,8 +159,12 @@ func TestNonGoRepositoryReportsNoSemanticMetrics(t *testing.T) {
 
 	report := indexCorpus(t, root)
 
-	if metrics, reported := report.Semantic["go"]; reported && metrics.Loads != 0 {
-		t.Fatalf("a repository with no Go sources reported %d workspace loads", metrics.Loads)
+	metrics, reported := report.Semantic["go"]
+	if !reported {
+		t.Fatalf("the Go parser keeps counters, so its entry must be present; languages: %v", keysOf(report.Semantic))
+	}
+	if metrics.Loads != 0 || metrics.LoadNS != 0 {
+		t.Fatalf("a repository with no Go sources reported %d loads over %dns", metrics.Loads, metrics.LoadNS)
 	}
 	if report.Phases.SemanticNS != 0 {
 		t.Fatalf("semantic phase = %d on a repository with no Go sources, want 0", report.Phases.SemanticNS)
@@ -167,4 +177,37 @@ func keysOf(metrics map[string]parserapi.SemanticLoadMetrics) []string {
 		result = append(result, language)
 	}
 	return result
+}
+
+// TestReusedRegistryReportsOnlyItsOwnRunsWork is the regression guard for
+// lifetime counters leaking between runs. Federation indexes every member
+// through one registry (internal/federation/repository.go), and the MCP
+// freshness coordinator keeps one for the session, so a report built from raw
+// counters attributes an earlier run's semantic time to a later one — and makes
+// SemanticNS exceed the ParseNS it is documented as a subset of.
+func TestReusedRegistryReportsOnlyItsOwnRunsWork(t *testing.T) {
+	registry := parserdefaults.NewRegistry()
+	first := indexCorpusWith(t, semanticMetricsCorpus(t), registry)
+	if first.Phases.SemanticNS <= 0 {
+		t.Fatalf("first run semantic phase = %d, want a positive duration", first.Phases.SemanticNS)
+	}
+
+	// A second, separate repository indexed through the same registry.
+	second := indexCorpusWith(t, semanticMetricsCorpus(t), registry)
+
+	if second.Phases.SemanticNS > second.Phases.ParseNS {
+		t.Fatalf("second run reported semantic %d above its own parse %d, so it inherited the first run's work",
+			second.Phases.SemanticNS, second.Phases.ParseNS)
+	}
+	// The two corpora are equivalent single-module repositories, so each run
+	// performs the same load work and must report the same count. Lifetime
+	// counters make the second report the first run's loads as well.
+	if second.Semantic["go"].Loads != first.Semantic["go"].Loads {
+		t.Fatalf("second run reported %d loads against the first run's %d over an equivalent corpus",
+			second.Semantic["go"].Loads, first.Semantic["go"].Loads)
+	}
+	if second.Semantic["go"].LoadNS >= first.Semantic["go"].LoadNS+second.Phases.SemanticNS+1 {
+		t.Fatalf("second run reported %dns of load time, which includes the first run's %dns",
+			second.Semantic["go"].LoadNS, first.Semantic["go"].LoadNS)
+	}
 }
