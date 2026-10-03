@@ -16,10 +16,10 @@ env:
   GOTOOLCHAIN: local
 
 jobs:
-  build-test:
-    name: Build & Test
+  build-vet:
+    name: Build & Vet
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -70,18 +70,12 @@ jobs:
       - name: Vet
         run: task vet
 
-      # -count=1 defeats the test result cache, not the build cache. The job
-      # above restores a warm build cache, which also makes go test find its
-      # recorded results and skip packages whose inputs did not change: on one
-      # warm run, 41 of 49 packages reported (cached), including every heavy
-      # one. That is sound, but this step is the gate, and a cached pass cannot
-      # catch a flake in the parallel tests it is here to protect.
-      - name: Test (race)
-        run: go test -race -count=1 ./...
-
       # The key carries the commit, so each push to main writes a fresh entry
       # rather than hitting its own primary key and keeping a stale one forever.
-      # always() so a failing test still publishes the compilation it paid for.
+      # always() so a failing step still publishes the compilation it paid for.
+      # This is also the entry release.yml restores: it holds the module cache
+      # and the compiled dependencies, including the cgo grammars, which is what
+      # a cold build spends its time on.
       - uses: actions/cache/save@v4
         if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         # A key another run already reserved must never fail main's checks.
@@ -91,6 +85,95 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
           key: go-${{ runner.os }}-build-test-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+
+  race:
+    # One lane per shard, because the step's wall clock was the sum of every
+    # package's run divided over the runner's 4 cores, and a handful of serial
+    # packages accounted for most of it. cmd/grafo-test-shards owns the split;
+    # the lane names here are its shard names and must stay in step with them,
+    # which -shards below enforces.
+    name: Test (race, ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      # Every lane reports: a failure in one must not hide a failure in another.
+      fail-fast: false
+      matrix:
+        shard: [eval, federation, indexer, rest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          # Keyed per lane below, for the reason given in build-vet.
+          cache: false
+
+      # Each lane compiles only its own packages, so each keeps its own entry
+      # rather than racing the others to save a partial one under a shared key.
+      # A lane with no history of its own falls back to build-vet's entry, which
+      # already holds the dependencies, instead of starting cold.
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-race-${{ matrix.shard }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-${{ runner.os }}-race-${{ matrix.shard }}-${{ hashFiles('**/go.sum') }}-
+            go-${{ runner.os }}-race-${{ matrix.shard }}-
+            go-${{ runner.os }}-build-test-${{ hashFiles('**/go.sum') }}-
+            go-${{ runner.os }}-build-test-
+
+      # -count=1 defeats the test result cache, not the build cache. The step
+      # above restores a warm build cache, which also makes go test find its
+      # recorded results and skip packages whose inputs did not change: on one
+      # warm run, 41 of 49 packages reported (cached), including every heavy
+      # one. That is sound, but this step is the gate, and a cached pass cannot
+      # catch a flake in the parallel tests it is here to protect.
+      - name: Test (race)
+        run: |
+          packages="$(go run ./cmd/grafo-test-shards -shards 4 -shard '${{ matrix.shard }}')"
+          if [ -z "$packages" ]; then
+            echo "::error::shard ${{ matrix.shard }} resolved to no packages"
+            exit 1
+          fi
+          echo "::group::packages in this shard"
+          echo "$packages"
+          echo "::endgroup::"
+          # Unquoted on purpose: one argument per package.
+          # shellcheck disable=SC2086
+          go test -race -count=1 $packages
+
+      - uses: actions/cache/save@v4
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        # A key another run already reserved must never fail main's checks.
+        continue-on-error: true
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-${{ runner.os }}-race-${{ matrix.shard }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+
+  build-test:
+    # Branch protection requires this context by name, and splitting the work
+    # above into a matrix would otherwise leave it unreported. It is the single
+    # check that covers every lane, so it must fail unless all of them passed;
+    # a matrix job's result is success only when every lane succeeded.
+    name: Build & Test
+    needs: [build-vet, race]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every lane to have passed
+        run: |
+          echo "Build & Vet: ${{ needs.build-vet.result }}"
+          echo "Test (race): ${{ needs.race.result }}"
+          if [ "${{ needs.build-vet.result }}" != "success" ] || [ "${{ needs.race.result }}" != "success" ]; then
+            echo "::error::Build & Vet or one of the race shards did not pass"
+            exit 1
+          fi
 
   lint:
     name: Lint
