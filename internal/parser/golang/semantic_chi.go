@@ -19,6 +19,10 @@ import (
 const (
 	chiPackagePath  = "github.com/go-chi/chi/v5"
 	chiSummaryLimit = 32
+	// chiRangeUnrollLimit bounds how many elements of a literal a range is
+	// unrolled over. A route table is a handful of entries; past this the
+	// summary falls back to treating the body as one conditional pass.
+	chiRangeUnrollLimit = 64
 )
 
 type chiFunction struct {
@@ -27,6 +31,9 @@ type chiFunction struct {
 	path      string
 	qualified string
 	kind      graph.NodeKind
+	// createsRouter caches whether the body calls chi.NewRouter, which is
+	// scanned at most once per function.
+	createsRouter *bool
 }
 
 type chiRouter struct {
@@ -84,6 +91,7 @@ type chiAnalyzer struct {
 	views     map[string]SemanticView
 	functions map[*types.Func]*chiFunction
 	bindings  map[types.Object]chiCallable
+	constants map[types.Object]string
 	chiRouter *types.Interface
 }
 
@@ -106,7 +114,7 @@ func collectChiPackageViews(root string, pkg *packages.Package, views map[string
 	iface.Complete()
 	analyzer := &chiAnalyzer{
 		root: root, pkg: pkg, views: views, functions: map[*types.Func]*chiFunction{},
-		bindings: map[types.Object]chiCallable{}, chiRouter: iface,
+		bindings: map[types.Object]chiCallable{}, constants: map[types.Object]string{}, chiRouter: iface,
 	}
 	analyzer.collectFunctions()
 	analyzer.collectCallableBindings()
@@ -431,6 +439,27 @@ func (a *chiAnalyzer) executeBlock(execution *chiExecution, function *chiFunctio
 			a.diagnoseConditionalRouterMutation(function.path, value.Body, environment, branch)
 			returned = append(returned, child...)
 		case *goast.RangeStmt:
+			if elements, object, ok := a.constantStringRange(value); ok {
+				// Ranging a literal runs the body once per element, so the
+				// composition is as provable as a straight-line sequence: the
+				// body is unrolled against the real environment with the loop
+				// variable bound, rather than executed once conditionally.
+				stopped := false
+				for _, element := range elements {
+					restore := a.bindConstant(object, element)
+					child, halted := a.executeBlock(execution, function, value.Body.List, environment, conditional)
+					restore()
+					returned = append(returned, child...)
+					if halted {
+						stopped = true
+						break
+					}
+				}
+				if stopped {
+					return returned, true
+				}
+				continue
+			}
 			branch := cloneChiEnvironment(environment)
 			child, _ := a.executeBlock(execution, function, value.Body.List, branch, true)
 			a.diagnoseConditionalRouterMutation(function.path, value.Body, environment, branch)
@@ -900,17 +929,53 @@ func (a *chiAnalyzer) directFunction(expression goast.Expr) *types.Func {
 	}
 }
 
+// functionReturnsRouter reports whether calling function could hand back a Chi
+// router. A declared chi.Router result proves it. A result declared as an
+// interface that chi.Router itself satisfies -- http.Handler, which is how a
+// sub-router constructor is usually typed -- only counts when the body builds a
+// router, so an ordinary middleware constructor is not executed for nothing.
 func (a *chiAnalyzer) functionReturnsRouter(function *chiFunction) bool {
 	signature, _ := function.object.Type().(*types.Signature)
 	if signature == nil {
 		return false
 	}
+	handlerShaped := false
 	for index := 0; index < signature.Results().Len(); index++ {
-		if a.isChiRouter(signature.Results().At(index).Type()) {
+		result := signature.Results().At(index).Type()
+		if a.isChiRouter(result) {
 			return true
 		}
+		handlerShaped = handlerShaped || a.satisfiedByChiRouter(result)
 	}
-	return false
+	return handlerShaped && a.functionCreatesRouter(function)
+}
+
+// satisfiedByChiRouter reports whether value is an interface a Chi router can
+// be assigned to, which makes it a type that may be carrying one.
+func (a *chiAnalyzer) satisfiedByChiRouter(value types.Type) bool {
+	if value == nil || a.chiRouter == nil {
+		return false
+	}
+	target, _ := value.Underlying().(*types.Interface)
+	if target == nil || target.Empty() {
+		return false
+	}
+	return types.Implements(a.chiRouter, target)
+}
+
+func (a *chiAnalyzer) functionCreatesRouter(function *chiFunction) bool {
+	if function.createsRouter == nil {
+		creates := false
+		goast.Inspect(function.decl.Body, func(node goast.Node) bool {
+			call, ok := node.(*goast.CallExpr)
+			if ok && a.isChiNewRouter(call) {
+				creates = true
+			}
+			return !creates
+		})
+		function.createsRouter = &creates
+	}
+	return *function.createsRouter
 }
 
 func (a *chiAnalyzer) isChiRouter(value types.Type) bool {
@@ -923,9 +988,90 @@ func (a *chiAnalyzer) isChiRouter(value types.Type) bool {
 func (a *chiAnalyzer) constantString(expression goast.Expr) (string, bool) {
 	value := a.pkg.TypesInfo.Types[expression].Value
 	if value == nil || value.Kind() != constant.String {
-		return "", false
+		return a.boundConstant(expression)
 	}
 	return constant.StringVal(value), true
+}
+
+// boundConstant resolves an identifier the analyzer itself has pinned to a
+// string, which is how an unrolled loop variable reads as a constant without
+// go/types having a constant value for it.
+func (a *chiAnalyzer) boundConstant(expression goast.Expr) (string, bool) {
+	identifier, ok := expression.(*goast.Ident)
+	if !ok {
+		return "", false
+	}
+	object := a.pkg.TypesInfo.Defs[identifier]
+	if object == nil {
+		object = a.pkg.TypesInfo.Uses[identifier]
+	}
+	if object == nil {
+		return "", false
+	}
+	value, bound := a.constants[object]
+	return value, bound
+}
+
+// bindConstant pins object to one unrolled element for the duration of a loop
+// body and returns the undo. An element that is not constant leaves the object
+// unbound, so a route built from it stays unproven.
+func (a *chiAnalyzer) bindConstant(object types.Object, element chiRangeElement) func() {
+	previous, bound := a.constants[object]
+	if element.provable {
+		a.constants[object] = element.value
+	} else {
+		delete(a.constants, object)
+	}
+	return func() {
+		if bound {
+			a.constants[object] = previous
+			return
+		}
+		delete(a.constants, object)
+	}
+}
+
+// chiRangeElement is one element of an unrolled range literal. An element that
+// is not a constant is still an iteration, but it leaves the loop variable
+// unbound so a route built from it stays unproven while its provable siblings
+// are composed.
+type chiRangeElement struct {
+	value    string
+	provable bool
+}
+
+// constantStringRange reports the elements of a range over a slice or array
+// literal of strings along with the object its value variable defines.
+func (a *chiAnalyzer) constantStringRange(statement *goast.RangeStmt) ([]chiRangeElement, types.Object, bool) {
+	if statement.Tok != token.DEFINE || statement.Value == nil {
+		return nil, nil, false
+	}
+	identifier, ok := statement.Value.(*goast.Ident)
+	if !ok || identifier.Name == "_" {
+		return nil, nil, false
+	}
+	object := a.pkg.TypesInfo.Defs[identifier]
+	if object == nil {
+		return nil, nil, false
+	}
+	literal, ok := statement.X.(*goast.CompositeLit)
+	if !ok || len(literal.Elts) > chiRangeUnrollLimit {
+		return nil, nil, false
+	}
+	switch literal.Type.(type) {
+	case *goast.ArrayType:
+	default:
+		return nil, nil, false
+	}
+	if basic, _ := a.pkg.TypesInfo.TypeOf(statement.Value).Underlying().(*types.Basic); basic == nil || basic.Kind() != types.String {
+		return nil, nil, false
+	}
+	elements := make([]chiRangeElement, 0, len(literal.Elts))
+	for _, element := range literal.Elts {
+		value, provable := a.constantString(element)
+		elements = append(elements, chiRangeElement{value: value, provable: provable})
+	}
+	return elements, object, true
 }
 
 func (a *chiAnalyzer) markCall(call *goast.CallExpr, endpoint bool) {
