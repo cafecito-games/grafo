@@ -1823,13 +1823,18 @@ func (e *extractor) handlerNode(qualified string) string {
 // handlerMethod returns the qualified name of the method a connect routes to,
 // or "" when the argument proves nothing. Only a bare identifier that resolves
 // to a method this script declares qualifies: a Callable bound to another
-// object, a lambda, or a computed name names no method that is knowable here.
+// object, a lambda, or a computed name names no method that is knowable here,
+// and a name shadowed by a local, parameter, or field names that declaration
+// rather than the method it is spelled like.
 func (e *extractor) handlerMethod(arguments []gdast.Expression, index int, current scope) string {
 	if index >= len(arguments) {
 		return ""
 	}
 	identifier, ok := arguments[index].(*gdast.Identifier)
 	if !ok {
+		return ""
+	}
+	if _, shadowed := current.symbols[identifier.Name]; shadowed {
 		return ""
 	}
 	return e.methods[qualify(current.receiver, identifier.Name)]

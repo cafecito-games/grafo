@@ -2556,3 +2556,45 @@ func _target(_value: int) -> void:
 		})
 	}
 }
+
+// TestParserRefusesShadowedSignalHandlerName proves a connect argument whose
+// name is shadowed by a parameter routes the signal to nothing: the value is
+// whatever the caller supplied, so naming the method it is spelled like would
+// be a guessed edge.
+func TestParserRefusesShadowedSignalHandlerName(t *testing.T) {
+	content := []byte(`class_name Player
+extends Node
+
+signal finished(value: int)
+
+func wire(on_finished: Callable) -> void:
+	finished.connect(on_finished)
+
+func rewire() -> void:
+	finished.connect(on_finished)
+
+func on_finished(_value: int) -> void:
+	pass
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "scripts/player.gd", Content: content, RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handlers := 0
+	for _, fact := range result.Facts {
+		if fact.Kind != graph.EdgeHandledBy {
+			continue
+		}
+		handlers++
+		if fact.Target != "Player.on_finished" || fact.Location.Line != 10 {
+			t.Fatalf("signal handler lost its evidence: %#v", fact)
+		}
+	}
+	// Only the unshadowed spelling names a method; the parameter holds a value
+	// this file cannot resolve to one.
+	if handlers != 1 {
+		t.Fatalf("signal handler facts = %d, want 1", handlers)
+	}
+}
