@@ -70,8 +70,14 @@ jobs:
       - name: Vet
         run: task vet
 
+      # -count=1 defeats the test result cache, not the build cache. The job
+      # above restores a warm build cache, which also makes go test find its
+      # recorded results and skip packages whose inputs did not change: on one
+      # warm run, 41 of 49 packages reported (cached), including every heavy
+      # one. That is sound, but this step is the gate, and a cached pass cannot
+      # catch a flake in the parallel tests it is here to protect.
       - name: Test (race)
-        run: go test -race ./...
+        run: go test -race -count=1 ./...
 
       # The key carries the commit, so each push to main writes a fresh entry
       # rather than hitting its own primary key and keeping a stale one forever.
