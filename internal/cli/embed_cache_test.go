@@ -15,6 +15,9 @@ import (
 	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
+// The embed-cache tests point the cache at a throwaway path with t.Setenv,
+// which is process-wide, so none of them calls t.Parallel. Only
+// TestParseEmbedCacheOptions, which touches no environment, runs in parallel.
 func TestEmbedCacheStatusAndPruneJSON(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(testtemp.Dir(t), "embeddings.sqlite")

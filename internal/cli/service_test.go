@@ -16,7 +16,9 @@ import (
 
 // isolateConfiguration points every configuration lookup at throwaway
 // directories and empties PATH, so no test can read or write the developer's
-// real client configuration or probe installed clients.
+// real client configuration or probe installed clients. It does that through
+// t.Setenv, so a test that calls it cannot also call t.Parallel: the variables
+// are process-wide and the testing package refuses the combination.
 func isolateConfiguration(t *testing.T) string {
 	t.Helper()
 	home := testtemp.Dir(t)
