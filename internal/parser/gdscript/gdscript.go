@@ -199,7 +199,12 @@ type extractor struct {
 	// the only inheritance evidence a single-file parser holds. It is what lets a
 	// receiver typed as a locally declared subclass of an input class still be
 	// recognized as one.
-	bases              map[string]string
+	bases map[string]string
+	// methodReturns maps the qualified name of every method this file declares
+	// to the type its `-> Type` annotation names. An unannotated method is
+	// absent, because its return type is not something a single-file parser can
+	// derive without guessing.
+	methodReturns      map[string]string
 	protobufAPIs       map[string]protobufAPI
 	protobufAmbiguous  map[string]bool
 	protobufTypes      map[string]bool
@@ -251,7 +256,8 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 	protobufAPIs, protobufAmbiguous, protobufTypes := gdscriptProtobufBindings(registry)
 	e := &extractor{b: b, input: input, module: parserapi.ModuleName(input.Path),
 		methods: map[string]string{}, callableDeclarations: map[string]bool{}, autoloads: map[gdast.Node]bool{},
-		projectKnown: true, bases: map[string]string{}, protobufAPIs: protobufAPIs,
+		projectKnown: true, bases: map[string]string{}, methodReturns: map[string]string{},
+		protobufAPIs:      protobufAPIs,
 		protobufAmbiguous: protobufAmbiguous, protobufTypes: protobufTypes,
 		protobufEnabled: protobufEnabled, protobufWarned: map[string]bool{},
 		transportSummaries: map[string][]gdTransportTemplate{}, callEffects: configuration.Adapters,
@@ -486,6 +492,18 @@ func (e *extractor) prepareClassSymbols(statements []gdast.Statement, current sc
 			if node.Name != "" {
 				current.types[node.Name] = qualify(current.container, node.Name)
 			}
+		}
+	}
+	// Return types are recorded after the whole class vocabulary is known so a
+	// method declared ahead of the inner class or enum it returns still
+	// resolves to that declaration's qualified name.
+	for _, statement := range statements {
+		node, ok := statement.(*gdast.FunctionDeclaration)
+		if !ok {
+			continue
+		}
+		if returns := e.resolveType(node.ReturnType, current); returns != "" {
+			e.methodReturns[qualify(current.container, node.Name)] = returns
 		}
 	}
 }
@@ -2102,6 +2120,13 @@ func (e *extractor) inferExpressionType(expression gdast.Expression, current sco
 			}
 		}
 	}
+	// A call to a method this file declares carries that method's declared
+	// return type. Without an annotation the method proves nothing about what it
+	// returns, so the value stays untyped rather than taking a guessed type and
+	// resolving later calls on it to the wrong declaration.
+	if method := e.localMethodName(call.Callee, current); method != "" {
+		return e.methodReturns[method]
+	}
 	if callee == "preload" || callee == "load" {
 		if len(call.Arguments) > 0 {
 			if resource, ok := literalString(call.Arguments[0]); ok {
@@ -2922,6 +2947,31 @@ func (e *extractor) localCall(callee gdast.Expression, current scope) bool {
 		return e.methods[qualify(current.receiver, node.Property)] != ""
 	default:
 		return false
+	}
+}
+
+// localMethodName returns the qualified name of the method a callsite invokes
+// on this object, or "" when the callee names anything else. A spelling that a
+// local, parameter, or field shadows resolves to that declaration instead, and a
+// receiver that is not this object holds declarations this file does not have,
+// so neither names a method here.
+func (e *extractor) localMethodName(callee gdast.Expression, current scope) string {
+	switch node := callee.(type) {
+	case *gdast.Identifier:
+		if _, shadowed := current.symbols[node.Name]; shadowed {
+			return ""
+		}
+		return e.methods[qualify(current.receiver, node.Name)]
+	case *gdast.MemberExpression:
+		if !e.namesThisObject(node.Object, current) {
+			return ""
+		}
+		if _, shadowed := current.fieldSymbols[node.Property]; shadowed {
+			return ""
+		}
+		return e.methods[qualify(current.receiver, node.Property)]
+	default:
+		return ""
 	}
 }
 
