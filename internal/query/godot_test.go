@@ -298,37 +298,47 @@ func (r *godotProjectRepository) ListNodesByKind(_ context.Context, request grap
 // TestGodotCompositionRefusesWeakerThanExactResourcePathEvidence pins the guard
 // that keeps a resource path from resolving to the wrong node. An identity is the
 // exact qualified name a Godot node carries, so a selector canonicalizing to one
-// must not be satisfied by a node whose name merely contains it or merely folds
-// to it - those are the matches ordinary selector resolution accepts, and here
-// they are evidence about a different node.
+// is satisfied by nothing weaker - and every case below is a match ordinary
+// selector resolution does accept, each one the sole candidate in its graph, so
+// without the guard each resolves confidently to a resource the caller did not
+// name.
 func TestGodotCompositionRefusesWeakerThanExactResourcePathEvidence(t *testing.T) {
 	for _, test := range []struct {
 		name     string
+		selector string
 		resident graph.Node
 	}{
 		{
-			name:     "substring",
-			resident: godotNodeAt(graph.KindGodotScene, "vendor/client/screens/game_over", "vendor/client/screens/game_over.tscn", nil),
+			// The identity is a substring of a longer one in another directory.
+			name:     "substring of a longer identity",
+			selector: "client/screens/game.tscn",
+			resident: godotNodeAt(graph.KindGodotScene, "vendor/client/screens/game_over",
+				"vendor/client/screens/game_over.tscn", nil),
 		},
 		{
-			name:     "case folded",
-			resident: godotNodeAt(graph.KindGodotScene, "client/Screens/Game", "client/Screens/Game.tscn", nil),
+			// Godot paths are case sensitive, so an identity differing only by
+			// case names a different resource however resolution folds it.
+			name:     "identity differing only by case",
+			selector: "client/screens/game.tscn",
+			resident: godotNodeAt(graph.KindGodotScene, "client/Screens/Game",
+				"client/Screens/Game.tscn", nil),
 		},
 		{
-			name: "bare name",
-			resident: func() graph.Node {
-				node := godotNodeAt(graph.KindGodotScene, "elsewhere/game", "elsewhere/game.tscn", nil)
-				node.Name = "client/screens/game"
-				return node
-			}(),
+			// A resource at a project root canonicalizes to a separator-free
+			// identity - res://game.tscn is the same selector - which the simple
+			// name of a resource in any other directory equals outright.
+			name:     "bare name of a resource elsewhere",
+			selector: "game.tscn",
+			resident: godotNodeAt(graph.KindGodotScene, "client/screens/game",
+				"client/screens/game.tscn", nil),
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			service := query.NewService(godotProjects(&fakeRepository{nodes: nodeSet(test.resident)}))
-			report, err := service.GodotComposition(context.Background(), "client/screens/game.tscn",
+			report, err := service.GodotComposition(context.Background(), test.selector,
 				query.GodotCompositionOptions{Kind: graph.KindGodotScene})
 			if !errors.Is(err, query.ErrNotFound) {
-				t.Fatalf("resolved %s [%s] on %s evidence (err = %v)",
+				t.Fatalf("resolved %s [%s] on %s (err = %v)",
 					report.Root.QualifiedName, report.Root.Kind, test.name, err)
 			}
 		})
