@@ -935,7 +935,7 @@ func (r *Repository) buildFederatedHTTPProjection(ctx context.Context) (*federat
 		if !ok {
 			return nil, fmt.Errorf("repository %s does not support bounded external request edges", item.project.Name)
 		}
-		after := ""
+		var after *graph.ExternalRequestEdgeCursor
 		for {
 			page, err := loader.ExternalRequestEdges(ctx, after, externalRequestPageSize)
 			if err != nil {
@@ -955,10 +955,10 @@ func (r *Repository) buildFederatedHTTPProjection(ctx context.Context) (*federat
 					repository: item.project.Name,
 				})
 			}
-			if page.Next == "" {
+			if page.Next == nil {
 				break
 			}
-			if page.Next <= after {
+			if after != nil && page.Next.Compare(*after) <= 0 {
 				return nil, fmt.Errorf("repository %s returned a non-advancing external request cursor", item.project.Name)
 			}
 			after = page.Next

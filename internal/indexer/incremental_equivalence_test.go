@@ -217,7 +217,13 @@ func tableFingerprint(t *testing.T, ctx context.Context, indexPath, table string
 	}
 	defer func() { _ = database.Close() }()
 	interned := internedPaths(t, ctx, database)
-	rows, err := database.QueryContext(ctx, "SELECT * FROM "+table+" ORDER BY id")
+	// edges is keyed by the columns its identity is derived from rather than by a
+	// stored id, so each table is ordered by whatever is total for it.
+	order := map[string]string{"edges": "fact_id, to_id, kind"}[table]
+	if order == "" {
+		order = "id"
+	}
+	rows, err := database.QueryContext(ctx, "SELECT * FROM "+table+" ORDER BY "+order)
 	if err != nil {
 		t.Fatal(err)
 	}

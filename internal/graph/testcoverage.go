@@ -35,7 +35,7 @@ func DirectTestEdge(source, target Node, evidence Edge) (Edge, bool) {
 	properties["evidence_relation"] = string(evidence.Kind)
 	properties["evidence_edge_id"] = evidence.ID
 	return Edge{
-		ID: StableID("e", evidence.FactID, target.ID, string(EdgeTests)), FactID: evidence.FactID,
+		ID: DerivedEdgeID(evidence.FactID, target.ID, EdgeTests), FactID: evidence.FactID,
 		FromID: source.ID, ToID: target.ID, Kind: EdgeTests, Producer: evidence.Producer,
 		Location: evidence.Location, Properties: properties,
 	}, true

@@ -323,7 +323,26 @@ func FactID(owner, from string, kind EdgeKind, target string, line, ordinal int)
 	return StableID("f", owner, from, string(kind), target, fmt.Sprint(line), fmt.Sprint(ordinal))
 }
 
+// EdgeID is the identity of an edge derived from a fact resolving to one target.
+// It is DerivedEdgeID for every kind but EdgeTests, and writers call it because
+// they know they are not building a structural test edge.
 func EdgeID(factID, toID string) string { return StableID("e", factID, toID) }
+
+// DerivedEdgeID computes an edge's identity from the three columns that
+// determine it. It is the single definition of that rule, and it is a derivation
+// rather than a lookup: storage stops keeping the identity and recomputes it
+// here, which is why the rule cannot be allowed to live in two places.
+//
+// EdgeTests is the one kind whose identity carries it, because DirectTestEdge
+// derives a test edge from a calls or references fact and the two would otherwise
+// share both other columns. That is also why (fact_id, to_id) alone is not a
+// unique key for edges and (fact_id, to_id, kind) is.
+func DerivedEdgeID(factID, toID string, kind EdgeKind) string {
+	if kind == EdgeTests {
+		return StableID("e", factID, toID, string(EdgeTests))
+	}
+	return StableID("e", factID, toID)
+}
 
 func MarshalProperties(properties map[string]string) string {
 	if len(properties) == 0 {

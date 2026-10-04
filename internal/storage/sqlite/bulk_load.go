@@ -25,16 +25,17 @@ var bulkLoadTables = []string{"nodes", "facts", "edges"}
 
 // bulkLoadRetainedIndexes are the secondary indexes a bulk load keeps.
 //
-// nodes_owner, facts_owner, and edges_fact drive the three deletes that every
+// nodes_owner, facts_owner, and edges_identity drive the three deletes that every
 // file replacement issues, which would otherwise scan tables that grow as the
-// load proceeds. facts_path is named by DeleteUnreferencedPaths in an INDEXED BY
+// load proceeds. edges_identity serves the edge delete because fact_id leads it,
+// which is why it replaced the narrower edges_fact rather than joining it. facts_path is named by DeleteUnreferencedPaths in an INDEXED BY
 // clause, and SQLite rejects a query that names an index it cannot find rather
 // than planning around it, so an absent one is an error and not a slow plan.
 var bulkLoadRetainedIndexes = map[string]bool{
-	"nodes_owner": true,
-	"facts_owner": true,
-	"facts_path":  true,
-	"edges_fact":  true,
+	"nodes_owner":    true,
+	"facts_owner":    true,
+	"facts_path":     true,
+	"edges_identity": true,
 }
 
 // repairDeferredIndexes rebuilds the indexes an interrupted bulk load left

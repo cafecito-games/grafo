@@ -127,15 +127,16 @@ func TestRelationEdgesFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err = database.ExecContext(ctx, `INSERT INTO edges
-        (id, fact_id, from_id, to_id, kind, properties)
-        VALUES ('missing-edge', 'synthetic-fact', 'missing-node', 'subject', 'reads', '{}')`); err != nil {
+        (fact_id, from_id, to_id, kind, properties)
+        VALUES ('synthetic-fact', 'missing-node', 'subject', 'reads', '{}')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repository.RelationEdges(ctx, graph.RelationEdgeQuery{SubjectID: "subject",
 		Direction: graph.IncomingRelations, Relations: []graph.EdgeKind{graph.EdgeReads}, Limit: 1}); err == nil {
 		t.Fatal("missing counterpart was silently omitted")
 	}
-	if _, err = database.ExecContext(ctx, `DELETE FROM edges WHERE id = 'missing-edge'`); err != nil {
+	if _, err = database.ExecContext(ctx,
+		`DELETE FROM edges WHERE fact_id = 'synthetic-fact' AND to_id = 'subject' AND kind = 'reads'`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = database.ExecContext(ctx, `INSERT INTO nodes
@@ -144,15 +145,16 @@ func TestRelationEdgesFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err = database.ExecContext(ctx, `INSERT INTO edges
-        (id, fact_id, from_id, to_id, kind, properties)
-        VALUES ('bad-edge', 'synthetic-fact', 'bad-node', 'subject', 'reads', '{}')`); err != nil {
+        (fact_id, from_id, to_id, kind, properties)
+        VALUES ('synthetic-fact', 'bad-node', 'subject', 'reads', '{}')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repository.RelationEdges(ctx, graph.RelationEdgeQuery{SubjectID: "subject",
 		Direction: graph.IncomingRelations, Relations: []graph.EdgeKind{graph.EdgeReads}, Limit: 1}); err == nil {
 		t.Fatal("malformed counterpart properties were silently accepted")
 	}
-	if _, err = database.ExecContext(ctx, `DELETE FROM edges WHERE id = 'bad-edge'`); err != nil {
+	if _, err = database.ExecContext(ctx,
+		`DELETE FROM edges WHERE fact_id = 'synthetic-fact' AND to_id = 'subject' AND kind = 'reads'`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = database.ExecContext(ctx, `DELETE FROM nodes WHERE id = 'bad-node'`); err != nil {
@@ -161,8 +163,8 @@ func TestRelationEdgesFailsClosed(t *testing.T) {
 	// An edge whose originating fact is gone can no longer supply a location.
 	// Reporting an empty one would hand the caller evidence pointing nowhere.
 	if _, err = database.ExecContext(ctx, `INSERT INTO edges
-        (id, fact_id, from_id, to_id, kind, properties)
-        VALUES ('orphan-edge', 'deleted-fact', 'writer', 'subject', 'reads', '{}')`); err != nil {
+        (fact_id, from_id, to_id, kind, properties)
+        VALUES ('deleted-fact', 'writer', 'subject', 'reads', '{}')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repository.RelationEdges(ctx, graph.RelationEdgeQuery{SubjectID: "subject",
@@ -476,20 +478,23 @@ func TestRelationEdgeQueriesUseTheEdgeEndpointIndexes(t *testing.T) {
 	for _, testCase := range []struct {
 		name   string
 		column string
-		index  string
+		// order is the leading ORDER BY column the matching production query uses:
+		// the endpoint the filter does not fix.
+		order string
+		index string
 	}{
-		{name: "incoming", column: "to_id", index: "edges_to"},
-		{name: "outgoing", column: "from_id", index: "edges_from"},
+		{name: "incoming", column: "to_id", order: "from_id", index: "edges_to"},
+		{name: "outgoing", column: "from_id", order: "to_id", index: "edges_from"},
 	} {
-		plan := queryPlan(t, repository, fmt.Sprintf(`SELECT edges.id, COALESCE(nodes.id, ''), COALESCE(facts.producer, ''),
+		plan := queryPlan(t, repository, fmt.Sprintf(`SELECT edges.fact_id, COALESCE(nodes.id, ''), COALESCE(facts.producer, ''),
     COALESCE(origin_paths.path, '')
 FROM edges
 LEFT JOIN nodes ON nodes.id = edges.from_id
 LEFT JOIN facts ON facts.id = edges.fact_id
 LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id
 WHERE edges.%s = 'subject' AND edges.kind = 'calls'
-ORDER BY edges.from_id, edges.id
-LIMIT 10`, testCase.column))
+ORDER BY edges.%s, edges.fact_id
+LIMIT 10`, testCase.column, testCase.order))
 		if !strings.Contains(plan, "USING INDEX "+testCase.index) {
 			t.Errorf("%s relation edge plan does not use %s:\n%s", testCase.name, testCase.index, plan)
 		}

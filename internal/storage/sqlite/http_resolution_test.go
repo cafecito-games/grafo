@@ -301,18 +301,18 @@ func TestExternalRequestEdgesPagesHydratedBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first, err := repository.ExternalRequestEdges(ctx, "", 1)
+	first, err := repository.ExternalRequestEdges(ctx, nil, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Items) != 1 || first.Next == "" || first.Items[0].Source.ID == "" || !first.Items[0].Target.External {
+	if len(first.Items) != 1 || first.Next == nil || first.Items[0].Source.ID == "" || !first.Items[0].Target.External {
 		t.Fatalf("first external request page = %#v", first)
 	}
 	second, err := repository.ExternalRequestEdges(ctx, first.Next, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Items) != 1 || second.Next != "" || second.Items[0].Edge.ID == first.Items[0].Edge.ID ||
+	if len(second.Items) != 1 || second.Next != nil || second.Items[0].Edge.ID == first.Items[0].Edge.ID ||
 		second.Items[0].Source.ID == "" || !second.Items[0].Target.External {
 		t.Fatalf("second external request page = %#v", second)
 	}

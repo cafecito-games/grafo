@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/cafecito-games/grafo/internal/graph"
 	sqlite3 "github.com/mattn/go-sqlite3"
 )
 
@@ -22,7 +23,48 @@ import (
 // which implementation is registered under it.
 const Name = "sqlite"
 
-func init() { sql.Register(Name, &sqlite3.SQLiteDriver{}) }
+func init() {
+	sql.Register(Name, &sqlite3.SQLiteDriver{ConnectHook: registerFunctions})
+}
+
+// stableIDFunction is the SQL name of graph.StableID.
+const stableIDFunction = "grafo_stable_id"
+
+// registerFunctions exposes graph.StableID to SQL as grafo_stable_id(prefix,
+// part...). A migration that has to produce an identity needs the exact bytes
+// StableID hashes -- each part followed by a zero byte, SHA-256, the first 20 hex
+// characters -- and SQLite offers no hash of its own to rebuild that from. Calling
+// the Go function is what keeps the two from drifting: reimplementing the framing
+// in SQL would put a second definition of identity in the schema, where nothing
+// would catch it diverging from the first.
+//
+// It is registered on every connection because a migration runs on whichever one
+// the pool hands out, and declared deterministic so SQLite may use it in an index
+// or a partial-index predicate if a later migration needs that.
+func registerFunctions(conn *sqlite3.SQLiteConn) error {
+	if err := conn.RegisterFunc(stableIDFunction, stableID, true); err != nil {
+		return fmt.Errorf("register %s: %w", stableIDFunction, err)
+	}
+	return nil
+}
+
+// stableID adapts graph.StableID to SQLite's calling convention. A NULL or
+// non-text part is an error rather than an empty string, because an identity
+// quietly built from the wrong parts is worse than a failed migration.
+func stableID(prefix string, parts ...any) (string, error) {
+	text := make([]string, 0, len(parts))
+	for index, part := range parts {
+		switch value := part.(type) {
+		case string:
+			text = append(text, value)
+		case []byte:
+			text = append(text, string(value))
+		default:
+			return "", fmt.Errorf("%s: part %d is %T, want text", stableIDFunction, index+1, part)
+		}
+	}
+	return graph.StableID(prefix, text...), nil
+}
 
 // Busy reports whether err is SQLite refusing an operation because another
 // connection holds the lock it needs, which callers retry rather than surface.
