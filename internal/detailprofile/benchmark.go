@@ -456,22 +456,26 @@ func capabilityFingerprints(ctx context.Context, path string) (map[Capability]st
 		return nil, fmt.Errorf("%d of %d edges have no originating fact or interned path; "+
 			"the index is corrupt and must be rebuilt", storedEdges-joinedEdges, storedEdges)
 	}
-	rows, err = db.QueryContext(ctx, `SELECT edges.id, edges.fact_id, edges.from_id, edges.to_id, edges.kind, facts.producer,
+	// The identity is derived from the three columns that determine it rather than
+	// stored, so it is also what the rows are ordered by: it is the only ordering
+	// available that is total.
+	rows, err = db.QueryContext(ctx, `SELECT edges.fact_id, edges.from_id, edges.to_id, edges.kind, facts.producer,
 	paths.path, facts.line, facts.column_no, facts.end_line, edges.properties
 FROM edges
 JOIN facts ON facts.id = edges.fact_id
 JOIN paths ON paths.id = facts.path_id
-ORDER BY edges.id`)
+ORDER BY edges.fact_id, edges.to_id, edges.kind`)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
-		var id, factID, fromID, toID, kind, producer, sourcePath, properties string
+		var factID, fromID, toID, kind, producer, sourcePath, properties string
 		var line, column, endLine int64
-		if err := rows.Scan(&id, &factID, &fromID, &toID, &kind, &producer, &sourcePath, &line, &column, &endLine, &properties); err != nil {
+		if err := rows.Scan(&factID, &fromID, &toID, &kind, &producer, &sourcePath, &line, &column, &endLine, &properties); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
+		id := graph.DerivedEdgeID(factID, toID, graph.EdgeKind(kind))
 		encoded := strings.Join([]string{"E", id, factID, fromID, toID, kind, producer, sourcePath, strconv.FormatInt(line, 10), strconv.FormatInt(column, 10), strconv.FormatInt(endLine, 10), properties}, "\x00") + "\n"
 		for _, capability := range edgeCaps[kind] {
 			if (kind == string(graph.EdgeDeclares) || kind == string(graph.EdgeContains)) && capability == CapabilityStructural &&

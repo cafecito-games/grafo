@@ -321,7 +321,7 @@ func (r *ReadRepository) EdgesFrom(ctx context.Context, id string) ([]graph.Edge
 func (r *ReadRepository) EdgesTo(ctx context.Context, id string) ([]graph.Edge, error) {
 	return r.reader.EdgesTo(ctx, id)
 }
-func (r *ReadRepository) ExternalRequestEdges(ctx context.Context, after string, limit int) (graph.ExternalRequestEdgePage, error) {
+func (r *ReadRepository) ExternalRequestEdges(ctx context.Context, after *graph.ExternalRequestEdgeCursor, limit int) (graph.ExternalRequestEdgePage, error) {
 	return r.reader.ExternalRequestEdges(ctx, after, limit)
 }
 func (r *ReadRepository) Repositories(ctx context.Context) ([]string, error) {

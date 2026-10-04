@@ -24,10 +24,10 @@ DELETE FROM edges WHERE fact_id IN (
 );
 
 -- name: InsertEdge :exec
-INSERT INTO edges(id, fact_id, from_id, to_id, kind, properties) VALUES (?, ?, ?, ?, ?, ?);
+INSERT INTO edges(fact_id, from_id, to_id, kind, properties) VALUES (?, ?, ?, ?, ?);
 
 -- name: ListEdgesFrom :many
-SELECT edges.id, edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.properties,
+SELECT edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.properties,
        COALESCE(facts.producer, '') AS producer,
        COALESCE(origin_paths.path, '') AS path,
        COALESCE(facts.line, 0) AS line,
@@ -37,10 +37,10 @@ SELECT edges.id, edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.pr
 FROM edges
 LEFT JOIN facts ON facts.id = edges.fact_id
 LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id
-WHERE edges.from_id = ? ORDER BY edges.kind, edges.to_id, edges.id;
+WHERE edges.from_id = ? ORDER BY edges.kind, edges.to_id, edges.fact_id;
 
 -- name: ListEdgesTo :many
-SELECT edges.id, edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.properties,
+SELECT edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.properties,
        COALESCE(facts.producer, '') AS producer,
        COALESCE(origin_paths.path, '') AS path,
        COALESCE(facts.line, 0) AS line,
@@ -50,11 +50,10 @@ SELECT edges.id, edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.pr
 FROM edges
 LEFT JOIN facts ON facts.id = edges.fact_id
 LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id
-WHERE edges.to_id = ? ORDER BY edges.kind, edges.from_id, edges.id;
+WHERE edges.to_id = ? ORDER BY edges.kind, edges.from_id, edges.fact_id;
 
 -- name: ListIncomingRelationEdges :many
 SELECT
-    edges.id AS edge_id,
     edges.fact_id AS edge_fact_id,
     edges.from_id AS edge_from_id,
     edges.to_id AS edge_to_id,
@@ -83,12 +82,11 @@ LEFT JOIN nodes ON nodes.id = edges.from_id
 LEFT JOIN facts ON facts.id = edges.fact_id
 LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id
 WHERE edges.to_id = @subject_id AND edges.kind = @relation
-ORDER BY edges.from_id, edges.id
+ORDER BY edges.from_id, edges.fact_id
 LIMIT @max_results;
 
 -- name: ListOutgoingRelationEdges :many
 SELECT
-    edges.id AS edge_id,
     edges.fact_id AS edge_fact_id,
     edges.from_id AS edge_from_id,
     edges.to_id AS edge_to_id,
@@ -117,11 +115,11 @@ LEFT JOIN nodes ON nodes.id = edges.to_id
 LEFT JOIN facts ON facts.id = edges.fact_id
 LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id
 WHERE edges.from_id = @subject_id AND edges.kind = @relation
-ORDER BY edges.to_id, edges.id
+ORDER BY edges.to_id, edges.fact_id
 LIMIT @max_results;
 
 -- name: ListExternalEdgesMatching :many
-SELECT edges.id, edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.properties,
+SELECT edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.properties,
        COALESCE(facts.producer, '') AS producer,
        COALESCE(origin_paths.path, '') AS path,
        COALESCE(facts.line, 0) AS line,
@@ -139,11 +137,10 @@ WHERE nodes.external = 1
       OR nodes.name = @qualified_name
       OR nodes.name = @name
   )
-ORDER BY edges.kind, edges.from_id, edges.id;
+ORDER BY edges.kind, edges.from_id, edges.fact_id, edges.to_id;
 
 -- name: ListExternalRequestEdges :many
 SELECT
-    edges.id AS edge_id,
     edges.fact_id AS edge_fact_id,
     edges.from_id AS edge_from_id,
     edges.to_id AS edge_to_id,
@@ -186,8 +183,8 @@ LEFT JOIN facts AS origin ON origin.id = edges.fact_id
 LEFT JOIN paths AS origin_paths ON origin_paths.id = origin.path_id
 WHERE edges.kind = 'requests'
   AND target.external = 1
-  AND edges.id > @after_id
-ORDER BY edges.id
+  AND (edges.fact_id, edges.to_id, edges.kind) > (@after_fact_id, @after_to_id, @after_kind)
+ORDER BY edges.fact_id, edges.to_id, edges.kind
 LIMIT @max_results;
 
 -- name: CountEdges :one

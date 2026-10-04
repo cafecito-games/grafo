@@ -50,7 +50,7 @@ func TestRolledBackTransactionDoesNotPublishInternedPathKeys(t *testing.T) {
 	ctx := context.Background()
 	repository := openTestRepository(t)
 
-	duplicate := sqlcgen.InsertEdgeParams{ID: "duplicate", FactID: "fact", FromID: "a", ToID: "b", Kind: "calls"}
+	duplicate := sqlcgen.InsertEdgeParams{FactID: "fact", FromID: "a", ToID: "b", Kind: "calls"}
 	var rolledBack int64
 	if err := repository.inTransaction(ctx, func(q *sqlcgen.Queries, writer *batchWriter) error {
 		key, err := writer.pathKey(ctx, q, "rolled-back.go")

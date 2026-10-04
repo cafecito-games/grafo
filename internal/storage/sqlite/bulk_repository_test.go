@@ -28,8 +28,8 @@ func TestBulkWritesAreExactlyEquivalentToSingleRowQueries(t *testing.T) {
 		{ID: "fact", Source: "pkg.Caller", SourceKind: "method", Kind: "references", Producer: "gdscript", Target: "pkg.Target", TargetKind: "function", PathID: 2, Line: 11, ColumnNo: 2, EndLine: 12, Properties: `{"proof":"name"}`, OwnerPathID: 3},
 	}
 	edges := []sqlcgen.InsertEdgeParams{
-		{ID: "edge-1", FactID: "fact", FromID: "caller", ToID: "target", Kind: "references", Properties: `{"proof":"name"}`},
-		{ID: "edge-2", FactID: "other", FromID: "target", ToID: "caller", Kind: "calls", Properties: `{}`},
+		{FactID: "fact", FromID: "caller", ToID: "target", Kind: "references", Properties: `{"proof":"name"}`},
+		{FactID: "other", FromID: "target", ToID: "caller", Kind: "calls", Properties: `{}`},
 	}
 
 	if err := control.inTransaction(ctx, func(q *sqlcgen.Queries, _ *batchWriter) error {
@@ -85,7 +85,7 @@ func TestBulkWritesAreExactlyEquivalentToSingleRowQueries(t *testing.T) {
 func TestBulkConstraintErrorRollsBackTransaction(t *testing.T) {
 	ctx := context.Background()
 	repository := openTestRepository(t)
-	duplicate := sqlcgen.InsertEdgeParams{ID: "duplicate", FactID: "fact", FromID: "a", ToID: "b", Kind: "calls"}
+	duplicate := sqlcgen.InsertEdgeParams{FactID: "fact", FromID: "a", ToID: "b", Kind: "calls"}
 	err := repository.inTransaction(ctx, func(_ *sqlcgen.Queries, writer *batchWriter) error {
 		if err := writer.addEdge(ctx, duplicate); err != nil {
 			return err
@@ -326,13 +326,20 @@ func tableRows(t *testing.T, repository *Repository, table string) []string {
 	columns := map[string]string{
 		"nodes": "id,kind,name,qualified_name,language,path,line,column_no,end_line,properties,owner_file,external,name_folded,qualified_name_folded",
 		"facts": "id,from_id,source,source_kind,kind,target_id,target,target_kind,path_id,line,column_no,end_line,properties,owner_path_id",
-		"edges": "id,fact_id,from_id,to_id,kind,properties",
+		"edges": "fact_id,from_id,to_id,kind,properties",
 		"paths": "id,path",
 	}[table]
 	if columns == "" {
 		t.Fatalf("unsupported table %q", table)
 	}
-	rows, err := repository.db.QueryContext(context.Background(), "SELECT "+columns+" FROM "+table+" ORDER BY id")
+	// edges is keyed by (fact_id, to_id, kind) rather than by a stored id, so the
+	// deterministic order for comparing two indexes differs by table.
+	order := map[string]string{"edges": "fact_id, to_id, kind"}[table]
+	if order == "" {
+		order = "id"
+	}
+	rows, err := repository.db.QueryContext(context.Background(),
+		"SELECT "+columns+" FROM "+table+" ORDER BY "+order)
 	if err != nil {
 		t.Fatal(err)
 	}

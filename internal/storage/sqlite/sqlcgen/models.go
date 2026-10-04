@@ -23,7 +23,6 @@ type DirtyTarget struct {
 }
 
 type Edge struct {
-	ID         string `json:"id"`
 	FactID     string `json:"fact_id"`
 	FromID     string `json:"from_id"`
 	ToID       string `json:"to_id"`

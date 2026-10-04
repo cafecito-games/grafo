@@ -77,7 +77,8 @@ INSERT INTO edges(id, fact_id, from_id, to_id, kind, producer, path, line, colum
 		t.Fatalf("migrated edges = %#v", edges)
 	}
 	migrated := edges[0]
-	if migrated.ID != "legacy-edge" || migrated.FactID != "legacy-fact" || migrated.ToID != "target" ||
+	wantID := graph.DerivedEdgeID("legacy-fact", "target", graph.EdgeCalls)
+	if migrated.ID != wantID || migrated.FactID != "legacy-fact" || migrated.ToID != "target" ||
 		migrated.Kind != graph.EdgeCalls || migrated.Producer != "go" ||
 		migrated.Location != (graph.Location{Path: "legacy.go", Line: 5, Column: 7, EndLine: 5}) ||
 		migrated.Properties["proof"] != "direct" {
@@ -397,7 +398,7 @@ func TestRebuiltTablesKeepEveryIndexEarlierMigrationsCreated(t *testing.T) {
 		t.Fatal(err)
 	}
 	for table, want := range map[string][]string{
-		"edges": {"edges_fact", "edges_from", "edges_kind", "edges_to"},
+		"edges": {"edges_identity", "edges_from", "edges_kind", "edges_to"},
 		"facts": {"facts_from_id", "facts_owner", "facts_path", "facts_source",
 			"facts_target", "facts_target_id"},
 	} {

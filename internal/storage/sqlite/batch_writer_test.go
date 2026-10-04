@@ -66,9 +66,9 @@ func TestBatchWriterRespectsByteLimitAndExecutesOversizedRowAlone(t *testing.T) 
 		t.Fatal(err)
 	}
 	rows := []sqlcgen.InsertEdgeParams{
-		{ID: "small-1", FactID: "f", FromID: "a", ToID: "b", Kind: "calls"},
-		{ID: "oversized", FactID: "f", FromID: "a", ToID: "b", Kind: "calls", Properties: strings.Repeat("x", 100)},
-		{ID: "small-2", FactID: "f", FromID: "a", ToID: "b", Kind: "calls"},
+		{FactID: "f", FromID: "a", ToID: "small-1", Kind: "calls"},
+		{FactID: "f", FromID: "a", ToID: "oversized", Kind: "calls", Properties: strings.Repeat("x", 100)},
+		{FactID: "f", FromID: "a", ToID: "small-2", Kind: "calls"},
 	}
 	for _, row := range rows {
 		if err := writer.addEdge(context.Background(), row); err != nil {

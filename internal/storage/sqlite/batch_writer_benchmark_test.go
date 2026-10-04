@@ -24,7 +24,7 @@ func BenchmarkGeneratedFixtureWrites(b *testing.B) {
 			Properties: `{"fixture":"deterministic"}`, OwnerFile: "generated.go"}
 		facts[index] = sqlcgen.UpsertFactParams{ID: factID, FromID: id, Kind: "calls", TargetID: id,
 			PathID: 1, Line: int64(index + 1), Properties: `{"fixture":"deterministic"}`, OwnerPathID: 1}
-		edges[index] = sqlcgen.InsertEdgeParams{ID: "edge-" + factID, FactID: factID, FromID: id, ToID: id,
+		edges[index] = sqlcgen.InsertEdgeParams{FactID: factID, FromID: id, ToID: id,
 			Kind: "calls", Properties: `{"fixture":"deterministic"}`}
 	}
 

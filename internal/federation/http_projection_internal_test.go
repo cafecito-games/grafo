@@ -89,7 +89,7 @@ func (r *countingHTTPRepository) ListNodesByKind(ctx context.Context, request gr
 	return r.Repository.ListNodesByKind(ctx, request)
 }
 
-func (r *countingHTTPRepository) ExternalRequestEdges(ctx context.Context, after string, limit int) (graph.ExternalRequestEdgePage, error) {
+func (r *countingHTTPRepository) ExternalRequestEdges(ctx context.Context, after *graph.ExternalRequestEdgeCursor, limit int) (graph.ExternalRequestEdgePage, error) {
 	r.externalRequestLoads++
 	return r.Repository.ExternalRequestEdges(ctx, after, limit)
 }

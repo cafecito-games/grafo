@@ -96,11 +96,10 @@ func (q *Queries) DeleteEdgesByOwnerFacts(ctx context.Context, path string) erro
 }
 
 const insertEdge = `-- name: InsertEdge :exec
-INSERT INTO edges(id, fact_id, from_id, to_id, kind, properties) VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO edges(fact_id, from_id, to_id, kind, properties) VALUES (?, ?, ?, ?, ?)
 `
 
 type InsertEdgeParams struct {
-	ID         string `json:"id"`
 	FactID     string `json:"fact_id"`
 	FromID     string `json:"from_id"`
 	ToID       string `json:"to_id"`
@@ -110,7 +109,6 @@ type InsertEdgeParams struct {
 
 func (q *Queries) InsertEdge(ctx context.Context, arg InsertEdgeParams) error {
 	_, err := q.exec(ctx, q.insertEdgeStmt, insertEdge,
-		arg.ID,
 		arg.FactID,
 		arg.FromID,
 		arg.ToID,
@@ -121,7 +119,7 @@ func (q *Queries) InsertEdge(ctx context.Context, arg InsertEdgeParams) error {
 }
 
 const listEdgesFrom = `-- name: ListEdgesFrom :many
-SELECT edges.id, edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.properties,
+SELECT edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.properties,
        COALESCE(facts.producer, '') AS producer,
        COALESCE(origin_paths.path, '') AS path,
        COALESCE(facts.line, 0) AS line,
@@ -131,11 +129,10 @@ SELECT edges.id, edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.pr
 FROM edges
 LEFT JOIN facts ON facts.id = edges.fact_id
 LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id
-WHERE edges.from_id = ? ORDER BY edges.kind, edges.to_id, edges.id
+WHERE edges.from_id = ? ORDER BY edges.kind, edges.to_id, edges.fact_id
 `
 
 type ListEdgesFromRow struct {
-	ID             string `json:"id"`
 	FactID         string `json:"fact_id"`
 	FromID         string `json:"from_id"`
 	ToID           string `json:"to_id"`
@@ -159,7 +156,6 @@ func (q *Queries) ListEdgesFrom(ctx context.Context, fromID string) ([]ListEdges
 	for rows.Next() {
 		var i ListEdgesFromRow
 		if err := rows.Scan(
-			&i.ID,
 			&i.FactID,
 			&i.FromID,
 			&i.ToID,
@@ -186,7 +182,7 @@ func (q *Queries) ListEdgesFrom(ctx context.Context, fromID string) ([]ListEdges
 }
 
 const listEdgesTo = `-- name: ListEdgesTo :many
-SELECT edges.id, edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.properties,
+SELECT edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.properties,
        COALESCE(facts.producer, '') AS producer,
        COALESCE(origin_paths.path, '') AS path,
        COALESCE(facts.line, 0) AS line,
@@ -196,11 +192,10 @@ SELECT edges.id, edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.pr
 FROM edges
 LEFT JOIN facts ON facts.id = edges.fact_id
 LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id
-WHERE edges.to_id = ? ORDER BY edges.kind, edges.from_id, edges.id
+WHERE edges.to_id = ? ORDER BY edges.kind, edges.from_id, edges.fact_id
 `
 
 type ListEdgesToRow struct {
-	ID             string `json:"id"`
 	FactID         string `json:"fact_id"`
 	FromID         string `json:"from_id"`
 	ToID           string `json:"to_id"`
@@ -224,7 +219,6 @@ func (q *Queries) ListEdgesTo(ctx context.Context, toID string) ([]ListEdgesToRo
 	for rows.Next() {
 		var i ListEdgesToRow
 		if err := rows.Scan(
-			&i.ID,
 			&i.FactID,
 			&i.FromID,
 			&i.ToID,
@@ -251,7 +245,7 @@ func (q *Queries) ListEdgesTo(ctx context.Context, toID string) ([]ListEdgesToRo
 }
 
 const listExternalEdgesMatching = `-- name: ListExternalEdgesMatching :many
-SELECT edges.id, edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.properties,
+SELECT edges.fact_id, edges.from_id, edges.to_id, edges.kind, edges.properties,
        COALESCE(facts.producer, '') AS producer,
        COALESCE(origin_paths.path, '') AS path,
        COALESCE(facts.line, 0) AS line,
@@ -269,7 +263,7 @@ WHERE nodes.external = 1
       OR nodes.name = ?1
       OR nodes.name = ?2
   )
-ORDER BY edges.kind, edges.from_id, edges.id
+ORDER BY edges.kind, edges.from_id, edges.fact_id, edges.to_id
 `
 
 type ListExternalEdgesMatchingParams struct {
@@ -278,7 +272,6 @@ type ListExternalEdgesMatchingParams struct {
 }
 
 type ListExternalEdgesMatchingRow struct {
-	ID             string `json:"id"`
 	FactID         string `json:"fact_id"`
 	FromID         string `json:"from_id"`
 	ToID           string `json:"to_id"`
@@ -302,7 +295,6 @@ func (q *Queries) ListExternalEdgesMatching(ctx context.Context, arg ListExterna
 	for rows.Next() {
 		var i ListExternalEdgesMatchingRow
 		if err := rows.Scan(
-			&i.ID,
 			&i.FactID,
 			&i.FromID,
 			&i.ToID,
@@ -330,7 +322,6 @@ func (q *Queries) ListExternalEdgesMatching(ctx context.Context, arg ListExterna
 
 const listExternalRequestEdges = `-- name: ListExternalRequestEdges :many
 SELECT
-    edges.id AS edge_id,
     edges.fact_id AS edge_fact_id,
     edges.from_id AS edge_from_id,
     edges.to_id AS edge_to_id,
@@ -373,18 +364,19 @@ LEFT JOIN facts AS origin ON origin.id = edges.fact_id
 LEFT JOIN paths AS origin_paths ON origin_paths.id = origin.path_id
 WHERE edges.kind = 'requests'
   AND target.external = 1
-  AND edges.id > ?1
-ORDER BY edges.id
-LIMIT ?2
+  AND (edges.fact_id, edges.to_id, edges.kind) > (?1, ?2, ?3)
+ORDER BY edges.fact_id, edges.to_id, edges.kind
+LIMIT ?4
 `
 
 type ListExternalRequestEdgesParams struct {
-	AfterID    string `json:"after_id"`
-	MaxResults int64  `json:"max_results"`
+	AfterFactID string `json:"after_fact_id"`
+	AfterToID   string `json:"after_to_id"`
+	AfterKind   string `json:"after_kind"`
+	MaxResults  int64  `json:"max_results"`
 }
 
 type ListExternalRequestEdgesRow struct {
-	EdgeID              string `json:"edge_id"`
 	EdgeFactID          string `json:"edge_fact_id"`
 	EdgeFromID          string `json:"edge_from_id"`
 	EdgeToID            string `json:"edge_to_id"`
@@ -423,7 +415,12 @@ type ListExternalRequestEdgesRow struct {
 }
 
 func (q *Queries) ListExternalRequestEdges(ctx context.Context, arg ListExternalRequestEdgesParams) ([]ListExternalRequestEdgesRow, error) {
-	rows, err := q.query(ctx, q.listExternalRequestEdgesStmt, listExternalRequestEdges, arg.AfterID, arg.MaxResults)
+	rows, err := q.query(ctx, q.listExternalRequestEdgesStmt, listExternalRequestEdges,
+		arg.AfterFactID,
+		arg.AfterToID,
+		arg.AfterKind,
+		arg.MaxResults,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -432,7 +429,6 @@ func (q *Queries) ListExternalRequestEdges(ctx context.Context, arg ListExternal
 	for rows.Next() {
 		var i ListExternalRequestEdgesRow
 		if err := rows.Scan(
-			&i.EdgeID,
 			&i.EdgeFactID,
 			&i.EdgeFromID,
 			&i.EdgeToID,
@@ -484,7 +480,6 @@ func (q *Queries) ListExternalRequestEdges(ctx context.Context, arg ListExternal
 
 const listIncomingRelationEdges = `-- name: ListIncomingRelationEdges :many
 SELECT
-    edges.id AS edge_id,
     edges.fact_id AS edge_fact_id,
     edges.from_id AS edge_from_id,
     edges.to_id AS edge_to_id,
@@ -513,7 +508,7 @@ LEFT JOIN nodes ON nodes.id = edges.from_id
 LEFT JOIN facts ON facts.id = edges.fact_id
 LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id
 WHERE edges.to_id = ?1 AND edges.kind = ?2
-ORDER BY edges.from_id, edges.id
+ORDER BY edges.from_id, edges.fact_id
 LIMIT ?3
 `
 
@@ -524,7 +519,6 @@ type ListIncomingRelationEdgesParams struct {
 }
 
 type ListIncomingRelationEdgesRow struct {
-	EdgeID                   string `json:"edge_id"`
 	EdgeFactID               string `json:"edge_fact_id"`
 	EdgeFromID               string `json:"edge_from_id"`
 	EdgeToID                 string `json:"edge_to_id"`
@@ -560,7 +554,6 @@ func (q *Queries) ListIncomingRelationEdges(ctx context.Context, arg ListIncomin
 	for rows.Next() {
 		var i ListIncomingRelationEdgesRow
 		if err := rows.Scan(
-			&i.EdgeID,
 			&i.EdgeFactID,
 			&i.EdgeFromID,
 			&i.EdgeToID,
@@ -600,7 +593,6 @@ func (q *Queries) ListIncomingRelationEdges(ctx context.Context, arg ListIncomin
 
 const listOutgoingRelationEdges = `-- name: ListOutgoingRelationEdges :many
 SELECT
-    edges.id AS edge_id,
     edges.fact_id AS edge_fact_id,
     edges.from_id AS edge_from_id,
     edges.to_id AS edge_to_id,
@@ -629,7 +621,7 @@ LEFT JOIN nodes ON nodes.id = edges.to_id
 LEFT JOIN facts ON facts.id = edges.fact_id
 LEFT JOIN paths AS origin_paths ON origin_paths.id = facts.path_id
 WHERE edges.from_id = ?1 AND edges.kind = ?2
-ORDER BY edges.to_id, edges.id
+ORDER BY edges.to_id, edges.fact_id
 LIMIT ?3
 `
 
@@ -640,7 +632,6 @@ type ListOutgoingRelationEdgesParams struct {
 }
 
 type ListOutgoingRelationEdgesRow struct {
-	EdgeID                   string `json:"edge_id"`
 	EdgeFactID               string `json:"edge_fact_id"`
 	EdgeFromID               string `json:"edge_from_id"`
 	EdgeToID                 string `json:"edge_to_id"`
@@ -676,7 +667,6 @@ func (q *Queries) ListOutgoingRelationEdges(ctx context.Context, arg ListOutgoin
 	for rows.Next() {
 		var i ListOutgoingRelationEdgesRow
 		if err := rows.Scan(
-			&i.EdgeID,
 			&i.EdgeFactID,
 			&i.EdgeFromID,
 			&i.EdgeToID,

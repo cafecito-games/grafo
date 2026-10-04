@@ -1409,7 +1409,7 @@ func (r *Repository) EdgesFrom(ctx context.Context, id string) ([]graph.Edge, er
 	}
 	origins := make([]edgeOrigin, 0, len(rows))
 	for _, row := range rows {
-		origins = append(origins, edgeOrigin{id: row.ID, factID: row.FactID, fromID: row.FromID,
+		origins = append(origins, edgeOrigin{factID: row.FactID, fromID: row.FromID,
 			toID: row.ToID, kind: row.Kind, producer: row.Producer, path: row.Path, line: row.Line,
 			columnNo: row.ColumnNo, endLine: row.EndLine, properties: row.Properties,
 			originResolved: row.OriginResolved})
@@ -1424,7 +1424,7 @@ func (r *Repository) EdgesTo(ctx context.Context, id string) ([]graph.Edge, erro
 	}
 	origins := make([]edgeOrigin, 0, len(rows))
 	for _, row := range rows {
-		origins = append(origins, edgeOrigin{id: row.ID, factID: row.FactID, fromID: row.FromID,
+		origins = append(origins, edgeOrigin{factID: row.FactID, fromID: row.FromID,
 			toID: row.ToID, kind: row.Kind, producer: row.Producer, path: row.Path, line: row.Line,
 			columnNo: row.ColumnNo, endLine: row.EndLine, properties: row.Properties,
 			originResolved: row.OriginResolved})
@@ -1435,15 +1435,22 @@ func (r *Repository) EdgesTo(ctx context.Context, id string) ([]graph.Edge, erro
 // ExternalRequestEdges returns unresolved HTTP request boundaries in stable,
 // bounded pages. Both endpoint and source nodes are hydrated by the same query
 // so federation can build its reverse projection without N+1 adjacency loads.
-func (r *Repository) ExternalRequestEdges(ctx context.Context, after string, limit int) (graph.ExternalRequestEdgePage, error) {
+func (r *Repository) ExternalRequestEdges(ctx context.Context, after *graph.ExternalRequestEdgeCursor, limit int) (graph.ExternalRequestEdgePage, error) {
 	if limit <= 0 {
 		return graph.ExternalRequestEdgePage{}, fmt.Errorf("external request edge limit must be positive")
 	}
 	if limit == int(^uint(0)>>1) {
 		return graph.ExternalRequestEdgePage{}, fmt.Errorf("external request edge limit is too large")
 	}
+	// The empty cursor is the first page: no identity sorts before three empty
+	// strings, so a nil cursor needs no separate query.
+	var cursor graph.ExternalRequestEdgeCursor
+	if after != nil {
+		cursor = *after
+	}
 	rows, err := r.queries.ListExternalRequestEdges(ctx, sqlcgen.ListExternalRequestEdgesParams{
-		AfterID: after, MaxResults: int64(limit) + 1,
+		AfterFactID: cursor.FactID, AfterToID: cursor.ToID, AfterKind: string(cursor.Kind),
+		MaxResults: int64(limit) + 1,
 	})
 	if err != nil {
 		return graph.ExternalRequestEdgePage{}, err
@@ -1451,13 +1458,16 @@ func (r *Repository) ExternalRequestEdges(ctx context.Context, after string, lim
 	page := graph.ExternalRequestEdgePage{Items: make([]graph.ExternalRequestEdge, 0, min(len(rows), limit))}
 	if len(rows) > limit {
 		rows = rows[:limit]
-		page.Next = rows[len(rows)-1].EdgeID
+		last := rows[len(rows)-1]
+		page.Next = &graph.ExternalRequestEdgeCursor{
+			FactID: last.EdgeFactID, ToID: last.EdgeToID, Kind: graph.EdgeKind(last.EdgeKind)}
 	}
 	for _, row := range rows {
+		edgeID := graph.DerivedEdgeID(row.EdgeFactID, row.EdgeToID, graph.EdgeKind(row.EdgeKind))
 		if row.EdgeOriginResolved == 0 {
-			return graph.ExternalRequestEdgePage{}, corruptInternedPath("edge " + row.EdgeID)
+			return graph.ExternalRequestEdgePage{}, corruptInternedPath("edge " + edgeID)
 		}
-		edgeProperties, err := decodeRelationProperties("edge "+row.EdgeID, row.EdgeProperties)
+		edgeProperties, err := decodeRelationProperties("edge "+edgeID, row.EdgeProperties)
 		if err != nil {
 			return graph.ExternalRequestEdgePage{}, err
 		}
@@ -1470,7 +1480,7 @@ func (r *Repository) ExternalRequestEdges(ctx context.Context, after string, lim
 			return graph.ExternalRequestEdgePage{}, err
 		}
 		page.Items = append(page.Items, graph.ExternalRequestEdge{
-			Edge: graph.Edge{ID: row.EdgeID, FactID: row.EdgeFactID, FromID: row.EdgeFromID, ToID: row.EdgeToID,
+			Edge: graph.Edge{ID: edgeID, FactID: row.EdgeFactID, FromID: row.EdgeFromID, ToID: row.EdgeToID,
 				Kind: graph.EdgeKind(row.EdgeKind), Producer: row.EdgeProducer,
 				Location:   graph.Location{Path: row.EdgePath, Line: int(row.EdgeLine), Column: int(row.EdgeColumnNo), EndLine: int(row.EdgeEndLine)},
 				Properties: edgeProperties},
@@ -1520,10 +1530,11 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 				return graph.RelationEdgePage{}, err
 			}
 			for _, row := range rows {
+				edgeID := graph.DerivedEdgeID(row.EdgeFactID, row.EdgeToID, graph.EdgeKind(row.EdgeKind))
 				if row.EdgeOriginResolved == 0 {
-					return graph.RelationEdgePage{}, corruptInternedPath("edge " + row.EdgeID)
+					return graph.RelationEdgePage{}, corruptInternedPath("edge " + edgeID)
 				}
-				item, err := hydratedRelationEdge(row.EdgeID, row.EdgeFactID, row.EdgeFromID, row.EdgeToID,
+				item, err := hydratedRelationEdge(edgeID, row.EdgeFactID, row.EdgeFromID, row.EdgeToID,
 					row.EdgeKind, row.EdgeProducer, row.EdgePath, row.EdgeLine, row.EdgeColumnNo, row.EdgeEndLine, row.EdgeProperties,
 					row.CounterpartID, row.CounterpartKind, row.CounterpartName, row.CounterpartQualifiedName,
 					row.CounterpartLanguage, row.CounterpartPath, row.CounterpartLine, row.CounterpartColumnNo,
@@ -1541,10 +1552,11 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 				return graph.RelationEdgePage{}, err
 			}
 			for _, row := range rows {
+				edgeID := graph.DerivedEdgeID(row.EdgeFactID, row.EdgeToID, graph.EdgeKind(row.EdgeKind))
 				if row.EdgeOriginResolved == 0 {
-					return graph.RelationEdgePage{}, corruptInternedPath("edge " + row.EdgeID)
+					return graph.RelationEdgePage{}, corruptInternedPath("edge " + edgeID)
 				}
-				item, err := hydratedRelationEdge(row.EdgeID, row.EdgeFactID, row.EdgeFromID, row.EdgeToID,
+				item, err := hydratedRelationEdge(edgeID, row.EdgeFactID, row.EdgeFromID, row.EdgeToID,
 					row.EdgeKind, row.EdgeProducer, row.EdgePath, row.EdgeLine, row.EdgeColumnNo, row.EdgeEndLine, row.EdgeProperties,
 					row.CounterpartID, row.CounterpartKind, row.CounterpartName, row.CounterpartQualifiedName,
 					row.CounterpartLanguage, row.CounterpartPath, row.CounterpartLine, row.CounterpartColumnNo,
@@ -1579,7 +1591,7 @@ func (r *Repository) ExternalEdgesTo(ctx context.Context, node graph.Node) ([]gr
 	}
 	origins := make([]edgeOrigin, 0, len(rows))
 	for _, row := range rows {
-		origins = append(origins, edgeOrigin{id: row.ID, factID: row.FactID, fromID: row.FromID,
+		origins = append(origins, edgeOrigin{factID: row.FactID, fromID: row.FromID,
 			toID: row.ToID, kind: row.Kind, producer: row.Producer, path: row.Path, line: row.Line,
 			columnNo: row.ColumnNo, endLine: row.EndLine, properties: row.Properties,
 			originResolved: row.OriginResolved})
@@ -1658,9 +1670,11 @@ func factParams(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter,
 
 // edgeParams stores only what reconciliation can resolve differently from the
 // originating fact. The edge's producer and location are the fact's and are
-// joined back through fact_id instead of being stored a second time.
+// joined back through fact_id instead of being stored a second time, and its
+// identity is derived from fact_id, to_id and kind on read rather than stored,
+// so graph.Edge.ID is deliberately not written here.
 func edgeParams(e graph.Edge) sqlcgen.InsertEdgeParams {
-	return sqlcgen.InsertEdgeParams{ID: e.ID, FactID: e.FactID, FromID: e.FromID, ToID: e.ToID,
+	return sqlcgen.InsertEdgeParams{FactID: e.FactID, FromID: e.FromID, ToID: e.ToID,
 		Kind: string(e.Kind), Properties: graph.MarshalProperties(e.Properties)}
 }
 
@@ -1692,7 +1706,6 @@ func corruptInternedPath(subject string) error {
 // edgeOrigin is the producer and location an edge derives from its originating
 // fact, projected by every edge read query.
 type edgeOrigin struct {
-	id             string
 	factID         string
 	fromID         string
 	toID           string
@@ -1707,10 +1720,14 @@ type edgeOrigin struct {
 }
 
 func edgeFromOrigin(row edgeOrigin) (graph.Edge, error) {
+	// The identity is derived from the three columns that determine it rather than
+	// read, which is the whole of migration 13: graph.DerivedEdgeID is the one
+	// definition of that rule and every read path goes through it.
+	id := graph.DerivedEdgeID(row.factID, row.toID, graph.EdgeKind(row.kind))
 	if row.originResolved == 0 {
-		return graph.Edge{}, corruptInternedPath("edge " + row.id)
+		return graph.Edge{}, corruptInternedPath("edge " + id)
 	}
-	return graph.Edge{ID: row.id, FactID: row.factID, FromID: row.fromID, ToID: row.toID,
+	return graph.Edge{ID: id, FactID: row.factID, FromID: row.fromID, ToID: row.toID,
 		Kind: graph.EdgeKind(row.kind), Producer: row.producer,
 		Location: graph.Location{Path: row.path, Line: int(row.line),
 			Column: int(row.columnNo), EndLine: int(row.endLine)},

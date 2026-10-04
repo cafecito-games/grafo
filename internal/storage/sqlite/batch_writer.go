@@ -92,9 +92,9 @@ var (
 	}
 	edgeBatchSpec = batchSpec{
 		name:    "edges",
-		columns: 6,
+		columns: 5,
 		prefix: `INSERT INTO edges(
-    id, fact_id, from_id, to_id, kind, properties
+    fact_id, from_id, to_id, kind, properties
 ) VALUES `,
 	}
 	dirtyNodeBatchSpec = batchSpec{
@@ -177,7 +177,7 @@ func (w *batchWriter) addDirtyTarget(ctx context.Context, target, kind string) e
 }
 
 func (w *batchWriter) addEdge(ctx context.Context, row sqlcgen.InsertEdgeParams) error {
-	return w.add(ctx, &w.edges, []any{row.ID, row.FactID, row.FromID, row.ToID, row.Kind,
+	return w.add(ctx, &w.edges, []any{row.FactID, row.FromID, row.ToID, row.Kind,
 		row.Properties})
 }
 

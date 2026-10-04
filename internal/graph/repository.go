@@ -135,13 +135,41 @@ type ExternalRequestEdge struct {
 	Target Node
 }
 
+// ExternalRequestEdgeCursor positions a page within the external request edges.
+// It is the three columns an edge's identity is derived from rather than the
+// identity itself: storage no longer stores the identity, so the ordering and the
+// cursor are both expressed in the columns that determine it.
+type ExternalRequestEdgeCursor struct {
+	FactID string
+	ToID   string
+	Kind   EdgeKind
+}
+
+// Compare orders two cursors the way the query that produces them orders rows:
+// by fact_id, then to_id, then kind. It has to mirror that ordering exactly,
+// because a caller uses it to prove a page advanced, and a comparison that
+// disagreed with the SQL would either reject a valid page or loop forever on an
+// invalid one.
+func (c ExternalRequestEdgeCursor) Compare(other ExternalRequestEdgeCursor) int {
+	if c.FactID != other.FactID {
+		return strings.Compare(c.FactID, other.FactID)
+	}
+	if c.ToID != other.ToID {
+		return strings.Compare(c.ToID, other.ToID)
+	}
+	return strings.Compare(string(c.Kind), string(other.Kind))
+}
+
 type ExternalRequestEdgePage struct {
 	Items []ExternalRequestEdge
-	Next  string
+	// Next is nil when the page is the last one, so a caller loops until it is
+	// rather than comparing against an empty cursor that is also a valid start.
+	Next *ExternalRequestEdgeCursor
 }
 
 type ExternalRequestEdgeRepository interface {
-	ExternalRequestEdges(context.Context, string, int) (ExternalRequestEdgePage, error)
+	// A nil cursor starts at the first page.
+	ExternalRequestEdges(context.Context, *ExternalRequestEdgeCursor, int) (ExternalRequestEdgePage, error)
 }
 
 // NodeVisibility selects whether an enumeration returns locally declared
