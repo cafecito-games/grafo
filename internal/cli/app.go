@@ -1556,6 +1556,7 @@ func (a *App) printGodotComposition(report query.GodotComposition) {
 	if len(report.SceneNodes) > 0 {
 		a.printf("\nscene nodes (%d)\n", len(report.SceneNodes))
 	}
+	a.printGodotMembers(report.Members)
 	for _, group := range []struct {
 		label     string
 		relations []query.GodotRelation
@@ -1592,6 +1593,20 @@ func (a *App) printGodotComposition(report query.GodotComposition) {
 	if report.Truncated {
 		a.println("\ntruncated")
 	}
+}
+
+// printGodotMembers names the declarations a report aggregated, so a reader can
+// tell a root that answered for itself from one answered through what it
+// declares.
+func (a *App) printGodotMembers(members *query.MemberAggregation) {
+	if members == nil {
+		return
+	}
+	marker := ""
+	if members.Truncated {
+		marker = " · truncated"
+	}
+	a.printf("\naggregated %d declared member(s) via %s%s\n", len(members.Members), members.Relation, marker)
 }
 
 func (a *App) godotInteractions(ctx context.Context, args parsedArguments) error {
@@ -1644,6 +1659,7 @@ func (a *App) printGodotInteractions(report query.GodotInteractions) {
 	if len(report.SceneNodes) > 0 {
 		a.printf("\nscene nodes (%d)\n", len(report.SceneNodes))
 	}
+	a.printGodotMembers(report.Members)
 	for _, group := range []struct {
 		label        string
 		interactions []query.GodotInteraction

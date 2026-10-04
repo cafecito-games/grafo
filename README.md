@@ -698,8 +698,37 @@ script or scene globally.
 
 ```sh
 grafo godot composition "scenes/main"
+grafo godot composition "client/scenes/main.tscn"
+grafo godot composition "res://scenes/main.tscn"
+grafo godot composition "client/project.godot"
 grafo godot composition "godot:autoload:client/project.godot:GameSession" --json
 ```
+
+#### Naming a Godot resource
+
+A Godot resource is identified by its repository-relative path with the
+extension dropped (`client/scenes/main`), because that is what a `res://`
+reference canonicalizes to and what makes a scene and its attached script one
+identity. Both Godot reports also accept the two forms a caller actually holds:
+
+- the **tracked path**, extension included (`client/scenes/main.tscn`). The
+  extension is the evidence the identity dropped, so it is what names the scene
+  rather than the same-named script; an explicit `--kind` still wins.
+- the **`res://` or `user://` reference** as the project writes it. It is
+  project-relative, so it is resolved against every indexed `project.godot`
+  exactly as the parser resolves it at extraction time. A path reachable in more
+  than one project is reported as ambiguous rather than resolved into whichever
+  came first, and one that traverses out of a project resolves nothing there. A
+  repository with no indexed project file resolves repository-relatively.
+
+Naming a **file** — a `.tscn`, a `.gd`, or `project.godot` — reports what that
+file declares. A file, a script module, and a class own no Godot evidence of
+their own: a scene is recorded on its file, and GDScript records every signal
+connection, group call, and input-action read on the method that performs it. So
+these roots aggregate their declarations through `declares`, bounded by
+`--depth` and `--limit`, and the report names the expansion in `members` and the
+declaring member in each relation's `via`. A scene answers for itself and
+reports no expansion.
 
 Scenes, resources, scene nodes, and autoloads are first-class node kinds
 (`godot_scene`, `godot_resource`, `godot_scene_node`, `godot_autoload`) linked
@@ -733,9 +762,14 @@ or a script established it.
 
 ```sh
 grafo godot interactions "scenes/arena"
+grafo godot interactions "client/scripts/player.gd" --direction both
 grafo godot interactions "godot:node_group:client/project.godot:enemies" --direction incoming
 grafo godot interactions "scripts/player.poll" --filter action,group --json
 ```
+
+Selectors follow the same rules as composition, including the resource-path and
+`res://` forms and the declaration aggregation behind a file, module, or class
+root; see [Naming a Godot resource](#naming-a-godot-resource).
 
 Input actions and node groups are first-class node kinds
 (`godot_input_action`, `godot_node_group`) linked by `uses_input_action`,
