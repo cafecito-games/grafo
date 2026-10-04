@@ -61,6 +61,16 @@ jobs:
             go-build-${{ runner.os }}-build-vet-${{ hashFiles('**/go.sum') }}-
             go-build-${{ runner.os }}-build-vet-
 
+      # Explicit, and the gate on the module cache save below. That entry is
+      # immutable once written, so a save that fired after a step died partway
+      # through resolving the module set would pin a torn copy under the exact
+      # key until it aged out. Succeeding here proves the build list downloaded
+      # whole; the save still runs last, so it stores whatever the steps after
+      # this one added too.
+      - name: Download modules
+        id: go-mod-download
+        run: go mod download
+
       - uses: go-task/setup-task@v2
         with:
           version: 3.x
@@ -94,7 +104,9 @@ jobs:
       # load every package and so leave the whole module set behind; a race lane
       # only has its own shard's.
       - uses: actions/cache/save@v4
-        if: always() && steps.go-mod-cache.outputs.cache-hit != 'true'
+        if: >-
+          always() && steps.go-mod-download.outcome == 'success'
+          && steps.go-mod-cache.outputs.cache-hit != 'true'
         # A key another run already reserved must never fail main's checks.
         continue-on-error: true
         with:
