@@ -200,6 +200,27 @@ const temporaryStoreMemory = "PRAGMA temp_store=MEMORY"
 // log that is about to be grown straight back, which measured 7% slower on the
 // reconciliation phase. It is only there to hand back what one oversized
 // transaction forced.
+//
+// Raising reconciliationBatchSize eightfold did not move that working set, and
+// the observation that suggested it had is worth recording so it is not read the
+// same way twice. Sampling the log file every 250ms through a cold index of a
+// 12.7k-file repository: persistence sawtooths to a live peak of 151.4 MiB, still
+// inside the range above; at t=69s of a 121s run the queue transaction takes it to
+// 529.1 MiB; the cap truncates it to 256 MiB once, and the file stays pinned there
+// for the rest of the run. A file sitting at exactly this constant is therefore the
+// retained allocation, not the live log reaching a ceiling -- and a capped file
+// that never exceeds the cap is itself the evidence the live set stays under it.
+//
+// Raising the cap was measured and rejected: at 4 GiB the peak log is identical to
+// the byte, because journal_size_limit bounds only what a restart leaves behind and
+// never what an open transaction may grow, so the only effect is that the file holds
+// 529 MiB instead of 256 MiB for the last 50s. Three interleaved pairs put wall
+// clock and reconciliation inside a +-10s drift with no consistent sign. The
+// truncate-and-regrow cost also needs many restarts to matter, and a cold run has
+// one explicit checkpoint inside the batch loop at 31 batches and
+// reconciliationCheckpointBatches of 16.
+//
+// The oversized transaction is the thing actually worth removing, which is #183.
 const retainedLogBytes = 256 << 20
 
 // writableConnectionPragmas configures a writable connection. busy_timeout is

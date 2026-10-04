@@ -26,21 +26,34 @@ import (
 //	     12   320.7s            249.8s   6.47 GiB
 //	     16   330.5s            359.2s   6.57 GiB
 //
-// Read those against the run-to-run spread, which is large: three runs at eight
-// workers on one build gave 308.9s, 326.7s, and 338.2s, a standard deviation of
-// 14.8s, their aggregate parse figures a standard deviation of 18.1s. Only gaps
-// well outside that band carry information. Four workers are genuinely too few.
-// Eight, twelve, and sixteen are indistinguishable in wall clock, and the
-// aggregate parse growth by sixteen is the one effect clearly outside the
-// noise.
+// Read those against the run-to-run spread of that build, which was large:
+// three runs at eight workers gave 308.9s, 326.7s, and 338.2s, a standard
+// deviation of 14.8s, their aggregate parse figures a standard deviation of
+// 18.1s. Only gaps well outside that band carry information. Four workers are
+// genuinely too few. Eight, twelve, and sixteen are indistinguishable in wall
+// clock, and the aggregate parse growth by sixteen is the one effect clearly
+// outside the noise.
+//
+// That 14.8s is a property of the build it was measured on and is not the
+// current noise floor. It predates the parse pool and the persisted Go view
+// cache, and a cold index of the same repository now runs in a third of the
+// time with a spread of 2.3-3.2s, measured over the twelve runs tabulated on
+// reconciliationBatchSize in internal/storage/sqlite/repository.go. Reusing
+// 14.8s as today's band hides real effects several times its size.
 //
 // So eight stays as the conservative choice rather than as a demonstrated
 // optimum: nothing here shows that raising it buys wall clock, while the CPU
-// summed across workers and the peak memory both rise. Why they rise is not
-// settled. Lock contention would do it, and so would the extra workers merely
-// queueing deeper ahead of the single ordered writer; these numbers cannot
-// separate the two, and a worker count chosen on more than one run per point
-// would need to.
+// summed across workers and the peak memory both rise.
+//
+// Why they rise is settled, and it is queueing rather than contention. A block
+// profile of a cold index of the same repository records 477.36s of blocking
+// delay across nine goroutines, of which 99.4% is channel operations and 0.57%
+// is sync.(*Mutex).Lock; the single largest holder is this file's parse worker
+// at 184.51s, 38.7% of the total, waiting on the hand-off to the ordered
+// writer. Nothing in the pool contends on a lock to any measurable degree, so
+// raising this constant to relieve lock contention would be aiming at a cause
+// that is not there. What extra workers buy is a deeper queue ahead of a serial
+// writer, which costs memory and yields no wall clock.
 //
 // Every additional worker also raises the number of parsed results held in
 // memory ahead of that writer, on top of the grouped commits in service.go,
