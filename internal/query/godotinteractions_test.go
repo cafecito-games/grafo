@@ -305,3 +305,86 @@ func TestGodotInteractionsRequiresProducerAndKnownFormForSignals(t *testing.T) {
 		}
 	}
 }
+
+// TestGodotInteractionsAggregatesScriptMembers pins the defect behind a script
+// selector reporting zero wiring: GDScript records every connect, emit, group
+// call, and input-action read on the enclosing method, so a report rooted at the
+// script's file, module, or class saw none of its own evidence even though the
+// README documents a script as a selector.
+func TestGodotInteractionsAggregatesScriptMembers(t *testing.T) {
+	file := godotNodeAt(graph.KindFile, "client/screens/game.gd", "client/screens/game.gd", nil)
+	module := godotNodeAt(graph.KindModule, "client/screens/game", "client/screens/game.gd", nil)
+	class := godotNodeAt(graph.KindClass, "GameCoreScreen", "client/screens/game.gd", nil)
+	ready := godotNodeAt(graph.KindMethod, "GameCoreScreen._ready", "client/screens/game.gd", nil)
+	signal := godotNodeAt(graph.KindEvent, "GameCoreScreen.ready_for_play", "client/screens/game.gd", nil)
+	action := godotNode(graph.KindGodotInputAction, "godot:input_action:client/project.godot:jump", nil)
+	caller := godotNodeAt(graph.KindMethod, "Boot.start", "client/boot.gd", nil)
+	repository := godotProjects(&fakeRepository{
+		nodes: nodeSet(file, module, class, ready, signal, action, caller),
+		edges: []graph.Edge{
+			{ID: "e-file-module", FromID: file.ID, ToID: module.ID, Kind: graph.EdgeDeclares},
+			{ID: "e-module-class", FromID: module.ID, ToID: class.ID, Kind: graph.EdgeDeclares},
+			{ID: "e-class-ready", FromID: class.ID, ToID: ready.ID, Kind: graph.EdgeDeclares},
+			{ID: "e-class-signal", FromID: class.ID, ToID: signal.ID, Kind: graph.EdgeDeclares},
+			{ID: "e-action", FromID: ready.ID, ToID: action.ID, Kind: graph.EdgeUsesInputAction,
+				Producer: graph.ProducerGDScript, Properties: map[string]string{"form": "query"}},
+			{ID: "e-inbound", FromID: caller.ID, ToID: signal.ID, Kind: graph.EdgeSubscribes,
+				Producer: graph.ProducerGDScript, Properties: map[string]string{"form": "connect"}},
+		},
+	})
+	service := query.NewService(repository)
+
+	for _, selector := range []string{"client/screens/game.gd", "client/screens/game", "GameCoreScreen"} {
+		kind := graph.NodeKind("")
+		if selector == "client/screens/game" {
+			kind = graph.KindModule
+		}
+		report, err := service.GodotInteractions(context.Background(), selector,
+			query.GodotInteractionsOptions{Kind: kind})
+		if err != nil {
+			t.Fatalf("%s: %v", selector, err)
+		}
+		if len(report.Outbound) != 1 || report.Outbound[0].Node.ID != action.ID {
+			t.Fatalf("%s outbound = %#v", selector, report.Outbound)
+		}
+		if report.Outbound[0].Via == nil || report.Outbound[0].Via.ID != ready.ID {
+			t.Fatalf("%s did not keep the declaring member as evidence: %#v", selector, report.Outbound[0])
+		}
+		if len(report.Inbound) != 1 || report.Inbound[0].Node.ID != caller.ID {
+			t.Fatalf("%s inbound = %#v", selector, report.Inbound)
+		}
+		if report.Members == nil || len(report.Members.Members) == 0 {
+			t.Fatalf("%s members = %#v", selector, report.Members)
+		}
+	}
+}
+
+// TestGodotInteractionsKeepsInternalWiringOutOfTheInboundSection pins that an
+// edge between two of a container root's own declarations is reported once, as
+// the outbound fact it is, rather than also as something reaching in.
+func TestGodotInteractionsKeepsInternalWiringOutOfTheInboundSection(t *testing.T) {
+	module := godotNodeAt(graph.KindModule, "client/screens/game", "client/screens/game.gd", nil)
+	ready := godotNodeAt(graph.KindMethod, "GameCoreScreen._ready", "client/screens/game.gd", nil)
+	signal := godotNodeAt(graph.KindEvent, "GameCoreScreen.ready_for_play", "client/screens/game.gd", nil)
+	service := query.NewService(godotProjects(&fakeRepository{
+		nodes: nodeSet(module, ready, signal),
+		edges: []graph.Edge{
+			{ID: "e-module-ready", FromID: module.ID, ToID: ready.ID, Kind: graph.EdgeDeclares},
+			{ID: "e-module-signal", FromID: module.ID, ToID: signal.ID, Kind: graph.EdgeDeclares},
+			{ID: "e-emit", FromID: ready.ID, ToID: signal.ID, Kind: graph.EdgePublishes,
+				Producer: graph.ProducerGDScript, Properties: map[string]string{"form": "emit"}},
+		},
+	}))
+
+	report, err := service.GodotInteractions(context.Background(), "client/screens/game",
+		query.GodotInteractionsOptions{Kind: graph.KindModule})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Outbound) != 1 {
+		t.Fatalf("outbound = %#v", report.Outbound)
+	}
+	if len(report.Inbound) != 0 {
+		t.Fatalf("inbound = %#v", report.Inbound)
+	}
+}

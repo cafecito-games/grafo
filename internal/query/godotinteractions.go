@@ -80,6 +80,11 @@ type GodotInteractions struct {
 	SceneNodes []graph.Node       `json:"scene_nodes"`
 	Outbound   []GodotInteraction `json:"outbound"`
 	Inbound    []GodotInteraction `json:"inbound"`
+	// Members is the declaration expansion behind a report whose root owns no
+	// wiring of its own - a file, a script module, or a class - because GDScript
+	// records every operation on the member that performs it. It is absent for a
+	// scene, which answers for itself.
+	Members *MemberAggregation `json:"members,omitempty"`
 	// Unresolved counts the interactions whose far side is an unresolved
 	// boundary node, so a caller can tell a fully wired report from one that
 	// merely looks wired.
@@ -128,37 +133,23 @@ func (o GodotInteractionsOptions) wants(category GodotInteractionCategory) bool 
 // interaction report. Resolution errors (ErrNotFound, *AmbiguousError) propagate
 // unchanged and never yield a partial report.
 func (s *Service) GodotInteractions(ctx context.Context, selector string, options GodotInteractionsOptions) (GodotInteractions, error) {
-	root, err := s.ResolveKind(ctx, selector, options.Kind)
+	options = options.withDefaults()
+	// A scene is wired through the nodes it declares, so the scene's own
+	// interactions include theirs, and a container root is wired through the
+	// members that perform the operations. Containment is followed only through
+	// declares, which is the relation the parsers emit.
+	evidence, err := s.godotEvidenceFor(ctx, selector, options.Kind, options.Depth, options.Limit)
 	if err != nil {
 		return GodotInteractions{}, err
 	}
-	options = options.withDefaults()
-	report := GodotInteractions{Root: root, SceneNodes: []graph.Node{},
-		Outbound: []GodotInteraction{}, Inbound: []GodotInteraction{}}
-
-	// A scene is wired through the nodes it declares, so the scene's own
-	// interactions include theirs. Containment is followed only through declares,
-	// which is the relation the scene parser emits.
-	members := []graph.Node{root}
-	if root.Kind == graph.KindGodotScene || root.Kind == graph.KindGodotSceneNode {
-		traversal, err := s.Neighborhood(ctx, root.ID, "", options.Depth, Outgoing,
-			[]graph.EdgeKind{graph.EdgeDeclares}, options.Limit)
-		if err != nil {
-			return GodotInteractions{}, err
-		}
-		for _, reached := range traversal.Nodes {
-			if reached.Depth == 0 || reached.Node.Kind != graph.KindGodotSceneNode {
-				continue
-			}
-			report.SceneNodes = append(report.SceneNodes, reached.Node)
-			members = append(members, reached.Node)
-		}
-		report.Truncated = report.Truncated || traversal.Truncated
-	}
-	report.SceneNodesExplored = len(report.SceneNodes)
+	root := evidence.root
+	report := GodotInteractions{Root: root, SceneNodes: evidence.sceneNodes,
+		Outbound: []GodotInteraction{}, Inbound: []GodotInteraction{},
+		Members: evidence.aggregation(), Truncated: evidence.truncated,
+		SceneNodesExplored: len(evidence.sceneNodes)}
 
 	if options.Direction == Outgoing || options.Direction == Both {
-		for _, member := range members {
+		for _, member := range evidence.sources() {
 			via := &member
 			if member.ID == root.ID {
 				via = nil
@@ -181,26 +172,34 @@ func (s *Service) GodotInteractions(ctx context.Context, selector string, option
 
 	if options.Direction == Incoming || options.Direction == Both {
 		scenes := map[string]*graph.Node{}
-		incoming, err := s.repository.EdgesTo(ctx, root.ID)
-		if err != nil {
-			return GodotInteractions{}, err
-		}
-		for _, edge := range incoming {
-			interaction, ok, err := s.godotInteraction(ctx, edge, root.Kind, edge.FromID, nil, Incoming, options)
+		for _, target := range evidence.targets() {
+			incoming, err := s.repository.EdgesTo(ctx, target.ID)
 			if err != nil {
 				return GodotInteractions{}, err
 			}
-			if !ok {
-				continue
+			for _, edge := range incoming {
+				// An edge from one of the root's own declarations is internal
+				// wiring, already reported outbound, rather than something
+				// outside reaching in.
+				if evidence.internal(edge.FromID) {
+					continue
+				}
+				interaction, ok, err := s.godotInteraction(ctx, edge, target.Kind, edge.FromID, nil, Incoming, options)
+				if err != nil {
+					return GodotInteractions{}, err
+				}
+				if !ok {
+					continue
+				}
+				// An interaction declared by a scene node belongs to that node's
+				// scene. Reporting the scene as the far side answers "which scenes
+				// use this" while the scene node keeps the exact evidence.
+				if owner, found := s.owningScene(ctx, interaction.Node, scenes); found {
+					via := interaction.Node
+					interaction.Node, interaction.Via = owner, &via
+				}
+				report.Inbound = append(report.Inbound, interaction)
 			}
-			// An interaction declared by a scene node belongs to that node's
-			// scene. Reporting the scene as the far side answers "which scenes
-			// use this" while the scene node keeps the exact evidence.
-			if owner, found := s.owningScene(ctx, interaction.Node, scenes); found {
-				via := interaction.Node
-				interaction.Node, interaction.Via = owner, &via
-			}
-			report.Inbound = append(report.Inbound, interaction)
 		}
 	}
 

@@ -30,16 +30,21 @@ type GodotRelation struct {
 // unresolved or ambiguous reference appears as an external node rather than as
 // a guessed edge or as a missing row.
 type GodotComposition struct {
-	Root               graph.Node      `json:"root"`
-	SceneNodes         []graph.Node    `json:"scene_nodes"`
-	OutboundInstances  []GodotRelation `json:"outbound_instances"`
-	InboundInstances   []GodotRelation `json:"inbound_instances"`
-	AttachedScripts    []GodotRelation `json:"attached_scripts"`
-	ScriptAttachments  []GodotRelation `json:"script_attachments"`
-	AutoloadTargets    []GodotRelation `json:"autoload_targets"`
-	AutoloadExposures  []GodotRelation `json:"autoload_exposures"`
-	Truncated          bool            `json:"truncated"`
-	SceneNodesExplored int             `json:"scene_nodes_explored"`
+	Root       graph.Node   `json:"root"`
+	SceneNodes []graph.Node `json:"scene_nodes"`
+	// Members is the declaration expansion behind a report whose root owns no
+	// Godot evidence of its own - a file, a script module, or a class - whose
+	// composition is the composition of what it declares. It is absent for a
+	// scene, which answers for itself.
+	Members            *MemberAggregation `json:"members,omitempty"`
+	OutboundInstances  []GodotRelation    `json:"outbound_instances"`
+	InboundInstances   []GodotRelation    `json:"inbound_instances"`
+	AttachedScripts    []GodotRelation    `json:"attached_scripts"`
+	ScriptAttachments  []GodotRelation    `json:"script_attachments"`
+	AutoloadTargets    []GodotRelation    `json:"autoload_targets"`
+	AutoloadExposures  []GodotRelation    `json:"autoload_exposures"`
+	Truncated          bool               `json:"truncated"`
+	SceneNodesExplored int                `json:"scene_nodes_explored"`
 }
 
 // GodotCompositionOptions bounds a composition report. Zero fields fall back to
@@ -67,41 +72,26 @@ func (o GodotCompositionOptions) withDefaults() GodotCompositionOptions {
 // composition report. Resolution errors (ErrNotFound, *AmbiguousError)
 // propagate unchanged and never yield a partial report.
 func (s *Service) GodotComposition(ctx context.Context, selector string, options GodotCompositionOptions) (GodotComposition, error) {
-	root, err := s.ResolveKind(ctx, selector, options.Kind)
+	options = options.withDefaults()
+	// A scene owns its tree, so the scene's own composition includes the
+	// instances and scripts its nodes declare, and a container root's
+	// composition is the composition of what it declares. Containment is
+	// followed only through declares, which is the relation the parsers emit.
+	evidence, err := s.godotEvidenceFor(ctx, selector, options.Kind, options.Depth, options.Limit)
 	if err != nil {
 		return GodotComposition{}, err
 	}
-	options = options.withDefaults()
+	root := evidence.root
 	report := GodotComposition{
-		Root: root, SceneNodes: []graph.Node{}, OutboundInstances: []GodotRelation{},
+		Root: root, SceneNodes: evidence.sceneNodes, OutboundInstances: []GodotRelation{},
 		InboundInstances: []GodotRelation{}, AttachedScripts: []GodotRelation{},
 		ScriptAttachments: []GodotRelation{}, AutoloadTargets: []GodotRelation{},
-		AutoloadExposures: []GodotRelation{},
+		AutoloadExposures: []GodotRelation{}, Members: evidence.aggregation(),
+		Truncated: evidence.truncated, SceneNodesExplored: len(evidence.sceneNodes),
 	}
-
-	// A scene owns its tree, so the scene's own composition includes the
-	// instances and scripts its nodes declare. Containment is followed only
-	// through declares, which is the relation the scene parser emits.
-	members := []graph.Node{root}
-	if root.Kind == graph.KindGodotScene || root.Kind == graph.KindGodotSceneNode {
-		traversal, err := s.Neighborhood(ctx, root.ID, "", options.Depth, Outgoing,
-			[]graph.EdgeKind{graph.EdgeDeclares}, options.Limit)
-		if err != nil {
-			return GodotComposition{}, err
-		}
-		for _, reached := range traversal.Nodes {
-			if reached.Depth == 0 || reached.Node.Kind != graph.KindGodotSceneNode {
-				continue
-			}
-			report.SceneNodes = append(report.SceneNodes, reached.Node)
-			members = append(members, reached.Node)
-		}
-		report.Truncated = report.Truncated || traversal.Truncated
-	}
-	report.SceneNodesExplored = len(report.SceneNodes)
 
 	scenes := map[string]*graph.Node{}
-	for _, member := range members {
+	for _, member := range evidence.sources() {
 		via := &member
 		if member.ID == root.ID {
 			via = nil
@@ -134,19 +124,45 @@ func (s *Service) GodotComposition(ctx context.Context, selector string, options
 		}
 	}
 
-	incoming, err := s.repository.EdgesTo(ctx, root.ID)
-	if err != nil {
-		return GodotComposition{}, err
+	for _, target := range evidence.targets() {
+		incoming, err := s.repository.EdgesTo(ctx, target.ID)
+		if err != nil {
+			return GodotComposition{}, err
+		}
+		if err := s.godotInboundRelations(ctx, &report, evidence, incoming, scenes); err != nil {
+			return GodotComposition{}, err
+		}
 	}
+
+	for _, section := range []*[]GodotRelation{
+		&report.OutboundInstances, &report.InboundInstances, &report.AttachedScripts,
+		&report.ScriptAttachments, &report.AutoloadTargets, &report.AutoloadExposures,
+	} {
+		sortGodotRelations(*section)
+		if len(*section) > options.Limit {
+			*section = (*section)[:options.Limit]
+			report.Truncated = true
+		}
+	}
+	return report, nil
+}
+
+// godotInboundRelations files the composition edges that reach one of the
+// report's nodes. An edge from the root's own declarations is internal wiring,
+// already reported outbound, rather than something outside reaching in.
+func (s *Service) godotInboundRelations(ctx context.Context, report *GodotComposition, evidence godotEvidence, incoming []graph.Edge, scenes map[string]*graph.Node) error {
 	for _, edge := range incoming {
 		switch edge.Kind {
 		case graph.EdgeInstantiates, graph.EdgeAttachesScript, graph.EdgeAutoloads:
 		default:
 			continue
 		}
+		if evidence.internal(edge.FromID) {
+			continue
+		}
 		source, err := s.repository.Node(ctx, edge.FromID)
 		if err != nil {
-			return GodotComposition{}, err
+			return err
 		}
 		relation := GodotRelation{Edge: edge, Node: source, Federated: isFederated(edge)}
 		// An instance or attachment declared by a scene node belongs to that
@@ -165,18 +181,7 @@ func (s *Service) GodotComposition(ctx context.Context, selector string, options
 			report.AutoloadExposures = append(report.AutoloadExposures, relation)
 		}
 	}
-
-	for _, section := range []*[]GodotRelation{
-		&report.OutboundInstances, &report.InboundInstances, &report.AttachedScripts,
-		&report.ScriptAttachments, &report.AutoloadTargets, &report.AutoloadExposures,
-	} {
-		sortGodotRelations(*section)
-		if len(*section) > options.Limit {
-			*section = (*section)[:options.Limit]
-			report.Truncated = true
-		}
-	}
-	return report, nil
+	return nil
 }
 
 func (s *Service) relation(ctx context.Context, edge graph.Edge, nodeID string, via *graph.Node) (GodotRelation, error) {

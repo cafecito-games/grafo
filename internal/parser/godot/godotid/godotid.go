@@ -84,15 +84,30 @@ const (
 
 // Classify reports which Godot resource class a path names.
 func Classify(path string) Class {
+	class, _ := ClassifyExtension(path)
+	return class
+}
+
+// ClassifyExtension reports the class a path's extension names and whether that
+// extension is one Godot's resource vocabulary recognizes.
+//
+// Classify answers the same question with ClassResource standing in for every
+// other extension, which is right for a reference written inside a project -
+// whatever it names is a resource the project loads - and wrong for a path a
+// caller handed in, where "notes.md" must not be read as a Godot resource at
+// all.
+func ClassifyExtension(path string) (Class, bool) {
 	switch strings.ToLower(filepath.Ext(strings.TrimSpace(path))) {
 	case ".tscn", ".escn", ".scn":
-		return ClassScene
+		return ClassScene, true
 	case ".gd", ".cs":
-		return ClassScript
+		return ClassScript, true
 	case ".gdshader", ".gdshaderinc":
-		return ClassShader
+		return ClassShader, true
+	case ".tres", ".res":
+		return ClassResource, true
 	default:
-		return ClassResource
+		return ClassResource, false
 	}
 }
 
