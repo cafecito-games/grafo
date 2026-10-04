@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/bufbuild/protocompile v0.14.1
-	github.com/cafecito-games/gdparser v0.0.0-20261001142545-06bc15a9a672
+	github.com/cafecito-games/gdparser v0.1.6
 	// A fork of alex-pinkus/tree-sitter-swift, which publishes the generated
 	// parser sources upstream declines to commit. The fork renames the module
 	// after itself so this requirement needs no replace directive, which would

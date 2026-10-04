@@ -2818,3 +2818,109 @@ func on_finished(_value: int) -> void:
 		t.Errorf("handled_by lines = %v, want %v", handled, want)
 	}
 }
+
+// TestParserNamesAStaticMethodThroughItsOwnClassName covers the one spelling
+// the self-only rule refused: a static method named through the script's own
+// class name, which is how Godot spells that Callable. The instance spellings
+// pin the other side of the rule, since ClassName.instance_method is not a
+// Callable the engine can resolve.
+func TestParserNamesAStaticMethodThroughItsOwnClassName(t *testing.T) {
+	content := []byte(`class_name Player
+extends Node
+
+signal finished(value: int)
+
+static func on_done(_value: int) -> void:
+	pass
+
+func on_instance(_value: int) -> void:
+	pass
+
+func wire() -> void:
+	finished.connect(Player.on_done)
+	finished.connect(self.on_done)
+	finished.connect(Player.on_instance)
+	finished.connect(self.on_instance)
+	finished.connect(Other.on_done)
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "scripts/player.gd", Content: content, RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	referenced := map[string][]int{}
+	handled := map[string][]int{}
+	for _, fact := range result.Facts {
+		switch {
+		case fact.Kind == graph.EdgeReferences && fact.Properties["form"] == "method_value":
+			referenced[fact.Target] = append(referenced[fact.Target], fact.Location.Line)
+		case fact.Kind == graph.EdgeHandledBy:
+			handled[fact.Target] = append(handled[fact.Target], fact.Location.Line)
+		}
+	}
+	for _, name := range []string{"Player.on_done", "Player.on_instance"} {
+		sort.Ints(referenced[name])
+		sort.Ints(handled[name])
+	}
+	// The static method is named on both its class-qualified and its self line;
+	// the instance method only on its self line, and the foreign class name
+	// resolves nothing at all.
+	for _, want := range []struct {
+		name  string
+		lines []int
+	}{
+		{"Player.on_done", []int{13, 14}},
+		{"Player.on_instance", []int{16}},
+	} {
+		if got := referenced[want.name]; !slices.Equal(got, want.lines) {
+			t.Errorf("%s method-value reference lines = %v, want %v", want.name, got, want.lines)
+		}
+		if got := handled[want.name]; !slices.Equal(got, want.lines) {
+			t.Errorf("%s handled_by lines = %v, want %v", want.name, got, want.lines)
+		}
+	}
+	if got := len(referenced) + len(handled); got != 4 {
+		t.Errorf("method-value and handled_by targets = %d, want 4; referenced = %v, handled = %v",
+			got, sortedKeys(boolSet(referenced)), sortedKeys(boolSet(handled)))
+	}
+}
+
+// TestParserInfersAReturnTypeOnlyThroughAResolvableSpelling pins the same rule
+// on the return-type path, which accepted the class-qualified spelling of an
+// instance method and so carried a type through a call Godot cannot make.
+func TestParserInfersAReturnTypeOnlyThroughAResolvableSpelling(t *testing.T) {
+	content := []byte(`class_name Player
+extends Node
+
+static func make_static() -> Coordinator:
+	return null
+
+func make_instance() -> Coordinator:
+	return null
+
+func use_static() -> void:
+	var made := Player.make_static()
+	made.handle()
+
+func use_instance() -> void:
+	var made := Player.make_instance()
+	made.handle()
+`)
+	targets := gdCallTargets(t, "scripts/player.gd", content)
+	if !targets["Coordinator.handle"] {
+		t.Errorf("static class-qualified call lost its return type; calls = %v", sortedKeys(targets))
+	}
+	if !targets["made.handle"] {
+		t.Errorf("instance class-qualified call should leave the receiver unresolved; calls = %v",
+			sortedKeys(targets))
+	}
+}
+
+func boolSet(values map[string][]int) map[string]bool {
+	set := map[string]bool{}
+	for key := range values {
+		set[key] = true
+	}
+	return set
+}

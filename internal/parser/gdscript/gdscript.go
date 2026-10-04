@@ -180,6 +180,11 @@ type extractor struct {
 	input   parserapi.Input
 	module  string
 	methods map[string]string
+	// staticMethods marks which of those methods are declared static. It is
+	// keyed exactly like methods so a receiver-qualified spelling resolves in
+	// one lookup, and it is what lets the class-qualified spelling of a method
+	// be accepted only where Godot resolves it.
+	staticMethods map[string]bool
 	// callableDeclarations holds the node ID of every field, parameter, and
 	// local this file declares as a Callable. It is keyed by node ID rather
 	// than by name so it needs no per-scope copy: the scope that owns a name
@@ -255,7 +260,8 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 	}
 	protobufAPIs, protobufAmbiguous, protobufTypes := gdscriptProtobufBindings(registry)
 	e := &extractor{b: b, input: input, module: parserapi.ModuleName(input.Path),
-		methods: map[string]string{}, callableDeclarations: map[string]bool{}, autoloads: map[gdast.Node]bool{},
+		methods: map[string]string{}, staticMethods: map[string]bool{},
+		callableDeclarations: map[string]bool{}, autoloads: map[gdast.Node]bool{},
 		projectKnown: true, bases: map[string]string{}, methodReturns: map[string]string{},
 		protobufAPIs:      protobufAPIs,
 		protobufAmbiguous: protobufAmbiguous, protobufTypes: protobufTypes,
@@ -484,7 +490,11 @@ func (e *extractor) prepareClassSymbols(statements []gdast.Statement, current sc
 			current.signals[qualified] = ref
 		case *gdast.FunctionDeclaration:
 			qualified := qualify(current.container, node.Name)
-			e.methods[qualify(current.receiver, node.Name)] = qualified
+			receiverKey := qualify(current.receiver, node.Name)
+			e.methods[receiverKey] = qualified
+			if node.Static {
+				e.staticMethods[receiverKey] = true
+			}
 		case *gdast.ClassDeclaration:
 			qualified := qualify(current.container, node.Name)
 			current.types[node.Name] = qualified
@@ -2022,9 +2032,9 @@ func (e *extractor) referencedMethodValues(expression gdast.Expression, current 
 }
 
 // methodValueName returns the qualified name of the method an expression names
-// as a value, or "" when it names something else. A member expression on
-// anything but self names a method on a receiver whose declarations this file
-// does not hold, so it proves nothing about which method a value carries.
+// as a value, or "" when it names something else. A member expression on a
+// receiver this file does not declare proves nothing about which method a value
+// carries, so only the spellings namesMethodReceiver accepts qualify.
 func (e *extractor) methodValueName(expression gdast.Expression, current scope) string {
 	switch node := expression.(type) {
 	case *gdast.Identifier:
@@ -2033,7 +2043,7 @@ func (e *extractor) methodValueName(expression gdast.Expression, current scope) 
 		}
 		return e.methods[qualify(current.receiver, node.Name)]
 	case *gdast.MemberExpression:
-		if object, ok := node.Object.(*gdast.Identifier); !ok || object.Name != "self" {
+		if !e.namesMethodReceiver(node.Object, node.Property, current) {
 			return ""
 		}
 		if _, shadowed := current.fieldSymbols[node.Property]; shadowed {
@@ -2977,7 +2987,7 @@ func (e *extractor) localMethodName(callee gdast.Expression, current scope) stri
 		}
 		return e.methods[qualify(current.receiver, node.Name)]
 	case *gdast.MemberExpression:
-		if !e.namesThisObject(node.Object, current) {
+		if !e.namesMethodReceiver(node.Object, node.Property, current) {
 			return ""
 		}
 		if _, shadowed := current.fieldSymbols[node.Property]; shadowed {
@@ -2987,6 +2997,22 @@ func (e *extractor) localMethodName(callee gdast.Expression, current scope) stri
 	default:
 		return ""
 	}
+}
+
+// namesMethodReceiver reports whether a member expression reaches a method this
+// script declares through a receiver Godot resolves that way. "self" reaches
+// every method the script declares. The script's own class name reaches only its
+// static methods: ClassName.instance_method is not a Callable the engine can
+// bind and not a call it can make, so accepting it would attribute a route that
+// never runs.
+func (e *extractor) namesMethodReceiver(object gdast.Expression, property string, current scope) bool {
+	if identifier, ok := object.(*gdast.Identifier); ok && identifier.Name == "self" {
+		return true
+	}
+	if !e.namesThisObject(object, current) {
+		return false
+	}
+	return e.staticMethods[qualify(current.receiver, property)]
 }
 
 // namesThisObject reports whether an expression names the object whose script
