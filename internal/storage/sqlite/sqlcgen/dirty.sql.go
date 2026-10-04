@@ -7,6 +7,8 @@ package sqlcgen
 
 import (
 	"context"
+
+	"github.com/cafecito-games/grafo/internal/storage/sqlite/identity"
 )
 
 const clearDirtyNodes = `-- name: ClearDirtyNodes :exec
@@ -124,7 +126,7 @@ const markDirtyNode = `-- name: MarkDirtyNode :exec
 INSERT OR IGNORE INTO dirty_nodes(node_id) VALUES (?)
 `
 
-func (q *Queries) MarkDirtyNode(ctx context.Context, nodeID string) error {
+func (q *Queries) MarkDirtyNode(ctx context.Context, nodeID identity.Key) error {
 	_, err := q.exec(ctx, q.markDirtyNodeStmt, markDirtyNode, nodeID)
 	return err
 }

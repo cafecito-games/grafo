@@ -91,7 +91,8 @@ INSERT INTO dirty_facts(fact_id, owner_file) VALUES
 	}
 	// The owner is what batch ordering and the resolution caches' locality depend
 	// on, so the payload column has to survive the rebuild, not just the key.
-	if owner := scanString(t, path, "SELECT owner_file FROM dirty_facts WHERE fact_id = 'fact-b'"); owner != "other.go" {
+	if owner := scanString(t, path,
+		"SELECT owner_file FROM dirty_facts WHERE fact_id = grafo_identity_blob('fact-b')"); owner != "other.go" {
 		t.Errorf("fact-b's owner is %q after the rebuild, want %q", owner, "other.go")
 	}
 }

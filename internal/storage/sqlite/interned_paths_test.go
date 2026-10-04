@@ -181,11 +181,11 @@ func TestEnqueueFailsClosedOnAFactWithoutAnInternedOwnerPath(t *testing.T) {
 	// fact dirty through its target node so enqueueing has to reach it without
 	// resolving its owner by path.
 	if _, err := database.ExecContext(ctx,
-		"UPDATE facts SET owner_path_id = 9999 WHERE id = 'fact'"); err != nil {
+		"UPDATE facts SET owner_path_id = 9999 WHERE id = grafo_identity_blob('fact')"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.ExecContext(ctx,
-		"INSERT OR IGNORE INTO dirty_nodes(node_id) VALUES ('node')"); err != nil {
+		"INSERT OR IGNORE INTO dirty_nodes(node_id) VALUES (grafo_identity_blob('node'))"); err != nil {
 		t.Fatal(err)
 	}
 	if err := repository.Reconcile(ctx); err == nil {
@@ -242,7 +242,7 @@ SELECT location_paths.path, owner_paths.path
 FROM facts
 JOIN paths AS location_paths ON location_paths.id = facts.path_id
 JOIN paths AS owner_paths ON owner_paths.id = facts.owner_path_id
-WHERE facts.id = 'workspace-fact'`).Scan(&location, &owner); err != nil {
+WHERE facts.id = grafo_identity_blob('workspace-fact')`).Scan(&location, &owner); err != nil {
 		t.Fatal(err)
 	}
 	if location != "grafo.yaml" || owner != "__workspace__" {

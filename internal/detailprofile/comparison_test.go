@@ -93,8 +93,8 @@ func TestCapabilityFingerprintsAttributeTypedExternalNodesToProducingEdges(t *te
 // that removes the fact also removes the row a missing-path mutation needs.
 func TestCapabilityFingerprintsRefuseAnEdgeWithoutItsOriginatingFact(t *testing.T) {
 	for name, corrupt := range map[string]string{
-		"missing fact":          "DELETE FROM facts WHERE id = 'f:call'",
-		"missing interned path": "UPDATE facts SET path_id = 9999 WHERE id = 'f:call'",
+		"missing fact":          "DELETE FROM facts WHERE id = grafo_identity_blob('f:call')",
+		"missing interned path": "UPDATE facts SET path_id = 9999 WHERE id = grafo_identity_blob('f:call')",
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()

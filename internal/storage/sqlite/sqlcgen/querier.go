@@ -6,6 +6,8 @@ package sqlcgen
 
 import (
 	"context"
+
+	"github.com/cafecito-games/grafo/internal/storage/sqlite/identity"
 )
 
 type Querier interface {
@@ -47,13 +49,13 @@ type Querier interface {
 	FindNodesExact(ctx context.Context, target string) ([]FindNodesExactRow, error)
 	FindNodesExactKind(ctx context.Context, arg FindNodesExactKindParams) ([]FindNodesExactKindRow, error)
 	GetMeta(ctx context.Context, key string) (string, error)
-	GetNode(ctx context.Context, id string) (Node, error)
+	GetNode(ctx context.Context, id identity.Key) (Node, error)
 	InsertEdge(ctx context.Context, arg InsertEdgeParams) error
 	InternPath(ctx context.Context, path string) (int64, error)
 	ListCanonicalMessages(ctx context.Context, arg ListCanonicalMessagesParams) ([]Node, error)
 	ListDirtyFactBatch(ctx context.Context, limit int64) ([]ListDirtyFactBatchRow, error)
-	ListEdgesFrom(ctx context.Context, fromID string) ([]ListEdgesFromRow, error)
-	ListEdgesTo(ctx context.Context, toID string) ([]ListEdgesToRow, error)
+	ListEdgesFrom(ctx context.Context, fromID identity.Key) ([]ListEdgesFromRow, error)
+	ListEdgesTo(ctx context.Context, toID identity.Key) ([]ListEdgesToRow, error)
 	ListExternalEdgesMatching(ctx context.Context, arg ListExternalEdgesMatchingParams) ([]ListExternalEdgesMatchingRow, error)
 	ListExternalNodesMatching(ctx context.Context, arg ListExternalNodesMatchingParams) ([]Node, error)
 	ListExternalRequestEdges(ctx context.Context, arg ListExternalRequestEdgesParams) ([]ListExternalRequestEdgesRow, error)
@@ -62,7 +64,7 @@ type Querier interface {
 	ListNodesByKind(ctx context.Context, arg ListNodesByKindParams) ([]Node, error)
 	ListOutgoingRelationEdges(ctx context.Context, arg ListOutgoingRelationEdgesParams) ([]ListOutgoingRelationEdgesRow, error)
 	ListSemanticCandidateNodes(ctx context.Context) ([]Node, error)
-	MarkDirtyNode(ctx context.Context, nodeID string) error
+	MarkDirtyNode(ctx context.Context, nodeID identity.Key) error
 	MarkDirtyOwner(ctx context.Context, ownerFile string) error
 	MarkDirtyTarget(ctx context.Context, arg MarkDirtyTargetParams) error
 	MarkOwnedNamesDirty(ctx context.Context, arg MarkOwnedNamesDirtyParams) error

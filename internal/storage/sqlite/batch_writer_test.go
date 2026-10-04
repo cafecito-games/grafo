@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cafecito-games/grafo/internal/storage/sqlite/identity"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/sqlcgen"
 )
 
@@ -36,7 +37,7 @@ func TestBatchWriterRespectsRowAndVariableLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 	for index := range 5 {
-		params := sqlcgen.UpsertNodeParams{ID: strings.Repeat("n", index+1), Kind: "function", Name: "node"}
+		params := sqlcgen.UpsertNodeParams{ID: identity.Key(strings.Repeat("n", index+1)), Kind: "function", Name: "node"}
 		if err := writer.addNode(context.Background(), params); err != nil {
 			t.Fatal(err)
 		}

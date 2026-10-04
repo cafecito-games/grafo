@@ -121,14 +121,16 @@ func TestRelationEdgesFailsClosed(t *testing.T) {
 	}
 	if _, err = database.ExecContext(ctx, `INSERT INTO facts
         (id, from_id, kind, target_id, path_id, line, column_no, end_line, properties, owner_path_id)
-        VALUES ('synthetic-fact', 'missing-node', 'reads', 'subject',
+        VALUES (grafo_identity_blob('synthetic-fact'), grafo_identity_blob('missing-node'), 'reads',
+                grafo_identity_blob('subject'),
                 (SELECT id FROM paths WHERE path = 'synthetic.go'), 1, 1, 1, '{}',
                 (SELECT id FROM paths WHERE path = 'synthetic.go'))`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = database.ExecContext(ctx, `INSERT INTO edges
         (fact_id, from_id, to_id, kind, properties)
-        VALUES ('synthetic-fact', 'missing-node', 'subject', 'reads', '{}')`); err != nil {
+        VALUES (grafo_identity_blob('synthetic-fact'), grafo_identity_blob('missing-node'),
+                grafo_identity_blob('subject'), 'reads', '{}')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repository.RelationEdges(ctx, graph.RelationEdgeQuery{SubjectID: "subject",
@@ -136,17 +138,19 @@ func TestRelationEdgesFailsClosed(t *testing.T) {
 		t.Fatal("missing counterpart was silently omitted")
 	}
 	if _, err = database.ExecContext(ctx,
-		`DELETE FROM edges WHERE fact_id = 'synthetic-fact' AND to_id = 'subject' AND kind = 'reads'`); err != nil {
+		`DELETE FROM edges WHERE fact_id = grafo_identity_blob('synthetic-fact')
+             AND to_id = grafo_identity_blob('subject') AND kind = 'reads'`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = database.ExecContext(ctx, `INSERT INTO nodes
         (id, kind, name, qualified_name, language, path, line, column_no, end_line, properties, owner_file, external)
-        VALUES ('bad-node', 'function', 'Bad', 'fixture.Bad', 'go', '', 0, 0, 0, '{', 'bad.go', 0)`); err != nil {
+        VALUES (grafo_identity_blob('bad-node'), 'function', 'Bad', 'fixture.Bad', 'go', '', 0, 0, 0, '{', 'bad.go', 0)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = database.ExecContext(ctx, `INSERT INTO edges
         (fact_id, from_id, to_id, kind, properties)
-        VALUES ('synthetic-fact', 'bad-node', 'subject', 'reads', '{}')`); err != nil {
+        VALUES (grafo_identity_blob('synthetic-fact'), grafo_identity_blob('bad-node'),
+                grafo_identity_blob('subject'), 'reads', '{}')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repository.RelationEdges(ctx, graph.RelationEdgeQuery{SubjectID: "subject",
@@ -154,17 +158,19 @@ func TestRelationEdgesFailsClosed(t *testing.T) {
 		t.Fatal("malformed counterpart properties were silently accepted")
 	}
 	if _, err = database.ExecContext(ctx,
-		`DELETE FROM edges WHERE fact_id = 'synthetic-fact' AND to_id = 'subject' AND kind = 'reads'`); err != nil {
+		`DELETE FROM edges WHERE fact_id = grafo_identity_blob('synthetic-fact')
+             AND to_id = grafo_identity_blob('subject') AND kind = 'reads'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = database.ExecContext(ctx, `DELETE FROM nodes WHERE id = 'bad-node'`); err != nil {
+	if _, err = database.ExecContext(ctx, `DELETE FROM nodes WHERE id = grafo_identity_blob('bad-node')`); err != nil {
 		t.Fatal(err)
 	}
 	// An edge whose originating fact is gone can no longer supply a location.
 	// Reporting an empty one would hand the caller evidence pointing nowhere.
 	if _, err = database.ExecContext(ctx, `INSERT INTO edges
         (fact_id, from_id, to_id, kind, properties)
-        VALUES ('deleted-fact', 'writer', 'subject', 'reads', '{}')`); err != nil {
+        VALUES (grafo_identity_blob('deleted-fact'), grafo_identity_blob('writer'),
+                grafo_identity_blob('subject'), 'reads', '{}')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repository.RelationEdges(ctx, graph.RelationEdgeQuery{SubjectID: "subject",
