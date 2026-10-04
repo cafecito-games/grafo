@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/cafecito-games/grafo/internal/storage/sqlite/identity"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/sqlcgen"
 )
 
@@ -19,12 +20,12 @@ func BenchmarkGeneratedFixtureWrites(b *testing.B) {
 	for index := range rowCount {
 		id := fmt.Sprintf("node-%06d", index)
 		factID := fmt.Sprintf("fact-%06d", index)
-		nodes[index] = sqlcgen.UpsertNodeParams{ID: id, Kind: "function", Name: id,
+		nodes[index] = sqlcgen.UpsertNodeParams{ID: identity.Key(id), Kind: "function", Name: id,
 			QualifiedName: "generated." + id, Language: "go", Path: "generated.go", Line: int64(index + 1),
 			Properties: `{"fixture":"deterministic"}`, OwnerFile: "generated.go"}
-		facts[index] = sqlcgen.UpsertFactParams{ID: factID, FromID: id, Kind: "calls", TargetID: id,
+		facts[index] = sqlcgen.UpsertFactParams{ID: identity.Key(factID), FromID: identity.Key(id), Kind: "calls", TargetID: identity.Key(id),
 			PathID: 1, Line: int64(index + 1), Properties: `{"fixture":"deterministic"}`, OwnerPathID: 1}
-		edges[index] = sqlcgen.InsertEdgeParams{FactID: factID, FromID: id, ToID: id,
+		edges[index] = sqlcgen.InsertEdgeParams{FactID: identity.Key(factID), FromID: identity.Key(id), ToID: identity.Key(id),
 			Kind: "calls", Properties: `{"fixture":"deterministic"}`}
 	}
 

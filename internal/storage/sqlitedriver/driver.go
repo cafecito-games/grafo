@@ -15,6 +15,7 @@ import (
 	"fmt"
 
 	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/storage/sqlite/identity"
 	sqlite3 "github.com/mattn/go-sqlite3"
 )
 
@@ -27,8 +28,14 @@ func init() {
 	sql.Register(Name, &sqlite3.SQLiteDriver{ConnectHook: registerFunctions})
 }
 
-// stableIDFunction is the SQL name of graph.StableID.
-const stableIDFunction = "grafo_stable_id"
+// stableIDFunction is the SQL name of graph.StableID, and the identity functions
+// are the SQL names of the storage encoding in
+// internal/storage/sqlite/identity.
+const (
+	stableIDFunction     = "grafo_stable_id"
+	identityBlobFunction = "grafo_identity_blob"
+	identityTextFunction = "grafo_identity_text"
+)
 
 // registerFunctions exposes graph.StableID to SQL as grafo_stable_id(prefix,
 // part...). A migration that has to produce an identity needs the exact bytes
@@ -42,8 +49,14 @@ const stableIDFunction = "grafo_stable_id"
 // the pool hands out, and declared deterministic so SQLite may use it in an index
 // or a partial-index predicate if a later migration needs that.
 func registerFunctions(conn *sqlite3.SQLiteConn) error {
-	if err := conn.RegisterFunc(stableIDFunction, stableID, true); err != nil {
-		return fmt.Errorf("register %s: %w", stableIDFunction, err)
+	for name, implementation := range map[string]any{
+		stableIDFunction:     stableID,
+		identityBlobFunction: identity.Encode,
+		identityTextFunction: identity.Decode,
+	} {
+		if err := conn.RegisterFunc(name, implementation, true); err != nil {
+			return fmt.Errorf("register %s: %w", name, err)
+		}
 	}
 	return nil
 }

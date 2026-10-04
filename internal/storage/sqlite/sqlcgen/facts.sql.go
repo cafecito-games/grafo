@@ -7,6 +7,8 @@ package sqlcgen
 
 import (
 	"context"
+
+	"github.com/cafecito-games/grafo/internal/storage/sqlite/identity"
 )
 
 const countFacts = `-- name: CountFacts :one
@@ -50,24 +52,24 @@ LIMIT ?
 `
 
 type ListDirtyFactBatchRow struct {
-	ID            string `json:"id"`
-	FromID        string `json:"from_id"`
-	Source        string `json:"source"`
-	SourceKind    string `json:"source_kind"`
-	Kind          string `json:"kind"`
-	Producer      string `json:"producer"`
-	TargetID      string `json:"target_id"`
-	Target        string `json:"target"`
-	TargetKind    string `json:"target_kind"`
-	Path          string `json:"path"`
-	Line          int64  `json:"line"`
-	ColumnNo      int64  `json:"column_no"`
-	EndLine       int64  `json:"end_line"`
-	Properties    string `json:"properties"`
-	OwnerFile     string `json:"owner_file"`
-	PathsResolved int64  `json:"paths_resolved"`
-	SourceExists  int64  `json:"source_exists"`
-	TargetExists  int64  `json:"target_exists"`
+	ID            identity.Key `json:"id"`
+	FromID        identity.Key `json:"from_id"`
+	Source        string       `json:"source"`
+	SourceKind    string       `json:"source_kind"`
+	Kind          string       `json:"kind"`
+	Producer      string       `json:"producer"`
+	TargetID      identity.Key `json:"target_id"`
+	Target        string       `json:"target"`
+	TargetKind    string       `json:"target_kind"`
+	Path          string       `json:"path"`
+	Line          int64        `json:"line"`
+	ColumnNo      int64        `json:"column_no"`
+	EndLine       int64        `json:"end_line"`
+	Properties    string       `json:"properties"`
+	OwnerFile     string       `json:"owner_file"`
+	PathsResolved int64        `json:"paths_resolved"`
+	SourceExists  int64        `json:"source_exists"`
+	TargetExists  int64        `json:"target_exists"`
 }
 
 func (q *Queries) ListDirtyFactBatch(ctx context.Context, limit int64) ([]ListDirtyFactBatchRow, error) {
@@ -135,21 +137,21 @@ ON CONFLICT(id) DO UPDATE SET
 `
 
 type UpsertFactParams struct {
-	ID          string `json:"id"`
-	FromID      string `json:"from_id"`
-	Source      string `json:"source"`
-	SourceKind  string `json:"source_kind"`
-	Kind        string `json:"kind"`
-	Producer    string `json:"producer"`
-	TargetID    string `json:"target_id"`
-	Target      string `json:"target"`
-	TargetKind  string `json:"target_kind"`
-	PathID      int64  `json:"path_id"`
-	Line        int64  `json:"line"`
-	ColumnNo    int64  `json:"column_no"`
-	EndLine     int64  `json:"end_line"`
-	Properties  string `json:"properties"`
-	OwnerPathID int64  `json:"owner_path_id"`
+	ID          identity.Key `json:"id"`
+	FromID      identity.Key `json:"from_id"`
+	Source      string       `json:"source"`
+	SourceKind  string       `json:"source_kind"`
+	Kind        string       `json:"kind"`
+	Producer    string       `json:"producer"`
+	TargetID    identity.Key `json:"target_id"`
+	Target      string       `json:"target"`
+	TargetKind  string       `json:"target_kind"`
+	PathID      int64        `json:"path_id"`
+	Line        int64        `json:"line"`
+	ColumnNo    int64        `json:"column_no"`
+	EndLine     int64        `json:"end_line"`
+	Properties  string       `json:"properties"`
+	OwnerPathID int64        `json:"owner_path_id"`
 }
 
 func (q *Queries) UpsertFact(ctx context.Context, arg UpsertFactParams) error {

@@ -4,13 +4,17 @@
 
 package sqlcgen
 
+import (
+	"github.com/cafecito-games/grafo/internal/storage/sqlite/identity"
+)
+
 type DirtyFact struct {
-	FactID    string `json:"fact_id"`
-	OwnerFile string `json:"owner_file"`
+	FactID    identity.Key `json:"fact_id"`
+	OwnerFile string       `json:"owner_file"`
 }
 
 type DirtyNode struct {
-	NodeID string `json:"node_id"`
+	NodeID identity.Key `json:"node_id"`
 }
 
 type DirtyOwner struct {
@@ -23,29 +27,29 @@ type DirtyTarget struct {
 }
 
 type Edge struct {
-	FactID     string `json:"fact_id"`
-	FromID     string `json:"from_id"`
-	ToID       string `json:"to_id"`
-	Kind       string `json:"kind"`
-	Properties string `json:"properties"`
+	FactID     identity.Key `json:"fact_id"`
+	FromID     identity.Key `json:"from_id"`
+	ToID       identity.Key `json:"to_id"`
+	Kind       string       `json:"kind"`
+	Properties string       `json:"properties"`
 }
 
 type Fact struct {
-	ID          string `json:"id"`
-	FromID      string `json:"from_id"`
-	Source      string `json:"source"`
-	SourceKind  string `json:"source_kind"`
-	Kind        string `json:"kind"`
-	Producer    string `json:"producer"`
-	TargetID    string `json:"target_id"`
-	Target      string `json:"target"`
-	TargetKind  string `json:"target_kind"`
-	PathID      int64  `json:"path_id"`
-	Line        int64  `json:"line"`
-	ColumnNo    int64  `json:"column_no"`
-	EndLine     int64  `json:"end_line"`
-	Properties  string `json:"properties"`
-	OwnerPathID int64  `json:"owner_path_id"`
+	ID          identity.Key `json:"id"`
+	FromID      identity.Key `json:"from_id"`
+	Source      string       `json:"source"`
+	SourceKind  string       `json:"source_kind"`
+	Kind        string       `json:"kind"`
+	Producer    string       `json:"producer"`
+	TargetID    identity.Key `json:"target_id"`
+	Target      string       `json:"target"`
+	TargetKind  string       `json:"target_kind"`
+	PathID      int64        `json:"path_id"`
+	Line        int64        `json:"line"`
+	ColumnNo    int64        `json:"column_no"`
+	EndLine     int64        `json:"end_line"`
+	Properties  string       `json:"properties"`
+	OwnerPathID int64        `json:"owner_path_id"`
 }
 
 type File struct {
@@ -64,20 +68,20 @@ type Meta struct {
 }
 
 type Node struct {
-	ID                  string `json:"id"`
-	Kind                string `json:"kind"`
-	Name                string `json:"name"`
-	QualifiedName       string `json:"qualified_name"`
-	Language            string `json:"language"`
-	Path                string `json:"path"`
-	Line                int64  `json:"line"`
-	ColumnNo            int64  `json:"column_no"`
-	EndLine             int64  `json:"end_line"`
-	Properties          string `json:"properties"`
-	OwnerFile           string `json:"owner_file"`
-	External            int64  `json:"external"`
-	NameFolded          string `json:"name_folded"`
-	QualifiedNameFolded string `json:"qualified_name_folded"`
+	ID                  identity.Key `json:"id"`
+	Kind                string       `json:"kind"`
+	Name                string       `json:"name"`
+	QualifiedName       string       `json:"qualified_name"`
+	Language            string       `json:"language"`
+	Path                string       `json:"path"`
+	Line                int64        `json:"line"`
+	ColumnNo            int64        `json:"column_no"`
+	EndLine             int64        `json:"end_line"`
+	Properties          string       `json:"properties"`
+	OwnerFile           string       `json:"owner_file"`
+	External            int64        `json:"external"`
+	NameFolded          string       `json:"name_folded"`
+	QualifiedNameFolded string       `json:"qualified_name_folded"`
 }
 
 type Path struct {

@@ -16,6 +16,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/httpmodel"
 	"github.com/cafecito-games/grafo/internal/semantic"
+	"github.com/cafecito-games/grafo/internal/storage/sqlite/identity"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/migrations"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/sqlcgen"
 	"github.com/cafecito-games/grafo/internal/storage/sqlitedriver"
@@ -573,7 +574,7 @@ func (r *Repository) reconcileBatch(ctx context.Context, resolved *resolutionCac
 			if node, ok := nodeCache[id]; ok {
 				return node, nil
 			}
-			row, err := q.GetNode(ctx, id)
+			row, err := q.GetNode(ctx, identity.Key(id))
 			if err != nil {
 				return graph.Node{}, err
 			}
@@ -668,7 +669,7 @@ func markOwnerDirty(ctx context.Context, q *sqlcgen.Queries, owner string) error
 }
 
 func markNodeDirty(ctx context.Context, writer *batchWriter, node graph.Node) error {
-	if err := writer.addDirtyNode(ctx, node.ID); err != nil {
+	if err := writer.addDirtyNode(ctx, identity.Key(node.ID)); err != nil {
 		return err
 	}
 	for _, target := range []string{node.Name, node.QualifiedName} {
@@ -864,7 +865,7 @@ func resolveEndpoint(ctx context.Context, q *sqlcgen.Queries, writer *batchWrite
 			}
 			rows = make([]resolutionCandidate, 0, len(found))
 			for _, row := range found {
-				rows = append(rows, resolutionCandidate{id: row.ID, kind: graph.NodeKind(row.Kind), qualifiedName: row.QualifiedName})
+				rows = append(rows, resolutionCandidate{id: string(row.ID), kind: graph.NodeKind(row.Kind), qualifiedName: row.QualifiedName})
 			}
 		} else {
 			found, err := q.FindNodesExactKind(ctx, sqlcgen.FindNodesExactKindParams{
@@ -874,7 +875,7 @@ func resolveEndpoint(ctx context.Context, q *sqlcgen.Queries, writer *batchWrite
 			}
 			rows = make([]resolutionCandidate, 0, len(found))
 			for _, row := range found {
-				rows = append(rows, resolutionCandidate{id: row.ID, kind: graph.NodeKind(row.Kind), qualifiedName: row.QualifiedName})
+				rows = append(rows, resolutionCandidate{id: string(row.ID), kind: graph.NodeKind(row.Kind), qualifiedName: row.QualifiedName})
 			}
 		}
 		rows = filterCandidates(fact, direction, rows)
@@ -912,7 +913,7 @@ func resolveRequestTarget(ctx context.Context, q *sqlcgen.Queries, writer *batch
 	}
 	if fact.TargetID != "" {
 		if exactExists {
-			row, nodeErr := q.GetNode(ctx, fact.TargetID)
+			row, nodeErr := q.GetNode(ctx, identity.Key(fact.TargetID))
 			if nodeErr != nil {
 				return endpointResult{}, nodeErr
 			}
@@ -1381,7 +1382,7 @@ func (r *Repository) matchNodesInScope(ctx context.Context, scope matchScope,
 }
 
 func (r *Repository) Node(ctx context.Context, id string) (graph.Node, error) {
-	row, err := r.queries.GetNode(ctx, id)
+	row, err := r.queries.GetNode(ctx, identity.Key(id))
 	if err != nil {
 		return graph.Node{}, err
 	}
@@ -1403,7 +1404,7 @@ func (r *Repository) ExternalNodesMatching(ctx context.Context, node graph.Node)
 }
 
 func (r *Repository) EdgesFrom(ctx context.Context, id string) ([]graph.Edge, error) {
-	rows, err := r.queries.ListEdgesFrom(ctx, id)
+	rows, err := r.queries.ListEdgesFrom(ctx, identity.Key(id))
 	if err != nil {
 		return nil, err
 	}
@@ -1418,7 +1419,7 @@ func (r *Repository) EdgesFrom(ctx context.Context, id string) ([]graph.Edge, er
 }
 
 func (r *Repository) EdgesTo(ctx context.Context, id string) ([]graph.Edge, error) {
-	rows, err := r.queries.ListEdgesTo(ctx, id)
+	rows, err := r.queries.ListEdgesTo(ctx, identity.Key(id))
 	if err != nil {
 		return nil, err
 	}
@@ -1449,7 +1450,8 @@ func (r *Repository) ExternalRequestEdges(ctx context.Context, after *graph.Exte
 		cursor = *after
 	}
 	rows, err := r.queries.ListExternalRequestEdges(ctx, sqlcgen.ListExternalRequestEdgesParams{
-		AfterFactID: cursor.FactID, AfterToID: cursor.ToID, AfterKind: string(cursor.Kind),
+		AfterFactID: identity.Key(cursor.FactID), AfterToID: identity.Key(cursor.ToID),
+		AfterKind:  identity.Key(cursor.Kind),
 		MaxResults: int64(limit) + 1,
 	})
 	if err != nil {
@@ -1460,10 +1462,10 @@ func (r *Repository) ExternalRequestEdges(ctx context.Context, after *graph.Exte
 		rows = rows[:limit]
 		last := rows[len(rows)-1]
 		page.Next = &graph.ExternalRequestEdgeCursor{
-			FactID: last.EdgeFactID, ToID: last.EdgeToID, Kind: graph.EdgeKind(last.EdgeKind)}
+			FactID: string(last.EdgeFactID), ToID: string(last.EdgeToID), Kind: graph.EdgeKind(last.EdgeKind)}
 	}
 	for _, row := range rows {
-		edgeID := graph.DerivedEdgeID(row.EdgeFactID, row.EdgeToID, graph.EdgeKind(row.EdgeKind))
+		edgeID := derivedEdgeID(row.EdgeFactID, row.EdgeToID, row.EdgeKind)
 		if row.EdgeOriginResolved == 0 {
 			return graph.ExternalRequestEdgePage{}, corruptInternedPath("edge " + edgeID)
 		}
@@ -1471,24 +1473,24 @@ func (r *Repository) ExternalRequestEdges(ctx context.Context, after *graph.Exte
 		if err != nil {
 			return graph.ExternalRequestEdgePage{}, err
 		}
-		sourceProperties, err := decodeRelationProperties("source node "+row.SourceID, row.SourceProperties)
+		sourceProperties, err := decodeRelationProperties("source node "+string(row.SourceID), row.SourceProperties)
 		if err != nil {
 			return graph.ExternalRequestEdgePage{}, err
 		}
-		targetProperties, err := decodeRelationProperties("target node "+row.TargetID, row.TargetProperties)
+		targetProperties, err := decodeRelationProperties("target node "+string(row.TargetID), row.TargetProperties)
 		if err != nil {
 			return graph.ExternalRequestEdgePage{}, err
 		}
 		page.Items = append(page.Items, graph.ExternalRequestEdge{
-			Edge: graph.Edge{ID: edgeID, FactID: row.EdgeFactID, FromID: row.EdgeFromID, ToID: row.EdgeToID,
+			Edge: graph.Edge{ID: edgeID, FactID: string(row.EdgeFactID), FromID: string(row.EdgeFromID), ToID: string(row.EdgeToID),
 				Kind: graph.EdgeKind(row.EdgeKind), Producer: row.EdgeProducer,
 				Location:   graph.Location{Path: row.EdgePath, Line: int(row.EdgeLine), Column: int(row.EdgeColumnNo), EndLine: int(row.EdgeEndLine)},
 				Properties: edgeProperties},
-			Source: graph.Node{ID: row.SourceID, Kind: graph.NodeKind(row.SourceKind), Name: row.SourceName,
+			Source: graph.Node{ID: string(row.SourceID), Kind: graph.NodeKind(row.SourceKind), Name: row.SourceName,
 				QualifiedName: row.SourceQualifiedName, Language: row.SourceLanguage,
 				Location:   graph.Location{Path: row.SourcePath, Line: int(row.SourceLine), Column: int(row.SourceColumnNo), EndLine: int(row.SourceEndLine)},
 				Properties: sourceProperties, OwnerFile: row.SourceOwnerFile, External: row.SourceExternal != 0},
-			Target: graph.Node{ID: row.TargetID, Kind: graph.NodeKind(row.TargetKind), Name: row.TargetName,
+			Target: graph.Node{ID: string(row.TargetID), Kind: graph.NodeKind(row.TargetKind), Name: row.TargetName,
 				QualifiedName: row.TargetQualifiedName, Language: row.TargetLanguage,
 				Location:   graph.Location{Path: row.TargetPath, Line: int(row.TargetLine), Column: int(row.TargetColumnNo), EndLine: int(row.TargetEndLine)},
 				Properties: targetProperties, OwnerFile: row.TargetOwnerFile, External: row.TargetExternal != 0},
@@ -1524,13 +1526,13 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 		switch request.Direction {
 		case graph.IncomingRelations:
 			rows, err := r.queries.ListIncomingRelationEdges(ctx, sqlcgen.ListIncomingRelationEdgesParams{
-				SubjectID: request.SubjectID, Relation: string(relation), MaxResults: maxResults,
+				SubjectID: identity.Key(request.SubjectID), Relation: string(relation), MaxResults: maxResults,
 			})
 			if err != nil {
 				return graph.RelationEdgePage{}, err
 			}
 			for _, row := range rows {
-				edgeID := graph.DerivedEdgeID(row.EdgeFactID, row.EdgeToID, graph.EdgeKind(row.EdgeKind))
+				edgeID := derivedEdgeID(row.EdgeFactID, row.EdgeToID, row.EdgeKind)
 				if row.EdgeOriginResolved == 0 {
 					return graph.RelationEdgePage{}, corruptInternedPath("edge " + edgeID)
 				}
@@ -1546,13 +1548,13 @@ func (r *Repository) RelationEdges(ctx context.Context, request graph.RelationEd
 			}
 		case graph.OutgoingRelations:
 			rows, err := r.queries.ListOutgoingRelationEdges(ctx, sqlcgen.ListOutgoingRelationEdgesParams{
-				SubjectID: request.SubjectID, Relation: string(relation), MaxResults: maxResults,
+				SubjectID: identity.Key(request.SubjectID), Relation: string(relation), MaxResults: maxResults,
 			})
 			if err != nil {
 				return graph.RelationEdgePage{}, err
 			}
 			for _, row := range rows {
-				edgeID := graph.DerivedEdgeID(row.EdgeFactID, row.EdgeToID, graph.EdgeKind(row.EdgeKind))
+				edgeID := derivedEdgeID(row.EdgeFactID, row.EdgeToID, row.EdgeKind)
 				if row.EdgeOriginResolved == 0 {
 					return graph.RelationEdgePage{}, corruptInternedPath("edge " + edgeID)
 				}
@@ -1632,7 +1634,7 @@ func (r *Repository) inTransaction(ctx context.Context, fn func(*sqlcgen.Queries
 }
 
 func nodeParams(n graph.Node, external int64) sqlcgen.UpsertNodeParams {
-	return sqlcgen.UpsertNodeParams{ID: n.ID, Kind: string(n.Kind), Name: n.Name,
+	return sqlcgen.UpsertNodeParams{ID: identity.Key(n.ID), Kind: string(n.Kind), Name: n.Name,
 		QualifiedName: n.QualifiedName, Language: n.Language, Path: n.Location.Path,
 		Line: int64(n.Location.Line), ColumnNo: int64(n.Location.Column), EndLine: int64(n.Location.EndLine),
 		Properties: graph.MarshalProperties(n.Properties), OwnerFile: n.OwnerFile, External: external,
@@ -1661,8 +1663,8 @@ func factParams(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter,
 			return sqlcgen.UpsertFactParams{}, err
 		}
 	}
-	return sqlcgen.UpsertFactParams{ID: f.ID, FromID: f.FromID, Source: f.Source,
-		SourceKind: string(f.SourceKind), Kind: string(f.Kind), Producer: f.Producer, TargetID: f.TargetID,
+	return sqlcgen.UpsertFactParams{ID: identity.Key(f.ID), FromID: identity.Key(f.FromID), Source: f.Source,
+		SourceKind: string(f.SourceKind), Kind: string(f.Kind), Producer: f.Producer, TargetID: identity.Key(f.TargetID),
 		Target: f.Target, TargetKind: string(f.TargetKind), PathID: pathID, Line: int64(f.Location.Line),
 		ColumnNo: int64(f.Location.Column), EndLine: int64(f.Location.EndLine),
 		Properties: graph.MarshalProperties(f.Properties), OwnerPathID: ownerPathID}, nil
@@ -1674,22 +1676,22 @@ func factParams(ctx context.Context, q *sqlcgen.Queries, writer *batchWriter,
 // identity is derived from fact_id, to_id and kind on read rather than stored,
 // so graph.Edge.ID is deliberately not written here.
 func edgeParams(e graph.Edge) sqlcgen.InsertEdgeParams {
-	return sqlcgen.InsertEdgeParams{FactID: e.FactID, FromID: e.FromID, ToID: e.ToID,
+	return sqlcgen.InsertEdgeParams{FactID: identity.Key(e.FactID), FromID: identity.Key(e.FromID), ToID: identity.Key(e.ToID),
 		Kind: string(e.Kind), Properties: graph.MarshalProperties(e.Properties)}
 }
 
 func nodeFromRow(n sqlcgen.Node) graph.Node {
-	return graph.Node{ID: n.ID, Kind: graph.NodeKind(n.Kind), Name: n.Name, QualifiedName: n.QualifiedName,
+	return graph.Node{ID: string(n.ID), Kind: graph.NodeKind(n.Kind), Name: n.Name, QualifiedName: n.QualifiedName,
 		Language: n.Language, Location: graph.Location{Path: n.Path, Line: int(n.Line), Column: int(n.ColumnNo), EndLine: int(n.EndLine)},
 		Properties: graph.UnmarshalProperties(n.Properties), OwnerFile: n.OwnerFile, External: n.External != 0}
 }
 
 func factFromDirtyRow(f sqlcgen.ListDirtyFactBatchRow) (graph.Fact, error) {
 	if f.PathsResolved == 0 {
-		return graph.Fact{}, corruptInternedPath("fact " + f.ID)
+		return graph.Fact{}, corruptInternedPath("fact " + string(f.ID))
 	}
-	return graph.Fact{ID: f.ID, FromID: f.FromID, Source: f.Source, SourceKind: graph.NodeKind(f.SourceKind),
-		Kind: graph.EdgeKind(f.Kind), Producer: f.Producer, TargetID: f.TargetID,
+	return graph.Fact{ID: string(f.ID), FromID: string(f.FromID), Source: f.Source, SourceKind: graph.NodeKind(f.SourceKind),
+		Kind: graph.EdgeKind(f.Kind), Producer: f.Producer, TargetID: string(f.TargetID),
 		Target: f.Target, TargetKind: graph.NodeKind(f.TargetKind),
 		Location:   graph.Location{Path: f.Path, Line: int(f.Line), Column: int(f.ColumnNo), EndLine: int(f.EndLine)},
 		Properties: graph.UnmarshalProperties(f.Properties), OwnerFile: f.OwnerFile}, nil
@@ -1706,9 +1708,9 @@ func corruptInternedPath(subject string) error {
 // edgeOrigin is the producer and location an edge derives from its originating
 // fact, projected by every edge read query.
 type edgeOrigin struct {
-	factID         string
-	fromID         string
-	toID           string
+	factID         identity.Key
+	fromID         identity.Key
+	toID           identity.Key
 	kind           string
 	producer       string
 	path           string
@@ -1723,11 +1725,11 @@ func edgeFromOrigin(row edgeOrigin) (graph.Edge, error) {
 	// The identity is derived from the three columns that determine it rather than
 	// read, which is the whole of migration 13: graph.DerivedEdgeID is the one
 	// definition of that rule and every read path goes through it.
-	id := graph.DerivedEdgeID(row.factID, row.toID, graph.EdgeKind(row.kind))
+	id := graph.DerivedEdgeID(string(row.factID), string(row.toID), graph.EdgeKind(row.kind))
 	if row.originResolved == 0 {
 		return graph.Edge{}, corruptInternedPath("edge " + id)
 	}
-	return graph.Edge{ID: id, FactID: row.factID, FromID: row.fromID, ToID: row.toID,
+	return graph.Edge{ID: id, FactID: string(row.factID), FromID: string(row.fromID), ToID: string(row.toID),
 		Kind: graph.EdgeKind(row.kind), Producer: row.producer,
 		Location: graph.Location{Path: row.path, Line: int(row.line),
 			Column: int(row.columnNo), EndLine: int(row.endLine)},
@@ -1746,8 +1748,16 @@ func edgesFromOrigins(rows []edgeOrigin) ([]graph.Edge, error) {
 	return result, nil
 }
 
-func hydratedRelationEdge(edgeID, factID, fromID, toID, kind, producer, path string,
-	line, column, endLine int64, properties, counterpartID, counterpartKind, counterpartName,
+// derivedEdgeID computes an edge's identity from the stored keys of the columns
+// that determine it, which is what every edge read path has to do since the
+// identity is no longer a column of its own.
+func derivedEdgeID(factID, toID identity.Key, kind string) string {
+	return graph.DerivedEdgeID(string(factID), string(toID), graph.EdgeKind(kind))
+}
+
+func hydratedRelationEdge(edgeID string, factID, fromID, toID identity.Key, kind, producer, path string,
+	line, column, endLine int64, properties string, counterpartID identity.Key,
+	counterpartKind, counterpartName,
 	counterpartQualifiedName, counterpartLanguage, counterpartPath string, counterpartLine,
 	counterpartColumn, counterpartEndLine int64, counterpartProperties, counterpartOwnerFile string,
 	counterpartExternal int64) (graph.HydratedRelationEdge, error) {
@@ -1758,15 +1768,15 @@ func hydratedRelationEdge(edgeID, factID, fromID, toID, kind, producer, path str
 	if err != nil {
 		return graph.HydratedRelationEdge{}, err
 	}
-	nodeProperties, err := decodeRelationProperties("counterpart node "+counterpartID, counterpartProperties)
+	nodeProperties, err := decodeRelationProperties("counterpart node "+string(counterpartID), counterpartProperties)
 	if err != nil {
 		return graph.HydratedRelationEdge{}, err
 	}
 	return graph.HydratedRelationEdge{
-		Edge: graph.Edge{ID: edgeID, FactID: factID, FromID: fromID, ToID: toID, Kind: graph.EdgeKind(kind), Producer: producer,
+		Edge: graph.Edge{ID: edgeID, FactID: string(factID), FromID: string(fromID), ToID: string(toID), Kind: graph.EdgeKind(kind), Producer: producer,
 			Location:   graph.Location{Path: path, Line: int(line), Column: int(column), EndLine: int(endLine)},
 			Properties: edgeProperties},
-		Counterpart: graph.Node{ID: counterpartID, Kind: graph.NodeKind(counterpartKind), Name: counterpartName,
+		Counterpart: graph.Node{ID: string(counterpartID), Kind: graph.NodeKind(counterpartKind), Name: counterpartName,
 			QualifiedName: counterpartQualifiedName, Language: counterpartLanguage,
 			Location: graph.Location{Path: counterpartPath, Line: int(counterpartLine),
 				Column: int(counterpartColumn), EndLine: int(counterpartEndLine)},

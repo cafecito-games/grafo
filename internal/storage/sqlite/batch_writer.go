@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/cafecito-games/grafo/internal/graph"
+	"github.com/cafecito-games/grafo/internal/storage/sqlite/identity"
 	"github.com/cafecito-games/grafo/internal/storage/sqlite/sqlcgen"
 )
 
@@ -168,7 +169,12 @@ func (w *batchWriter) addFact(ctx context.Context, row sqlcgen.UpsertFactParams)
 		row.Properties, row.OwnerPathID})
 }
 
-func (w *batchWriter) addDirtyNode(ctx context.Context, id string) error {
+// addDirtyNode takes the identity as a stored key rather than a string, because
+// the queue is joined against facts.from_id and facts.target_id. Binding the
+// text would store a value of a different storage class, which SQLite compares
+// as unequal to every encoded identity rather than failing, so reconciliation
+// would resolve nothing and report no error.
+func (w *batchWriter) addDirtyNode(ctx context.Context, id identity.Key) error {
 	return w.add(ctx, &w.dirtyNodes, []any{id})
 }
 

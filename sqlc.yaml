@@ -14,3 +14,26 @@ sql:
         output_db_file_name: "db.go"
         output_models_file_name: "models.go"
         output_querier_file_name: "querier.go"
+        # Identity columns are BLOBs holding the encoding in
+        # internal/storage/sqlite/identity. Overriding the generated type to
+        # identity.Key puts that encoding in one Value/Scan pair instead of at
+        # every site that binds or reads an identity.
+        overrides:
+          - column: "nodes.id"
+            go_type: "github.com/cafecito-games/grafo/internal/storage/sqlite/identity.Key"
+          - column: "facts.id"
+            go_type: "github.com/cafecito-games/grafo/internal/storage/sqlite/identity.Key"
+          - column: "facts.from_id"
+            go_type: "github.com/cafecito-games/grafo/internal/storage/sqlite/identity.Key"
+          - column: "facts.target_id"
+            go_type: "github.com/cafecito-games/grafo/internal/storage/sqlite/identity.Key"
+          - column: "edges.fact_id"
+            go_type: "github.com/cafecito-games/grafo/internal/storage/sqlite/identity.Key"
+          - column: "edges.from_id"
+            go_type: "github.com/cafecito-games/grafo/internal/storage/sqlite/identity.Key"
+          - column: "edges.to_id"
+            go_type: "github.com/cafecito-games/grafo/internal/storage/sqlite/identity.Key"
+          - column: "dirty_nodes.node_id"
+            go_type: "github.com/cafecito-games/grafo/internal/storage/sqlite/identity.Key"
+          - column: "dirty_facts.fact_id"
+            go_type: "github.com/cafecito-games/grafo/internal/storage/sqlite/identity.Key"

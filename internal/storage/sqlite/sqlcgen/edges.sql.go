@@ -7,6 +7,8 @@ package sqlcgen
 
 import (
 	"context"
+
+	"github.com/cafecito-games/grafo/internal/storage/sqlite/identity"
 )
 
 const countEdges = `-- name: CountEdges :one
@@ -100,11 +102,11 @@ INSERT INTO edges(fact_id, from_id, to_id, kind, properties) VALUES (?, ?, ?, ?,
 `
 
 type InsertEdgeParams struct {
-	FactID     string `json:"fact_id"`
-	FromID     string `json:"from_id"`
-	ToID       string `json:"to_id"`
-	Kind       string `json:"kind"`
-	Properties string `json:"properties"`
+	FactID     identity.Key `json:"fact_id"`
+	FromID     identity.Key `json:"from_id"`
+	ToID       identity.Key `json:"to_id"`
+	Kind       string       `json:"kind"`
+	Properties string       `json:"properties"`
 }
 
 func (q *Queries) InsertEdge(ctx context.Context, arg InsertEdgeParams) error {
@@ -133,20 +135,20 @@ WHERE edges.from_id = ? ORDER BY edges.kind, edges.to_id, edges.fact_id
 `
 
 type ListEdgesFromRow struct {
-	FactID         string `json:"fact_id"`
-	FromID         string `json:"from_id"`
-	ToID           string `json:"to_id"`
-	Kind           string `json:"kind"`
-	Properties     string `json:"properties"`
-	Producer       string `json:"producer"`
-	Path           string `json:"path"`
-	Line           int64  `json:"line"`
-	ColumnNo       int64  `json:"column_no"`
-	EndLine        int64  `json:"end_line"`
-	OriginResolved int64  `json:"origin_resolved"`
+	FactID         identity.Key `json:"fact_id"`
+	FromID         identity.Key `json:"from_id"`
+	ToID           identity.Key `json:"to_id"`
+	Kind           string       `json:"kind"`
+	Properties     string       `json:"properties"`
+	Producer       string       `json:"producer"`
+	Path           string       `json:"path"`
+	Line           int64        `json:"line"`
+	ColumnNo       int64        `json:"column_no"`
+	EndLine        int64        `json:"end_line"`
+	OriginResolved int64        `json:"origin_resolved"`
 }
 
-func (q *Queries) ListEdgesFrom(ctx context.Context, fromID string) ([]ListEdgesFromRow, error) {
+func (q *Queries) ListEdgesFrom(ctx context.Context, fromID identity.Key) ([]ListEdgesFromRow, error) {
 	rows, err := q.query(ctx, q.listEdgesFromStmt, listEdgesFrom, fromID)
 	if err != nil {
 		return nil, err
@@ -196,20 +198,20 @@ WHERE edges.to_id = ? ORDER BY edges.kind, edges.from_id, edges.fact_id
 `
 
 type ListEdgesToRow struct {
-	FactID         string `json:"fact_id"`
-	FromID         string `json:"from_id"`
-	ToID           string `json:"to_id"`
-	Kind           string `json:"kind"`
-	Properties     string `json:"properties"`
-	Producer       string `json:"producer"`
-	Path           string `json:"path"`
-	Line           int64  `json:"line"`
-	ColumnNo       int64  `json:"column_no"`
-	EndLine        int64  `json:"end_line"`
-	OriginResolved int64  `json:"origin_resolved"`
+	FactID         identity.Key `json:"fact_id"`
+	FromID         identity.Key `json:"from_id"`
+	ToID           identity.Key `json:"to_id"`
+	Kind           string       `json:"kind"`
+	Properties     string       `json:"properties"`
+	Producer       string       `json:"producer"`
+	Path           string       `json:"path"`
+	Line           int64        `json:"line"`
+	ColumnNo       int64        `json:"column_no"`
+	EndLine        int64        `json:"end_line"`
+	OriginResolved int64        `json:"origin_resolved"`
 }
 
-func (q *Queries) ListEdgesTo(ctx context.Context, toID string) ([]ListEdgesToRow, error) {
+func (q *Queries) ListEdgesTo(ctx context.Context, toID identity.Key) ([]ListEdgesToRow, error) {
 	rows, err := q.query(ctx, q.listEdgesToStmt, listEdgesTo, toID)
 	if err != nil {
 		return nil, err
@@ -272,17 +274,17 @@ type ListExternalEdgesMatchingParams struct {
 }
 
 type ListExternalEdgesMatchingRow struct {
-	FactID         string `json:"fact_id"`
-	FromID         string `json:"from_id"`
-	ToID           string `json:"to_id"`
-	Kind           string `json:"kind"`
-	Properties     string `json:"properties"`
-	Producer       string `json:"producer"`
-	Path           string `json:"path"`
-	Line           int64  `json:"line"`
-	ColumnNo       int64  `json:"column_no"`
-	EndLine        int64  `json:"end_line"`
-	OriginResolved int64  `json:"origin_resolved"`
+	FactID         identity.Key `json:"fact_id"`
+	FromID         identity.Key `json:"from_id"`
+	ToID           identity.Key `json:"to_id"`
+	Kind           string       `json:"kind"`
+	Properties     string       `json:"properties"`
+	Producer       string       `json:"producer"`
+	Path           string       `json:"path"`
+	Line           int64        `json:"line"`
+	ColumnNo       int64        `json:"column_no"`
+	EndLine        int64        `json:"end_line"`
+	OriginResolved int64        `json:"origin_resolved"`
 }
 
 func (q *Queries) ListExternalEdgesMatching(ctx context.Context, arg ListExternalEdgesMatchingParams) ([]ListExternalEdgesMatchingRow, error) {
@@ -370,48 +372,48 @@ LIMIT ?4
 `
 
 type ListExternalRequestEdgesParams struct {
-	AfterFactID string `json:"after_fact_id"`
-	AfterToID   string `json:"after_to_id"`
-	AfterKind   string `json:"after_kind"`
-	MaxResults  int64  `json:"max_results"`
+	AfterFactID identity.Key `json:"after_fact_id"`
+	AfterToID   identity.Key `json:"after_to_id"`
+	AfterKind   identity.Key `json:"after_kind"`
+	MaxResults  int64        `json:"max_results"`
 }
 
 type ListExternalRequestEdgesRow struct {
-	EdgeFactID          string `json:"edge_fact_id"`
-	EdgeFromID          string `json:"edge_from_id"`
-	EdgeToID            string `json:"edge_to_id"`
-	EdgeKind            string `json:"edge_kind"`
-	EdgeProducer        string `json:"edge_producer"`
-	EdgePath            string `json:"edge_path"`
-	EdgeLine            int64  `json:"edge_line"`
-	EdgeColumnNo        int64  `json:"edge_column_no"`
-	EdgeEndLine         int64  `json:"edge_end_line"`
-	EdgeProperties      string `json:"edge_properties"`
-	EdgeOriginResolved  int64  `json:"edge_origin_resolved"`
-	SourceID            string `json:"source_id"`
-	SourceKind          string `json:"source_kind"`
-	SourceName          string `json:"source_name"`
-	SourceQualifiedName string `json:"source_qualified_name"`
-	SourceLanguage      string `json:"source_language"`
-	SourcePath          string `json:"source_path"`
-	SourceLine          int64  `json:"source_line"`
-	SourceColumnNo      int64  `json:"source_column_no"`
-	SourceEndLine       int64  `json:"source_end_line"`
-	SourceProperties    string `json:"source_properties"`
-	SourceOwnerFile     string `json:"source_owner_file"`
-	SourceExternal      int64  `json:"source_external"`
-	TargetID            string `json:"target_id"`
-	TargetKind          string `json:"target_kind"`
-	TargetName          string `json:"target_name"`
-	TargetQualifiedName string `json:"target_qualified_name"`
-	TargetLanguage      string `json:"target_language"`
-	TargetPath          string `json:"target_path"`
-	TargetLine          int64  `json:"target_line"`
-	TargetColumnNo      int64  `json:"target_column_no"`
-	TargetEndLine       int64  `json:"target_end_line"`
-	TargetProperties    string `json:"target_properties"`
-	TargetOwnerFile     string `json:"target_owner_file"`
-	TargetExternal      int64  `json:"target_external"`
+	EdgeFactID          identity.Key `json:"edge_fact_id"`
+	EdgeFromID          identity.Key `json:"edge_from_id"`
+	EdgeToID            identity.Key `json:"edge_to_id"`
+	EdgeKind            string       `json:"edge_kind"`
+	EdgeProducer        string       `json:"edge_producer"`
+	EdgePath            string       `json:"edge_path"`
+	EdgeLine            int64        `json:"edge_line"`
+	EdgeColumnNo        int64        `json:"edge_column_no"`
+	EdgeEndLine         int64        `json:"edge_end_line"`
+	EdgeProperties      string       `json:"edge_properties"`
+	EdgeOriginResolved  int64        `json:"edge_origin_resolved"`
+	SourceID            identity.Key `json:"source_id"`
+	SourceKind          string       `json:"source_kind"`
+	SourceName          string       `json:"source_name"`
+	SourceQualifiedName string       `json:"source_qualified_name"`
+	SourceLanguage      string       `json:"source_language"`
+	SourcePath          string       `json:"source_path"`
+	SourceLine          int64        `json:"source_line"`
+	SourceColumnNo      int64        `json:"source_column_no"`
+	SourceEndLine       int64        `json:"source_end_line"`
+	SourceProperties    string       `json:"source_properties"`
+	SourceOwnerFile     string       `json:"source_owner_file"`
+	SourceExternal      int64        `json:"source_external"`
+	TargetID            identity.Key `json:"target_id"`
+	TargetKind          string       `json:"target_kind"`
+	TargetName          string       `json:"target_name"`
+	TargetQualifiedName string       `json:"target_qualified_name"`
+	TargetLanguage      string       `json:"target_language"`
+	TargetPath          string       `json:"target_path"`
+	TargetLine          int64        `json:"target_line"`
+	TargetColumnNo      int64        `json:"target_column_no"`
+	TargetEndLine       int64        `json:"target_end_line"`
+	TargetProperties    string       `json:"target_properties"`
+	TargetOwnerFile     string       `json:"target_owner_file"`
+	TargetExternal      int64        `json:"target_external"`
 }
 
 func (q *Queries) ListExternalRequestEdges(ctx context.Context, arg ListExternalRequestEdgesParams) ([]ListExternalRequestEdgesRow, error) {
@@ -513,35 +515,35 @@ LIMIT ?3
 `
 
 type ListIncomingRelationEdgesParams struct {
-	SubjectID  string `json:"subject_id"`
-	Relation   string `json:"relation"`
-	MaxResults int64  `json:"max_results"`
+	SubjectID  identity.Key `json:"subject_id"`
+	Relation   string       `json:"relation"`
+	MaxResults int64        `json:"max_results"`
 }
 
 type ListIncomingRelationEdgesRow struct {
-	EdgeFactID               string `json:"edge_fact_id"`
-	EdgeFromID               string `json:"edge_from_id"`
-	EdgeToID                 string `json:"edge_to_id"`
-	EdgeKind                 string `json:"edge_kind"`
-	EdgeProducer             string `json:"edge_producer"`
-	EdgePath                 string `json:"edge_path"`
-	EdgeLine                 int64  `json:"edge_line"`
-	EdgeColumnNo             int64  `json:"edge_column_no"`
-	EdgeEndLine              int64  `json:"edge_end_line"`
-	EdgeProperties           string `json:"edge_properties"`
-	EdgeOriginResolved       int64  `json:"edge_origin_resolved"`
-	CounterpartID            string `json:"counterpart_id"`
-	CounterpartKind          string `json:"counterpart_kind"`
-	CounterpartName          string `json:"counterpart_name"`
-	CounterpartQualifiedName string `json:"counterpart_qualified_name"`
-	CounterpartLanguage      string `json:"counterpart_language"`
-	CounterpartPath          string `json:"counterpart_path"`
-	CounterpartLine          int64  `json:"counterpart_line"`
-	CounterpartColumnNo      int64  `json:"counterpart_column_no"`
-	CounterpartEndLine       int64  `json:"counterpart_end_line"`
-	CounterpartProperties    string `json:"counterpart_properties"`
-	CounterpartOwnerFile     string `json:"counterpart_owner_file"`
-	CounterpartExternal      int64  `json:"counterpart_external"`
+	EdgeFactID               identity.Key `json:"edge_fact_id"`
+	EdgeFromID               identity.Key `json:"edge_from_id"`
+	EdgeToID                 identity.Key `json:"edge_to_id"`
+	EdgeKind                 string       `json:"edge_kind"`
+	EdgeProducer             string       `json:"edge_producer"`
+	EdgePath                 string       `json:"edge_path"`
+	EdgeLine                 int64        `json:"edge_line"`
+	EdgeColumnNo             int64        `json:"edge_column_no"`
+	EdgeEndLine              int64        `json:"edge_end_line"`
+	EdgeProperties           string       `json:"edge_properties"`
+	EdgeOriginResolved       int64        `json:"edge_origin_resolved"`
+	CounterpartID            identity.Key `json:"counterpart_id"`
+	CounterpartKind          string       `json:"counterpart_kind"`
+	CounterpartName          string       `json:"counterpart_name"`
+	CounterpartQualifiedName string       `json:"counterpart_qualified_name"`
+	CounterpartLanguage      string       `json:"counterpart_language"`
+	CounterpartPath          string       `json:"counterpart_path"`
+	CounterpartLine          int64        `json:"counterpart_line"`
+	CounterpartColumnNo      int64        `json:"counterpart_column_no"`
+	CounterpartEndLine       int64        `json:"counterpart_end_line"`
+	CounterpartProperties    string       `json:"counterpart_properties"`
+	CounterpartOwnerFile     string       `json:"counterpart_owner_file"`
+	CounterpartExternal      int64        `json:"counterpart_external"`
 }
 
 func (q *Queries) ListIncomingRelationEdges(ctx context.Context, arg ListIncomingRelationEdgesParams) ([]ListIncomingRelationEdgesRow, error) {
@@ -626,35 +628,35 @@ LIMIT ?3
 `
 
 type ListOutgoingRelationEdgesParams struct {
-	SubjectID  string `json:"subject_id"`
-	Relation   string `json:"relation"`
-	MaxResults int64  `json:"max_results"`
+	SubjectID  identity.Key `json:"subject_id"`
+	Relation   string       `json:"relation"`
+	MaxResults int64        `json:"max_results"`
 }
 
 type ListOutgoingRelationEdgesRow struct {
-	EdgeFactID               string `json:"edge_fact_id"`
-	EdgeFromID               string `json:"edge_from_id"`
-	EdgeToID                 string `json:"edge_to_id"`
-	EdgeKind                 string `json:"edge_kind"`
-	EdgeProducer             string `json:"edge_producer"`
-	EdgePath                 string `json:"edge_path"`
-	EdgeLine                 int64  `json:"edge_line"`
-	EdgeColumnNo             int64  `json:"edge_column_no"`
-	EdgeEndLine              int64  `json:"edge_end_line"`
-	EdgeProperties           string `json:"edge_properties"`
-	EdgeOriginResolved       int64  `json:"edge_origin_resolved"`
-	CounterpartID            string `json:"counterpart_id"`
-	CounterpartKind          string `json:"counterpart_kind"`
-	CounterpartName          string `json:"counterpart_name"`
-	CounterpartQualifiedName string `json:"counterpart_qualified_name"`
-	CounterpartLanguage      string `json:"counterpart_language"`
-	CounterpartPath          string `json:"counterpart_path"`
-	CounterpartLine          int64  `json:"counterpart_line"`
-	CounterpartColumnNo      int64  `json:"counterpart_column_no"`
-	CounterpartEndLine       int64  `json:"counterpart_end_line"`
-	CounterpartProperties    string `json:"counterpart_properties"`
-	CounterpartOwnerFile     string `json:"counterpart_owner_file"`
-	CounterpartExternal      int64  `json:"counterpart_external"`
+	EdgeFactID               identity.Key `json:"edge_fact_id"`
+	EdgeFromID               identity.Key `json:"edge_from_id"`
+	EdgeToID                 identity.Key `json:"edge_to_id"`
+	EdgeKind                 string       `json:"edge_kind"`
+	EdgeProducer             string       `json:"edge_producer"`
+	EdgePath                 string       `json:"edge_path"`
+	EdgeLine                 int64        `json:"edge_line"`
+	EdgeColumnNo             int64        `json:"edge_column_no"`
+	EdgeEndLine              int64        `json:"edge_end_line"`
+	EdgeProperties           string       `json:"edge_properties"`
+	EdgeOriginResolved       int64        `json:"edge_origin_resolved"`
+	CounterpartID            identity.Key `json:"counterpart_id"`
+	CounterpartKind          string       `json:"counterpart_kind"`
+	CounterpartName          string       `json:"counterpart_name"`
+	CounterpartQualifiedName string       `json:"counterpart_qualified_name"`
+	CounterpartLanguage      string       `json:"counterpart_language"`
+	CounterpartPath          string       `json:"counterpart_path"`
+	CounterpartLine          int64        `json:"counterpart_line"`
+	CounterpartColumnNo      int64        `json:"counterpart_column_no"`
+	CounterpartEndLine       int64        `json:"counterpart_end_line"`
+	CounterpartProperties    string       `json:"counterpart_properties"`
+	CounterpartOwnerFile     string       `json:"counterpart_owner_file"`
+	CounterpartExternal      int64        `json:"counterpart_external"`
 }
 
 func (q *Queries) ListOutgoingRelationEdges(ctx context.Context, arg ListOutgoingRelationEdgesParams) ([]ListOutgoingRelationEdgesRow, error) {
