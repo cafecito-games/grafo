@@ -40,15 +40,23 @@ jobs:
           # an entry the pull request jobs would then read.
           cache: false
 
+      # The module cache and the build cache are separate entries; see
+      # pr-checks.yml for why they cannot be restored as one. This job saves
+      # neither, so the module restore falls back to an older go.sum's modules
+      # rather than letting the release gate go cold on a dependency change.
       - uses: actions/cache/restore@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-${{ runner.os }}-build-test-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          path: ~/go/pkg/mod
+          key: go-mod-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: go-mod-${{ runner.os }}-
+
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-build-vet-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           restore-keys: |
-            go-${{ runner.os }}-build-test-${{ hashFiles('**/go.sum') }}-
-            go-${{ runner.os }}-build-test-
+            go-build-${{ runner.os }}-build-vet-${{ hashFiles('**/go.sum') }}-
+            go-build-${{ runner.os }}-build-vet-
 
       # Every package runs: a release gate must not skip one. See pr-checks.yml.
       - run: go test -race -count=1 ./...

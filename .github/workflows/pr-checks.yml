@@ -33,18 +33,33 @@ jobs:
           # that every later job hit and therefore never replaced.
           cache: false
 
+      # The module cache is byte-identical in every job and changes only when
+      # go.sum does, so it gets one entry keyed on go.sum alone rather than one
+      # copy per job per push. It has to be its own entry: actions/cache derives
+      # a version from the path list, and an entry saved under one list is
+      # invisible to a restore declaring another, which is why every restore and
+      # save here and in release.yml moves together.
+      #
+      # No restore-keys, unlike the jobs below: this is the job that saves the
+      # entry, and falling back to an older go.sum's modules would make it save
+      # that older set alongside the current one, growing the entry on every
+      # dependency change.
+      - uses: actions/cache/restore@v4
+        id: go-mod-cache
+        with:
+          path: ~/go/pkg/mod
+          key: go-mod-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+
       # Restored on every run, saved only from main: a pull request reuses the
-      # default branch's warm caches without spending the repository's cache
-      # budget on an entry nobody else will read.
+      # default branch's warm build cache without spending the repository's
+      # cache budget on an entry nobody else will read.
       - uses: actions/cache/restore@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-${{ runner.os }}-build-test-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-build-vet-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           restore-keys: |
-            go-${{ runner.os }}-build-test-${{ hashFiles('**/go.sum') }}-
-            go-${{ runner.os }}-build-test-
+            go-build-${{ runner.os }}-build-vet-${{ hashFiles('**/go.sum') }}-
+            go-build-${{ runner.os }}-build-vet-
 
       - uses: go-task/setup-task@v2
         with:
@@ -70,21 +85,35 @@ jobs:
       - name: Vet
         run: task vet
 
+      # Written whenever the exact key missed, from a pull request as well as
+      # from main, which the build caches below are not: this entry is keyed on
+      # go.sum alone, so every job and both workflows read it, and a go.sum
+      # change that so far exists only on a branch would otherwise leave six
+      # jobs downloading the module set cold on every push to that branch. This
+      # is the job that saves it because `go mod tidy -diff` and `go vet ./...`
+      # load every package and so leave the whole module set behind; a race lane
+      # only has its own shard's.
+      - uses: actions/cache/save@v4
+        if: always() && steps.go-mod-cache.outputs.cache-hit != 'true'
+        # A key another run already reserved must never fail main's checks.
+        continue-on-error: true
+        with:
+          path: ~/go/pkg/mod
+          key: go-mod-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+
       # The key carries the commit, so each push to main writes a fresh entry
       # rather than hitting its own primary key and keeping a stale one forever.
       # always() so a failing step still publishes the compilation it paid for.
-      # This is also the entry release.yml restores: it holds the module cache
-      # and the compiled dependencies, including the cgo grammars, which is what
-      # a cold build spends its time on.
+      # This is also the build cache release.yml restores: it holds the compiled
+      # dependencies, including the cgo grammars, which is what a cold build
+      # spends its time on.
       - uses: actions/cache/save@v4
         if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
         # A key another run already reserved must never fail main's checks.
         continue-on-error: true
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-${{ runner.os }}-build-test-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-build-vet-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
 
   race:
     # One lane per shard, because the step's wall clock was the sum of every
@@ -109,21 +138,28 @@ jobs:
           # Keyed per lane below, for the reason given in build-vet.
           cache: false
 
+      # Shared with every other job; see build-vet. This lane never saves the
+      # entry, so it can fall back to an older go.sum's modules and download
+      # only the difference instead of the whole set.
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/go/pkg/mod
+          key: go-mod-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: go-mod-${{ runner.os }}-
+
       # Each lane compiles only its own packages, so each keeps its own entry
       # rather than racing the others to save a partial one under a shared key.
       # A lane with no history of its own falls back to build-vet's entry, which
-      # already holds the dependencies, instead of starting cold.
+      # already holds the dependencies' object code, instead of starting cold.
       - uses: actions/cache/restore@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-${{ runner.os }}-race-${{ matrix.shard }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-race-${{ matrix.shard }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           restore-keys: |
-            go-${{ runner.os }}-race-${{ matrix.shard }}-${{ hashFiles('**/go.sum') }}-
-            go-${{ runner.os }}-race-${{ matrix.shard }}-
-            go-${{ runner.os }}-build-test-${{ hashFiles('**/go.sum') }}-
-            go-${{ runner.os }}-build-test-
+            go-build-${{ runner.os }}-race-${{ matrix.shard }}-${{ hashFiles('**/go.sum') }}-
+            go-build-${{ runner.os }}-race-${{ matrix.shard }}-
+            go-build-${{ runner.os }}-build-vet-${{ hashFiles('**/go.sum') }}-
+            go-build-${{ runner.os }}-build-vet-
 
       # -count=1 defeats the test result cache, not the build cache. The step
       # above restores a warm build cache, which also makes go test find its
@@ -150,10 +186,8 @@ jobs:
         # A key another run already reserved must never fail main's checks.
         continue-on-error: true
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-${{ runner.os }}-race-${{ matrix.shard }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-race-${{ matrix.shard }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
 
   build-test:
     # Branch protection requires this context by name, and splitting the work
@@ -188,15 +222,20 @@ jobs:
           # Keyed per job below, for the reason given in build-test.
           cache: false
 
+      # Shared with every other job; see build-vet.
       - uses: actions/cache/restore@v4
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-${{ runner.os }}-lint-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          path: ~/go/pkg/mod
+          key: go-mod-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: go-mod-${{ runner.os }}-
+
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-lint-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
           restore-keys: |
-            go-${{ runner.os }}-lint-${{ hashFiles('**/go.sum') }}-
-            go-${{ runner.os }}-lint-
+            go-build-${{ runner.os }}-lint-${{ hashFiles('**/go.sum') }}-
+            go-build-${{ runner.os }}-lint-
 
       - uses: j178/prek-action@4e14d07f9231acabce116ccfca13b13dd9755ece # v3.0.0
         with:
@@ -208,10 +247,8 @@ jobs:
         # A key another run already reserved must never fail main's checks.
         continue-on-error: true
         with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: go-${{ runner.os }}-lint-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-lint-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
 
   generated:
     name: Generated Code Up To Date
