@@ -298,9 +298,14 @@ func (s *Service) godotProjectDirectories(ctx context.Context) ([]string, error)
 	if err != nil {
 		return nil, err
 	}
+	// The bound was reached, so the enumeration proves nothing about what it did
+	// not list. It counts files whose path matches the project file name rather
+	// than projects, so the refusal says that and does not assert a project
+	// count it never established.
 	if len(nodes) >= maxGodotProjects {
-		return nil, fmt.Errorf("more than %d Godot projects are indexed, so no project can be proven "+
-			"to own this reference; name the resource by its repository-relative path", maxGodotProjects-1)
+		return nil, fmt.Errorf("the Godot project enumeration reached its bound of %d files matching %q, "+
+			"so no project can be proven to own this reference; name the resource by its "+
+			"repository-relative path", maxGodotProjects, godotid.ProjectFileName)
 	}
 	directories := []string{}
 	seen := map[string]bool{}

@@ -294,3 +294,43 @@ func (r *godotProjectRepository) ListNodesByKind(_ context.Context, request grap
 	sort.Slice(result, func(i, j int) bool { return result[i].Node.ID < result[j].Node.ID })
 	return result, nil
 }
+
+// TestGodotCompositionRefusesWeakerThanExactResourcePathEvidence pins the guard
+// that keeps a resource path from resolving to the wrong node. An identity is the
+// exact qualified name a Godot node carries, so a selector canonicalizing to one
+// must not be satisfied by a node whose name merely contains it or merely folds
+// to it - those are the matches ordinary selector resolution accepts, and here
+// they are evidence about a different node.
+func TestGodotCompositionRefusesWeakerThanExactResourcePathEvidence(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		resident graph.Node
+	}{
+		{
+			name:     "substring",
+			resident: godotNodeAt(graph.KindGodotScene, "vendor/client/screens/game_over", "vendor/client/screens/game_over.tscn", nil),
+		},
+		{
+			name:     "case folded",
+			resident: godotNodeAt(graph.KindGodotScene, "client/Screens/Game", "client/Screens/Game.tscn", nil),
+		},
+		{
+			name: "bare name",
+			resident: func() graph.Node {
+				node := godotNodeAt(graph.KindGodotScene, "elsewhere/game", "elsewhere/game.tscn", nil)
+				node.Name = "client/screens/game"
+				return node
+			}(),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service := query.NewService(godotProjects(&fakeRepository{nodes: nodeSet(test.resident)}))
+			report, err := service.GodotComposition(context.Background(), "client/screens/game.tscn",
+				query.GodotCompositionOptions{Kind: graph.KindGodotScene})
+			if !errors.Is(err, query.ErrNotFound) {
+				t.Fatalf("resolved %s [%s] on %s evidence (err = %v)",
+					report.Root.QualifiedName, report.Root.Kind, test.name, err)
+			}
+		})
+	}
+}
