@@ -200,6 +200,11 @@ type extractor struct {
 	// projectKnown is false when the owning Godot project could not be read, in
 	// which case no res:// reference in this script resolves.
 	projectKnown bool
+	// classes holds the qualified name of every class this file declares,
+	// including the script's own. It is what lets a class name spelled inside a
+	// sibling or inner class resolve against the declarations of the class it
+	// names rather than only against the enclosing one.
+	classes map[string]bool
 	// bases maps every class this file declares to the type it extends, which is
 	// the only inheritance evidence a single-file parser holds. It is what lets a
 	// receiver typed as a locally declared subclass of an input class still be
@@ -262,7 +267,8 @@ func (p *Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 	e := &extractor{b: b, input: input, module: parserapi.ModuleName(input.Path),
 		methods: map[string]string{}, staticMethods: map[string]bool{},
 		callableDeclarations: map[string]bool{}, autoloads: map[gdast.Node]bool{},
-		projectKnown: true, bases: map[string]string{}, methodReturns: map[string]string{},
+		projectKnown: true, classes: map[string]bool{}, bases: map[string]string{},
+		methodReturns:     map[string]string{},
 		protobufAPIs:      protobufAPIs,
 		protobufAmbiguous: protobufAmbiguous, protobufTypes: protobufTypes,
 		protobufEnabled: protobufEnabled, protobufWarned: map[string]bool{},
@@ -358,6 +364,7 @@ func (e *extractor) extract(file *gdast.File) {
 	if qualified == "" {
 		qualified = className
 	}
+	e.classes[qualified] = true
 	hierarchy := scope{container: qualified, receiver: qualified, types: map[string]string{className: qualified}}
 	// Register the complete same-file class hierarchy before classifying any
 	// test scope. GDScript permits a script or inner class to extend a class
@@ -418,6 +425,7 @@ func (e *extractor) prepareClassHierarchy(statements []gdast.Statement, current 
 			continue
 		}
 		qualified := qualify(current.container, node.Name)
+		e.classes[qualified] = true
 		if base := e.resolveType(node.Extends, current); base != "" {
 			e.bases[qualified] = base
 		}
@@ -2034,7 +2042,7 @@ func (e *extractor) referencedMethodValues(expression gdast.Expression, current 
 // methodValueName returns the qualified name of the method an expression names
 // as a value, or "" when it names something else. A member expression on a
 // receiver this file does not declare proves nothing about which method a value
-// carries, so only the spellings namesMethodReceiver accepts qualify.
+// carries, so only the spellings methodReceiver accepts qualify.
 func (e *extractor) methodValueName(expression gdast.Expression, current scope) string {
 	switch node := expression.(type) {
 	case *gdast.Identifier:
@@ -2043,13 +2051,14 @@ func (e *extractor) methodValueName(expression gdast.Expression, current scope) 
 		}
 		return e.methods[qualify(current.receiver, node.Name)]
 	case *gdast.MemberExpression:
-		if !e.namesMethodReceiver(node.Object, node.Property, current) {
+		receiver := e.methodReceiver(node.Object, node.Property, current)
+		if receiver == "" {
 			return ""
 		}
 		if _, shadowed := current.fieldSymbols[node.Property]; shadowed {
 			return ""
 		}
-		return e.methods[qualify(current.receiver, node.Property)]
+		return e.methods[qualify(receiver, node.Property)]
 	}
 	return ""
 }
@@ -2965,10 +2974,11 @@ func (e *extractor) localCall(callee gdast.Expression, current scope) bool {
 	case *gdast.Identifier:
 		return e.methods[qualify(current.receiver, node.Name)] != ""
 	case *gdast.MemberExpression:
-		if !e.namesThisObject(node.Object, current) {
+		receiver := e.receiverClass(node.Object, current)
+		if receiver == "" {
 			return false
 		}
-		return e.methods[qualify(current.receiver, node.Property)] != ""
+		return e.methods[qualify(receiver, node.Property)] != ""
 	default:
 		return false
 	}
@@ -2987,49 +2997,56 @@ func (e *extractor) localMethodName(callee gdast.Expression, current scope) stri
 		}
 		return e.methods[qualify(current.receiver, node.Name)]
 	case *gdast.MemberExpression:
-		if !e.namesMethodReceiver(node.Object, node.Property, current) {
+		receiver := e.methodReceiver(node.Object, node.Property, current)
+		if receiver == "" {
 			return ""
 		}
 		if _, shadowed := current.fieldSymbols[node.Property]; shadowed {
 			return ""
 		}
-		return e.methods[qualify(current.receiver, node.Property)]
+		return e.methods[qualify(receiver, node.Property)]
 	default:
 		return ""
 	}
 }
 
-// namesMethodReceiver reports whether a member expression reaches a method this
-// script declares through a receiver Godot resolves that way. "self" reaches
-// every method the script declares. The script's own class name reaches only its
-// static methods: ClassName.instance_method is not a Callable the engine can
-// bind and not a call it can make, so accepting it would attribute a route that
-// never runs.
-func (e *extractor) namesMethodReceiver(object gdast.Expression, property string, current scope) bool {
+// methodReceiver returns the qualified name of the class whose method a member
+// expression reaches, or "" when Godot does not resolve that spelling. "self"
+// reaches every method the enclosing class declares. A class name reaches only
+// that class's static methods: ClassName.instance_method is not a Callable the
+// engine can bind and not a call it can make, so accepting it would attribute a
+// route that never runs.
+func (e *extractor) methodReceiver(object gdast.Expression, property string, current scope) string {
 	if identifier, ok := object.(*gdast.Identifier); ok && identifier.Name == "self" {
-		return true
+		return current.receiver
 	}
-	if !e.namesThisObject(object, current) {
-		return false
+	receiver := e.receiverClass(object, current)
+	if receiver == "" || !e.staticMethods[qualify(receiver, property)] {
+		return ""
 	}
-	return e.staticMethods[qualify(current.receiver, property)]
+	return receiver
 }
 
-// namesThisObject reports whether an expression names the object whose script
-// this is: "self", or the script's own class. Any other receiver is a different
-// object whose type this parser cannot resolve, so a method call on it is not
-// evidence of a local method.
-func (e *extractor) namesThisObject(expression gdast.Expression, current scope) bool {
+// receiverClass returns the qualified name of the class whose declarations a
+// receiver expression reaches, or "" when the receiver is an object this file
+// does not declare. "self" reaches the enclosing class. Any other name reaches a
+// class only when the type table resolves it to one this file declares, which
+// covers both the class spelling and a value declared as that class; every
+// other receiver is an object whose declarations this file does not hold, so a
+// method named on it is not evidence of a local method.
+func (e *extractor) receiverClass(expression gdast.Expression, current scope) string {
 	identifier, ok := expression.(*gdast.Identifier)
 	if !ok {
-		return false
+		return ""
 	}
 	if identifier.Name == "self" {
-		return true
+		return current.receiver
 	}
-	// A bare class name resolves through the type table to this script's own
-	// qualified name only when it is this script's class.
-	return current.types[identifier.Name] == current.receiver && current.receiver != ""
+	resolved := current.types[identifier.Name]
+	if !e.classes[resolved] {
+		return ""
+	}
+	return resolved
 }
 
 // inputAction returns the identity an action name has inside the Godot project

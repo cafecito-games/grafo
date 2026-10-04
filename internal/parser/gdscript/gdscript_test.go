@@ -2924,3 +2924,107 @@ func boolSet(values map[string][]int) map[string]bool {
 	}
 	return set
 }
+
+// TestParserReachesAStaticMethodThroughAnotherClassTheFileDeclares covers the
+// receiver rule from inside an inner class. Godot resolves Outer.static_method()
+// written in Outer.Inner, but the receiver rule compared the named class against
+// the enclosing receiver alone, so the outer class's own static methods named
+// nothing from its inner classes.
+func TestParserReachesAStaticMethodThroughAnotherClassTheFileDeclares(t *testing.T) {
+	content := []byte(`class_name Outer
+extends Node
+
+static func make() -> Coordinator:
+	return null
+
+func on_instance(_value: int) -> void:
+	pass
+
+class Inner:
+	signal ready_up(value: int)
+
+	func wire() -> void:
+		ready_up.connect(Outer.make)
+		ready_up.connect(Outer.on_instance)
+
+	func use() -> void:
+		var made := Outer.make()
+		made.handle()
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "scripts/outer.gd", Content: content, RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	referenced := map[string][]int{}
+	handled := map[string][]int{}
+	calls := map[string]bool{}
+	for _, fact := range result.Facts {
+		switch {
+		case fact.Kind == graph.EdgeReferences && fact.Properties["form"] == "method_value":
+			referenced[fact.Target] = append(referenced[fact.Target], fact.Location.Line)
+		case fact.Kind == graph.EdgeHandledBy:
+			handled[fact.Target] = append(handled[fact.Target], fact.Location.Line)
+		case fact.Kind == graph.EdgeCalls:
+			calls[fact.Target] = true
+		}
+	}
+	// The outer class's static method is named on line 14; its instance method
+	// is not a Callable the engine can bind through the class name, so line 15
+	// records nothing.
+	if got := referenced["Outer.make"]; !slices.Equal(got, []int{14}) {
+		t.Errorf("Outer.make method-value reference lines = %v, want [14]", got)
+	}
+	if got := handled["Outer.make"]; !slices.Equal(got, []int{14}) {
+		t.Errorf("Outer.make handled_by lines = %v, want [14]", got)
+	}
+	if got := len(referenced) + len(handled); got != 2 {
+		t.Errorf("method-value and handled_by targets = %d, want 2; referenced = %v, handled = %v",
+			got, sortedKeys(boolSet(referenced)), sortedKeys(boolSet(handled)))
+	}
+	// The same spelling carries the static method's declared return type, so the
+	// call on the returned value resolves instead of staying on the local name.
+	if !calls["Coordinator.handle"] {
+		t.Errorf("static call through another class of the file lost its return type; calls = %v",
+			sortedKeys(calls))
+	}
+}
+
+// TestParserSuppressesGodotVocabularyForEveryClassTheFileDeclares pins the other
+// half of the receiver rule. A call that resolved to a method the file declares
+// is that method, never the engine API sharing its name, and that holds for the
+// class-qualified spelling of any class in the file - otherwise a project's own
+// add_to_group() emits a node-group edge for an API it never called.
+func TestParserSuppressesGodotVocabularyForEveryClassTheFileDeclares(t *testing.T) {
+	content := []byte(`class_name Outer
+extends Node
+
+func add_to_group(_name: String) -> void:
+	pass
+
+func own() -> void:
+	Outer.add_to_group("own")
+	self.add_to_group("self")
+	add_to_group("bare")
+
+class Inner:
+	func run() -> void:
+		Outer.add_to_group("inner")
+`)
+	result, err := gdscriptparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "scripts/outer.gd", Content: content, RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups := map[string][]int{}
+	for _, fact := range result.Facts {
+		if fact.TargetKind == graph.KindGodotNodeGroup {
+			groups[fact.Target] = append(groups[fact.Target], fact.Location.Line)
+		}
+	}
+	if len(groups) != 0 {
+		t.Errorf("node-group edges for a locally declared add_to_group = %v, want none", groups)
+	}
+}
