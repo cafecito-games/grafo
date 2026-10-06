@@ -77,7 +77,7 @@ func storedFreshnessToken(t *testing.T, indexPath string) string {
 	return token
 }
 
-func setFreshnessToken(t *testing.T, indexPath, value string) {
+func setIndexMeta(t *testing.T, indexPath, key, value string) {
 	t.Helper()
 	ctx := context.Background()
 	repository, err := sqlite.Open(ctx, indexPath)
@@ -85,7 +85,7 @@ func setFreshnessToken(t *testing.T, indexPath, value string) {
 		t.Fatal(err)
 	}
 	defer func() { _ = repository.Close() }()
-	if err := repository.SetMeta(ctx, indexer.FreshnessTokenMeta, value); err != nil {
+	if err := repository.SetMeta(ctx, key, value); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -139,18 +139,65 @@ func TestFreshnessGateRefreshesAfterAnEdit(t *testing.T) {
 
 // TestFreshnessGateAlwaysRefreshesANonGitProject keeps the conservatism the MCP
 // path applies: without Git there is no snapshot to prove anything about, so
-// every query reconciles exactly as it did before the gate existed.
+// every query reconciles exactly as it did before the gate existed. Asserting
+// that an edit is found would not discriminate - an invalidated token produces
+// the same answer - so this holds the lock and requires the query to fail,
+// which only the refreshing path can do.
 func TestFreshnessGateAlwaysRefreshesANonGitProject(t *testing.T) {
-	t.Parallel()
 	root := indexedRepository(t)
-	writeFixtureFile(t, root, "refund.go", "package sample\n\nfunc Refund() error { return nil }\n")
-
-	stdout, stderr, code := output(t, "find", "Refund", "--repo", root)
-	if code != 0 {
-		t.Fatalf("find exited with %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	project := discoveredProject(t, root)
+	if project.GitManaged {
+		t.Fatalf("fixture at %s is Git-managed; the non-Git branch is not exercised", root)
 	}
-	if !strings.Contains(stdout, "Refund") {
-		t.Fatalf("find missed the edit in a non-Git project\nstdout: %s", stdout)
+	shortIndexLockWait(t, 50*time.Millisecond)
+
+	unlock, err := service.IndexLock(project.IndexPath, 0)
+	if err != nil {
+		t.Fatalf("hold the index lock: %v", err)
+	}
+	defer func() { _ = unlock() }()
+
+	stdout, stderr, code := output(t, "find", "Charge", "--repo", root)
+	if code == 0 {
+		t.Fatalf("find answered a non-Git project without refreshing it\nstdout: %s", stdout)
+	}
+	if !strings.Contains(stderr, "another grafo process is refreshing this branch index") {
+		t.Fatalf("contended non-Git find stderr = %q, want the refresh-contention message", stderr)
+	}
+}
+
+// TestFreshnessGateRefusesAnIndexBuiltForAnotherRepository pins that a matching
+// token is not on its own licence to answer: the index must also claim this
+// repository's identity. "repository identity changed" is an error Run raises,
+// and the fast path never reaches Run, so the invariant has to be checked where
+// the gate decides. Today the token digest folds the project id in as well, but
+// that is an encoder detail; were it ever dropped as derivable, an identity
+// mismatch would quietly become a wrong answer with nothing else failing.
+func TestFreshnessGateRefusesAnIndexBuiltForAnotherRepository(t *testing.T) {
+	root := indexedGitRepository(t)
+	project := discoveredProject(t, root)
+	other := discoveredProject(t, indexedGitRepository(t))
+	if other.ID == project.ID {
+		t.Fatalf("the two fixtures share the repository id %q", project.ID)
+	}
+	setIndexMeta(t, project.IndexPath, "repository_id", other.ID)
+	if storedFreshnessToken(t, project.IndexPath) == "" {
+		t.Fatal("the fixture lost its freshness token; the gate would refuse for the wrong reason")
+	}
+	shortIndexLockWait(t, 50*time.Millisecond)
+
+	unlock, err := service.IndexLock(project.IndexPath, 0)
+	if err != nil {
+		t.Fatalf("hold the index lock: %v", err)
+	}
+	defer func() { _ = unlock() }()
+
+	stdout, stderr, code := output(t, "find", "Charge", "--repo", root)
+	if code == 0 {
+		t.Fatalf("find answered from an index belonging to another repository\nstdout: %s", stdout)
+	}
+	if !strings.Contains(stderr, "another grafo process is refreshing this branch index") {
+		t.Fatalf("contended find stderr = %q, want the refresh-contention message", stderr)
 	}
 }
 
@@ -161,7 +208,7 @@ func TestFreshnessGateRefreshesWithoutAStoredToken(t *testing.T) {
 	t.Parallel()
 	root := indexedGitRepository(t)
 	project := discoveredProject(t, root)
-	setFreshnessToken(t, project.IndexPath, "")
+	setIndexMeta(t, project.IndexPath, indexer.FreshnessTokenMeta, "")
 
 	stdout, stderr, code := output(t, "find", "Charge", "--repo", root)
 	if code != 0 {

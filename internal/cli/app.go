@@ -2489,8 +2489,8 @@ func parseNodeKinds(raw string) ([]graph.NodeKind, error) {
 }
 
 // openFreshRead answers from an index the stored freshness token proves
-// current, so a query against an unchanged tree pays neither a reconciliation
-// pass nor the wait for whoever else holds the index.
+// current, skipping the index lock, the writer and the reconciliation pass that
+// a query otherwise pays to be told the tree has not changed.
 //
 // The token is read from the very handle that will answer the query, not from a
 // separate open that is closed again before the graph is read. Both therefore
@@ -2499,18 +2499,32 @@ func parseNodeKinds(raw string) ([]graph.NodeKind, error) {
 // token the query never goes on to consult, and a reopen in between could land
 // on a file another process has since replaced wholesale. A writer committing
 // after the comparison only ever moves the index forward onto a later state of
-// the same worktree, which is what today's refresh-then-reopen path already
-// allows, so it cannot produce an answer from a state that never existed.
+// the same worktree.
 //
-// Nothing here takes the index lock, because
-// nothing here writes and nothing here migrates - which is the point, and why
-// it does not reintroduce the SQLITE_BUSY races openExisting's lock settled.
+// What this handle does not give is snapshot isolation across the answer: it
+// holds no read transaction, so every statement is its own committed snapshot
+// and a multi-statement answer can still straddle a commit - an edge row whose
+// endpoint node a concurrent refresh has since removed. That exposure is the
+// refresh-then-reopen path's too, which also releases the lock before any query
+// statement runs, and the gate does not widen it. It does make it somewhat
+// likelier: the old path serialized once behind the lock, so it could not begin
+// reading while a supervisor refresh was already in flight, and this one can.
+//
+// Nothing here takes the index lock, because nothing here writes and nothing
+// here migrates - which is the point, and why it does not reintroduce the
+// SQLITE_BUSY races openExisting's lock settled.
 //
 // A nil repository with a nil error means there was no proof, and the caller
 // must refresh. The returned probe is the one that was spent reaching that
 // verdict, so the refreshing path can reuse it rather than probe a second time.
 func openFreshRead(ctx context.Context, root string) (indexer.FreshnessProbe, *sqlite.ReadRepository, error) {
 	probe, err := indexer.ProbeFreshness(ctx, root, parserdefaults.NewRegistry(), indexer.FreshnessOptions{})
+	if cancelled := ctx.Err(); cancelled != nil {
+		// A cancellation must stay a cancellation, exactly as Service.Run keeps
+		// it. Degraded into "no proof" it would send a query that has already
+		// been abandoned on to open the index writable and spend a refresh.
+		return indexer.FreshnessProbe{}, nil, cancelled
+	}
 	if err != nil {
 		// A probe that cannot run proves nothing, and must not make a repository
 		// impossible to query: the refreshing path discovers the project itself
@@ -2537,9 +2551,26 @@ func openFreshRead(ctx context.Context, root string) (indexer.FreshnessProbe, *s
 	// An empty stored token is the absence of proof, never a claim of freshness:
 	// a run that failed before publishing its token leaves one behind.
 	if stored == "" || stored != probe.Token.String() {
-		if err := repository.Close(); err != nil {
-			return probe, nil, err
-		}
+		// There is no proof and the caller is about to open the index writable
+		// anyway, so a failed close of this handle is not worth failing a query
+		// that would otherwise have refreshed and answered.
+		_ = repository.Close()
+		return probe, nil, nil
+	}
+	identity, err := repository.Meta(ctx, "repository_id")
+	if err != nil {
+		_ = repository.Close()
+		return probe, nil, nil
+	}
+	// A matching token is not on its own a licence to answer. An index that
+	// names another repository is a condition Run refuses outright, and the fast
+	// path never reaches Run, so the check has to live here: falling through
+	// hands the caller the refreshing path, which raises that error properly.
+	// The token digest happens to fold the project id in today, so this cannot
+	// currently disagree with the comparison above; it is checked explicitly
+	// because the digest's inputs are an encoder detail and this is not.
+	if identity != "" && identity != probe.Project.ID {
+		_ = repository.Close()
 		return probe, nil, nil
 	}
 	return probe, repository, nil
@@ -2552,22 +2583,25 @@ func openFreshRead(ctx context.Context, root string) (indexer.FreshnessProbe, *s
 // instead of serializing. The returned unlock is released by the caller after
 // the repository is closed, never before.
 //
-// A supported probe is the evidence a caller already gathered about this root,
-// and both its project and its token are reused: Options.Token requires that
-// the Project handed to Run comes from the same probe as the token, because
-// pairing one probe's token with another's project would store a proof the
-// index does not satisfy. A zero probe makes the run probe for itself.
+// A probe is the evidence a caller already gathered about this root, so its
+// project is reused rather than discovered again. Its token is reused only when
+// the probe is supported, and then necessarily together with that same project:
+// Options.Token requires the pairing, because the project carries the Git
+// snapshot the pass indexes, and certifying a pass over a freshly discovered
+// tree with another probe's token would store a proof the index does not
+// satisfy. A zero probe makes the run discover and probe for itself.
 func openExisting(ctx context.Context, root string, probe indexer.FreshnessProbe) (indexer.Project, graph.Repository, service.Unlock, error) {
 	options := indexer.Options{ReportDetail: indexer.ReportWithoutCounts}
 	project := probe.Project
-	if probe.Supported {
-		options.Token = probe.Token
-	} else {
+	if probe.Project.Root == "" {
 		discovered, err := indexer.DiscoverProject(ctx, root)
 		if err != nil {
 			return discovered, nil, nil, err
 		}
 		project = discovered
+	}
+	if probe.Supported {
+		options.Token = probe.Token
 	}
 	if _, err := os.Stat(project.IndexPath); errors.Is(err, os.ErrNotExist) {
 		return project, nil, nil, fmt.Errorf("branch %q has no index; run 'grafo index %s'", project.Branch, project.Root)
@@ -2726,6 +2760,12 @@ func openStatusRead(ctx context.Context, args parsedArguments, observer indexer.
 	return readRepository, []indexer.Project{project}, []indexer.Report{report}, readRepository.Close, nil
 }
 
+// requiresWritableRead names the query commands that must keep a writable
+// handle to the branch index after the refresh that opened it. It currently has
+// no members, so every command openRead serves is answered query-only and is
+// eligible for the freshness gate - the branches guarding the writable case are
+// a reserved hook, kept so that adding such a command is a one-line change here
+// instead of a rediscovery of why openRead closes and reopens the index.
 func requiresWritableRead(command string) bool {
 	return false
 }
