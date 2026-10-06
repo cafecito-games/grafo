@@ -2,6 +2,7 @@ package indexer_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -717,5 +718,77 @@ func TestFreshnessTokenFromOptionsIsStoredWithoutASecondProbe(t *testing.T) {
 
 	if stored := metaValue(t, ctx, probe.Project.IndexPath, indexer.FreshnessTokenMeta); stored != probe.Token.String() {
 		t.Fatalf("stored token = %q, want the supplied %q", stored, probe.Token.String())
+	}
+}
+
+// TestFreshnessTokenFromOptionsSpendsFewerGitCommands is the observable proof
+// that a supplied token replaces the run's own probe: the stored value would be
+// identical either way, but the Git work would not.
+func TestFreshnessTokenFromOptionsSpendsFewerGitCommands(t *testing.T) {
+	ctx := context.Background()
+	root := newRepository(t)
+	write(t, filepath.Join(root, "pkg", "pkg.go"), "package pkg\n\nfunc Exported() {}\n")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "commit", "-m", "initial")
+	project := indexProject(t, ctx, root)
+
+	registry := parserdefaults.NewRegistry()
+	run := func(options indexer.Options) indexer.Report {
+		t.Helper()
+		repository, err := sqlite.Open(ctx, project.IndexPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = repository.Close() }()
+		report, err := indexer.NewService(repository, registry).Run(ctx, project, options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return report
+	}
+
+	probe, err := indexer.ProbeFreshness(ctx, root, registry, indexer.FreshnessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	probing := run(indexer.Options{})
+	supplied := run(indexer.Options{Token: probe.Token})
+	if supplied.GitCommands >= probing.GitCommands {
+		t.Fatalf("supplied token spent %d Git commands, self-probing run spent %d", supplied.GitCommands, probing.GitCommands)
+	}
+}
+
+// TestFreshnessTokenIsNotStoredByAFailedRun pins that a run which did not finish
+// leaves the previous claim in place, never a claim about the tree it abandoned.
+func TestFreshnessTokenIsNotStoredByAFailedRun(t *testing.T) {
+	ctx := context.Background()
+	root := newRepository(t)
+	write(t, filepath.Join(root, "pkg", "pkg.go"), "package pkg\n\nfunc Exported() {}\n")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "commit", "-m", "initial")
+	project := indexProject(t, ctx, root)
+	first := metaValue(t, ctx, project.IndexPath, indexer.FreshnessTokenMeta)
+	if first == "" {
+		t.Fatal("the first run stored no freshness token")
+	}
+
+	write(t, filepath.Join(root, "pkg", "pkg.go"), "package pkg\n\nfunc Exported() {}\n\nfunc Added() {}\n")
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("induced failure")
+	_, err = indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{
+		Boundary: func(indexer.Boundary) error { return failure },
+	})
+	if closeErr := repository.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if !errors.Is(err, failure) {
+		t.Fatalf("run error = %v, want the induced failure", err)
+	}
+
+	if stored := metaValue(t, ctx, project.IndexPath, indexer.FreshnessTokenMeta); stored != first {
+		t.Fatalf("a failed run changed the stored token from %q to %q", first, stored)
 	}
 }

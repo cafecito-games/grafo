@@ -98,8 +98,8 @@ func TestServiceProvenUnchangedRefreshSkipsGraphWritesAndCounts(t *testing.T) {
 	if len(spy.setMetaKeys) != 1 || spy.setMetaKeys[0] != "indexed_at" {
 		t.Fatalf("unchanged metadata rewrites = %q, want only indexed_at", spy.setMetaKeys)
 	}
-	if report.GitCommands > 3 || report.Checked != 0 {
-		t.Fatalf("unchanged refresh probes=%d checked=%d, want at most three Git commands and no content checks", report.GitCommands, report.Checked)
+	if budget := 3 + selfProbeGitCommands(t, ctx, root, registry); report.GitCommands > budget || report.Checked != 0 {
+		t.Fatalf("unchanged refresh probes=%d checked=%d, want at most %d Git commands and no content checks", report.GitCommands, report.Checked, budget)
 	}
 	if report.CountsCollected {
 		t.Fatalf("counts unexpectedly collected: %#v", report)
@@ -354,7 +354,7 @@ func TestServiceGitSnapshotConvergesAcrossMembershipAndHeadChanges(t *testing.T)
 	runGit(t, root, "add", ".")
 	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "changes")
 	committed, err := service.Run(ctx, project, indexer.Options{})
-	if err != nil || committed.GitCommands > 3 {
+	if err != nil || committed.GitCommands > 3+selfProbeGitCommands(t, ctx, root, parserapi.NewRegistry(markdownparser.New())) {
 		t.Fatalf("advanced HEAD: report=%#v err=%v", committed, err)
 	}
 	indexedCommit, err := repository.Meta(ctx, "commit")

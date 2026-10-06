@@ -44,6 +44,18 @@ func Drive(runner contract.Runner) error { return runner.Run() }
 
 // refreshUnchangedRefreshCorpus rediscovers root and runs one more pass against
 // the same database, which is exactly what a second grafo process does.
+// selfProbeGitCommands is what a run spends proving the freshness of the tree
+// it indexes when the caller supplied no token. The refresh-cost budgets below
+// are about change detection, so they exclude it rather than absorbing it.
+func selfProbeGitCommands(t *testing.T, ctx context.Context, root string, registry *parserapi.Registry) int {
+	t.Helper()
+	probe, err := indexer.ProbeFreshness(ctx, root, registry, indexer.FreshnessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return probe.GitCommands
+}
+
 func refreshUnchangedRefreshCorpus(t *testing.T, ctx context.Context, repository *sqlite.Repository, root string) indexer.Report {
 	t.Helper()
 	project, err := indexer.DiscoverProject(ctx, root)
@@ -123,8 +135,9 @@ func TestServiceUnchangedRefreshReadsNoFilesWithGoSources(t *testing.T) {
 		// Proving the control file tracked costs one index lookup on top of the
 		// three change probes. Pinning the total keeps that the whole price of
 		// reading nothing.
-		if report.GitCommands > 4 {
-			t.Fatalf("round %d spent %d Git commands on an unchanged refresh", round, report.GitCommands)
+		budget := 4 + selfProbeGitCommands(t, ctx, root, parserapi.NewRegistry(golangparser.New(), configparser.New()))
+		if report.GitCommands > budget {
+			t.Fatalf("round %d spent %d Git commands on an unchanged refresh, want at most %d", round, report.GitCommands, budget)
 		}
 	}
 }

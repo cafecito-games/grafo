@@ -343,10 +343,17 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	if token.Version() == "" {
 		probe, probeErr := probeProjectFreshness(ctx, project, s.parsers,
 			FreshnessOptions{MaxFileSize: options.MaxFileSize}, nil, false)
-		if probeErr != nil {
-			return report, fmt.Errorf("probe freshness for %s: %w", project.Root, probeErr)
-		}
-		if probe.Supported {
+		report.GitCommands += probe.GitCommands
+		switch {
+		case ctx.Err() != nil:
+			return report, ctx.Err()
+		case probeErr != nil:
+			// Failing to prove freshness must never make a repository impossible
+			// to index. The token stays zero, which is stored as the absence of
+			// proof, so the next reader refreshes instead of trusting this index.
+			report.Diagnostics = append(report.Diagnostics, graph.Diagnostic{
+				Path: ".", Level: "warning", Message: "probe freshness: " + probeErr.Error() + "; the index will be refreshed by the next reader"})
+		case probe.Supported:
 			token = probe.Token
 		}
 	}
