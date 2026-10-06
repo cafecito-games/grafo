@@ -3,7 +3,9 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -11,6 +13,8 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/agentinstall"
 	"github.com/cafecito-games/grafo/internal/indexer"
+	parserdefaults "github.com/cafecito-games/grafo/internal/parser/defaults"
+	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
@@ -28,6 +32,7 @@ func doctorOptions(binary string) DoctorOptions {
 		RefreshAgents: func(context.Context, agentinstall.Environment, string) ([]agentinstall.Action, error) {
 			return nil, nil
 		},
+		TokenFresh: func(context.Context, string) bool { return false },
 	}
 }
 
@@ -535,5 +540,137 @@ func TestDoctorAcceptsADefinitionThatStartsTheRunningBinary(t *testing.T) {
 				t.Fatalf("a correct definition was reported as pointing elsewhere: %#v", finding)
 			}
 		})
+	}
+}
+
+// gitRepositoryWithGoFile creates a committed Git repository holding one Go
+// file, so the real freshness probe has a snapshot to describe.
+func gitRepositoryWithGoFile(t *testing.T) (root, file string) {
+	t.Helper()
+	root = testtemp.Dir(t)
+	file = filepath.Join(root, "main.go")
+	if err := os.WriteFile(file, []byte("package main\n\nfunc main() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, arguments := range [][]string{
+		{"init", "-q", "-b", "main"},
+		{"add", "."},
+		{"-c", "user.name=test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "initial"},
+	} {
+		command := exec.Command("git", arguments...)
+		command.Dir = root
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", arguments, err, output)
+		}
+	}
+	return root, file
+}
+
+func TestDoctorReportsTokenFreshness(t *testing.T) {
+	ctx := context.Background()
+	env := newRecordingEnvironment(t, "linux")
+	root, file := gitRepositoryWithGoFile(t)
+	if _, _, err := NewStore(env).Add(root, Settings{}); err != nil {
+		t.Fatal(err)
+	}
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, runErr := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{})
+	if closeErr := repository.Close(); runErr != nil || closeErr != nil {
+		t.Fatalf("index: run=%v close=%v", runErr, closeErr)
+	}
+	// Without a stored token the first assertion below would hold for the wrong
+	// reason, so the fixture proves the index really carries one.
+	readable, err := sqlite.OpenReadOnly(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, metaErr := readable.Meta(ctx, indexer.FreshnessTokenMeta)
+	_ = readable.Close()
+	if metaErr != nil || stored == "" {
+		t.Fatalf("freshly indexed repository stored token %q (%v)", stored, metaErr)
+	}
+
+	options := doctorOptions(installedBinary(t))
+	options.Discover = nil
+	options.TokenFresh = tokenFresh
+	diagnose := func() RootCheck {
+		t.Helper()
+		diagnosis, err := Diagnose(ctx, env, options)
+		if err != nil {
+			t.Fatalf("Diagnose: %v", err)
+		}
+		if len(diagnosis.Roots) != 1 || !diagnosis.Roots[0].IndexPresent {
+			t.Fatalf("root diagnosis = %#v", diagnosis.Roots)
+		}
+		return diagnosis.Roots[0]
+	}
+
+	fresh := diagnose()
+	if !fresh.IndexTokenFresh {
+		t.Fatalf("a freshly indexed root was reported stale: %#v", fresh)
+	}
+	encoded, err := json.Marshal(fresh)
+	if err != nil || !strings.Contains(string(encoded), `"index_token_fresh":true`) {
+		t.Fatalf("JSON does not carry the state: %s (%v)", encoded, err)
+	}
+
+	if err := os.WriteFile(file, []byte("package main\n\nfunc main() { println(1) }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	edited := diagnose()
+	if edited.IndexTokenFresh {
+		t.Fatalf("a root with an edited working tree was reported fresh: %#v", edited)
+	}
+	encoded, err = json.Marshal(edited)
+	if err != nil || !strings.Contains(string(encoded), `"index_token_fresh":false`) {
+		t.Fatalf("JSON does not carry the state: %s (%v)", encoded, err)
+	}
+}
+
+func TestDoctorProbesTokenFreshnessOnlyForAnIndexedRoot(t *testing.T) {
+	env := newRecordingEnvironment(t, "linux")
+	store := NewStore(env)
+	indexed, unindexed := testtemp.Dir(t), testtemp.Dir(t)
+	for _, root := range []string{indexed, unindexed} {
+		if _, _, err := store.Add(root, Settings{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	indexPath := fakeProject(indexed, "main").IndexPath
+	if err := os.MkdirAll(filepath.Dir(indexPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexPath, []byte("index"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var probed []string
+	options := doctorOptions(installedBinary(t))
+	options.TokenFresh = func(_ context.Context, root string) bool {
+		probed = append(probed, root)
+		return true
+	}
+	diagnosis, err := Diagnose(context.Background(), env, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(probed, []string{indexed}) {
+		t.Fatalf("probed %v, want only the indexed root %q", probed, indexed)
+	}
+	for _, check := range diagnosis.Roots {
+		if check.IndexTokenFresh != check.IndexPresent {
+			t.Fatalf("root %q: index present %v, token fresh %v", check.Root, check.IndexPresent, check.IndexTokenFresh)
+		}
+	}
+	buffer := &bytes.Buffer{}
+	diagnosis.Fprint(buffer)
+	if !strings.Contains(buffer.String(), "token=fresh") {
+		t.Fatalf("text report does not state freshness:\n%s", buffer)
 	}
 }

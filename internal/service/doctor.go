@@ -12,6 +12,8 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/agentinstall"
 	"github.com/cafecito-games/grafo/internal/indexer"
+	parserdefaults "github.com/cafecito-games/grafo/internal/parser/defaults"
+	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 	"github.com/cafecito-games/grafo/internal/version"
 )
 
@@ -68,19 +70,25 @@ type RegistryCheck struct {
 
 // RootCheck reports one registered root.
 type RootCheck struct {
-	Root         string      `json:"root"`
-	Name         string      `json:"name,omitempty"`
-	Paused       bool        `json:"paused,omitempty"`
-	Exists       bool        `json:"exists"`
-	Readable     bool        `json:"readable"`
-	GitManaged   bool        `json:"git_managed"`
-	Branch       string      `json:"branch,omitempty"`
-	IndexPath    string      `json:"index_path,omitempty"`
-	IndexPresent bool        `json:"index_present"`
-	IndexBytes   int64       `json:"index_bytes,omitempty"`
-	SharedWith   []string    `json:"shared_with,omitempty"`
-	Status       *RootStatus `json:"status,omitempty"`
-	Detail       string      `json:"detail,omitempty"`
+	Root         string `json:"root"`
+	Name         string `json:"name,omitempty"`
+	Paused       bool   `json:"paused,omitempty"`
+	Exists       bool   `json:"exists"`
+	Readable     bool   `json:"readable"`
+	GitManaged   bool   `json:"git_managed"`
+	Branch       string `json:"branch,omitempty"`
+	IndexPath    string `json:"index_path,omitempty"`
+	IndexPresent bool   `json:"index_present"`
+	// IndexTokenFresh reports whether a query against this root would be
+	// answered from the index without refreshing it. It is read-only evidence:
+	// the probe runs, the stored token is compared, and nothing is written. A
+	// comparison that cannot be made reports false, because a diagnosis must
+	// never claim more freshness than it proved.
+	IndexTokenFresh bool        `json:"index_token_fresh"`
+	IndexBytes      int64       `json:"index_bytes,omitempty"`
+	SharedWith      []string    `json:"shared_with,omitempty"`
+	Status          *RootStatus `json:"status,omitempty"`
+	Detail          string      `json:"detail,omitempty"`
 }
 
 // SupervisorCheck reports the running supervisor, as far as its status file and
@@ -145,6 +153,12 @@ type DoctorOptions struct {
 	// RefreshAgents refreshes only the Grafo artifacts a client already has;
 	// defaults to agentinstall.Install with Options.Refresh.
 	RefreshAgents func(ctx context.Context, env agentinstall.Environment, binary string) ([]agentinstall.Action, error)
+	// TokenFresh reports whether root's index is already reconciled to its
+	// current inputs. Nil selects the real comparison, which probes the
+	// repository and reads the stored token from a query-only handle - the same
+	// proof the query path requires. Tests substitute it so a diagnosis stays
+	// independent of a real Git repository.
+	TokenFresh func(ctx context.Context, root string) bool
 }
 
 // Diagnose inspects the binary, the registry, every registered root, the
@@ -163,6 +177,9 @@ func Diagnose(ctx context.Context, env agentinstall.Environment, options DoctorO
 		options.RefreshAgents = func(ctx context.Context, env agentinstall.Environment, binary string) ([]agentinstall.Action, error) {
 			return agentinstall.Install(ctx, env, binary, agentinstall.Options{Refresh: true})
 		}
+	}
+	if options.TokenFresh == nil {
+		options.TokenFresh = tokenFresh
 	}
 	stateDir := options.StateDir
 	if stateDir == "" {
@@ -343,6 +360,7 @@ func checkRoots(ctx context.Context, env agentinstall.Environment, options Docto
 		check.GitManaged, check.Branch, check.IndexPath = project.GitManaged, project.Branch, project.IndexPath
 		if info, err := env.Stat(project.IndexPath); err == nil {
 			check.IndexPresent, check.IndexBytes = true, info.Size()
+			check.IndexTokenFresh = options.TokenFresh(ctx, entry.Root)
 		} else if !entry.Paused {
 			diagnosis.Findings = append(diagnosis.Findings, Finding{
 				Area: "index", Level: "warning", Target: project.IndexPath,
@@ -360,6 +378,30 @@ func checkRoots(ctx context.Context, env agentinstall.Environment, options Docto
 		checks = append(checks, check)
 	}
 	return checks
+}
+
+// tokenFresh is the real freshness comparison. It must stay in agreement with
+// the one the CLI query path makes before answering without a refresh: if the
+// two drift, the doctor would report a freshness the query path does not honour
+// or deny one it does. Everything here is read-only - the probe only runs Git
+// queries and the index is opened query-only - and every way the comparison can
+// fail reports false, because an empty or unreadable token is the absence of
+// proof, never a claim of freshness.
+func tokenFresh(ctx context.Context, root string) bool {
+	probe, err := indexer.ProbeFreshness(ctx, root, parserdefaults.NewRegistry(), indexer.FreshnessOptions{})
+	if err != nil || !probe.Supported {
+		return false
+	}
+	repository, err := sqlite.OpenReadOnly(ctx, probe.Project.IndexPath)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = repository.Close() }()
+	stored, err := repository.Meta(ctx, indexer.FreshnessTokenMeta)
+	if err != nil {
+		return false
+	}
+	return stored != "" && stored == probe.Token.String()
 }
 
 func checkSupervisor(stateDir string, snapshot Snapshot, snapshotErr error, registry Registry) SupervisorCheck {
@@ -700,7 +742,14 @@ func (d Diagnosis) Fprint(out interface{ Write([]byte) (int, error) }) {
 		case !root.IndexPresent:
 			state = "no index"
 		}
-		write("root        %-9s %s  branch=%s\n", state, root.Root, orDash(root.Branch))
+		token := ""
+		if root.IndexPresent {
+			token = "stale"
+			if root.IndexTokenFresh {
+				token = "fresh"
+			}
+		}
+		write("root        %-9s %s  branch=%s  token=%s\n", state, root.Root, orDash(root.Branch), orDash(token))
 	}
 	for _, agent := range d.Agents {
 		state := "not installed"
