@@ -905,7 +905,7 @@ func (a *App) embed(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return fmt.Errorf("usage: grafo embed [path] [--model name] [--ollama-url url] [--force]")
 	}
-	project, repository, unlock, err := openExisting(ctx, root)
+	project, repository, unlock, err := openExisting(ctx, root, indexer.FreshnessProbe{})
 	if err != nil {
 		return err
 	}
@@ -2488,16 +2488,86 @@ func parseNodeKinds(raw string) ([]graph.NodeKind, error) {
 	return result, nil
 }
 
+// openFreshRead answers from an index the stored freshness token proves
+// current, so a query against an unchanged tree pays neither a reconciliation
+// pass nor the wait for whoever else holds the index.
+//
+// The token is read from the very handle that will answer the query, not from a
+// separate open that is closed again before the graph is read. Both therefore
+// come from one query-only connection over one database file, so the proof
+// belongs to the data the answer is read from: a separate open could compare a
+// token the query never goes on to consult, and a reopen in between could land
+// on a file another process has since replaced wholesale. A writer committing
+// after the comparison only ever moves the index forward onto a later state of
+// the same worktree, which is what today's refresh-then-reopen path already
+// allows, so it cannot produce an answer from a state that never existed.
+//
+// Nothing here takes the index lock, because
+// nothing here writes and nothing here migrates - which is the point, and why
+// it does not reintroduce the SQLITE_BUSY races openExisting's lock settled.
+//
+// A nil repository with a nil error means there was no proof, and the caller
+// must refresh. The returned probe is the one that was spent reaching that
+// verdict, so the refreshing path can reuse it rather than probe a second time.
+func openFreshRead(ctx context.Context, root string) (indexer.FreshnessProbe, *sqlite.ReadRepository, error) {
+	probe, err := indexer.ProbeFreshness(ctx, root, parserdefaults.NewRegistry(), indexer.FreshnessOptions{})
+	if err != nil {
+		// A probe that cannot run proves nothing, and must not make a repository
+		// impossible to query: the refreshing path discovers the project itself
+		// and reports anything genuinely wrong with it.
+		return indexer.FreshnessProbe{}, nil, nil
+	}
+	if !probe.Supported {
+		// Not Git-managed, so there is no snapshot to prove anything about. The
+		// MCP path refreshes such a project for every request; so does this one.
+		return probe, nil, nil
+	}
+	repository, err := sqlite.OpenReadOnly(ctx, probe.Project.IndexPath)
+	if err != nil {
+		// An index this build cannot read query-only - missing, older schema,
+		// corrupt - is not an error here: the refreshing path opens it writable,
+		// migrates it, and reports anything it genuinely cannot use.
+		return probe, nil, nil
+	}
+	stored, err := repository.Meta(ctx, indexer.FreshnessTokenMeta)
+	if err != nil {
+		_ = repository.Close()
+		return probe, nil, nil
+	}
+	// An empty stored token is the absence of proof, never a claim of freshness:
+	// a run that failed before publishing its token leaves one behind.
+	if stored == "" || stored != probe.Token.String() {
+		if err := repository.Close(); err != nil {
+			return probe, nil, err
+		}
+		return probe, nil, nil
+	}
+	return probe, repository, nil
+}
+
 // openExisting opens an existing branch index read-write and refreshes it. The
 // refresh is a real write, and migrations run inside sqlite.Open, so the index
 // lock is taken for the whole span: query commands used to race each other as
 // concurrent writers and fail on SQLITE_BUSY or a half-applied migration
 // instead of serializing. The returned unlock is released by the caller after
 // the repository is closed, never before.
-func openExisting(ctx context.Context, root string) (indexer.Project, graph.Repository, service.Unlock, error) {
-	project, err := indexer.DiscoverProject(ctx, root)
-	if err != nil {
-		return project, nil, nil, err
+//
+// A supported probe is the evidence a caller already gathered about this root,
+// and both its project and its token are reused: Options.Token requires that
+// the Project handed to Run comes from the same probe as the token, because
+// pairing one probe's token with another's project would store a proof the
+// index does not satisfy. A zero probe makes the run probe for itself.
+func openExisting(ctx context.Context, root string, probe indexer.FreshnessProbe) (indexer.Project, graph.Repository, service.Unlock, error) {
+	options := indexer.Options{ReportDetail: indexer.ReportWithoutCounts}
+	project := probe.Project
+	if probe.Supported {
+		options.Token = probe.Token
+	} else {
+		discovered, err := indexer.DiscoverProject(ctx, root)
+		if err != nil {
+			return discovered, nil, nil, err
+		}
+		project = discovered
 	}
 	if _, err := os.Stat(project.IndexPath); errors.Is(err, os.ErrNotExist) {
 		return project, nil, nil, fmt.Errorf("branch %q has no index; run 'grafo index %s'", project.Branch, project.Root)
@@ -2513,7 +2583,7 @@ func openExisting(ctx context.Context, root string) (indexer.Project, graph.Repo
 		_ = unlock()
 		return project, nil, nil, err
 	}
-	if _, err := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, indexer.Options{ReportDetail: indexer.ReportWithoutCounts}); err != nil {
+	if _, err := indexer.NewService(repository, parserdefaults.NewRegistry()).Run(ctx, project, options); err != nil {
 		_ = repository.Close()
 		_ = unlock()
 		return project, nil, nil, fmt.Errorf("refresh index: %w", err)
@@ -2548,7 +2618,19 @@ func openRead(ctx context.Context, args parsedArguments) (graph.ReadRepository, 
 		}
 		return readRepository, projects, readRepository.Close, nil
 	}
-	project, repository, unlock, err := openExisting(ctx, repoPath(args))
+	root := repoPath(args)
+	var probe indexer.FreshnessProbe
+	if !requiresWritableRead(args.command) {
+		freshProbe, freshRepository, err := openFreshRead(ctx, root)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if freshRepository != nil {
+			return freshRepository, []indexer.Project{freshProbe.Project}, freshRepository.Close, nil
+		}
+		probe = freshProbe
+	}
+	project, repository, unlock, err := openExisting(ctx, root, probe)
 	if err != nil {
 		return nil, nil, nil, err
 	}

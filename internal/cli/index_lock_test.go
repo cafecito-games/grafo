@@ -39,7 +39,7 @@ func TestOpenExistingWaitsForTheIndexLock(t *testing.T) {
 	}
 	shortIndexLockWait(t, 50*time.Millisecond)
 
-	_, repository, release, err := openExisting(ctx, root)
+	_, repository, release, err := openExisting(ctx, root, indexer.FreshnessProbe{})
 	if err == nil {
 		_ = repository.Close()
 		_ = release()
@@ -53,7 +53,7 @@ func TestOpenExistingWaitsForTheIndexLock(t *testing.T) {
 	if err := unlock(); err != nil {
 		t.Fatalf("release the competing lock: %v", err)
 	}
-	_, repository, release, err = openExisting(ctx, root)
+	_, repository, release, err = openExisting(ctx, root, indexer.FreshnessProbe{})
 	if err != nil {
 		t.Fatalf("openExisting after the lock was released: %v", err)
 	}
