@@ -1161,3 +1161,46 @@ export function use(value: Alias) {
 		assertHasFact(t, result.Facts, graph.EdgeCalls, target)
 	}
 }
+
+// TestParserOmitsBundlerAssetImports pins that importing a stylesheet or image
+// for its bytes is neither a resolution failure nor a module: it produces no
+// diagnostic and no node. A JSON import stays a module, because
+// resolveJsonModule makes it one.
+func TestParserOmitsBundlerAssetImports(t *testing.T) {
+	root := testtemp.Dir(t)
+	writeFile(t, root, "src/widget.ts", `export function render() {}`)
+	source := `
+import "./styles.css";
+import "@fontsource/dm-mono/latin-400.css";
+import logo from "./logo.svg";
+import sheet from "./theme.module.scss";
+import config from "./config.json";
+import { render } from "./widget.js";
+export function use() { return [render, logo, sheet, config]; }
+`
+	writeFile(t, root, "src/main.ts", source)
+
+	result, err := typescriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "src/main.ts", Content: []byte(source),
+		Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, specifier := range []string{
+		"./styles.css",
+		"@fontsource/dm-mono/latin-400.css",
+		"./logo.svg",
+		"./theme.module.scss",
+	} {
+		assertLacksFact(t, result.Facts, graph.EdgeImports, specifier)
+		assertLacksDiagnostic(t, result.Diagnostics, specifier)
+	}
+
+	// A real module still resolves, and an untracked JSON module is still a
+	// module, so it keeps both its edge and its diagnostic.
+	assertHasFactTargetID(t, result.Facts, graph.EdgeImports,
+		graph.NodeID(graph.KindModule, "repo:sample:src/widget.ts"))
+	assertHasFact(t, result.Facts, graph.EdgeImports, "./config.json")
+	assertDiagnosticContains(t, result.Diagnostics, "relative module is not tracked: ./config.json")
+}

@@ -346,6 +346,12 @@ func (e *extractor) parseImport(node *treesitter.Node) {
 		return
 	}
 	module := parserapi.Unquote(e.text(source))
+	// A stylesheet or image is imported for its bytes, so it is neither a
+	// module that failed to resolve nor one the graph can say anything about.
+	// Declaring a module node for it would assert a module that does not exist.
+	if isAssetSpecifier(module) {
+		return
+	}
 	resolvedModule, diagnostic := e.catalog.resolveModule(e.input.Path, module)
 	e.reportCatalogDiagnostics()
 	if diagnostic != "" && resolvedModule == nil && strings.HasPrefix(module, ".") {

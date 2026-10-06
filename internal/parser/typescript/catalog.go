@@ -39,6 +39,23 @@ var javaScriptSourceSuffixes = map[string][]string{
 	".jsx": {".tsx"},
 }
 
+// assetSpecifierExtensions are the file types a bundler lets a module import
+// for its bytes rather than for its bindings. None of them is a TypeScript
+// module, so importing one is not a resolution failure. `.json` is absent
+// because `resolveJsonModule` makes it a module TypeScript really does resolve.
+var assetSpecifierExtensions = map[string]bool{
+	".css": true, ".scss": true, ".sass": true, ".less": true, ".styl": true,
+	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".svg": true,
+	".webp": true, ".avif": true, ".ico": true, ".bmp": true,
+	".woff": true, ".woff2": true, ".eot": true, ".ttf": true, ".otf": true,
+	".mp3": true, ".mp4": true, ".wav": true, ".webm": true, ".ogg": true,
+}
+
+// isAssetSpecifier reports whether a module specifier names a bundler asset.
+func isAssetSpecifier(specifier string) bool {
+	return assetSpecifierExtensions[strings.ToLower(filepath.Ext(specifier))]
+}
+
 const maxExportDepth = 128
 
 type symbolRef struct {
