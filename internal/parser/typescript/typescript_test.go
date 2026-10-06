@@ -2,6 +2,7 @@ package typescript_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1009,4 +1010,197 @@ func reexportTargets(t *testing.T, parser *typescriptparser.Parser, root, conten
 	}
 	slices.Sort(targets)
 	return targets
+}
+
+// TestParserResolvesNodeNextJavaScriptSpecifiers pins TypeScript's
+// Node16/NodeNext rule that a relative specifier names the emitted JavaScript
+// file, so it must resolve to the TypeScript source that produces it.
+func TestParserResolvesNodeNextJavaScriptSpecifiers(t *testing.T) {
+	root := testtemp.Dir(t)
+	writeFile(t, root, "tsconfig.json", `{"compilerOptions":{"module":"NodeNext","moduleResolution":"NodeNext"}}`)
+	writeFile(t, root, "src/mailbox.ts", `export function deliver() {}`)
+	writeFile(t, root, "src/widget.tsx", `export function render() {}`)
+	writeFile(t, root, "src/shapes.d.ts", `export declare function shape(): void;`)
+	writeFile(t, root, "src/nested/index.ts", `export function nested() {}`)
+	writeFile(t, root, "sibling.ts", `export function sibling() {}`)
+
+	cases := []struct {
+		name      string
+		path      string
+		specifier string
+		module    string
+	}{
+		{name: "js specifier selects ts source", path: "src/fromJS.ts", specifier: "./mailbox.js", module: "src/mailbox.ts"},
+		{name: "js specifier selects tsx source", path: "src/fromJSX.ts", specifier: "./widget.js", module: "src/widget.tsx"},
+		{name: "jsx specifier selects tsx source", path: "src/fromJSXExt.ts", specifier: "./widget.jsx", module: "src/widget.tsx"},
+		{name: "js specifier selects declaration source", path: "src/fromDeclaration.ts", specifier: "./shapes.js", module: "src/shapes.d.ts"},
+		{name: "js specifier selects directory index", path: "src/fromIndex.ts", specifier: "./nested/index.js", module: "src/nested/index.ts"},
+		{name: "parent js specifier selects ts source", path: "src/fromParent.ts", specifier: "../sibling.js", module: "sibling.ts"},
+		{name: "extensionless specifier still resolves", path: "src/fromBare.ts", specifier: "./mailbox", module: "src/mailbox.ts"},
+	}
+	content := func(specifier string) string {
+		return fmt.Sprintf("import * as imported from %q;\nexport function use() { return imported; }\n", specifier)
+	}
+	for _, test := range cases {
+		writeFile(t, root, test.path, content(test.specifier))
+	}
+	writeFile(t, root, "src/fromMissing.ts", content("./missing.js"))
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := typescriptparser.New().Parse(context.Background(), parserapi.Input{
+				Root: root, Path: test.path, Content: []byte(content(test.specifier)),
+				Repository: "sample", RepoID: "repo:sample",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertHasFactTargetID(t, result.Facts, graph.EdgeImports,
+				graph.NodeID(graph.KindModule, "repo:sample:"+test.module))
+			assertLacksDiagnostic(t, result.Diagnostics, "relative module is not tracked")
+		})
+	}
+
+	t.Run("untracked js specifier still reports a diagnostic", func(t *testing.T) {
+		missing := content("./missing.js")
+		result, err := typescriptparser.New().Parse(context.Background(), parserapi.Input{
+			Root: root, Path: "src/fromMissing.ts", Content: []byte(missing),
+			Repository: "sample", RepoID: "repo:sample",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertDiagnosticContains(t, result.Diagnostics, "relative module is not tracked")
+	})
+}
+
+// TestParserDeclaresExportedTypeAliases pins that an exported type alias is a
+// resolvable declaration: importers reach it through a barrel, and its object
+// members resolve receiver calls the same way interface members do.
+func TestParserDeclaresExportedTypeAliases(t *testing.T) {
+	root := testtemp.Dir(t)
+	protocol := `
+export type HarnessId = "claude" | "codex";
+export type TaskShape = { run(): void };
+export interface Runner { run(): void }
+`
+	writeFile(t, root, "src/protocol.ts", protocol)
+	writeFile(t, root, "src/barrel.ts", `export type { HarnessId as AgentId, TaskShape } from "./protocol.js";`)
+	consumer := `
+import type { AgentId, TaskShape } from "./barrel.js";
+export function use(id: AgentId, shape: TaskShape) {
+  shape.run();
+  return id;
+}
+`
+	writeFile(t, root, "src/consumer.ts", consumer)
+
+	declared, err := typescriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "src/protocol.ts", Content: []byte(protocol),
+		Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHasNode(t, declared.Nodes, graph.KindType, "HarnessId")
+	assertHasNode(t, declared.Nodes, graph.KindType, "TaskShape")
+	assertHasNode(t, declared.Nodes, graph.KindMethod, "run")
+
+	result, err := typescriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "src/consumer.ts", Content: []byte(consumer),
+		Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertLacksDiagnostic(t, result.Diagnostics, "is absent from")
+	assertHasFactProperty(t, result.Facts, graph.EdgeImports, "local", "AgentId")
+	assertHasFact(t, result.Facts, graph.EdgeCalls, "src/protocol.TaskShape.run")
+}
+
+// TestParserResolvesExportedDeclarationModifiers pins that the modifiers a
+// declaration export may carry between `export` and its declarator do not hide
+// the exported name from importers.
+func TestParserResolvesExportedDeclarationModifiers(t *testing.T) {
+	root := testtemp.Dir(t)
+	source := `
+export async function deliver() {}
+export function* enumerate() {}
+export async function* stream() {}
+export declare function declared(): void;
+export abstract class Shape {}
+export type Alias = string;
+`
+	writeFile(t, root, "src/source.ts", source)
+	consumer := `
+import { deliver, enumerate, stream, declared, Shape, type Alias } from "./source.js";
+export function use(value: Alias) {
+  deliver();
+  enumerate();
+  stream();
+  declared();
+  return [value, Shape];
+}
+`
+	writeFile(t, root, "src/consumer.ts", consumer)
+
+	result, err := typescriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "src/consumer.ts", Content: []byte(consumer),
+		Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertLacksDiagnostic(t, result.Diagnostics, "is absent from")
+	for _, target := range []string{
+		"src/source.deliver",
+		"src/source.enumerate",
+		"src/source.stream",
+		"src/source.declared",
+	} {
+		assertHasFact(t, result.Facts, graph.EdgeCalls, target)
+	}
+}
+
+// TestParserOmitsBundlerAssetImports pins that importing a stylesheet or image
+// for its bytes is neither a resolution failure nor a module: it produces no
+// diagnostic and no node. A JSON import stays a module, because
+// resolveJsonModule makes it one.
+func TestParserOmitsBundlerAssetImports(t *testing.T) {
+	root := testtemp.Dir(t)
+	writeFile(t, root, "src/widget.ts", `export function render() {}`)
+	source := `
+import "./styles.css";
+import "@fontsource/dm-mono/latin-400.css";
+import logo from "./logo.svg";
+import sheet from "./theme.module.scss";
+import config from "./config.json";
+import { render } from "./widget.js";
+export function use() { return [render, logo, sheet, config]; }
+`
+	writeFile(t, root, "src/main.ts", source)
+
+	result, err := typescriptparser.New().Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "src/main.ts", Content: []byte(source),
+		Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, specifier := range []string{
+		"./styles.css",
+		"@fontsource/dm-mono/latin-400.css",
+		"./logo.svg",
+		"./theme.module.scss",
+	} {
+		assertLacksFact(t, result.Facts, graph.EdgeImports, specifier)
+		assertLacksDiagnostic(t, result.Diagnostics, specifier)
+	}
+
+	// A real module still resolves, and an untracked JSON module is still a
+	// module, so it keeps both its edge and its diagnostic.
+	assertHasFactTargetID(t, result.Facts, graph.EdgeImports,
+		graph.NodeID(graph.KindModule, "repo:sample:src/widget.ts"))
+	assertHasFact(t, result.Facts, graph.EdgeImports, "./config.json")
+	assertDiagnosticContains(t, result.Diagnostics, "relative module is not tracked: ./config.json")
 }

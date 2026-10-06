@@ -29,6 +29,33 @@ import (
 // position are never selected by directory or lexical order.
 var moduleSuffixes = []string{".ts", ".tsx", ".d.ts", "/index.ts", "/index.tsx", "/index.d.ts"}
 
+// javaScriptSourceSuffixes maps the extension of an emitted JavaScript file to
+// the TypeScript sources that can produce it, in the order TypeScript selects
+// them. Node16/NodeNext specifiers name the emitted file rather than the
+// source, so `./mailbox.js` is how a module imports `mailbox.ts`. `.mjs` and
+// `.cjs` are absent because `.mts` and `.cts` are not tracked inputs yet.
+var javaScriptSourceSuffixes = map[string][]string{
+	".js":  {".ts", ".tsx", ".d.ts"},
+	".jsx": {".tsx"},
+}
+
+// assetSpecifierExtensions are the file types a bundler lets a module import
+// for its bytes rather than for its bindings. None of them is a TypeScript
+// module, so importing one is not a resolution failure. `.json` is absent
+// because `resolveJsonModule` makes it a module TypeScript really does resolve.
+var assetSpecifierExtensions = map[string]bool{
+	".css": true, ".scss": true, ".sass": true, ".less": true, ".styl": true,
+	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".svg": true,
+	".webp": true, ".avif": true, ".ico": true, ".bmp": true,
+	".woff": true, ".woff2": true, ".eot": true, ".ttf": true, ".otf": true,
+	".mp3": true, ".mp4": true, ".wav": true, ".webm": true, ".ogg": true,
+}
+
+// isAssetSpecifier reports whether a module specifier names a bundler asset.
+func isAssetSpecifier(specifier string) bool {
+	return assetSpecifierExtensions[strings.ToLower(filepath.Ext(specifier))]
+}
+
 const maxExportDepth = 128
 
 type symbolRef struct {
@@ -93,7 +120,7 @@ type moduleCatalog struct {
 }
 
 // resolutionSurfaceVersion tags the encoding of the resolution surface digest.
-const resolutionSurfaceVersion = "typescript-resolution-surface-v2"
+const resolutionSurfaceVersion = "typescript-resolution-surface-v3"
 
 func (c *moduleCatalog) clone() *moduleCatalog {
 	copyCatalog := *c
@@ -120,7 +147,13 @@ func (c *moduleCatalog) clone() *moduleCatalog {
 }
 
 var (
-	exportedDeclarationPattern = regexp.MustCompile(`(?m)\bexport\s+(type\s+)?(?:declare\s+)?(?:abstract\s+)?(class|interface|function|const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
+	// `type` is a declarator in its own right, for `export type Alias = ...`,
+	// and is listed last so the leading `(type\s+)?` modifier is still
+	// preferred where both could match. It cannot swallow `export type { ... }`
+	// because a brace is not an identifier. The declarator is followed by `\b`
+	// rather than `\s+` so a generator star binds to it without `classFoo`
+	// reading as a declarator plus a name.
+	exportedDeclarationPattern = regexp.MustCompile(`(?m)\bexport\s+(type\s+)?(?:declare\s+)?(?:abstract\s+)?(?:async\s+)?(class|interface|function|const|let|var|type)\b\s*\*?\s*([A-Za-z_$][A-Za-z0-9_$]*)`)
 	defaultDeclarationPattern  = regexp.MustCompile(`(?m)\bexport\s+default\s+(?:async\s+)?(?:abstract\s+)?(?:class|function)\s+([A-Za-z_$][A-Za-z0-9_$]*)`)
 	defaultIdentifierPattern   = regexp.MustCompile(`(?m)\bexport\s+default\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*;?\s*$`)
 	exportListPattern          = regexp.MustCompile(`(?ms)\bexport\s+(type\s+)?\{([^}]*)\}\s*(?:from\s*["']([^"']+)["'])?`)
@@ -463,7 +496,9 @@ func scanModule(path string, content []byte) (*moduleInfo, error) {
 func collectModuleExports(info *moduleInfo, text string) {
 	for _, match := range exportedDeclarationPattern.FindAllStringSubmatch(text, -1) {
 		name := match[3]
-		info.exports[name] = append(info.exports[name], exportRef{local: name, typeOnly: strings.TrimSpace(match[1]) != ""})
+		// A type alias is type-only whether or not the modifier is spelled out.
+		typeOnly := strings.TrimSpace(match[1]) != "" || match[2] == "type"
+		info.exports[name] = append(info.exports[name], exportRef{local: name, typeOnly: typeOnly})
 	}
 	for _, match := range defaultDeclarationPattern.FindAllStringSubmatch(text, -1) {
 		if match[1] == "extends" || match[1] == "implements" {
@@ -542,21 +577,34 @@ func anonymousDefaultLocal(export *treesitter.Node, source []byte) string {
 	return ""
 }
 
+// namedDeclarationKind reports the graph kind a type-level declaration's name
+// resolves to. A type alias resolves like an interface: a named type whose
+// object members other modules reach through it. Only a class declaration can
+// be anonymous, so only it gets a positional name.
+func namedDeclarationKind(kind string) (graph.NodeKind, bool) {
+	switch kind {
+	case "class", "class_declaration", "abstract_class_declaration":
+		return graph.KindClass, true
+	case "interface_declaration":
+		return graph.KindInterface, true
+	case "type_alias_declaration":
+		return graph.KindType, true
+	default:
+		return "", false
+	}
+}
+
 func collectModuleDeclarations(node *treesitter.Node, source []byte, info *moduleInfo, container string) {
 	if node == nil {
 		return
 	}
 	kind := node.Kind()
-	if kind == "class" || kind == "class_declaration" || kind == "abstract_class_declaration" || kind == "interface_declaration" {
+	if nodeKind, named := namedDeclarationKind(kind); named {
 		name := nodeText(node.ChildByFieldName("name"), source)
-		if name == "" && kind != "interface_declaration" {
+		if name == "" && nodeKind == graph.KindClass {
 			name = fmt.Sprintf("anonymous@%d", node.StartPosition().Row+1)
 		}
 		if name != "" {
-			nodeKind := graph.KindClass
-			if kind == "interface_declaration" {
-				nodeKind = graph.KindInterface
-			}
 			qualified := info.name + "." + name
 			info.locals[name] = symbolRef{qualified: qualified, kind: nodeKind, owner: info.path}
 			if info.methods[name] == nil {
@@ -575,7 +623,9 @@ func collectModuleDeclarations(node *treesitter.Node, source []byte, info *modul
 		}
 		return
 	}
-	if container == "" && (kind == "function_declaration" || kind == "generator_function_declaration" || kind == "function_expression" || kind == "generator_function") {
+	// function_signature is the ambient form, `declare function f(): void`,
+	// which exports a name that importers can resolve like any other.
+	if container == "" && (kind == "function_declaration" || kind == "generator_function_declaration" || kind == "function_expression" || kind == "generator_function" || kind == "function_signature") {
 		name := nodeText(node.ChildByFieldName("name"), source)
 		if name == "" {
 			name = fmt.Sprintf("anonymous@%d", node.StartPosition().Row+1)
@@ -690,12 +740,35 @@ func (c *moduleCatalog) resolvePath(base string) *moduleInfo {
 	if isTypeScriptPath(base) {
 		return c.modules[base]
 	}
+	// A specifier that names an emitted JavaScript file resolves only to the
+	// TypeScript source that produces it; a directory candidate would be a
+	// guess, because `./mailbox.js/index.ts` is not a path TypeScript selects.
+	if stem, suffixes := javaScriptSourceStem(base); suffixes != nil {
+		for _, suffix := range suffixes {
+			if info := c.modules[stem+suffix]; info != nil {
+				return info
+			}
+		}
+		return nil
+	}
 	for _, suffix := range moduleSuffixes {
 		if info := c.modules[base+suffix]; info != nil {
 			return info
 		}
 	}
 	return nil
+}
+
+// javaScriptSourceStem splits a path that names an emitted JavaScript file into
+// the stem its TypeScript source shares and the suffixes to try against it. The
+// suffixes are nil when the path names something else.
+func javaScriptSourceStem(base string) (string, []string) {
+	extension := strings.ToLower(filepath.Ext(base))
+	suffixes, emitted := javaScriptSourceSuffixes[extension]
+	if !emitted {
+		return "", nil
+	}
+	return base[:len(base)-len(extension)], suffixes
 }
 
 func (c *moduleCatalog) resolvePathsAlias(config compilerConfig, specifier string) (*moduleInfo, string) {

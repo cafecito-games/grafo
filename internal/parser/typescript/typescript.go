@@ -293,7 +293,7 @@ func (e *extractor) walk(node *treesitter.Node, current scope) {
 		return
 	case "export_statement":
 		e.parseExport(node)
-	case "function_declaration", "generator_function_declaration", "function_expression", "generator_function":
+	case "function_declaration", "generator_function_declaration", "function_expression", "generator_function", "function_signature":
 		e.parseFunction(node, current, graph.KindFunction)
 		return
 	case "class", "class_declaration", "abstract_class_declaration":
@@ -301,6 +301,9 @@ func (e *extractor) walk(node *treesitter.Node, current scope) {
 		return
 	case "interface_declaration":
 		e.parseInterface(node, current)
+		return
+	case "type_alias_declaration":
+		e.parseTypeAlias(node, current)
 		return
 	case "method_definition", "method_signature", "abstract_method_signature":
 		e.parseFunction(node, current, graph.KindMethod)
@@ -343,6 +346,12 @@ func (e *extractor) parseImport(node *treesitter.Node) {
 		return
 	}
 	module := parserapi.Unquote(e.text(source))
+	// A stylesheet or image is imported for its bytes, so it is neither a
+	// module that failed to resolve nor one the graph can say anything about.
+	// Declaring a module node for it would assert a module that does not exist.
+	if isAssetSpecifier(module) {
+		return
+	}
 	resolvedModule, diagnostic := e.catalog.resolveModule(e.input.Path, module)
 	e.reportCatalogDiagnostics()
 	if diagnostic != "" && resolvedModule == nil && strings.HasPrefix(module, ".") {
@@ -649,6 +658,24 @@ func (e *extractor) parseInterface(node *treesitter.Node, current scope) {
 	body := node.ChildByFieldName("body")
 	if body != nil {
 		e.walkChildren(body, scope{currentID: interfaceID, parentID: interfaceID, container: qualified,
+			symbols: map[string]string{}, types: map[string]string{}, lexical: current.lexical})
+	}
+}
+
+// parseTypeAlias declares the alias itself and then walks its value, so object
+// members written inside it are owned by the alias the way interface members
+// are owned by their interface instead of by the module.
+func (e *extractor) parseTypeAlias(node *treesitter.Node, current scope) {
+	name := strings.TrimSpace(e.text(node.ChildByFieldName("name")))
+	if name == "" {
+		return
+	}
+	qualified := e.qualify(current.container, name)
+	aliasID := e.b.Declare(current.parentID, graph.Node{Kind: graph.KindType, Name: name,
+		QualifiedName: qualified, Location: e.location(node)})
+	value := node.ChildByFieldName("value")
+	if value != nil {
+		e.walkChildren(value, scope{currentID: aliasID, parentID: aliasID, container: qualified,
 			symbols: map[string]string{}, types: map[string]string{}, lexical: current.lexical})
 	}
 }
