@@ -334,12 +334,17 @@ func adopt(ctx context.Context, project indexer.Project, chosen candidate,
 	// pair too, but the workspace digest covers those properties, so the
 	// adopting pass replaces that node on its own. Clearing both dirty ledgers is
 	// what forces that pass to re-read every file instead of trusting a Git diff
-	// against the donor's uncommitted state.
+	// against the donor's uncommitted state. The freshness token is cleared for a
+	// different reason: the ledgers keep this pass from reusing a file's facts it
+	// cannot prove, while the token keeps a reader from being convinced the index
+	// is already current. It names the donor's inputs, so an adopter that kept it
+	// could match a probe and be served without ever being reconciled.
 	if err := sqlite.SetIndexMeta(ctx, temporary, map[string]string{
 		"root":                        project.Root,
 		"branch":                      project.Branch,
 		indexer.GitDirtyPathsMeta:     "",
 		indexer.GitUntrackedPathsMeta: "",
+		indexer.FreshnessTokenMeta:    "",
 	}); err != nil {
 		removeTemporary()
 		if ctx.Err() != nil {

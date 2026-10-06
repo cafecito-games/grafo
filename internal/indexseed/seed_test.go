@@ -90,6 +90,36 @@ func TestSeedAdoptsASiblingIndexWithoutCarryingItsWorkingTree(t *testing.T) {
 		report.Updated, report.Unchanged, report.Checked)
 }
 
+// TestSeedClearsTheDonorsFreshnessToken keeps adoption from carrying a proof of
+// freshness across worktrees. The donor's token describes the donor's inputs; an
+// adopter that kept it could be served without ever reconciling.
+func TestSeedClearsTheDonorsFreshnessToken(t *testing.T) {
+	ctx := context.Background()
+	main := newRepository(t)
+	write(t, filepath.Join(main, "shared", "shared.go"), "package shared\n\nfunc Shared() {}\n")
+	runGit(t, main, "add", ".")
+	runGit(t, main, "commit", "-m", "committed state")
+	indexProject(t, ctx, main, nil)
+	if donorToken := metaValue(t, ctx, indexPathOf(t, ctx, main), indexer.FreshnessTokenMeta); donorToken == "" {
+		t.Fatal("the donor index recorded no freshness token, so clearing it would prove nothing")
+	}
+
+	worktree := addWorktree(t, main, "issue-240")
+	project := discover(t, ctx, worktree)
+
+	result, err := Seed(ctx, project, Options{TryLock: alwaysLock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Seeded {
+		t.Fatalf("seed result = %#v", result)
+	}
+
+	if stored := metaValue(t, ctx, project.IndexPath, indexer.FreshnessTokenMeta); stored != "" {
+		t.Fatalf("a seeded index carried freshness token %q", stored)
+	}
+}
+
 // TestSeedFromACleanDonorReusesEveryFile measures where the saving actually
 // comes from: a worktree created at the donor's committed state holds an
 // identical tree, so every file is proven unchanged by its content hash and
@@ -338,6 +368,20 @@ func indexProject(t *testing.T, ctx context.Context, root string, seed *indexer.
 		t.Fatal(err)
 	}
 	return report
+}
+
+func metaValue(t *testing.T, ctx context.Context, indexPath, key string) string {
+	t.Helper()
+	repository, err := sqlite.OpenReadOnly(ctx, indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	value, err := repository.Meta(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
 }
 
 func assertMatchTotal(t *testing.T, ctx context.Context, indexPath, selector string, want int) {
