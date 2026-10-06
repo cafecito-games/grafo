@@ -210,6 +210,28 @@
       {
         "from": {
           "repo": "monorepo",
+          "kind": "module",
+          "qualified_name": "services/client"
+        },
+        "relation": "exports",
+        "to": {
+          "repo": "monorepo",
+          "kind": "function",
+          "qualified_name": "services/client.submit"
+        },
+        "source": {
+          "path": "services/client.ts",
+          "line": 1,
+          "column": 1
+        },
+        "properties": {
+          "exported": "submit",
+          "local": "submit"
+        }
+      },
+      {
+        "from": {
+          "repo": "monorepo",
           "kind": "parameter",
           "qualified_name": "services.server.create_order.order_id"
         },
