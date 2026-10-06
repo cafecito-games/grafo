@@ -343,7 +343,9 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	if token.Version() == "" {
 		probe, probeErr := probeProjectFreshness(ctx, project, s.parsers,
 			FreshnessOptions{MaxFileSize: options.MaxFileSize}, nil, false)
-		report.GitCommands += probe.GitCommands
+		// Only what the probe spent itself: the project's snapshot was already
+		// counted above, and probe.GitCommands includes it.
+		report.GitCommands += probe.ownGitCommands
 		switch {
 		case ctx.Err() != nil:
 			return report, ctx.Err()

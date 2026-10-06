@@ -62,11 +62,15 @@ func (t FreshnessToken) String() string {
 // Unsupported means the project is not Git-managed and must conservatively be
 // refreshed for every request generation.
 type FreshnessProbe struct {
-	Project                   Project
-	Token                     FreshnessToken
-	Supported                 bool
-	Fallback                  string
-	GitCommands               int
+	Project     Project
+	Token       FreshnessToken
+	Supported   bool
+	Fallback    string
+	GitCommands int
+	// ownGitCommands is the part of GitCommands the probe spent itself. The rest
+	// is the project's snapshot, which the probe is handed rather than takes, so
+	// a caller that already counted that snapshot adds only this.
+	ownGitCommands            int
 	workspaceSemanticKeys     map[string]string
 	workspaceSemanticEvidence map[string]string
 	hiddenSemanticDigest      [sha256.Size]byte
@@ -195,6 +199,7 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 	if !project.GitManaged || project.gitSnapshot == nil {
 		return FreshnessProbe{
 			Project: project, Fallback: "non-Git project requires a conservative full refresh",
+			ownGitCommands:        hiddenGitCommands + membershipGitCommands,
 			workspaceSemanticKeys: cloneFreshnessMap(keys), workspaceSemanticEvidence: cloneFreshnessMap(evidence),
 			hiddenSemanticDigest: hiddenSemanticDigest,
 		}, nil
@@ -202,6 +207,7 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 	if membershipFallback != "" {
 		return FreshnessProbe{
 			Project: project, Fallback: membershipFallback, GitCommands: project.gitSnapshot.Commands + hiddenGitCommands + membershipGitCommands,
+			ownGitCommands:        hiddenGitCommands + membershipGitCommands,
 			workspaceSemanticKeys: cloneFreshnessMap(keys), workspaceSemanticEvidence: cloneFreshnessMap(evidence),
 			hiddenSemanticDigest: hiddenSemanticDigest,
 		}, nil
@@ -273,6 +279,7 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 	return FreshnessProbe{
 		Project: project, Token: FreshnessToken{version: FreshnessTokenVersion, digest: encoder.sum()},
 		Supported: true, GitCommands: snapshot.Commands + hiddenGitCommands + membershipGitCommands,
+		ownGitCommands:        hiddenGitCommands + membershipGitCommands,
 		workspaceSemanticKeys: cloneFreshnessMap(keys), workspaceSemanticEvidence: cloneFreshnessMap(evidence),
 		hiddenSemanticDigest: hiddenSemanticDigest,
 	}, nil

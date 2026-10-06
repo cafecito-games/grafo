@@ -792,3 +792,65 @@ func TestFreshnessTokenIsNotStoredByAFailedRun(t *testing.T) {
 		t.Fatalf("a failed run changed the stored token from %q to %q", first, stored)
 	}
 }
+
+// failsOnceFreshnessParser rejects its first workspace semantic key request,
+// which is the one the run's own freshness probe makes, and answers every later
+// request, so the pass that follows can still index.
+type failsOnceFreshnessParser struct{ calls *int }
+
+func (failsOnceFreshnessParser) Language() string          { return "fails-once" }
+func (failsOnceFreshnessParser) Supports(path string) bool { return filepath.Ext(path) == ".snap" }
+func (failsOnceFreshnessParser) Parse(context.Context, parserapi.Input) (graph.ParseResult, error) {
+	return graph.ParseResult{}, nil
+}
+func (p failsOnceFreshnessParser) WorkspaceSemanticKey(context.Context, parserapi.Input) (string, error) {
+	*p.calls++
+	if *p.calls == 1 {
+		return "", errors.New("induced probe failure")
+	}
+	return "key", nil
+}
+
+// TestFreshnessProbeFailureDoesNotFailTheRun pins that being unable to prove
+// freshness only withholds the proof: the repository is still indexed, no token
+// is stored, and the failure is reported.
+func TestFreshnessProbeFailureDoesNotFailTheRun(t *testing.T) {
+	ctx := context.Background()
+	root := newRepository(t)
+	write(t, filepath.Join(root, "sample.snap"), "fixture")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "commit", "-m", "initial")
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls int
+	report, err := indexer.NewService(repository, parserapi.NewRegistry(failsOnceFreshnessParser{calls: &calls})).
+		Run(ctx, project, indexer.Options{})
+	if closeErr := repository.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if err != nil {
+		t.Fatalf("a failed freshness probe failed the run: %v", err)
+	}
+	if calls < 2 {
+		t.Fatalf("workspace semantic key requested %d times, want the probe and the pass", calls)
+	}
+	if stored := metaValue(t, ctx, project.IndexPath, indexer.FreshnessTokenMeta); stored != "" {
+		t.Fatalf("a run without a probe stored freshness token %q", stored)
+	}
+	found := false
+	for _, diagnostic := range report.Diagnostics {
+		if diagnostic.Level == "warning" && strings.Contains(diagnostic.Message, "probe freshness") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no probe failure diagnostic in %#v", report.Diagnostics)
+	}
+}

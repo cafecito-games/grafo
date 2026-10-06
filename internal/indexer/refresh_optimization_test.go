@@ -98,8 +98,10 @@ func TestServiceProvenUnchangedRefreshSkipsGraphWritesAndCounts(t *testing.T) {
 	if len(spy.setMetaKeys) != 1 || spy.setMetaKeys[0] != "indexed_at" {
 		t.Fatalf("unchanged metadata rewrites = %q, want only indexed_at", spy.setMetaKeys)
 	}
-	if budget := 3 + selfProbeGitCommands(t, ctx, root, registry); report.GitCommands > budget || report.Checked != 0 {
-		t.Fatalf("unchanged refresh probes=%d checked=%d, want at most %d Git commands and no content checks", report.GitCommands, report.Checked, budget)
+	// Three change probes plus the run's own freshness probe, which lists
+	// Git-visible files to find semantic inputs Git does not track.
+	if report.GitCommands > 4 || report.Checked != 0 {
+		t.Fatalf("unchanged refresh probes=%d checked=%d, want at most four Git commands and no content checks", report.GitCommands, report.Checked)
 	}
 	if report.CountsCollected {
 		t.Fatalf("counts unexpectedly collected: %#v", report)
@@ -354,7 +356,10 @@ func TestServiceGitSnapshotConvergesAcrossMembershipAndHeadChanges(t *testing.T)
 	runGit(t, root, "add", ".")
 	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "changes")
 	committed, err := service.Run(ctx, project, indexer.Options{})
-	if err != nil || committed.GitCommands > 3+selfProbeGitCommands(t, ctx, root, parserapi.NewRegistry(markdownparser.New())) {
+	// Three change probes plus the run's own freshness probe, which here spends
+	// two: one listing Git-visible files for hidden semantic inputs and one
+	// discovering workspace membership, since no earlier probe's keys are reused.
+	if err != nil || committed.GitCommands > 5 {
 		t.Fatalf("advanced HEAD: report=%#v err=%v", committed, err)
 	}
 	indexedCommit, err := repository.Meta(ctx, "commit")
