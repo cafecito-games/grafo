@@ -796,6 +796,8 @@ func TestFreshnessTokenIsNotStoredByAFailedRun(t *testing.T) {
 // failsOnceFreshnessParser rejects its first workspace semantic key request,
 // which is the one the run's own freshness probe makes, and answers every later
 // request, so the pass that follows can still index.
+const inducedProbeFailure = "induced probe failure"
+
 type failsOnceFreshnessParser struct{ calls *int }
 
 func (failsOnceFreshnessParser) Language() string          { return "fails-once" }
@@ -806,7 +808,7 @@ func (failsOnceFreshnessParser) Parse(context.Context, parserapi.Input) (graph.P
 func (p failsOnceFreshnessParser) WorkspaceSemanticKey(context.Context, parserapi.Input) (string, error) {
 	*p.calls++
 	if *p.calls == 1 {
-		return "", errors.New("induced probe failure")
+		return "", errors.New(inducedProbeFailure)
 	}
 	return "key", nil
 }
@@ -838,15 +840,15 @@ func TestFreshnessProbeFailureDoesNotFailTheRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a failed freshness probe failed the run: %v", err)
 	}
-	if calls < 2 {
-		t.Fatalf("workspace semantic key requested %d times, want the probe and the pass", calls)
+	if calls != 2 {
+		t.Fatalf("workspace semantic key requested %d times, want exactly the probe and the pass", calls)
 	}
 	if stored := metaValue(t, ctx, project.IndexPath, indexer.FreshnessTokenMeta); stored != "" {
 		t.Fatalf("a run without a probe stored freshness token %q", stored)
 	}
 	found := false
 	for _, diagnostic := range report.Diagnostics {
-		if diagnostic.Level == "warning" && strings.Contains(diagnostic.Message, "probe freshness") {
+		if diagnostic.Level == "warning" && strings.Contains(diagnostic.Message, "probe freshness") && strings.Contains(diagnostic.Message, inducedProbeFailure) {
 			found = true
 		}
 	}

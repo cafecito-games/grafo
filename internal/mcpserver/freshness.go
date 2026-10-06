@@ -129,7 +129,7 @@ func NewFreshnessCoordinator(ctx context.Context, roots []string, registry *pars
 				return indexer.Report{}, fmt.Errorf("open writer for %s: %w", probe.Project.Root, err)
 			}
 			report, refreshErr := indexer.NewService(repository, registry).Run(refreshContext, probe.Project, indexer.Options{
-				MaxFileSize: options.MaxFileSize, ReportDetail: indexer.ReportWithoutCounts,
+				MaxFileSize: options.MaxFileSize, ReportDetail: indexer.ReportWithoutCounts, Token: probe.Token,
 			})
 			closeErr := repository.Close()
 			if refreshErr != nil || closeErr != nil {

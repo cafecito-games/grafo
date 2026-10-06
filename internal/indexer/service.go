@@ -348,6 +348,9 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 		report.GitCommands += probe.ownGitCommands
 		switch {
 		case ctx.Err() != nil:
+			// A cancellation must stay a cancellation. Without this guard the
+			// probe's own context error would be downgraded into a freshness
+			// warning and the run would continue as though it had been asked to.
 			return report, ctx.Err()
 		case probeErr != nil:
 			// Failing to prove freshness must never make a repository impossible
@@ -942,14 +945,6 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	if err := s.repository.SetMeta(ctx, "indexed_at", graph.NowUTC()); err != nil {
 		return report, err
 	}
-	// Stored only on the success path, because the token is a claim that this
-	// index describes those inputs. The claim is about the snapshot taken before
-	// the pass, not about the tree as it stands now: a file edited while the pass
-	// ran is not in this index, and keeping the pre-pass token is exactly what
-	// makes the next probe disagree and refresh.
-	if err := setMetaIfChanged(ctx, s.repository, FreshnessTokenMeta, token.String()); err != nil {
-		return report, err
-	}
 	if err := setMetaIfChanged(ctx, s.repository, indexScopeScopedOutMeta, strconv.Itoa(discovered.scopedOut)); err != nil {
 		return report, err
 	}
@@ -962,6 +957,17 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	// Clear the fail-reuse marker only after the committed digest and its
 	// associated catalog/count metadata are durable.
 	if err := setMetaIfChanged(ctx, s.repository, indexScopePendingMeta, ""); err != nil {
+		return report, err
+	}
+	// Published after everything else, including the scope marker, and only on the
+	// success path. The token is a claim that this index describes those inputs,
+	// so it must be the weakest claim in the file: a run killed anywhere earlier
+	// leaves the previous token, never a proof that outlives an unfinished
+	// publish. The claim is about the snapshot taken before the pass, not about
+	// the tree as it stands now: a file edited while the pass ran is not in this
+	// index, and keeping the pre-pass token is exactly what makes the next probe
+	// disagree and refresh.
+	if err := setMetaIfChanged(ctx, s.repository, FreshnessTokenMeta, token.String()); err != nil {
 		return report, err
 	}
 	if options.Boundary != nil {

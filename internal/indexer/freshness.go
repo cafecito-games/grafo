@@ -163,17 +163,17 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 	}
 	hiddenSemanticDigest, hiddenGitCommands, err := freshnessHiddenSemanticDigest(ctx, project, registry, maximum, configuration.Index)
 	if err != nil {
-		return FreshnessProbe{}, err
+		return FreshnessProbe{ownGitCommands: hiddenGitCommands}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return FreshnessProbe{}, err
+		return FreshnessProbe{ownGitCommands: hiddenGitCommands}, err
 	}
 	semanticInput := parserapi.Input{
 		Root: project.Root, Repository: project.Name, RepoID: project.ID, GoModule: project.GoModule,
 	}
 	evidence, cacheable, err := registry.WorkspaceSemanticEvidenceKeys(ctx, semanticInput)
 	if err != nil {
-		return FreshnessProbe{}, err
+		return FreshnessProbe{ownGitCommands: hiddenGitCommands}, err
 	}
 	var keys map[string]string
 	membershipGitCommands := 0
@@ -184,7 +184,7 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 	} else {
 		discovered, discoverErr := discoverFilesWithCatalog(ctx, project, registry, nil, false, configuration.Index)
 		if discoverErr != nil {
-			return FreshnessProbe{}, fmt.Errorf("discover workspace semantic membership: %w", discoverErr)
+			return FreshnessProbe{ownGitCommands: hiddenGitCommands + discovered.gitCommands}, fmt.Errorf("discover workspace semantic membership: %w", discoverErr)
 		}
 		semanticInput.SourcePaths = discovered.paths
 		membershipGitCommands = discovered.gitCommands
@@ -193,7 +193,7 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 		}
 		keys, err = registry.WorkspaceSemanticKeys(ctx, semanticInput)
 		if err != nil {
-			return FreshnessProbe{}, err
+			return FreshnessProbe{ownGitCommands: hiddenGitCommands + membershipGitCommands}, err
 		}
 	}
 	if !project.GitManaged || project.gitSnapshot == nil {
