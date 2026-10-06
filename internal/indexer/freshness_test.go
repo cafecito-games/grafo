@@ -10,8 +10,10 @@ import (
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	parserdefaults "github.com/cafecito-games/grafo/internal/parser/defaults"
 	golangparser "github.com/cafecito-games/grafo/internal/parser/golang"
 	"github.com/cafecito-games/grafo/internal/parser/typescript"
+	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
@@ -598,5 +600,122 @@ func TestFreshnessProbeIgnoresUnrelatedAndTracksRenameAndSymlinkStates(t *testin
 	}
 	if renamed.Token.Equal(symlink.Token) {
 		t.Fatal("symlink transition retained freshness")
+	}
+}
+
+func newRepository(t *testing.T) string {
+	t.Helper()
+	root := testtemp.Dir(t)
+	runGit(t, root, "init", "-b", "main")
+	runGit(t, root, "config", "user.name", "Grafo Test")
+	runGit(t, root, "config", "user.email", "grafo@example.invalid")
+	return root
+}
+
+func indexProject(t *testing.T, ctx context.Context, root string) indexer.Project {
+	t.Helper()
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runEquivalenceIndex(t, ctx, project, project.IndexPath)
+	return project
+}
+
+func metaValue(t *testing.T, ctx context.Context, indexPath, key string) string {
+	t.Helper()
+	repository, err := sqlite.OpenReadOnly(ctx, indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	value, err := repository.Meta(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+// TestFreshnessTokenIsStoredByASuccessfulRun is the whole contract of the
+// persisted token: a run records the inputs it indexed, so a later process can
+// compare without indexing, and an edit after the run breaks the comparison.
+func TestFreshnessTokenIsStoredByASuccessfulRun(t *testing.T) {
+	ctx := context.Background()
+	root := newRepository(t)
+	write(t, filepath.Join(root, "pkg", "pkg.go"), "package pkg\n\nfunc Exported() {}\n")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "commit", "-m", "initial")
+
+	project := indexProject(t, ctx, root)
+
+	stored := metaValue(t, ctx, project.IndexPath, indexer.FreshnessTokenMeta)
+	if stored == "" {
+		t.Fatal("a successful run stored no freshness token")
+	}
+
+	probe, err := indexer.ProbeFreshness(ctx, root, parserdefaults.NewRegistry(), indexer.FreshnessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if probe.Token.String() != stored {
+		t.Fatalf("stored token = %q, probe token = %q", stored, probe.Token.String())
+	}
+
+	// An edit after the run must break the comparison, or a query would be
+	// served from an index that does not describe the working tree.
+	write(t, filepath.Join(root, "pkg", "pkg.go"), "package pkg\n\nfunc Exported() {}\n\nfunc Added() {}\n")
+	after, err := indexer.ProbeFreshness(ctx, root, parserdefaults.NewRegistry(), indexer.FreshnessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Token.String() == stored {
+		t.Fatal("an edited working tree still matched the stored freshness token")
+	}
+}
+
+// TestFreshnessTokenIsClearedForANonGitProject covers the conservative case:
+// a project Git cannot describe must never be served without a refresh, so no
+// token may remain to prove it fresh.
+func TestFreshnessTokenIsClearedForANonGitProject(t *testing.T) {
+	ctx := context.Background()
+	root := testtemp.Dir(t)
+	write(t, filepath.Join(root, "pkg", "pkg.go"), "package pkg\n\nfunc Exported() {}\n")
+
+	project := indexProject(t, ctx, root)
+
+	if stored := metaValue(t, ctx, project.IndexPath, indexer.FreshnessTokenMeta); stored != "" {
+		t.Fatalf("a non-Git project stored freshness token %q", stored)
+	}
+}
+
+// TestFreshnessTokenFromOptionsIsStoredWithoutASecondProbe pins that a caller
+// which already probed does not pay for probing twice.
+func TestFreshnessTokenFromOptionsIsStoredWithoutASecondProbe(t *testing.T) {
+	ctx := context.Background()
+	root := newRepository(t)
+	write(t, filepath.Join(root, "pkg", "pkg.go"), "package pkg\n\nfunc Exported() {}\n")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "commit", "-m", "initial")
+
+	registry := parserdefaults.NewRegistry()
+	probe, err := indexer.ProbeFreshness(ctx, root, registry, indexer.FreshnessOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repository, err := sqlite.Open(ctx, probe.Project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := indexer.NewService(repository, registry).Run(ctx, probe.Project,
+		indexer.Options{Token: probe.Token}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if stored := metaValue(t, ctx, probe.Project.IndexPath, indexer.FreshnessTokenMeta); stored != probe.Token.String() {
+		t.Fatalf("stored token = %q, want the supplied %q", stored, probe.Token.String())
 	}
 }

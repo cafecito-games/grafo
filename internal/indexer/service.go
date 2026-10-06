@@ -30,6 +30,15 @@ const workspaceStateDigestMeta = "workspace_state_digest"
 // last covered. See GitDirtyPathsMeta for why both are cleared rather than
 // carried when an index is adopted from another worktree.
 const GitUntrackedPathsMeta = "git_untracked_paths"
+
+// FreshnessTokenMeta names the stored FreshnessToken of the inputs this index
+// was last reconciled to. A reader that probes the same inputs and computes an
+// equal token has proof the index is current and may answer from it without
+// opening a writer, taking the index lock, or running a pass. An empty value is
+// the absence of that proof, never a claim of freshness: it is what a non-Git
+// project, an adopted index, and an index written before this key existed all
+// carry, and each of those must refresh before being trusted.
+const FreshnessTokenMeta = "freshness_token"
 const indexScopeDigestMeta = "index_scope_digest"
 const indexScopePendingMeta = "index_scope_pending"
 const indexScopeScopedOutMeta = "index_scope_scoped_out"
@@ -61,6 +70,13 @@ type Options struct {
 	Boundary         BoundaryHook
 	ProgressObserver ProgressObserver
 	ReportDetail     ReportDetail
+	// Token is the freshness token of the inputs this run will index, supplied
+	// by a caller that has already probed them. The caller must pass the Project
+	// from that same probe: the token describes the snapshot the run indexes, and
+	// pairing one probe's token with another's project would store a proof of
+	// freshness the index does not satisfy. A zero value makes the run probe for
+	// itself, which is what `grafo index`, watch, and the background service do.
+	Token FreshnessToken
 	// ParseWorkers bounds the goroutines that read, hash, and parse files ahead
 	// of the single ordered writer. Zero selects a CPU-derived default under an
 	// explicit cap; one runs the stage inline on the writer goroutine and
@@ -319,6 +335,20 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	configuration, err := projectconfig.Load(project.Root)
 	if err != nil {
 		return report, fmt.Errorf("load project configuration: %w", err)
+	}
+	// Probed before any input is read so the token describes the snapshot the
+	// pass consumes. Probing afterwards would fold an edit made during the pass
+	// into the token and certify an index that never saw it.
+	token := options.Token
+	if token.Version() == "" {
+		probe, probeErr := probeProjectFreshness(ctx, project, s.parsers,
+			FreshnessOptions{MaxFileSize: options.MaxFileSize}, nil, false)
+		if probeErr != nil {
+			return report, fmt.Errorf("probe freshness for %s: %w", project.Root, probeErr)
+		}
+		if probe.Supported {
+			token = probe.Token
+		}
 	}
 	storedRepositoryID, err := s.repository.Meta(ctx, "repository_id")
 	if err != nil {
@@ -901,6 +931,14 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	// so it intentionally advances even when every graph and other metadata
 	// value is unchanged.
 	if err := s.repository.SetMeta(ctx, "indexed_at", graph.NowUTC()); err != nil {
+		return report, err
+	}
+	// Stored only on the success path, because the token is a claim that this
+	// index describes those inputs. The claim is about the snapshot taken before
+	// the pass, not about the tree as it stands now: a file edited while the pass
+	// ran is not in this index, and keeping the pre-pass token is exactly what
+	// makes the next probe disagree and refresh.
+	if err := setMetaIfChanged(ctx, s.repository, FreshnessTokenMeta, token.String()); err != nil {
 		return report, err
 	}
 	if err := setMetaIfChanged(ctx, s.repository, indexScopeScopedOutMeta, strconv.Itoa(discovered.scopedOut)); err != nil {
