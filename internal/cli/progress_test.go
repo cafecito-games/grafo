@@ -71,24 +71,42 @@ func TestStatusProgressModesKeepStdoutMachineReadable(t *testing.T) {
 
 func TestAutoProgressPublishesCachedPhaseAndStopsBeforeReturn(t *testing.T) {
 	t.Parallel()
-	var stderr bytes.Buffer
-	renderer := newProgressRenderer(&stderr, progressAuto, true, 10*time.Millisecond)
+	stderr := &notifyingWriter{written: make(chan struct{}, 1)}
+	renderer := newProgressRenderer(stderr, progressAuto, true, 10*time.Millisecond)
 	event := indexer.ProgressEvent{Schema: indexer.ProgressSchemaV1, RepositoryName: "sample", Phase: indexer.ProgressParse, State: indexer.ProgressStarted}
 	if err := renderer.Observe(event); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(30 * time.Millisecond)
+	select {
+	case <-stderr.written:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cached active phase was not rendered before the deadline")
+	}
 	if err := renderer.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(stderr.String(), "sample parse: started") {
 		t.Fatalf("cached active phase was not rendered: %q", stderr.String())
 	}
-	stable := stderr.String()
-	time.Sleep(20 * time.Millisecond)
-	if stderr.String() != stable {
-		t.Fatalf("late timer write after close: before=%q after=%q", stable, stderr.String())
+	select {
+	case <-stderr.written:
+		t.Fatalf("late timer write after close: %q", stderr.String())
+	default:
 	}
+}
+
+type notifyingWriter struct {
+	bytes.Buffer
+	written chan struct{}
+}
+
+func (writer *notifyingWriter) Write(data []byte) (int, error) {
+	written, err := writer.Buffer.Write(data)
+	select {
+	case writer.written <- struct{}{}:
+	default:
+	}
+	return written, err
 }
 
 type failWriter struct{ err error }
