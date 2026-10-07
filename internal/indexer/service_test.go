@@ -2,6 +2,7 @@ package indexer_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -3099,6 +3100,184 @@ func test_installs_into_registry() -> void:
 	}
 	if !covered["TradeModule"] || !covered["TradeModule.install"] {
 		t.Fatalf("class root omitted construction or member test evidence: %#v", tests)
+	}
+}
+
+// TestServiceKeepsGDScriptConstructionExplicitAcrossDeclarationStates pins the
+// exact issue #238 shape: one global class_name with five ClassName.new(...)
+// sites spread across production and test scripts. The later phases prove that
+// duplicate or malformed declarations never turn those sites into a plausible
+// edge to one guessed class.
+func TestServiceKeepsGDScriptConstructionExplicitAcrossDeclarationStates(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	root := testtemp.Dir(t)
+	runGit(t, root, "init", "-b", "main")
+	write(t, filepath.Join(root, "session_assembly.gd"), `class_name SessionAssembly
+extends RefCounted
+
+func _init(first = null, second = null) -> void:
+	pass
+`)
+	write(t, filepath.Join(root, "game_core_screen.gd"), `class_name GameCoreScreen
+extends Node
+
+func _build_session_assembly() -> SessionAssembly:
+	return SessionAssembly.new()
+`)
+	write(t, filepath.Join(root, "session_assembly_contract_test.gd"), `extends GutTest
+
+func test_exposes_every_fixed_factory() -> void:
+	var assembly := SessionAssembly.new()
+	assert_not_null(assembly)
+
+func test_missing_factory_family_fails_closed() -> void:
+	var missing_live := SessionAssembly.new(null, null)
+	var missing_world := SessionAssembly.new(null)
+	assert_false(missing_live == missing_world)
+`)
+	write(t, filepath.Join(root, "in_game_session_coordinator_test.gd"), `extends GutTest
+
+func _assembly_with_overrides() -> SessionAssembly:
+	return SessionAssembly.new()
+`)
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(gdscriptparser.New()))
+	queries := query.NewService(repository)
+
+	constructionTargets := func(t *testing.T) []graph.Node {
+		t.Helper()
+		caller, err := queries.ResolveKind(ctx, "GameCoreScreen._build_session_assembly", graph.KindMethod)
+		if err != nil {
+			t.Fatal(err)
+		}
+		edges, err := repository.EdgesFrom(ctx, caller.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var targets []graph.Node
+		for _, edge := range edges {
+			if edge.Kind != graph.EdgeCalls || edge.Properties["form"] != "construction" {
+				continue
+			}
+			target, err := repository.Node(ctx, edge.ToID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			targets = append(targets, target)
+		}
+		return targets
+	}
+
+	phases := []struct {
+		name   string
+		mutate func(*testing.T)
+		assert func(*testing.T, indexer.Report)
+	}{
+		{
+			name:   "unique global class",
+			mutate: func(*testing.T) {},
+			assert: func(t *testing.T, _ indexer.Report) {
+				report, err := queries.Impact(ctx, "SessionAssembly", query.ImpactOptions{Kind: graph.KindClass})
+				if err != nil {
+					t.Fatal(err)
+				}
+				constructionEdges := 0
+				for _, edge := range report.Upstream.Edges {
+					if edge.Kind == graph.EdgeCalls && edge.Properties["form"] == "construction" {
+						constructionEdges++
+					}
+				}
+				if report.Upstream.Truncated || constructionEdges != 5 {
+					t.Fatalf("construction edges = %d, truncated %t; want 5 complete: %#v",
+						constructionEdges, report.Upstream.Truncated, report.Upstream)
+				}
+				targets := constructionTargets(t)
+				if len(targets) != 1 || targets[0].External || targets[0].QualifiedName != "SessionAssembly" {
+					t.Fatalf("unique construction target = %#v", targets)
+				}
+			},
+		},
+		{
+			name: "duplicate global class is ambiguous",
+			mutate: func(t *testing.T) {
+				write(t, filepath.Join(root, "duplicate_session_assembly.gd"), `class_name SessionAssembly
+extends RefCounted
+`)
+			},
+			assert: func(t *testing.T, _ indexer.Report) {
+				impact, err := queries.Impact(ctx, "SessionAssembly", query.ImpactOptions{Kind: graph.KindClass})
+				var ambiguous *query.AmbiguousError
+				if !errors.As(err, &ambiguous) || ambiguous.Total != 2 {
+					t.Fatalf("duplicate class impact = %#v, error %v; want two-candidate ambiguity", impact, err)
+				}
+				targets := constructionTargets(t)
+				if len(targets) != 1 || !targets[0].External || targets[0].QualifiedName != "SessionAssembly" {
+					t.Fatalf("ambiguous construction target = %#v; want explicit unresolved boundary", targets)
+				}
+			},
+		},
+		{
+			name: "malformed declaration is unresolved",
+			mutate: func(t *testing.T) {
+				if err := os.Remove(filepath.Join(root, "duplicate_session_assembly.gd")); err != nil {
+					t.Fatal(err)
+				}
+				write(t, filepath.Join(root, "session_assembly.gd"), "class_name SessionAssembly\nfunc broken(\n")
+			},
+			assert: func(t *testing.T, indexReport indexer.Report) {
+				impact, err := queries.Impact(ctx, "SessionAssembly", query.ImpactOptions{Kind: graph.KindClass})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !impact.Root.External || impact.Root.QualifiedName != "SessionAssembly" {
+					t.Fatalf("malformed class impact root = %#v; want explicit unresolved boundary", impact.Root)
+				}
+				constructionEdges := 0
+				for _, edge := range impact.Upstream.Edges {
+					if edge.Kind == graph.EdgeCalls && edge.Properties["form"] == "construction" {
+						constructionEdges++
+					}
+				}
+				if impact.Upstream.Truncated || constructionEdges != 5 {
+					t.Fatalf("malformed construction edges = %d, truncated %t; want 5 complete",
+						constructionEdges, impact.Upstream.Truncated)
+				}
+				diagnosed := false
+				for _, diagnostic := range indexReport.Diagnostics {
+					diagnosed = diagnosed || diagnostic.Path == "session_assembly.gd" &&
+						diagnostic.Level == "error" && strings.Contains(diagnostic.Message, "parse GDScript")
+				}
+				if !diagnosed {
+					t.Fatalf("malformed declaration was not diagnosed: %#v", indexReport.Diagnostics)
+				}
+				targets := constructionTargets(t)
+				if len(targets) != 1 || !targets[0].External || targets[0].QualifiedName != "SessionAssembly" {
+					t.Fatalf("malformed construction target = %#v; want explicit unresolved boundary", targets)
+				}
+			},
+		},
+	}
+
+	for _, phase := range phases {
+		t.Run(phase.name, func(t *testing.T) {
+			phase.mutate(t)
+			indexReport, err := service.Run(ctx, project, indexer.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			phase.assert(t, indexReport)
+		})
 	}
 }
 
