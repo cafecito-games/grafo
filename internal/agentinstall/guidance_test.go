@@ -670,8 +670,10 @@ func TestHooksAreOptInAndAdvisory(t *testing.T) {
 			t.Errorf("settings are missing the %s hook: %s", phase.phase, settings)
 		}
 	}
-	if !strings.Contains(settings, hookEvent) {
-		t.Errorf("settings do not use the documented %s event: %s", hookEvent, settings)
+	for _, event := range []string{preToolUseEvent, sessionEndEvent} {
+		if !strings.Contains(settings, event) {
+			t.Errorf("settings do not use the documented %s event: %s", event, settings)
+		}
 	}
 }
 
@@ -698,9 +700,9 @@ func TestHooksPreserveForeignEntriesAndRefreshOwnEntries(t *testing.T) {
 	if _, err := Install(context.Background(), environment, grafoPath, options); err != nil {
 		t.Fatal(err)
 	}
-	entries := hookEntries(t, environment.files[claudeSettings])
-	if len(entries) != 1+len(hookPhases) {
-		t.Fatalf("PreToolUse entries = %d, want %d", len(entries), 1+len(hookPhases))
+	entries := hookEntries(t, environment.files[claudeSettings], preToolUseEvent)
+	if len(entries) != 1+advisoryPhases {
+		t.Fatalf("PreToolUse entries = %d, want %d", len(entries), 1+advisoryPhases)
 	}
 	if entries[0].Matcher != "Bash" || entries[0].Hooks[0].Command != "/usr/local/bin/audit" {
 		t.Fatalf("foreign hook entry changed: %#v", entries[0])
@@ -729,8 +731,8 @@ func TestHooksPreserveForeignEntriesAndRefreshOwnEntries(t *testing.T) {
 	if got := findAction(t, actions, "claude", KindHooks); got.Change != changeUpdated {
 		t.Fatalf("moved-binary hooks action = %#v", got)
 	}
-	entries = hookEntries(t, environment.files[claudeSettings])
-	if len(entries) != 1+len(hookPhases) {
+	entries = hookEntries(t, environment.files[claudeSettings], preToolUseEvent)
+	if len(entries) != 1+advisoryPhases {
 		t.Fatalf("refresh duplicated entries: %#v", entries)
 	}
 	for _, entry := range entries[1:] {
@@ -743,7 +745,7 @@ func TestHooksPreserveForeignEntriesAndRefreshOwnEntries(t *testing.T) {
 	if _, err = Uninstall(context.Background(), environment, Options{Targets: []string{"claude"}}); err != nil {
 		t.Fatal(err)
 	}
-	entries = hookEntries(t, environment.files[claudeSettings])
+	entries = hookEntries(t, environment.files[claudeSettings], preToolUseEvent)
 	if len(entries) != 1 || entries[0].Matcher != "Bash" {
 		t.Fatalf("PreToolUse entries after uninstall = %#v", entries)
 	}
@@ -762,7 +764,11 @@ func TestHooksRefuseMalformedSettings(t *testing.T) {
 	}
 }
 
-func hookEntries(t *testing.T, settings string) []hookEntry {
+// advisoryPhases is how many phases install under PreToolUse, which is what an
+// existing settings file's entry count is measured against.
+const advisoryPhases = 2
+
+func hookEntries(t *testing.T, settings, event string) []hookEntry {
 	t.Helper()
 	var document struct {
 		Hooks map[string][]hookEntry `json:"hooks"`
@@ -770,11 +776,11 @@ func hookEntries(t *testing.T, settings string) []hookEntry {
 	if err := json.Unmarshal([]byte(settings), &document); err != nil {
 		t.Fatalf("parse settings: %v", err)
 	}
-	return document.Hooks[hookEvent]
+	return document.Hooks[event]
 }
 
 func TestHookEntryOwnershipIsExact(t *testing.T) {
-	owned := []hookPair{{matcher: "Grep|Glob", command: "/opt/bin/grafo guidance --hook pre-search"}}
+	owned := []hookPair{{event: preToolUseEvent, matcher: "Grep|Glob", command: "/opt/bin/grafo guidance --hook pre-search"}}
 	cases := map[string]bool{
 		`{"matcher":"Grep|Glob","hooks":[{"type":"command","command":"/opt/bin/grafo guidance --hook pre-search"}]}`:                                                     true,
 		`{"hooks":[{"command":"/opt/bin/grafo guidance --hook pre-search","type":"command"}],"matcher":"Grep|Glob"}`:                                                     true,
@@ -786,8 +792,15 @@ func TestHookEntryOwnershipIsExact(t *testing.T) {
 		`{"matcher":"Grep|Glob","hooks":[{"type":"prompt","command":"/opt/bin/grafo guidance --hook pre-search"}]}`:                                                      false,
 		`not json`: false,
 	}
+	// The same entry under another event is not Grafo's: a phase's entry is
+	// claimed only in the event it is installed under.
+	for entry := range cases {
+		if hookEntryIsExactly(sessionEndEvent, json.RawMessage(entry), owned) {
+			t.Errorf("hookEntryIsExactly claimed %s out of its own event", entry)
+		}
+	}
 	for entry, want := range cases {
-		if got := hookEntryIsExactly(json.RawMessage(entry), owned); got != want {
+		if got := hookEntryIsExactly(preToolUseEvent, json.RawMessage(entry), owned); got != want {
 			t.Errorf("hookEntryIsExactly(%s) = %v, want %v", entry, got, want)
 		}
 	}
@@ -989,9 +1002,9 @@ func TestHooksRefuseToClaimLookalikeEntries(t *testing.T) {
 	if _, err := Install(context.Background(), environment, grafoPath, options); err != nil {
 		t.Fatal(err)
 	}
-	entries := hookEntries(t, environment.files[claudeSettings])
-	if len(entries) != 2+len(hookPhases) {
-		t.Fatalf("PreToolUse entries = %d, want %d: %s", len(entries), 2+len(hookPhases), environment.files[claudeSettings])
+	entries := hookEntries(t, environment.files[claudeSettings], preToolUseEvent)
+	if len(entries) != 2+advisoryPhases {
+		t.Fatalf("PreToolUse entries = %d, want %d: %s", len(entries), 2+advisoryPhases, environment.files[claudeSettings])
 	}
 	if !strings.Contains(entries[0].Hooks[0].Command, "exfiltrate") {
 		t.Errorf("a lookalike entry was claimed and rewritten: %#v", entries[0])
@@ -1003,7 +1016,7 @@ func TestHooksRefuseToClaimLookalikeEntries(t *testing.T) {
 	if _, err := Uninstall(context.Background(), environment, Options{Targets: []string{"claude"}}); err != nil {
 		t.Fatal(err)
 	}
-	entries = hookEntries(t, environment.files[claudeSettings])
+	entries = hookEntries(t, environment.files[claudeSettings], preToolUseEvent)
 	if len(entries) != 2 {
 		t.Fatalf("uninstall left %d entries, want the 2 user entries: %s", len(entries), environment.files[claudeSettings])
 	}
@@ -1071,7 +1084,11 @@ func TestHookCommandQuotesPathsWithSpaces(t *testing.T) {
 		{"windows", `C:\Program Files\grafo.exe`, `"C:\Program Files\grafo.exe" guidance --hook pre-edit`},
 	}
 	for _, test := range cases {
-		if got := hookCommandFor(test.goos, test.executable, "pre-edit"); got != test.want {
+		phase, ok := phaseNamed("pre-edit")
+		if !ok {
+			t.Fatal("the pre-edit phase is no longer registered")
+		}
+		if got := hookCommandFor(test.goos, test.executable, phase); got != test.want {
 			t.Errorf("hookCommandFor(%q, %q) = %q, want %q", test.goos, test.executable, got, test.want)
 		}
 	}
@@ -1084,8 +1101,8 @@ func TestHooksInstallQuotedExecutablePath(t *testing.T) {
 	if _, err := Install(context.Background(), environment, spaced, options); err != nil {
 		t.Fatal(err)
 	}
-	entries := hookEntries(t, environment.files[claudeSettings])
-	if len(entries) != len(hookPhases) {
+	entries := hookEntries(t, environment.files[claudeSettings], preToolUseEvent)
+	if len(entries) != advisoryPhases {
 		t.Fatalf("PreToolUse entries = %#v", entries)
 	}
 	for _, entry := range entries {
@@ -1169,8 +1186,8 @@ func TestHookReceiptDoesNotAuthorizeADifferentSettingsFile(t *testing.T) {
 		if got := findAction(t, actions, "claude", KindHooks); got.Change != changeInstalled {
 			t.Fatalf("hooks action = %#v", got)
 		}
-		entries := hookEntries(t, environment.files[claudeSettings])
-		if len(entries) != 1+len(hookPhases) {
+		entries := hookEntries(t, environment.files[claudeSettings], preToolUseEvent)
+		if len(entries) != 1+advisoryPhases {
 			t.Fatalf("PreToolUse entries = %#v", entries)
 		}
 		if entries[0].Hooks[0].Command != staleCommands[0] {
@@ -1313,5 +1330,175 @@ func TestHooksRefuseUnquotableWindowsPath(t *testing.T) {
 	// The safe artifacts are still installed.
 	if got := findAction(t, actions, "claude", KindSkill); got.Change != changeInstalled {
 		t.Fatalf("skill action = %#v", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Session-end reaper hook
+// ---------------------------------------------------------------------------
+
+// The reaper hook is installed under its own event, because a server orphaned
+// by a dead client is cleaned up when a session ends rather than before a tool
+// call. It carries no matcher: the event has nothing to match on.
+func TestHooksInstallTheSessionEndReaper(t *testing.T) {
+	environment := guidanceEnvironment()
+	options := Options{Targets: []string{"claude"}, Hooks: true}
+	if _, err := Install(context.Background(), environment, grafoPath, options); err != nil {
+		t.Fatal(err)
+	}
+	entries := hookEntries(t, environment.files[claudeSettings], sessionEndEvent)
+	if len(entries) != 1 {
+		t.Fatalf("%s entries = %#v", sessionEndEvent, entries)
+	}
+	if entries[0].Matcher != "" {
+		t.Errorf("the session-end hook carries a matcher: %#v", entries[0])
+	}
+	if got, want := entries[0].Hooks[0].Command, grafoPath+" reap --hook session-end"; got != want {
+		t.Errorf("session-end command = %q, want %q", got, want)
+	}
+	if entries := hookEntries(t, environment.files[claudeSettings], preToolUseEvent); len(entries) != 2 {
+		t.Errorf("%s entries = %#v, want the two advisory phases", preToolUseEvent, entries)
+	}
+}
+
+// Settings written before the reaper existed hold only the two advisory
+// phases, and their receipt records only two commands. Installing over them
+// must add the reaper and refresh, rather than duplicate, what is already
+// there.
+func TestHooksAddTheReaperToSettingsThatPredateIt(t *testing.T) {
+	environment := guidanceEnvironment()
+	environment.files[claudeSettings] = `{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "` + grafoPath + ` guidance --hook pre-search"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "` + grafoPath + ` guidance --hook pre-edit"
+          }
+        ]
+      }
+    ]
+  }
+}
+`
+	ledger, err := json.Marshal(receiptFile{Format: receiptFormat, Receipts: []Receipt{{
+		Client: "claude", Kind: KindHooks, Target: claudeSettings,
+		Commands: []string{
+			grafoPath + " guidance --hook pre-search",
+			grafoPath + " guidance --hook pre-edit",
+		},
+		Grafo: "0.0.1", Updated: "2020-01-01T00:00:00Z",
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment.files[receiptLedger] = string(ledger)
+
+	actions, err := Install(context.Background(), environment, grafoPath,
+		Options{Targets: []string{"claude"}, Hooks: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := findAction(t, actions, "claude", KindHooks); got.Change != changeUpdated {
+		t.Fatalf("upgrade hooks action = %#v", got)
+	}
+	if entries := hookEntries(t, environment.files[claudeSettings], preToolUseEvent); len(entries) != 2 {
+		t.Fatalf("the upgrade duplicated advisory entries: %#v", entries)
+	}
+	if entries := hookEntries(t, environment.files[claudeSettings], sessionEndEvent); len(entries) != 1 {
+		t.Fatalf("the upgrade did not add the reaper: %#v", entries)
+	}
+}
+
+// Uninstall removes Grafo's entries from every event it installs under and
+// leaves a user's own session-end hook alone.
+func TestHooksUninstallEveryEventAndKeepForeignSessionEndEntries(t *testing.T) {
+	environment := guidanceEnvironment()
+	environment.files[claudeSettings] = `{
+  "hooks": {
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/notify"
+          }
+        ]
+      }
+    ]
+  }
+}
+`
+	options := Options{Targets: []string{"claude"}, Hooks: true}
+	if _, err := Install(context.Background(), environment, grafoPath, options); err != nil {
+		t.Fatal(err)
+	}
+	if entries := hookEntries(t, environment.files[claudeSettings], sessionEndEvent); len(entries) != 2 {
+		t.Fatalf("%s entries = %#v", sessionEndEvent, entries)
+	}
+
+	if _, err := Uninstall(context.Background(), environment, Options{Targets: []string{"claude"}}); err != nil {
+		t.Fatal(err)
+	}
+	entries := hookEntries(t, environment.files[claudeSettings], sessionEndEvent)
+	if len(entries) != 1 || entries[0].Hooks[0].Command != "/usr/local/bin/notify" {
+		t.Fatalf("uninstall did not leave exactly the user's own hook: %#v", entries)
+	}
+	if entries := hookEntries(t, environment.files[claudeSettings], preToolUseEvent); len(entries) != 0 {
+		t.Fatalf("uninstall left advisory entries behind: %#v", entries)
+	}
+}
+
+// An unprovable cleanup must be reported for the reaper command too, so a hook
+// Grafo cannot claim is never silently left in place without a word.
+func TestHooksReportAnUnprovableReaperEntry(t *testing.T) {
+	environment := guidanceEnvironment()
+	environment.files[claudeSettings] = `{
+  "hooks": {
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/bin/grafo reap --hook session-end"
+          }
+        ]
+      }
+    ]
+  }
+}
+`
+	actions, err := Uninstall(context.Background(), environment, Options{Targets: []string{"claude"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hooks := findAction(t, actions, "claude", KindHooks)
+	if hooks.Change != changeSkipped || !strings.Contains(hooks.Detail, "cannot prove") {
+		t.Fatalf("hooks action = %#v", hooks)
+	}
+}
+
+// Every phase renders a command a shell can run, including the reaper's.
+func TestHookCommandsNameTheirSubcommand(t *testing.T) {
+	cases := map[string]string{
+		"pre-search":  "/opt/bin/grafo guidance --hook pre-search",
+		"pre-edit":    "/opt/bin/grafo guidance --hook pre-edit",
+		"session-end": "/opt/bin/grafo reap --hook session-end",
+	}
+	for phase, want := range cases {
+		if got := HookCommand("linux", "/opt/bin/grafo", phase); got != want {
+			t.Errorf("HookCommand(%q) = %q, want %q", phase, got, want)
+		}
 	}
 }

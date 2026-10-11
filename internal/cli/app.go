@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/cafecito-games/grafo/internal/agentguide"
@@ -21,6 +22,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/indexer"
 	branchindexes "github.com/cafecito-games/grafo/internal/indexes"
 	"github.com/cafecito-games/grafo/internal/indexseed"
+	"github.com/cafecito-games/grafo/internal/mcpreap"
 	"github.com/cafecito-games/grafo/internal/mcpserver"
 	parserdefaults "github.com/cafecito-games/grafo/internal/parser/defaults"
 	"github.com/cafecito-games/grafo/internal/profiling"
@@ -822,6 +824,26 @@ func (a *App) mcp(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
+	// A server whose client died without closing the stdin pipe can never be
+	// reached again, yet it holds an index open for a tree that may be gone. So
+	// this server watches for its own client disappearing that way, and then
+	// cleans up the servers earlier clients left behind. See issue #248.
+	//
+	// The guard goes first because it works by comparing the current parent
+	// process with the one captured when it starts: whatever happens before
+	// that capture is invisible to it. A client that dies in the window is
+	// left to the next server's startup scan, which recognizes an orphan by
+	// its parent alone.
+	var guardStopped atomic.Bool
+	ctx, stopGuard := mcpreap.Guard(ctx, mcpreap.GuardOptions{
+		Roots: roots,
+		Report: func(reason string) {
+			guardStopped.Store(true)
+			a.errorf("grafo mcp: %s; shutting down\n", reason)
+		},
+	})
+	defer stopGuard()
+	a.reapOrphanedServers()
 	// The handshake must not wait on an index refresh: a stale index would
 	// otherwise hold `initialize` past the client's connect timeout and the
 	// whole server would be reported as failed. Service.ready acquires and
@@ -868,7 +890,19 @@ func (a *App) mcp(ctx context.Context, args parsedArguments) error {
 			return semanticService.SearchWith(searchContext, request)
 		}
 	})
-	return service.Run(ctx, Version)
+	return mcpShutdownError(service.Run(ctx, Version), guardStopped.Load())
+}
+
+// mcpShutdownError reports the error `grafo mcp` exits with. A server the guard
+// stopped did exactly what it decided to do, and its reason is already on
+// stderr, so the cancellation that carried out the decision is not reported as
+// a failure: a client still alive would otherwise read a deliberate shutdown as
+// its server crashing.
+func mcpShutdownError(err error, guardStopped bool) error {
+	if guardStopped && errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
 }
 
 func mcpRoots(args parsedArguments) ([]string, error) {
@@ -2947,6 +2981,7 @@ Usage:
   grafo doctor [--repair] [--json]
   grafo status [path] [--repos pathA,pathB] [--json] [--progress auto|human|json|off]
   grafo mcp [--repo path | --repos pathA,pathB] [--model embeddinggemma]
+  grafo reap [--dry-run]
   grafo embed [path] [--model embeddinggemma] [--ollama-url http://localhost:11434] [--force]
   grafo embed-cache status [--json]
   grafo embed-cache prune [--model name] [--older-than duration] [--max-bytes n] [--dry-run] [--yes] [--json]
@@ -3027,9 +3062,18 @@ reports every file and command a real run would touch. 'grafo install' also inst
 Grafo's agent guidance as an isolated skill file or a delimited managed block and
 reports every target before mutating anything; '--mcp-only' registers the server
 alone, '--refresh' updates only artifacts that already exist, and '--hooks' opts
-in to advisory pre-search and pre-edit hooks for clients that document a safe
-hook API. 'grafo uninstall' removes only Grafo's own registration, skill, managed
-block, and hooks, and leaves anything whose ownership it cannot prove.
+in to advisory pre-search and pre-edit hooks, plus a session-end hook that stops
+orphaned MCP servers, for clients that document a safe hook API. 'grafo uninstall'
+removes only Grafo's own registration, skill, managed block, and hooks, and leaves
+anything whose ownership it cannot prove.
+
+'grafo mcp' serves the graph over stdio and ends when its client does. A client
+killed without closing the server's stdin pipe leaves a server nothing can reach,
+so the server also exits once its parent process is gone or every repository root
+it serves has been removed, and stops the servers earlier clients left behind
+before it starts serving. 'grafo reap' performs that cleanup on demand and
+'--dry-run' only reports what it would signal; selection needs proof that a
+server has no client left, never process age or count.
 
 'grafo service' keeps every registered repository root indexed without a
 foreground terminal: 'add'/'remove'/'list' own the user-level registry of watched
