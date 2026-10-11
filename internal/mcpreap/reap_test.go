@@ -19,6 +19,7 @@ type fakeProcess struct {
 	workingDir string
 	// rawCommand replaces the NUL-separated argv when a test needs a malformed
 	// cmdline, and unreadable marks an entry whose files deny access.
+	startTime   int64
 	rawCommand  string
 	malformed   bool
 	unreadable  bool
@@ -77,6 +78,13 @@ func (f fakeProcFS) ReadFile(name string) ([]byte, error) {
 			return nil, fs.ErrNotExist
 		}
 		return []byte("Name:\tgrafo\nState:\tS (sleeping)\nPPid:\t" + strconv.Itoa(process.parent) + "\nThreads:\t18\n"), nil
+	case "stat":
+		if process.missingStat {
+			return nil, fs.ErrNotExist
+		}
+		return []byte(strconv.Itoa(process.pid) + " (grafo) S " + strconv.Itoa(process.parent) +
+			" 100 100 0 -1 0 0 0 0 0 0 0 0 0 20 0 18 0 " +
+			strconv.FormatInt(process.startTime, 10) + " 0 0\n"), nil
 	}
 	return nil, fs.ErrNotExist
 }
@@ -403,5 +411,71 @@ func TestReapIgnoresNonProcessEntries(t *testing.T) {
 	}
 	if len(results) != 0 {
 		t.Fatalf("expected no selections, got %+v", results)
+	}
+}
+
+// A pid that is reused between selection and the signal must not be signalled,
+// even when the process that inherited it looks identical. The command line
+// alone cannot tell two servers apart, so identity includes the start time the
+// kernel records, which a later process cannot share.
+func TestReapSkipsAReusedProcessIdentifier(t *testing.T) {
+	processes := []fakeProcess{
+		{pid: 100, arguments: []string{"/bin/grafo", "mcp"}, parent: 1, workingDir: "/repo", startTime: 900},
+	}
+	restarting := &restartedProcFS{ProcFS: fakeProcFS{processes: processes}, restartAt: 1, startTime: 9000}
+	var signalled []int
+	scanner := Scanner{
+		Proc:   restarting,
+		Self:   1,
+		Exists: func(string) bool { return true },
+		Signal: func(pid int) error { signalled = append(signalled, pid); return nil },
+	}
+
+	results, err := scanner.Reap(false)
+	if err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+	if len(signalled) != 0 {
+		t.Fatalf("signalled a reused pid: %v", signalled)
+	}
+	if len(results) != 1 || results[0].Signalled || results[0].Err == nil {
+		t.Fatalf("expected the reused pid reported unsignalled with a reason, got %+v", results)
+	}
+}
+
+// restartedProcFS answers the first status read with the selected process and
+// every later one with a different start time, which is what a reused pid looks
+// like.
+type restartedProcFS struct {
+	ProcFS
+	reads     int
+	restartAt int
+	startTime int64
+}
+
+func (r *restartedProcFS) ReadFile(name string) ([]byte, error) {
+	if strings.HasSuffix(name, "/stat") {
+		r.reads++
+		if r.reads > r.restartAt {
+			return []byte("100 (grafo) S 1 100 100 0 -1 0 0 0 0 0 0 0 0 0 20 0 18 0 " +
+				strconv.FormatInt(r.startTime, 10) + " 0 0\n"), nil
+		}
+	}
+	return r.ProcFS.ReadFile(name)
+}
+
+// A command name containing spaces and parentheses must not derail start-time
+// parsing, which is why the field is read after the last closing parenthesis.
+func TestProcessStartTimeSurvivesAnAwkwardCommandName(t *testing.T) {
+	stat := []byte("100 ((my grafo) build) S 1 100 100 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 18 0 " +
+		"4242 0 0\n")
+	if got, ok := parseStartTime(stat); !ok || got != 4242 {
+		t.Fatalf("parseStartTime = %d, %v, want 4242, true", got, ok)
+	}
+	if _, ok := parseStartTime([]byte("100 (grafo) S 1")); ok {
+		t.Fatal("a truncated stat line was parsed as a start time")
+	}
+	if _, ok := parseStartTime([]byte("nothing useful")); ok {
+		t.Fatal("a malformed stat line was parsed as a start time")
 	}
 }

@@ -2,9 +2,15 @@ package mcpreap
 
 import (
 	"context"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/cafecito-games/grafo/internal/testtemp"
 )
 
 // waitForCancel reports whether a context was cancelled before the test's
@@ -170,4 +176,34 @@ func TestGuardStopEndsTheWatchdog(t *testing.T) {
 	// Stop is idempotent: the deferred stop in a caller must be harmless after
 	// an explicit one.
 	stop()
+}
+
+// Only the filesystem saying a root is not there proves it was removed. A stat
+// that fails for any other reason — a permission denial, an I/O error, a mount
+// that is briefly unavailable — says nothing about whether the root exists, and
+// must never shut down a server whose client is still waiting on it.
+func TestRootPresenceTreatsOnlyNonexistenceAsRemoval(t *testing.T) {
+	root := testtemp.Dir(t)
+	unreadable := filepath.Join(root, "parent")
+	nested := filepath.Join(unreadable, "repo")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(unreadable, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o755) })
+	if _, err := os.Stat(nested); err == nil || errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("this filesystem does not deny the stat the test needs: %v", err)
+	}
+
+	if !rootPresent(nested) {
+		t.Error("a root whose stat was denied was reported as removed")
+	}
+	if !rootPresent(root) {
+		t.Error("a root that plainly exists was reported as removed")
+	}
+	if rootPresent(filepath.Join(root, "never-existed")) {
+		t.Error("a root that does not exist was reported as present")
+	}
 }

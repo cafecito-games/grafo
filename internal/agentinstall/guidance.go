@@ -674,7 +674,7 @@ func (h claudeHooks) planInstall(reader Reader, display, path, executable string
 	updated := make(map[string][]json.RawMessage, len(hookEvents))
 	current, unchanged := 0, true
 	for _, event := range hookEvents {
-		kept, mine := partitionHookEntries(entries[event], owned)
+		kept, mine := partitionHookEntries(event, entries[event], owned)
 		current += len(mine)
 		if len(mine) != len(desired[event]) || !sameRawMessages(mine, desired[event]) {
 			unchanged = false
@@ -730,7 +730,7 @@ func (h claudeHooks) planUninstall(reader Reader, display, path string, own owne
 	remaining := make(map[string][]json.RawMessage, len(hookEvents))
 	claimed := 0
 	for _, event := range hookEvents {
-		kept, mine := partitionHookEntries(entries[event], owned)
+		kept, mine := partitionHookEntries(event, entries[event], owned)
 		claimed += len(mine)
 		remaining[event] = kept
 	}
@@ -777,17 +777,19 @@ func ownedHookPairs(current, recorded []string) []hookPair {
 	for _, commands := range [][]string{current, recorded} {
 		for index, phase := range hookPhases {
 			if index < len(commands) && commands[index] != "" {
-				pairs = append(pairs, hookPair{matcher: phase.matcher, command: commands[index]})
+				pairs = append(pairs, hookPair{event: phase.event, matcher: phase.matcher, command: commands[index]})
 			}
 		}
 	}
 	return pairs
 }
 
-// hookPair is one exact matcher-and-command pair Grafo may claim. A receipt
-// records commands in phase order, so an older receipt that predates a later
-// phase still maps to the phases it was written for.
+// hookPair is one exact event, matcher, and command triple Grafo may claim. The
+// event is part of it so a phase's entry is never claimed out of the event it
+// belongs to. A receipt records commands in phase order, so an older receipt
+// that predates a later phase still maps to the phases it was written for.
 type hookPair struct {
+	event   string
 	matcher string
 	command string
 }
@@ -862,9 +864,9 @@ func (h claudeHooks) render(path string, document, container *jsonObject, indent
 
 // partitionHookEntries splits one event's existing array into the user's own
 // entries, preserved byte-for-byte, and the entries Grafo can prove are its own.
-func partitionHookEntries(entries []json.RawMessage, owned []hookPair) (kept, mine []json.RawMessage) {
+func partitionHookEntries(event string, entries []json.RawMessage, owned []hookPair) (kept, mine []json.RawMessage) {
 	for _, entry := range entries {
-		if hookEntryIsExactly(entry, owned) {
+		if hookEntryIsExactly(event, entry, owned) {
 			mine = append(mine, entry)
 			continue
 		}
@@ -876,7 +878,7 @@ func partitionHookEntries(entries []json.RawMessage, owned []hookPair) (kept, mi
 // hookEntryIsExactly reports whether an entry is exactly one of Grafo's own
 // entries: one command hook, the exact matcher, the exact command line, and no
 // extra fields anywhere that would belong to the user rather than to Grafo.
-func hookEntryIsExactly(entry json.RawMessage, owned []hookPair) bool {
+func hookEntryIsExactly(event string, entry json.RawMessage, owned []hookPair) bool {
 	fields, err := decodeJSONObject(entry)
 	if err != nil {
 		return false
@@ -909,7 +911,7 @@ func hookEntryIsExactly(entry json.RawMessage, owned []hookPair) bool {
 		}
 	}
 	for _, pair := range owned {
-		if decoded.Matcher == pair.matcher && decoded.Hooks[0].Command == pair.command {
+		if pair.event == event && decoded.Matcher == pair.matcher && decoded.Hooks[0].Command == pair.command {
 			return true
 		}
 	}

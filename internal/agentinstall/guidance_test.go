@@ -780,7 +780,7 @@ func hookEntries(t *testing.T, settings, event string) []hookEntry {
 }
 
 func TestHookEntryOwnershipIsExact(t *testing.T) {
-	owned := []hookPair{{matcher: "Grep|Glob", command: "/opt/bin/grafo guidance --hook pre-search"}}
+	owned := []hookPair{{event: preToolUseEvent, matcher: "Grep|Glob", command: "/opt/bin/grafo guidance --hook pre-search"}}
 	cases := map[string]bool{
 		`{"matcher":"Grep|Glob","hooks":[{"type":"command","command":"/opt/bin/grafo guidance --hook pre-search"}]}`:                                                     true,
 		`{"hooks":[{"command":"/opt/bin/grafo guidance --hook pre-search","type":"command"}],"matcher":"Grep|Glob"}`:                                                     true,
@@ -792,8 +792,15 @@ func TestHookEntryOwnershipIsExact(t *testing.T) {
 		`{"matcher":"Grep|Glob","hooks":[{"type":"prompt","command":"/opt/bin/grafo guidance --hook pre-search"}]}`:                                                      false,
 		`not json`: false,
 	}
+	// The same entry under another event is not Grafo's: a phase's entry is
+	// claimed only in the event it is installed under.
+	for entry := range cases {
+		if hookEntryIsExactly(sessionEndEvent, json.RawMessage(entry), owned) {
+			t.Errorf("hookEntryIsExactly claimed %s out of its own event", entry)
+		}
+	}
 	for entry, want := range cases {
-		if got := hookEntryIsExactly(json.RawMessage(entry), owned); got != want {
+		if got := hookEntryIsExactly(preToolUseEvent, json.RawMessage(entry), owned); got != want {
 			t.Errorf("hookEntryIsExactly(%s) = %v, want %v", entry, got, want)
 		}
 	}

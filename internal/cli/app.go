@@ -825,10 +825,15 @@ func (a *App) mcp(ctx context.Context, args parsedArguments) error {
 		return err
 	}
 	// A server whose client died without closing the stdin pipe can never be
-	// reached again, yet it holds an index open for a tree that may be gone.
-	// Clean up the ones earlier clients left behind, then watch for this
-	// server's own client disappearing the same way. See issue #248.
-	a.reapOrphanedServers()
+	// reached again, yet it holds an index open for a tree that may be gone. So
+	// this server watches for its own client disappearing that way, and then
+	// cleans up the servers earlier clients left behind. See issue #248.
+	//
+	// The guard goes first because it works by comparing the current parent
+	// process with the one captured when it starts: whatever happens before
+	// that capture is invisible to it. A client that dies in the window is
+	// left to the next server's startup scan, which recognizes an orphan by
+	// its parent alone.
 	var guardStopped atomic.Bool
 	ctx, stopGuard := mcpreap.Guard(ctx, mcpreap.GuardOptions{
 		Roots: roots,
@@ -838,6 +843,7 @@ func (a *App) mcp(ctx context.Context, args parsedArguments) error {
 		},
 	})
 	defer stopGuard()
+	a.reapOrphanedServers()
 	// The handshake must not wait on an index refresh: a stale index would
 	// otherwise hold `initialize` past the client's connect timeout and the
 	// whole server would be reported as failed. Service.ready acquires and

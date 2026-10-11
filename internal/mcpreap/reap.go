@@ -64,7 +64,8 @@ type Scanner struct {
 	Proc ProcFS
 	// Self is the calling process, which is never a candidate.
 	Self int
-	// Exists reports whether a repository root is still present.
+	// Exists reports whether a repository root is still present. Only an
+	// answer that it is not counts as removal; see rootPresent.
 	Exists func(string) bool
 	// Signal asks one process to shut down.
 	Signal func(pid int) error
@@ -74,11 +75,8 @@ type Scanner struct {
 // it reports ErrUnsupported from Reap rather than silently finding nothing.
 func NewScanner() Scanner {
 	scanner := Scanner{
-		Self: os.Getpid(),
-		Exists: func(root string) bool {
-			_, err := os.Stat(root)
-			return err == nil
-		},
+		Self:   os.Getpid(),
+		Exists: rootPresent,
 		// SIGTERM and nothing more. A server that ignores it is a separate bug,
 		// and escalating to SIGKILL would make this the one part of the cleanup
 		// capable of interrupting a write.
@@ -132,7 +130,8 @@ func (s Scanner) Reap(dryRun bool) ([]Result, error) {
 		}
 		result := Result{PID: pid, Arguments: arguments, Reason: reason}
 		if !dryRun {
-			result.Signalled, result.Err = s.signal(pid, arguments)
+			started, _ := s.startTimeOf(pid)
+			result.Signalled, result.Err = s.signal(pid, arguments, started)
 		}
 		results = append(results, result)
 	}
@@ -226,6 +225,43 @@ func (s Scanner) parentOf(pid int) (int, bool) {
 	return 0, false
 }
 
+// startTimeOf reports when the kernel started one process, in clock ticks since
+// boot, which together with the pid identifies a process across its lifetime.
+func (s Scanner) startTimeOf(pid int) (int64, bool) {
+	raw, err := s.Proc.ReadFile(strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return 0, false
+	}
+	return parseStartTime(raw)
+}
+
+// startTimeField is the one-based position of starttime in a procfs stat line,
+// counting the fields that follow the command name.
+const startTimeField = 20
+
+// parseStartTime reads the start time out of a procfs stat line.
+//
+// The fields are read after the last closing parenthesis, because the command
+// name is the second field, is parenthesized, and may itself contain spaces and
+// parentheses: splitting the whole line on spaces would shift every field after
+// a name like "(my grafo) build".
+func parseStartTime(raw []byte) (int64, bool) {
+	line := string(raw)
+	end := strings.LastIndex(line, ")")
+	if end < 0 {
+		return 0, false
+	}
+	fields := strings.Fields(line[end+1:])
+	if len(fields) < startTimeField {
+		return 0, false
+	}
+	started, err := strconv.ParseInt(fields[startTimeField-1], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return started, true
+}
+
 // deletedSuffix is what the kernel appends to a working directory link whose
 // target has been unlinked.
 const deletedSuffix = " (deleted)"
@@ -283,11 +319,20 @@ func rootsFrom(arguments []string, workingDirectory string) []string {
 }
 
 // signal asks one selected server to stop, after confirming it is still the
-// process that was selected. The second read closes the window in which a pid
-// is reused by something else between selection and the signal.
-func (s Scanner) signal(pid int, arguments []string) (bool, error) {
+// process that was selected.
+//
+// A pid identifies a process only while that process lives. One that exits
+// between selection and the signal frees its number for something else, and a
+// command line cannot tell two servers apart, so identity is the command line
+// together with the start time the kernel recorded: a later process occupying
+// the same number cannot share it. Without that check the cleanup could stop a
+// live server that merely inherited the number of a dead one.
+func (s Scanner) signal(pid int, arguments []string, started int64) (bool, error) {
 	current, ok := s.serverArguments(pid)
 	if !ok || !slices.Equal(current, arguments) {
+		return false, errVanished
+	}
+	if now, known := s.startTimeOf(pid); !known || now != started {
 		return false, errVanished
 	}
 	if err := s.Signal(pid); err != nil {

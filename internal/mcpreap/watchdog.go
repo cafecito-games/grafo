@@ -15,7 +15,9 @@ package mcpreap
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 	"sync"
@@ -38,7 +40,7 @@ type GuardOptions struct {
 	// Parent reports the current parent process id. Defaults to os.Getppid.
 	Parent func() int
 	// RootExists reports whether one root is still present on disk. Defaults to
-	// a stat.
+	// rootPresent.
 	RootExists func(string) bool
 	// Ticks drives the checks. Defaults to a ticker of Interval.
 	Ticks <-chan time.Time
@@ -61,6 +63,15 @@ type GuardOptions struct {
 // closes the freshness coordinator and the index it holds, and that path only
 // runs when the context it was given ends.
 //
+// The parent is captured when the guard starts, so a client that dies before
+// that is invisible to it: such a server is already reparented and its parent
+// never changes again. That residue is left to the next server's startup scan,
+// which recognizes an orphan by its parent alone. The guard deliberately does
+// not read a parent of init at startup the same way, because a server run under
+// a container's init process is a legitimate child of it with a client holding
+// its stdin from outside that namespace, and shutting such a server down would
+// break a working setup to tidy a rare one.
+//
 // Two conditions speak for a dead client. The first is reparenting: a process
 // is reparented only when its original parent dies, so a parent id that differs
 // from the one captured here proves the client is gone. The comparison is
@@ -77,10 +88,7 @@ func Guard(ctx context.Context, options GuardOptions) (context.Context, func()) 
 	}
 	rootExists := options.RootExists
 	if rootExists == nil {
-		rootExists = func(root string) bool {
-			_, err := os.Stat(root)
-			return err == nil
-		}
+		rootExists = rootPresent
 	}
 	guarded, cancel := context.WithCancel(ctx)
 	ticks := options.Ticks
@@ -127,6 +135,18 @@ func Guard(ctx context.Context, options GuardOptions) (context.Context, func()) 
 		})
 		cancel()
 	}
+}
+
+// rootPresent reports whether a repository root is still there, counting only
+// the filesystem's own answer that it is not as proof of removal.
+//
+// Every other failure — a denied stat, an I/O error, a mount that is briefly
+// unavailable — reports nothing about whether the root exists. Reading those as
+// absence would shut down a server, or signal one, whose client is still alive
+// and whose repository never went anywhere.
+func rootPresent(root string) bool {
+	_, err := os.Stat(root)
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 // clientGone names the condition that proves this server has no client left, or
