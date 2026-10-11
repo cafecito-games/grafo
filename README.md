@@ -193,6 +193,15 @@ inputs and return one result or error per input in the caller's order, so one
 bad selector never erases unrelated results. The scalar input fields remain
 supported.
 
+The server ends when its client does. Because a stdio server only sees end of
+input once every holder of its stdin pipe closes it, a client killed after
+forking a helper that inherited the descriptor would otherwise leave a server
+nothing can reach, still holding an index open. So `grafo mcp` also exits once
+its parent process is gone or every repository root it serves has been removed,
+and stops the servers earlier clients left behind before it starts serving.
+`grafo reap` performs that cleanup on demand, and `--dry-run` reports what it
+would signal without signalling anything.
+
 <details>
 <summary><strong>Installed agent guidance</strong> — the playbook, the <code>grafo-setup</code> skill, hooks, and ownership receipts</summary>
 
@@ -229,12 +238,14 @@ After upgrading Grafo, run `grafo install --refresh` to update existing
 Grafo-owned structural and setup skills to the current canonical versions. It
 does not create a missing guidance artifact and never adopts a foreign file.
 
-`--hooks` opts in to advisory `PreToolUse` hooks in Claude Code's documented
-personal settings. They only inject context: `grafo guidance --hook pre-search`
-and `--hook pre-edit` print one advisory line and always exit 0, so a missing or
+`--hooks` opts in to hooks in Claude Code's documented personal settings. The
+`PreToolUse` pair only injects context: `grafo guidance --hook pre-search` and
+`--hook pre-edit` print one advisory line and always exit 0, so a missing or
 broken Grafo can never block a tool call. `grafo guidance` prints the same
 canonical text plus whether the current repository and branch actually have an
-index.
+index. A `SessionEnd` hook runs `grafo reap --hook session-end`, which stops MCP
+servers left behind by clients that died without closing their stdin pipe; it is
+fail-open on the same terms.
 
 Every installed artifact is recorded in a receipt under the Grafo configuration
 directory (`$XDG_CONFIG_HOME/grafo/installed-artifacts.json`) with its target,
@@ -309,6 +320,7 @@ Every CLI query has an MCP equivalent, and every one of them accepts `--json`,
 | `grafo embed`, `grafo embed-cache …` | [optional embeddings for reuse queries](#semantic-candidate-discovery) |
 | `grafo install / uninstall / guidance` | [agent registration and guidance](#use-it-from-an-agent) |
 | `grafo mcp` | serve the graph over stdio |
+| `grafo reap [--dry-run]` | stop MCP servers orphaned by a dead client |
 | `grafo version [--check]` | version, and an immediate update check |
 
 ## Query guide

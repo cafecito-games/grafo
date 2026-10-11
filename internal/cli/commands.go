@@ -34,6 +34,7 @@ var commandTable = []commandEntry{
 	{names: []string{"doctor"}, handler: (*App).doctor},
 	{names: []string{"status", "counts"}, handler: (*App).status},
 	{names: []string{"mcp"}, handler: (*App).mcp},
+	{names: []string{"reap"}, handler: (*App).reap},
 	{names: []string{"embed"}, handler: (*App).embed},
 	{names: []string{"embed-cache"}, handler: (*App).embedCache},
 	{names: []string{"reusable", "find-reusable-code"}, handler: (*App).reusable},

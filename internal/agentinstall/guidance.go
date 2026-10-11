@@ -521,33 +521,64 @@ func (b retiredInstructionBlock) planCleanup(reader Reader, display, path string
 // Advisory hooks (opt-in, documented hook API only)
 // ---------------------------------------------------------------------------
 
-// hookEvent is the Claude Code settings key advisory hooks are installed under.
-const hookEvent = "PreToolUse"
+// preToolUseEvent and sessionEndEvent are the Claude Code settings keys Grafo
+// installs hooks under. Nothing else in the file is touched: an event Grafo
+// does not install under is never read, written, or removed.
+const (
+	preToolUseEvent = "PreToolUse"
+	sessionEndEvent = "SessionEnd"
+)
 
-// hookPhase identifies one advisory hook. The phase word is also the argument
-// Grafo's own hook command receives, so ownership is provable from the command.
+// hookEvents is the deterministic order events are written in, so one install
+// produces the same settings file as the next.
+var hookEvents = []string{preToolUseEvent, sessionEndEvent}
+
+// hookPhase identifies one hook. The phase word is also the argument Grafo's
+// own hook command receives, so ownership is provable from the command. An
+// empty matcher means the event has nothing to match on and the entry is
+// written without one.
 type hookPhase struct {
-	phase   string
-	matcher string
+	event      string
+	phase      string
+	matcher    string
+	subcommand string
 }
 
-// hookPhases are the two advisory phases: context before a content search, and
-// context before an edit. Both are advisory only: the hook command prints
-// context and always exits 0, so a missing or broken Grafo cannot block a tool.
+// hookPhases are the hooks '--hooks' opts in to. The two advisory phases inject
+// context before a content search and before an edit. The third stops MCP
+// servers orphaned by a client that died without closing their stdin pipe,
+// which a session's own teardown is the natural moment to do (issue #248).
+// All three are fail-open: the hook command prints at most a line and always
+// exits 0, so a missing or broken Grafo can never block a tool or a teardown.
 var hookPhases = []hookPhase{
-	{phase: "pre-search", matcher: "Grep|Glob"},
-	{phase: "pre-edit", matcher: "Edit|Write|MultiEdit|NotebookEdit"},
+	{event: preToolUseEvent, phase: "pre-search", matcher: "Grep|Glob", subcommand: "guidance"},
+	{event: preToolUseEvent, phase: "pre-edit", matcher: "Edit|Write|MultiEdit|NotebookEdit", subcommand: "guidance"},
+	{event: sessionEndEvent, phase: "session-end", subcommand: "reap"},
 }
 
-// HookCommand renders the advisory hook command line for one phase. The
-// executable is shell-quoted for the target platform, because clients run hook
-// commands through a shell and Grafo's absolute path may contain spaces.
+// phaseNamed resolves one phase by its word.
+func phaseNamed(phase string) (hookPhase, bool) {
+	for _, candidate := range hookPhases {
+		if candidate.phase == phase {
+			return candidate, true
+		}
+	}
+	return hookPhase{}, false
+}
+
+// HookCommand renders the hook command line for one phase. The executable is
+// shell-quoted for the target platform, because clients run hook commands
+// through a shell and Grafo's absolute path may contain spaces.
 func HookCommand(goos, executable, phase string) string {
-	return hookCommandFor(goos, executable, phase)
+	resolved, ok := phaseNamed(phase)
+	if !ok {
+		return ""
+	}
+	return hookCommandFor(goos, executable, resolved)
 }
 
-func hookCommandFor(goos, executable, phase string) string {
-	return shellQuote(goos, executable) + " guidance --hook " + phase
+func hookCommandFor(goos, executable string, phase hookPhase) string {
+	return shellQuote(goos, executable) + " " + phase.subcommand + " --hook " + phase.phase
 }
 
 // shellSafe is the set of characters that never need quoting in a POSIX shell.
@@ -601,10 +632,11 @@ func (claudeHooks) path(reader Reader) (string, error) {
 	return homePath(reader, ".claude", "settings.json")
 }
 
-// hookEntry is the documented shape of one PreToolUse matcher entry. Unknown
+// hookEntry is the documented shape of one hook entry. The matcher is omitted
+// for an event that has none, which is the form those events document. Unknown
 // fields of user entries are never decoded: those entries stay raw.
 type hookEntry struct {
-	Matcher string        `json:"matcher"`
+	Matcher string        `json:"matcher,omitempty"`
 	Hooks   []hookCommand `json:"hooks"`
 }
 
@@ -624,7 +656,7 @@ func (h claudeHooks) planInstall(reader Reader, display, path, executable string
 		return plan{change: changeSkipped, detail: unsupported.Error()}, nil
 	}
 	commands := hookCommands(reader.GOOS(), executable)
-	desired := make([]json.RawMessage, 0, len(hookPhases))
+	desired := make(map[string][]json.RawMessage, len(hookEvents))
 	for index, phase := range hookPhases {
 		encoded, marshalErr := json.Marshal(hookEntry{
 			Matcher: phase.matcher,
@@ -633,26 +665,36 @@ func (h claudeHooks) planInstall(reader Reader, display, path, executable string
 		if marshalErr != nil {
 			return plan{}, marshalErr
 		}
-		desired = append(desired, encoded)
+		desired[phase.event] = append(desired[phase.event], encoded)
 	}
 	// Grafo may replace only entries it can prove are its own: the exact command
 	// it is about to install, or the exact command a receipt says it installed
 	// before (which is how a moved binary is refreshed instead of duplicated).
-	kept, owned := partitionHookEntries(entries, ownedHookPairs(commands, own.commandsFor(path)))
-	if len(owned) == len(desired) && sameRawMessages(owned, desired) {
+	owned := ownedHookPairs(commands, own.commandsFor(path))
+	updated := make(map[string][]json.RawMessage, len(hookEvents))
+	current, unchanged := 0, true
+	for _, event := range hookEvents {
+		kept, mine := partitionHookEntries(entries[event], owned)
+		current += len(mine)
+		if len(mine) != len(desired[event]) || !sameRawMessages(mine, desired[event]) {
+			unchanged = false
+		}
+		updated[event] = append(kept, desired[event]...)
+	}
+	if unchanged {
 		return plan{change: changeUnchanged, detail: "advisory hooks are current"}, nil
 	}
 	change := changeInstalled
-	if len(owned) > 0 {
+	if current > 0 {
 		change = changeUpdated
 	}
-	write, err := h.render(path, document, container, indent, state, append(kept, desired...))
+	write, err := h.render(path, document, container, indent, state, updated)
 	if err != nil {
 		return plan{}, err
 	}
 	return plan{
 		change:        change,
-		detail:        "advisory " + hookEvent + " hooks (fail open; exit status is always 0)",
+		detail:        "advisory " + strings.Join(hookEvents, " and ") + " hooks (fail open; exit status is always 0)",
 		write:         write,
 		digest:        agentguide.Digest(string(write.data)),
 		ownedCommands: commands,
@@ -684,15 +726,22 @@ func (h claudeHooks) planUninstall(reader Reader, display, path string, own owne
 				" (no matching install receipt); remove them manually if you no longer want them",
 		}, nil
 	}
-	kept, owned := partitionHookEntries(entries, ownedHookPairs(nil, recorded))
-	if len(owned) == 0 {
+	owned := ownedHookPairs(nil, recorded)
+	remaining := make(map[string][]json.RawMessage, len(hookEvents))
+	claimed := 0
+	for _, event := range hookEvents {
+		kept, mine := partitionHookEntries(entries[event], owned)
+		claimed += len(mine)
+		remaining[event] = kept
+	}
+	if claimed == 0 {
 		return plan{
 			change:      changeUnchanged,
 			detail:      "advisory hooks are not installed",
 			dropReceipt: own.provesPath(path),
 		}, nil
 	}
-	write, err := h.render(path, document, container, indent, state, kept)
+	write, err := h.render(path, document, container, indent, state, remaining)
 	if err != nil {
 		return plan{}, err
 	}
@@ -716,7 +765,7 @@ func hookExecutableSupported(goos, executable string) error {
 func hookCommands(goos, executable string) []string {
 	commands := make([]string, 0, len(hookPhases))
 	for _, phase := range hookPhases {
-		commands = append(commands, hookCommandFor(goos, executable, phase.phase))
+		commands = append(commands, hookCommandFor(goos, executable, phase))
 	}
 	return commands
 }
@@ -735,15 +784,18 @@ func ownedHookPairs(current, recorded []string) []hookPair {
 	return pairs
 }
 
-// hookPair is one exact matcher-and-command pair Grafo may claim.
+// hookPair is one exact matcher-and-command pair Grafo may claim. A receipt
+// records commands in phase order, so an older receipt that predates a later
+// phase still maps to the phases it was written for.
 type hookPair struct {
 	matcher string
 	command string
 }
 
-// load parses the settings document, the hooks container, and the PreToolUse
-// array. A malformed document is an error, so the file stays byte-identical.
-func (h claudeHooks) load(reader Reader, display, path string) (*jsonObject, *jsonObject, string, []json.RawMessage, targetState, error) {
+// load parses the settings document, the hooks container, and the entry array
+// of every event Grafo installs under. A malformed document is an error, so the
+// file stays byte-identical.
+func (h claudeHooks) load(reader Reader, display, path string) (*jsonObject, *jsonObject, string, map[string][]json.RawMessage, targetState, error) {
 	state, err := inspectTarget(reader, display, path)
 	if err != nil {
 		return nil, nil, "", nil, state, err
@@ -761,25 +813,36 @@ func (h claudeHooks) load(reader Reader, display, path string) (*jsonObject, *js
 	if err != nil {
 		return nil, nil, "", nil, state, fmt.Errorf("%s settings %s: %w", display, path, err)
 	}
-	var entries []json.RawMessage
-	if raw, ok := container.get(hookEvent); ok {
-		if err = json.Unmarshal(raw, &entries); err != nil {
-			return nil, nil, "", nil, state, fmt.Errorf("%s settings %s: %q is not an array: %w",
-				display, path, hookEvent, err)
+	entries := make(map[string][]json.RawMessage, len(hookEvents))
+	for _, event := range hookEvents {
+		raw, ok := container.get(event)
+		if !ok {
+			continue
 		}
+		var decoded []json.RawMessage
+		if err = json.Unmarshal(raw, &decoded); err != nil {
+			return nil, nil, "", nil, state, fmt.Errorf("%s settings %s: %q is not an array: %w",
+				display, path, event, err)
+		}
+		entries[event] = decoded
 	}
 	return document, container, indent, entries, state, nil
 }
 
-func (h claudeHooks) render(path string, document, container *jsonObject, indent string, state targetState, entries []json.RawMessage) (*fileWrite, error) {
-	if len(entries) == 0 {
-		container.remove(hookEvent)
-	} else {
-		encoded, err := json.Marshal(entries)
+func (h claudeHooks) render(path string, document, container *jsonObject, indent string, state targetState, entries map[string][]json.RawMessage) (*fileWrite, error) {
+	// Events are written in a fixed order, and an event left empty is removed
+	// rather than written as an empty array, so uninstalling Grafo's hooks from
+	// a file it is the only author of leaves no trace of them.
+	for _, event := range hookEvents {
+		if len(entries[event]) == 0 {
+			container.remove(event)
+			continue
+		}
+		encoded, err := json.Marshal(entries[event])
 		if err != nil {
 			return nil, err
 		}
-		container.set(hookEvent, encoded)
+		container.set(event, encoded)
 	}
 	encoded, err := container.compact()
 	if err != nil {
@@ -797,7 +860,7 @@ func (h claudeHooks) render(path string, document, container *jsonObject, indent
 	return &fileWrite{path: path, data: data, perm: state.perm}, nil
 }
 
-// partitionHookEntries splits an existing PreToolUse array into the user's own
+// partitionHookEntries splits one event's existing array into the user's own
 // entries, preserved byte-for-byte, and the entries Grafo can prove are its own.
 func partitionHookEntries(entries []json.RawMessage, owned []hookPair) (kept, mine []json.RawMessage) {
 	for _, entry := range entries {
@@ -863,15 +926,19 @@ func mustField(object *jsonObject, key string) json.RawMessage {
 
 // hasHookLookalike reports whether any entry names Grafo's hook subcommand, so
 // an unprovable cleanup can be reported instead of silently doing nothing.
-func hasHookLookalike(entries []json.RawMessage) bool {
-	for _, entry := range entries {
-		var decoded hookEntry
-		if err := json.Unmarshal(entry, &decoded); err != nil {
-			continue
-		}
-		for _, command := range decoded.Hooks {
-			if strings.Contains(command.Command, "guidance --hook ") {
-				return true
+func hasHookLookalike(entries map[string][]json.RawMessage) bool {
+	for _, event := range hookEvents {
+		for _, entry := range entries[event] {
+			var decoded hookEntry
+			if err := json.Unmarshal(entry, &decoded); err != nil {
+				continue
+			}
+			for _, command := range decoded.Hooks {
+				for _, phase := range hookPhases {
+					if strings.Contains(command.Command, phase.subcommand+" --hook ") {
+						return true
+					}
+				}
 			}
 		}
 	}
