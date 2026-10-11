@@ -24,7 +24,10 @@ type fakeProcess struct {
 	malformed   bool
 	unreadable  bool
 	missingStat bool
-	noWorkingD  bool
+	// missingStartTime denies only the stat read, leaving the parent readable,
+	// so a test can isolate the identity requirement from the parent rule.
+	missingStartTime bool
+	noWorkingD       bool
 }
 
 // fakeProcFS serves the three procfs files the scanner reads. It is a map
@@ -79,7 +82,7 @@ func (f fakeProcFS) ReadFile(name string) ([]byte, error) {
 		}
 		return []byte("Name:\tgrafo\nState:\tS (sleeping)\nPPid:\t" + strconv.Itoa(process.parent) + "\nThreads:\t18\n"), nil
 	case "stat":
-		if process.missingStat {
+		if process.missingStat || process.missingStartTime {
 			return nil, fs.ErrNotExist
 		}
 		return []byte(strconv.Itoa(process.pid) + " (grafo) S " + strconv.Itoa(process.parent) +
@@ -477,5 +480,49 @@ func TestProcessStartTimeSurvivesAnAwkwardCommandName(t *testing.T) {
 	}
 	if _, ok := parseStartTime([]byte("nothing useful")); ok {
 		t.Fatal("a malformed stat line was parsed as a start time")
+	}
+}
+
+// Identity must be established before the process is judged, so a pid reused
+// before anything is concluded about it is not signalled either. The fake
+// serves the original start time only to the first read, which is the read the
+// selection must have made.
+func TestReapEstablishesIdentityBeforeJudgingAProcess(t *testing.T) {
+	processes := []fakeProcess{
+		{pid: 100, arguments: []string{"/bin/grafo", "mcp"}, parent: 1, workingDir: "/repo", startTime: 900},
+	}
+	restarting := &restartedProcFS{ProcFS: fakeProcFS{processes: processes}, restartAt: 1, startTime: 9000}
+	var signalled []int
+	scanner := Scanner{
+		Proc:   restarting,
+		Self:   1,
+		Exists: func(string) bool { return true },
+		Signal: func(pid int) error { signalled = append(signalled, pid); return nil },
+	}
+
+	if _, err := scanner.Reap(false); err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+	if len(signalled) != 0 {
+		t.Fatalf("signalled a pid whose identity changed during the scan: %v", signalled)
+	}
+	if restarting.reads < 2 {
+		t.Fatalf("identity was read %d times; it must be read at selection and again before the signal", restarting.reads)
+	}
+}
+
+// A process whose identity cannot be read at all is never signalled: without a
+// start time there is nothing to confirm the process by later.
+func TestReapSkipsAProcessWhoseIdentityCannotBeRead(t *testing.T) {
+	scanner, signalled := scannerOver([]fakeProcess{
+		{pid: 100, arguments: []string{"/bin/grafo", "mcp"}, parent: 1, workingDir: "/repo (deleted)", missingStartTime: true},
+	}, 1)
+
+	results, err := scanner.Reap(false)
+	if err != nil {
+		t.Fatalf("Reap: %v", err)
+	}
+	if len(results) != 0 || len(*signalled) != 0 {
+		t.Fatalf("a process with no readable identity was acted on: %+v %v", results, *signalled)
 	}
 }

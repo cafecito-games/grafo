@@ -124,13 +124,20 @@ func (s Scanner) Reap(dryRun bool) ([]Result, error) {
 		if !ok {
 			continue
 		}
+		// Identity is established before anything is judged about this process,
+		// and confirmed again before it is signalled. A baseline read next to
+		// the confirmation would prove nothing: both reads could describe a
+		// process that merely inherited the number of the one examined here.
+		started, known := s.startTimeOf(pid)
+		if !known {
+			continue
+		}
 		reason, selected := s.reasonFor(pid, arguments)
 		if !selected {
 			continue
 		}
 		result := Result{PID: pid, Arguments: arguments, Reason: reason}
 		if !dryRun {
-			started, _ := s.startTimeOf(pid)
 			result.Signalled, result.Err = s.signal(pid, arguments, started)
 		}
 		results = append(results, result)
@@ -324,9 +331,11 @@ func rootsFrom(arguments []string, workingDirectory string) []string {
 // A pid identifies a process only while that process lives. One that exits
 // between selection and the signal frees its number for something else, and a
 // command line cannot tell two servers apart, so identity is the command line
-// together with the start time the kernel recorded: a later process occupying
-// the same number cannot share it. Without that check the cleanup could stop a
-// live server that merely inherited the number of a dead one.
+// together with the start time the kernel recorded, which a later process
+// occupying the same number cannot share. The caller reads that start time
+// before it judges the process at all, so this confirmation covers everything
+// the selection concluded; without it the cleanup could stop a live server that
+// merely inherited the number of a dead one.
 func (s Scanner) signal(pid int, arguments []string, started int64) (bool, error) {
 	current, ok := s.serverArguments(pid)
 	if !ok || !slices.Equal(current, arguments) {
