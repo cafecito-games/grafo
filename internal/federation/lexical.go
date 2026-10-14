@@ -24,7 +24,7 @@ func (r *Repository) SearchDeclarations(ctx context.Context, q graph.Declaration
 	if q.MaxMetadata == 0 {
 		q.MaxMetadata = graph.DefaultDeclarationMetadata
 	}
-	supported := false
+	supported, selected := false, q.Repository == ""
 	for _, member := range r.members {
 		if page.MetadataReads >= q.MaxMetadata {
 			page.Truncated = true
@@ -34,6 +34,7 @@ func (r *Repository) SearchDeclarations(ctx context.Context, q graph.Declaration
 		if q.Repository != "" && q.Repository != member.project.Name {
 			continue
 		}
+		selected = true
 		repo, ok := member.repository.(graph.DeclarationRepository)
 		if !ok {
 			return page, fmt.Errorf("repository %s has no lexical retrieval capability", member.project.Name)
@@ -64,6 +65,11 @@ func (r *Repository) SearchDeclarations(ctx context.Context, q graph.Declaration
 			match.Repository = member.project.Name
 			page.Matches = append(page.Matches, match)
 		}
+	}
+	if !selected && !page.Truncated {
+		// An unmatched selector would otherwise be indistinguishable from a
+		// repository that genuinely holds no matching declaration.
+		return page, fmt.Errorf("repository %s is not indexed", q.Repository)
 	}
 	if !supported && q.Repository == "" && !page.Truncated {
 		return page, fmt.Errorf("no repository has lexical retrieval capability")

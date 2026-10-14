@@ -7,6 +7,7 @@ import (
 	"github.com/cafecito-games/grafo/internal/storage/sqlite"
 	"github.com/cafecito-games/grafo/internal/testtemp"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -58,5 +59,31 @@ func TestLexicalFederationBoundsEmptyMemberMetadata(t *testing.T) {
 	page, err := fed.SearchDeclarations(ctx, q)
 	if err != nil || !page.Truncated || page.MetadataReads != 13 || page.PostingsRead != 0 || page.CandidatesRead != 0 {
 		t.Fatalf("empty members bounded: %+v %v", page, err)
+	}
+}
+
+func TestLexicalFederationRejectsUnknownRepositoryScope(t *testing.T) {
+	ctx := context.Background()
+	r, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "index.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if err = r.ReplaceOwner(ctx, "a.go", graph.ParseResult{Nodes: []graph.Node{{ID: "one", Kind: graph.KindFunction, Name: "RestorePlayer", QualifiedName: "RestorePlayer", OwnerFile: "a.go", Location: graph.Location{Path: "a.go"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	fed := &Repository{members: []member{{project: indexer.Project{Name: "one"}, repository: r}}}
+	q := graph.DeclarationQuery{Terms: []string{"restore"}, Limit: 5, MaxPostings: 10, MaxCandidates: 10, Repository: "onee"}
+	page, err := fed.SearchDeclarations(ctx, q)
+	if err == nil {
+		t.Fatalf("misspelled repository scope read as absent evidence: %+v", page)
+	}
+	if !strings.Contains(err.Error(), "onee") {
+		t.Fatalf("error must name the unmatched scope: %v", err)
+	}
+	q.Repository = "one"
+	page, err = fed.SearchDeclarations(ctx, q)
+	if err != nil || len(page.Matches) != 1 {
+		t.Fatalf("known repository scope: %+v %v", page, err)
 	}
 }

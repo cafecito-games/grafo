@@ -329,3 +329,46 @@ func TestLexicalMetadataPlanStaysWithinCandidateNeighborhood(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestLexicalBoundedMetadataLookupReportsTruncation(t *testing.T) {
+	ctx := context.Background()
+	r, _ := lexicalFixture(t)
+	nodes := []graph.Node{
+		declaration("impl", "RestorePlayer", "src/impl.go"),
+		{ID: "file", Kind: graph.KindFile, Name: "impl.go", OwnerFile: "src/impl.go", Location: graph.Location{Path: "src/impl.go"}},
+		{ID: "shadow", Kind: graph.KindFile, Name: "impl.go", OwnerFile: "src/impl.go", Location: graph.Location{Path: "src/impl.go"}},
+		{ID: "component", Kind: graph.KindComponent, Name: "game", OwnerFile: "workspace"}}
+	facts := []graph.Fact{{ID: "component-contains", FromID: "component", TargetID: "file", Kind: graph.EdgeContains, OwnerFile: "workspace"}}
+	if e := r.ReplaceOwner(ctx, "workspace", graph.ParseResult{Nodes: nodes, Facts: facts}); e != nil {
+		t.Fatal(e)
+	}
+	if e := r.Reconcile(ctx); e != nil {
+		t.Fatal(e)
+	}
+	flags, e := r.queries.LexicalFlags(ctx, sqlcgen.LexicalFlagsParams{Path: "src/impl.go", ID: identity.Key("impl")})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if !flags.LookupTruncated.Valid || !flags.LookupTruncated.Bool {
+		t.Fatalf("fixture must exhaust the bounded file lookup: %+v", flags)
+	}
+	page, e := r.SearchDeclarations(ctx, lexicalQuery("restore", "player"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if !page.Truncated {
+		t.Fatal("exhausted metadata lookup must report an explicit truncation boundary")
+	}
+	scoped := lexicalQuery("restore", "player")
+	scoped.Component = "absent"
+	page, e = r.SearchDeclarations(ctx, scoped)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(page.Matches) != 0 {
+		t.Fatalf("unknown component scope must not match: %+v", page)
+	}
+	if !page.Truncated {
+		t.Fatal("component scope dropped by an exhausted lookup must not read as complete")
+	}
+}

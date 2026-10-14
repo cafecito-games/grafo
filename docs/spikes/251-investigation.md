@@ -6,7 +6,12 @@ Continue with a bounded retrieval/evidence-design iteration, but do not ship the
 
 ## Reproduction and provenance
 
-- Grafo base: `96b20b7d3dbe2c6c51b9d8b35e5e4e988c617adf`; spike branch `spike/251-investigation`.
+The spike wrapper and its runner scripts are deliberately not retained in this
+repository, per the decision above. The commands below reproduce the experiment
+only from the spike branch, where that code still exists; the production
+`grafo investigate` entry point supersedes it.
+
+- Grafo base: `96b20b7d3dbe2c6c51b9d8b35e5e4e988c617adf`; spike branch `spike/251-investigation`, commit `48f9968`, which holds `cmd/grafo-investigate-spike/` and `docs/spikes/run-251*.py`. That branch was local to the original author's machine and was never published, so the experiment is reproducible from this history only where it is present.
 - Uzir: detached clean worktree at `8bee8ac48b63f231e3ee89fb8d335902a5e33632`, excluding the user's active uncommitted work.
 - Corpus checkout: `/tmp/uzir-251-spike`; prototype checkout: `/tmp/grafo-251-spike`.
 - Fresh index completed successfully: 14,253 updated files, 402,587 ms, 37 reconciliation batches. Index and source remain local.

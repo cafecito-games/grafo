@@ -209,10 +209,10 @@ func (r *Repository) SearchDeclarations(ctx context.Context, request graph.Decla
 		if e != nil {
 			return page, e
 		}
-		if fmt.Sprint(flags.LookupTruncated) == "1" {
+		if flags.LookupTruncated.Valid && flags.LookupTruncated.Bool {
 			page.Truncated = true
 		}
-		if fmt.Sprint(flags.InComponent) != "1" {
+		if !sqliteFlag(flags.InComponent) {
 			continue
 		}
 		m.Repository = name
@@ -232,4 +232,23 @@ func (r *Repository) SearchDeclarations(ctx context.Context, request graph.Decla
 		page.Truncated = true
 	}
 	return page, nil
+}
+
+// sqliteFlag reads a SQL boolean expression that sqlc cannot type, which the
+// driver may return as an integer, a boolean or their textual encodings.
+func sqliteFlag(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case int64:
+		return typed != 0
+	case float64:
+		return typed != 0
+	case []byte:
+		return len(typed) == 1 && typed[0] == '1'
+	case string:
+		return typed == "1" || typed == "true"
+	default:
+		return false
+	}
 }
