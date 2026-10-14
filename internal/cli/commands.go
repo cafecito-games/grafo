@@ -38,6 +38,7 @@ var commandTable = []commandEntry{
 	{names: []string{"embed"}, handler: (*App).embed},
 	{names: []string{"embed-cache"}, handler: (*App).embedCache},
 	{names: []string{"reusable", "find-reusable-code"}, handler: (*App).reusable},
+	{names: []string{"investigate"}, handler: (*App).investigate},
 	{names: []string{"find"}, handler: (*App).find},
 	{names: []string{"show"}, handler: (*App).show},
 	{names: []string{"source"}, handler: (*App).source},

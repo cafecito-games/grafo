@@ -860,6 +860,7 @@ func (a *App) mcp(ctx context.Context, args parsedArguments) error {
 	if err != nil {
 		return err
 	}
+	service.WithInvestigationSource(sourcecontext.NewScopedService)
 	service.WithSource(sourceService.ReadKind).WithSourceFactory(func(repository graph.ReadRepository, projects []indexer.Project) (func(context.Context, string, graph.NodeKind, int, int) (sourcecontext.Excerpt, error), error) {
 		reader, factoryErr := newSourceService(repository, projects)
 		if factoryErr != nil {
@@ -2792,7 +2793,9 @@ var valueOptions = map[string]bool{
 	"filter": true, "method": true, "route": true, "event": true, "component": true,
 	"package": true, "message": true, "oneof": true, "status": true,
 	"progress": true, "older-than": true, "max-bytes": true, "keep": true,
-	"budget": true,
+	"budget":         true,
+	"max-candidates": true, "max-source-lines": true, "max-source-bytes": true,
+	"max-output-bytes": true, "max-work": true, "timeout-ms": true,
 	// Profiling applies to every command rather than to one, so these are not
 	// in any per-command support table below.
 	"cpu-profile": true, "memory-profile": true, "block-profile": true,
@@ -2812,6 +2815,7 @@ var seedCommands = map[string]bool{"index": true, "watch": true}
 // option that is intentionally available to only a bounded command set. Keep
 // aliases here so unsupported commands fail before opening any repository.
 var pathPrefixCommands = map[string]bool{
+	"investigate":     true,
 	"search":          true,
 	"data-resources":  true,
 	"config-keys":     true,
@@ -2985,6 +2989,7 @@ Usage:
   grafo embed [path] [--model embeddinggemma] [--ollama-url http://localhost:11434] [--force]
   grafo embed-cache status [--json]
   grafo embed-cache prune [--model name] [--older-than duration] [--max-bytes n] [--dry-run] [--yes] [--json]
+  grafo investigate <question> [--repo path | --repos pathA,pathB] [--repo-name name] [--component name] [--path-prefix dir] [--language go] [--max-candidates 5] [--max-source-lines 240] [--max-source-bytes 524288] [--max-output-bytes 24000] [--max-work 12000] [--timeout-ms 4000] [--json]
   grafo reusable <description> [--repo path | --repos pathA,pathB] [--limit 5] [--budget 45s] [--language name] [--path-prefix dir] [--json]
   grafo find <text> [--limit 20] [--repo path | --repos pathA,pathB] [--json]
   grafo show <symbol-or-id> [--kind function] [--repo path | --repos pathA,pathB] [--json]

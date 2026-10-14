@@ -402,7 +402,7 @@ func operationEvidence() []Operation {
 	}{
 		{"find", []Capability{CapabilityStructural}, "internal/query/service.go", 110},
 		{"show", []Capability{CapabilityStructural}, "internal/query/service.go", 124},
-		{"source", []Capability{CapabilityStructural, CapabilitySourceLookup}, "internal/source/service.go", 63},
+		{"source", []Capability{CapabilityStructural, CapabilitySourceLookup}, "internal/source/service.go", 71},
 		{"neighbors", []Capability{CapabilityStructural}, "internal/query/service.go", 323},
 		{"callers", []Capability{CapabilityStructural}, "internal/query/service.go", 323},
 		{"callees", []Capability{CapabilityStructural}, "internal/query/service.go", 323},

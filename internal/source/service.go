@@ -52,6 +52,14 @@ type Excerpt struct {
 type Service struct {
 	repository graph.QueryRepository
 	locator    ProjectLocator
+	projects   []indexer.Project
+}
+
+// NewScopedService binds known graph nodes to an explicitly named repository.
+// It avoids resolving a federated node ID in an arbitrary member. Callers must
+// only pass nodes obtained from that repository's graph evidence.
+func NewScopedService(repository graph.QueryRepository, projects []indexer.Project) *Service {
+	return &Service{repository: repository, projects: append([]indexer.Project(nil), projects...)}
 }
 
 func NewService(repository graph.QueryRepository, locator ProjectLocator) *Service {
@@ -88,7 +96,7 @@ func (s *Service) ReadKind(ctx context.Context, selector string, kind graph.Node
 	if node.Location.Path == "" || node.Location.Line < 1 {
 		return Excerpt{}, fmt.Errorf("node %s has no source location", node.QualifiedName)
 	}
-	project, err := s.locator.ProjectForNode(ctx, node.ID)
+	project, err := s.projectForNode(ctx, node.ID, "")
 	if err != nil {
 		return Excerpt{}, fmt.Errorf("locate repository for %s: %w", node.QualifiedName, err)
 	}

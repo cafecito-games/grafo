@@ -62,6 +62,20 @@ type File struct {
 	EvidenceDigest string `json:"evidence_digest"`
 }
 
+type LexicalDirty struct {
+	NodeID identity.Key `json:"node_id"`
+}
+
+type LexicalPosting struct {
+	Term   string       `json:"term"`
+	NodeID identity.Key `json:"node_id"`
+}
+
+type LexicalTerm struct {
+	Term       string `json:"term"`
+	Population int64  `json:"population"`
+}
+
 type Meta struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`

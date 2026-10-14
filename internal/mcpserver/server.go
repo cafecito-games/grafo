@@ -33,10 +33,11 @@ type Service struct {
 	freshness       interface {
 		Acquire(context.Context) (*FreshnessGeneration, func(), error)
 	}
-	generationKey string
-	generationMu  sync.Mutex
-	sourceFactory func(graph.ReadRepository, []indexer.Project) (func(context.Context, string, graph.NodeKind, int, int) (sourcecontext.Excerpt, error), error)
-	searchFactory func(graph.ReadRepository, []indexer.Project) (*search.Service, error)
+	generationKey       string
+	generationMu        sync.Mutex
+	investigationSource func(graph.QueryRepository, []indexer.Project) *sourcecontext.Service
+	sourceFactory       func(graph.ReadRepository, []indexer.Project) (func(context.Context, string, graph.NodeKind, int, int) (sourcecontext.Excerpt, error), error)
+	searchFactory       func(graph.ReadRepository, []indexer.Project) (*search.Service, error)
 }
 
 func New(repository graph.Repository, project indexer.Project) *Service {
@@ -92,6 +93,15 @@ func (s *Service) WithSource(read func(context.Context, string, graph.NodeKind, 
 	// Impact reports read excerpts through the same bounded reader, so
 	// repository-root confinement and line/byte limits are enforced once.
 	s.query = s.query.WithSourceReader(sourcecontext.ReaderFunc(read))
+	return s
+}
+
+// WithInvestigationSource explicitly authorizes investigation source access.
+// The factory runs against the generation acquired for each investigation. It
+// is separate from WithSource: a custom source callback may redact or deny
+// content and must never implicitly authorize direct file reads.
+func (s *Service) WithInvestigationSource(factory func(graph.QueryRepository, []indexer.Project) *sourcecontext.Service) *Service {
+	s.investigationSource = factory
 	return s
 }
 
@@ -188,11 +198,14 @@ func (s *Service) bindGeneration(generation *FreshnessGeneration) error {
 
 func (s *Service) Server(version string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "grafo", Version: version}, &mcp.ServerOptions{
-		Instructions: "Use Grafo tools for deterministic structural code retrieval. Resolve symbols first, then walk graph edges. Treat external nodes as explicit unresolved boundaries. Use find_tests and get_test_coverage for bounded structural test relationships; they do not report runtime execution coverage. Use get_message_flow and list_message_coverage for canonical Protobuf flow instead of inferring stages from names; unknown is not proof of a missing runtime stage. Prefer get_blast_radius before a behavior-changing edit: it reports both what depends on a symbol and what it depends on. Symbol, node, source, caller, callee, path, impact, test, and message-flow tools accept a batch of inputs and return one result or error per input in order. Use search_source only for content questions the graph does not model. Reusable-code search uses embeddings only to select candidates and includes graph-resolved context.",
+		Instructions: "Use Grafo tools for deterministic structural code retrieval. When investigate is available, use it to collect bounded implementation candidates, source, and structural evidence for a behavior question; follow its uncertainty and follow-up queries before claiming a complete answer. Resolve symbols before walking graph edges. Treat external nodes as explicit unresolved boundaries. Use find_tests and get_test_coverage for bounded structural test relationships; they do not report runtime execution coverage. Use get_message_flow and list_message_coverage for canonical Protobuf flow instead of inferring stages from names; unknown is not proof of a missing runtime stage. Prefer get_blast_radius before a behavior-changing edit: it reports both what depends on a symbol and what it depends on. Symbol, node, source, caller, callee, path, impact, test, and message-flow tools accept a batch of inputs and return one result or error per input in order. Use search_source only for content questions the graph does not model. Reusable-code search uses embeddings only to select candidates and includes graph-resolved context.",
 	})
 	annotations := &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: boolPointer(false)}
 	mcp.AddTool(server, &mcp.Tool{Name: "find_symbols", Title: "Find symbols", Description: "Find graph nodes by deterministic name matching. Use this to obtain an unambiguous qualified name or stable node ID.", Annotations: annotations}, s.findSymbols)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_node", Title: "Get node", Description: "Resolve one symbol or stable ID and return its graph metadata and source location.", Annotations: annotations}, s.getNode)
+	if s.investigationSource != nil {
+		mcp.AddTool(server, &mcp.Tool{Name: "investigate", Title: "Investigate repository behavior", Description: "Retrieve bounded provider-free implementation candidates, exact source, structural evidence, and follow-up queries for a question. Relevance is not proof of a relationship; incomplete coverage and no matches are not proof of absence. Scope by repository, component, path_prefixes or languages. Returns one compact JSON text report capped at 24000 bytes; all work and source budgets are global per call.", Annotations: annotations}, s.investigate)
+	}
 	if s.source != nil {
 		mcp.AddTool(server, &mcp.Tool{Name: "get_source", Title: "Get source", Description: "Resolve a graph node and return its exact bounded source span from the correct worktree without text search.", Annotations: annotations}, s.getSource)
 	}

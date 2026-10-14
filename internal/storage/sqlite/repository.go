@@ -158,6 +158,10 @@ func Open(ctx context.Context, path string) (*Repository, error) {
 		_ = repository.Close()
 		return nil, err
 	}
+	if err := repository.backfillLexical(ctx); err != nil {
+		_ = repository.Close()
+		return nil, fmt.Errorf("backfill lexical declarations: %w", err)
+	}
 	return repository, nil
 }
 
@@ -1619,6 +1623,15 @@ func (r *Repository) inTransaction(ctx context.Context, fn func(*sqlcgen.Queries
 	}
 	if err := writer.flush(ctx); err != nil {
 		return err
+	}
+	for {
+		count, err := drainLexical(ctx, r.queries.WithTx(tx), lexicalBackfillBatch)
+		if err != nil {
+			return err
+		}
+		if count < lexicalBackfillBatch {
+			break
+		}
 	}
 	if err := writer.close(); err != nil {
 		return fmt.Errorf("close SQLite batch statements: %w", err)

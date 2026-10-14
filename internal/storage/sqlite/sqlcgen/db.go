@@ -126,6 +126,30 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.internPathStmt, err = db.PrepareContext(ctx, internPath); err != nil {
 		return nil, fmt.Errorf("error preparing query InternPath: %w", err)
 	}
+	if q.lexicalClearDirtyStmt, err = db.PrepareContext(ctx, lexicalClearDirty); err != nil {
+		return nil, fmt.Errorf("error preparing query LexicalClearDirty: %w", err)
+	}
+	if q.lexicalDeletePostingsStmt, err = db.PrepareContext(ctx, lexicalDeletePostings); err != nil {
+		return nil, fmt.Errorf("error preparing query LexicalDeletePostings: %w", err)
+	}
+	if q.lexicalDirtyNodesStmt, err = db.PrepareContext(ctx, lexicalDirtyNodes); err != nil {
+		return nil, fmt.Errorf("error preparing query LexicalDirtyNodes: %w", err)
+	}
+	if q.lexicalFlagsStmt, err = db.PrepareContext(ctx, lexicalFlags); err != nil {
+		return nil, fmt.Errorf("error preparing query LexicalFlags: %w", err)
+	}
+	if q.lexicalInsertPostingStmt, err = db.PrepareContext(ctx, lexicalInsertPosting); err != nil {
+		return nil, fmt.Errorf("error preparing query LexicalInsertPosting: %w", err)
+	}
+	if q.lexicalPendingStmt, err = db.PrepareContext(ctx, lexicalPending); err != nil {
+		return nil, fmt.Errorf("error preparing query LexicalPending: %w", err)
+	}
+	if q.lexicalPopulationStmt, err = db.PrepareContext(ctx, lexicalPopulation); err != nil {
+		return nil, fmt.Errorf("error preparing query LexicalPopulation: %w", err)
+	}
+	if q.lexicalPostingsStmt, err = db.PrepareContext(ctx, lexicalPostings); err != nil {
+		return nil, fmt.Errorf("error preparing query LexicalPostings: %w", err)
+	}
 	if q.listCanonicalMessagesStmt, err = db.PrepareContext(ctx, listCanonicalMessages); err != nil {
 		return nil, fmt.Errorf("error preparing query ListCanonicalMessages: %w", err)
 	}
@@ -388,6 +412,46 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing internPathStmt: %w", cerr)
 		}
 	}
+	if q.lexicalClearDirtyStmt != nil {
+		if cerr := q.lexicalClearDirtyStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing lexicalClearDirtyStmt: %w", cerr)
+		}
+	}
+	if q.lexicalDeletePostingsStmt != nil {
+		if cerr := q.lexicalDeletePostingsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing lexicalDeletePostingsStmt: %w", cerr)
+		}
+	}
+	if q.lexicalDirtyNodesStmt != nil {
+		if cerr := q.lexicalDirtyNodesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing lexicalDirtyNodesStmt: %w", cerr)
+		}
+	}
+	if q.lexicalFlagsStmt != nil {
+		if cerr := q.lexicalFlagsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing lexicalFlagsStmt: %w", cerr)
+		}
+	}
+	if q.lexicalInsertPostingStmt != nil {
+		if cerr := q.lexicalInsertPostingStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing lexicalInsertPostingStmt: %w", cerr)
+		}
+	}
+	if q.lexicalPendingStmt != nil {
+		if cerr := q.lexicalPendingStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing lexicalPendingStmt: %w", cerr)
+		}
+	}
+	if q.lexicalPopulationStmt != nil {
+		if cerr := q.lexicalPopulationStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing lexicalPopulationStmt: %w", cerr)
+		}
+	}
+	if q.lexicalPostingsStmt != nil {
+		if cerr := q.lexicalPostingsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing lexicalPostingsStmt: %w", cerr)
+		}
+	}
 	if q.listCanonicalMessagesStmt != nil {
 		if cerr := q.listCanonicalMessagesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing listCanonicalMessagesStmt: %w", cerr)
@@ -606,6 +670,14 @@ type Queries struct {
 	getNodeStmt                         *sql.Stmt
 	insertEdgeStmt                      *sql.Stmt
 	internPathStmt                      *sql.Stmt
+	lexicalClearDirtyStmt               *sql.Stmt
+	lexicalDeletePostingsStmt           *sql.Stmt
+	lexicalDirtyNodesStmt               *sql.Stmt
+	lexicalFlagsStmt                    *sql.Stmt
+	lexicalInsertPostingStmt            *sql.Stmt
+	lexicalPendingStmt                  *sql.Stmt
+	lexicalPopulationStmt               *sql.Stmt
+	lexicalPostingsStmt                 *sql.Stmt
 	listCanonicalMessagesStmt           *sql.Stmt
 	listDirtyFactBatchStmt              *sql.Stmt
 	listEdgesFromStmt                   *sql.Stmt
@@ -675,6 +747,14 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getNodeStmt:                         q.getNodeStmt,
 		insertEdgeStmt:                      q.insertEdgeStmt,
 		internPathStmt:                      q.internPathStmt,
+		lexicalClearDirtyStmt:               q.lexicalClearDirtyStmt,
+		lexicalDeletePostingsStmt:           q.lexicalDeletePostingsStmt,
+		lexicalDirtyNodesStmt:               q.lexicalDirtyNodesStmt,
+		lexicalFlagsStmt:                    q.lexicalFlagsStmt,
+		lexicalInsertPostingStmt:            q.lexicalInsertPostingStmt,
+		lexicalPendingStmt:                  q.lexicalPendingStmt,
+		lexicalPopulationStmt:               q.lexicalPopulationStmt,
+		lexicalPostingsStmt:                 q.lexicalPostingsStmt,
 		listCanonicalMessagesStmt:           q.listCanonicalMessagesStmt,
 		listDirtyFactBatchStmt:              q.listDirtyFactBatchStmt,
 		listEdgesFromStmt:                   q.listEdgesFromStmt,

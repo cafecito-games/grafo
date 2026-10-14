@@ -134,6 +134,7 @@ grafo path "HandleCheckout" "Charge"      # shortest proven route
 grafo impact "Charge"                     # bidirectional blast radius
 grafo source "HandleCheckout"             # graph-addressed source span
 grafo search "chargeRetryLimit"           # bounded content search
+grafo investigate "checkout retry"        # candidates, source, and evidence
 ```
 
 **3. Ask about the shape of the system**, not just its symbols:
@@ -285,6 +286,7 @@ Every CLI query has an MCP equivalent, and every one of them accepts `--json`,
 | `grafo impact <selector>` | `get_blast_radius` | [bidirectional change impact](#change-impact) |
 | `grafo failure-flow <selector>` | `get_failure_flow` | [where errors come from, go, and get handled](#failure-flow) |
 | `grafo search <pattern>` | `search_source` | [bounded content search over indexed files](#bounded-source-search) |
+| `grafo investigate <question>` | `investigate` | [bounded implementation discovery with source and graph evidence](docs/investigation.md) |
 | `grafo reusable <description>` | `find_reusable_code` | [existing code that already does this](#semantic-candidate-discovery) |
 
 ### Catalogs and system shape
@@ -415,6 +417,22 @@ filesystem enumeration. Prefer the graph tools when the question is structural.
 span from the active worktree. In a federation, the node ID selects the correct
 repository even when several repos contain the same relative path. Reads are
 confined to the repository root and capped by line and byte limits.
+
+### Repository investigations
+
+`grafo investigate` (MCP `investigate`) combines provider-free lexical discovery,
+bounded implementation source, and structural evidence in one compact report.
+It shares scope and global resource limits across CLI and MCP. Relevant names
+are discovery hints; only source and graph evidence support behavior or
+relationships. Missing results never establish absence.
+
+```sh
+grafo investigate "where does checkout charge a payment" --path-prefix internal --language go --json
+```
+
+See [repository investigations](docs/investigation.md) for the report contract,
+limits, follow-up queries, source-access opt-in, index migration, and evaluation
+status. The CLI always emits compact JSON for this command.
 
 ### Semantic candidate discovery
 

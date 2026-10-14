@@ -37,3 +37,7 @@ sql:
             go_type: "github.com/cafecito-games/grafo/internal/storage/sqlite/identity.Key"
           - column: "dirty_facts.fact_id"
             go_type: "github.com/cafecito-games/grafo/internal/storage/sqlite/identity.Key"
+          - column: "lexical_dirty.node_id"
+            go_type: "github.com/cafecito-games/grafo/internal/storage/sqlite/identity.Key"
+          - column: "lexical_postings.node_id"
+            go_type: "github.com/cafecito-games/grafo/internal/storage/sqlite/identity.Key"

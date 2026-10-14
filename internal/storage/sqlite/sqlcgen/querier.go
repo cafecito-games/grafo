@@ -52,6 +52,14 @@ type Querier interface {
 	GetNode(ctx context.Context, id identity.Key) (Node, error)
 	InsertEdge(ctx context.Context, arg InsertEdgeParams) error
 	InternPath(ctx context.Context, path string) (int64, error)
+	LexicalClearDirty(ctx context.Context, nodeID identity.Key) error
+	LexicalDeletePostings(ctx context.Context, nodeID identity.Key) error
+	LexicalDirtyNodes(ctx context.Context, limit int64) ([]Node, error)
+	LexicalFlags(ctx context.Context, arg LexicalFlagsParams) (LexicalFlagsRow, error)
+	LexicalInsertPosting(ctx context.Context, arg LexicalInsertPostingParams) error
+	LexicalPending(ctx context.Context) (bool, error)
+	LexicalPopulation(ctx context.Context, term string) (int64, error)
+	LexicalPostings(ctx context.Context, arg LexicalPostingsParams) ([]LexicalPostingsRow, error)
 	ListCanonicalMessages(ctx context.Context, arg ListCanonicalMessagesParams) ([]Node, error)
 	ListDirtyFactBatch(ctx context.Context, limit int64) ([]ListDirtyFactBatchRow, error)
 	ListEdgesFrom(ctx context.Context, fromID identity.Key) ([]ListEdgesFromRow, error)
