@@ -245,7 +245,7 @@ func sqliteFlag(value any) bool {
 	case float64:
 		return typed != 0
 	case []byte:
-		return len(typed) == 1 && typed[0] == '1'
+		return sqliteFlag(string(typed))
 	case string:
 		return typed == "1" || typed == "true"
 	default:
