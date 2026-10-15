@@ -669,6 +669,39 @@ sql:
 	}
 }
 
+func TestRouterDoesNotGuessAliasShadowedTable(t *testing.T) {
+	root := testtemp.Dir(t)
+	writeRouterFiles(t, root, map[string]string{
+		"sqlc.yaml": `version: "2"
+sql:
+  - engine: postgresql
+    schema: schema.sql
+    queries: queries.sql
+    gen: {go: {package: db, out: internal/db}}
+`,
+		"schema.sql":  "CREATE TABLE a (id bigint PRIMARY KEY, a_value text); CREATE TABLE b (id bigint PRIMARY KEY, b_value text);",
+		"queries.sql": "-- name: ListRows :many\nSELECT a.* FROM b AS a JOIN a AS c ON a.id = c.id;",
+	})
+	content, err := os.ReadFile(filepath.Join(root, "queries.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := sqlparser.New(postgresparser.New(), sqliteparser.New()).Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "queries.sql", Content: content, SourcePaths: []string{"sqlc.yaml", "schema.sql", "queries.sql"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDiagnostic(result, "wildcard column usage is unresolved") {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	for _, fact := range result.Facts {
+		if fact.TargetKind == graph.KindColumn && fact.Producer == "sqlcbinding" {
+			t.Fatalf("alias shadowing produced guessed column evidence: %#v", fact)
+		}
+	}
+}
+
 func TestRouterDoesNotUseSqlcSchemaAcrossDialectMismatch(t *testing.T) {
 	root := testtemp.Dir(t)
 	writeRouterFiles(t, root, map[string]string{

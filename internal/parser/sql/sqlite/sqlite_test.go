@@ -137,6 +137,11 @@ SELECT id FROM audit_log;
 	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#UpdateUser", graph.EdgeWrites, "users.name")
 	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#UpdateUser", graph.EdgeReads, "users.id")
 	assertFact(t, result.Facts, graph.EdgeReads, "audit_log")
+	for _, node := range result.Nodes {
+		if node.Kind != graph.KindSQLQuery && node.Properties["unqualified_wildcard_safe"] != "" {
+			t.Fatalf("non-query node has wildcard safety property: %#v", node)
+		}
+	}
 	for _, diagnostic := range result.Diagnostics {
 		if strings.Contains(diagnostic.Message, "sqlc") || strings.Contains(diagnostic.Message, "parse SQLite") {
 			t.Fatalf("unexpected template diagnostic: %#v", diagnostic)

@@ -723,18 +723,12 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 		}
 	}
 	for table, value := range result {
+		tableSchema, tableName := schemaTableIdentity(table, entry.Engine)
 		for incomplete := range incompleteNames {
-			if strings.EqualFold(graph.SimpleName(table), graph.SimpleName(incomplete)) {
+			incompleteSchema, incompleteName := schemaTableIdentity(incomplete, entry.Engine)
+			if identifiersEqual(tableSchema, incompleteSchema, entry.Engine) && identifiersEqual(tableName, incompleteName, entry.Engine) {
 				value.incomplete = true
 				break
-			}
-		}
-		tableSchema, _ := splitTableName(table)
-		if tableSchema == "" {
-			if entry.Engine == "postgres" {
-				tableSchema = "public"
-			} else if entry.Engine == "sqlite" {
-				tableSchema = "main"
 			}
 		}
 		for incompleteSchema := range incompleteSchemas {
@@ -749,6 +743,18 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 		return nil
 	}
 	return result
+}
+
+func schemaTableIdentity(name, engine string) (string, string) {
+	schema, table := splitTableName(name)
+	if schema == "" {
+		if engine == "postgres" {
+			schema = "public"
+		} else if engine == "sqlite" {
+			schema = "main"
+		}
+	}
+	return schema, table
 }
 
 func schemaColumns(tables map[string]schemaTable, selector, engine string) (string, []string, bool) {

@@ -245,17 +245,6 @@ func appendUnique(values []string, value string) []string {
 
 func resolveEmbedTable(argument, statement string, tables []string) (string, bool) {
 	var matched string
-	for _, table := range tables {
-		if argument == table || argument == graph.SimpleName(table) {
-			if matched != "" && matched != table {
-				return "", false
-			}
-			matched = table
-		}
-	}
-	if matched != "" {
-		return matched, true
-	}
 	pattern := regexp.MustCompile(`(?i)(?:\bfrom|\bjoin)\s+([A-Za-z0-9_."` + "`" + `]+)(?:\s+as)?\s+` + regexp.QuoteMeta(argument) + `\b`)
 	for _, match := range pattern.FindAllStringSubmatch(statement, -1) {
 		declared := strings.Trim(match[1], "\"`")
@@ -263,6 +252,22 @@ func resolveEmbedTable(argument, statement string, tables []string) (string, boo
 			if declared != table && graph.SimpleName(declared) != graph.SimpleName(table) {
 				continue
 			}
+			if matched != "" && matched != table {
+				return "", false
+			}
+			matched = table
+		}
+	}
+	if matched != "" {
+		for _, table := range tables {
+			if (argument == table || argument == graph.SimpleName(table)) && table != matched {
+				return "", false
+			}
+		}
+		return matched, true
+	}
+	for _, table := range tables {
+		if argument == table || argument == graph.SimpleName(table) {
 			if matched != "" && matched != table {
 				return "", false
 			}

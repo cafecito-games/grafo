@@ -159,6 +159,11 @@ DELETE FROM users WHERE id = ANY(sqlc.slice(ids));
 	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#SearchUsers", graph.EdgeReads, "users.role")
 	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#DeleteUsers", graph.EdgeWrites, "users")
 	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#DeleteUsers", graph.EdgeReads, "users.id")
+	for _, node := range result.Nodes {
+		if node.Kind != graph.KindSQLQuery && node.Properties["unqualified_wildcard_safe"] != "" {
+			t.Fatalf("non-query node has wildcard safety property: %#v", node)
+		}
+	}
 }
 
 func TestParserDoesNotGuessAmbiguousUnqualifiedColumns(t *testing.T) {
