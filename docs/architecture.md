@@ -289,12 +289,16 @@ parsers, traversal, or the MCP contract.
 
 ## Traversal output
 
-`get_neighbors`, `get_callers`, `get_callees`, and the impact sections all return
-one `query.Traversal`, a bounded breadth-first walk outward from a resolved root.
-Both of its arrays are multi-level. A node carries `depth` in hops from the root,
-and an edge carries `depth` plus `direct`: `depth` is the greater depth of the
-edge's two endpoints, so the label does not depend on which endpoint the walk
-reached first, and `direct` says the edge is incident to the root.
+`get_neighbors`, `get_callers`, and `get_callees` return one `query.Traversal`, a
+bounded breadth-first walk outward from a resolved root. An impact report does
+not return the traversal itself: each `ImpactSection` is one direction's walk,
+copying that walk's nodes, edges, and truncation flag and naming its own
+direction, depth, and relation vocabulary instead of repeating the shared root.
+Both node and edge arrays are multi-level either way. A node carries `depth` in
+hops from the root, and an edge carries `depth` plus `direct`: `depth` is the
+greater depth of the edge's two endpoints, so the label does not depend on which
+endpoint the walk reached first, and `direct` says the edge is incident to the
+root.
 
 Only the direct subset is evidence of a relation to the root. Every other edge
 connects two reached nodes, so it proves reachability through an intermediate
