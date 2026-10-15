@@ -104,6 +104,7 @@ func TestEquivalentSQLScopesProjectionWildcards(t *testing.T) {
 		{name: "update returning", handwritten: `UPDATE users SET name = $1 RETURNING *`, generated: `UPDATE users SET name = $1 RETURNING id, name`, want: true},
 		{name: "update from returning", handwritten: `UPDATE users SET name = orders.id::text FROM orders RETURNING *`, generated: `UPDATE users SET name = orders.id::text FROM orders RETURNING id, name`, want: false},
 		{name: "insert select returning", handwritten: `INSERT INTO users (name) SELECT id::text FROM orders RETURNING *`, generated: `INSERT INTO users (name) SELECT id::text FROM orders RETURNING id, name`, want: true},
+		{name: "upsert returning", handwritten: `INSERT INTO users (id, name) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET name = excluded.name RETURNING *`, generated: `INSERT INTO users (id, name) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET name = excluded.name RETURNING id, name`, want: true},
 		{name: "delete returning", handwritten: `DELETE FROM users RETURNING *`, generated: `DELETE FROM users RETURNING id, name`, want: true},
 		{name: "delete using returning", handwritten: `DELETE FROM users USING orders WHERE orders.user_id = users.id RETURNING *`, generated: `DELETE FROM users USING orders WHERE orders.user_id = users.id RETURNING id, name`, want: false},
 		{name: "nested select", handwritten: `SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)`, generated: `SELECT id, name FROM users WHERE id IN (SELECT user_id FROM orders)`, want: true},

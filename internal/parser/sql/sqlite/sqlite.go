@@ -511,6 +511,7 @@ func (e *extractor) emitAccesses(fromID string, root ast.Node) {
 	for _, queryID := range e.queries {
 		if queryID == fromID {
 			e.b.SetNodeProperty(fromID, "unqualified_wildcard_safe", strconv.FormatBool(!hasCTE && !hasNonTableSource && len(uniqueRelations) == 1))
+			e.b.SetNodeProperty(fromID, "qualified_wildcard_safe", strconv.FormatBool(!hasCTE && !hasNonTableSource))
 			break
 		}
 	}

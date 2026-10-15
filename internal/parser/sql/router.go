@@ -193,6 +193,11 @@ func expandSQLCWildcards(result *graph.ParseResult, input parserapi.Input, regis
 				continue
 			}
 			line, column := document.Position(macro.Start)
+			if node.Properties["qualified_wildcard_safe"] != "true" {
+				result.Diagnostics = append(result.Diagnostics, graph.Diagnostic{Path: input.Path, Line: line, Level: "warning",
+					Message: fmt.Sprintf("sqlc.embed(%s) column expansion is ambiguous in this statement", macro.Argument)})
+				continue
+			}
 			table, ok := resolveEmbedTable(macro.Argument, statement, tablesByQuery[node.ID])
 			if !ok {
 				result.Diagnostics = append(result.Diagnostics, graph.Diagnostic{Path: input.Path, Line: line, Level: "warning",
@@ -212,7 +217,9 @@ func expandSQLCWildcards(result *graph.ParseResult, input parserapi.Input, regis
 			table := ""
 			ok := false
 			if wildcard.Qualifier != "" {
-				table, ok = resolveEmbedTable(wildcard.Qualifier, statement, tablesByQuery[node.ID])
+				if node.Properties["qualified_wildcard_safe"] == "true" {
+					table, ok = resolveEmbedTable(wildcard.Qualifier, statement, tablesByQuery[node.ID])
+				}
 			} else if node.Properties["unqualified_wildcard_safe"] == "true" && len(tablesByQuery[node.ID]) == 1 {
 				table, ok = tablesByQuery[node.ID][0], true
 			}

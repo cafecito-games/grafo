@@ -449,6 +449,57 @@ sql:
 	}
 }
 
+func TestRouterDoesNotExpandQualifiedColumnsFromNonTableSource(t *testing.T) {
+	sources := []struct {
+		name, format string
+	}{
+		{name: "cte shadows table", format: "WITH users AS (SELECT id FROM public.users) SELECT %s FROM users;"},
+		{name: "derived alias shadows table", format: "SELECT %s FROM (SELECT id FROM public.users) AS users;"},
+	}
+	forms := []struct {
+		name, expression, diagnostic string
+	}{
+		{name: "qualified wildcard", expression: "users.*", diagnostic: "wildcard column usage is unresolved"},
+		{name: "embed", expression: "sqlc.embed(users)", diagnostic: "column expansion is ambiguous"},
+	}
+	for _, source := range sources {
+		for _, form := range forms {
+			t.Run(source.name+"/"+form.name, func(t *testing.T) {
+				root := testtemp.Dir(t)
+				writeRouterFiles(t, root, map[string]string{
+					"sqlc.yaml": `version: "2"
+sql:
+  - engine: postgresql
+    schema: schema.sql
+    queries: queries.sql
+    gen: {go: {package: db, out: internal/db}}
+`,
+					"schema.sql":  "CREATE TABLE public.users (id bigint PRIMARY KEY, name text, email text);",
+					"queries.sql": "-- name: ListRows :many\n" + fmt.Sprintf(source.format, form.expression),
+				})
+				content, err := os.ReadFile(filepath.Join(root, "queries.sql"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				result, err := sqlparser.New(postgresparser.New(), sqliteparser.New()).Parse(context.Background(), parserapi.Input{
+					Root: root, Path: "queries.sql", Content: content, SourcePaths: []string{"sqlc.yaml", "schema.sql", "queries.sql"},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !hasDiagnostic(result, form.diagnostic) {
+					t.Fatalf("diagnostics = %#v", result.Diagnostics)
+				}
+				for _, fact := range result.Facts {
+					if fact.TargetKind == graph.KindColumn && fact.Producer == "sqlcbinding" {
+						t.Fatalf("non-table source produced qualified column evidence: %#v", fact)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestRouterDisablesSchemaEvidenceWhenMigrationDoesNotParse(t *testing.T) {
 	root := testtemp.Dir(t)
 	writeRouterFiles(t, root, map[string]string{

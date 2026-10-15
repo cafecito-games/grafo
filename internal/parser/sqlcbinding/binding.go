@@ -1294,6 +1294,9 @@ func dmlTarget(tokens []sqlScopeToken, returning, depth int, dialect string) (st
 		var target int
 		switch word {
 		case "update":
+			if index > 0 && tokens[index-1].depth == depth && strings.EqualFold(tokens[index-1].text, "do") {
+				continue
+			}
 			target = index + 1
 		case "insert":
 			if index+1 >= len(tokens) || !strings.EqualFold(tokens[index+1].text, "into") {
@@ -1314,6 +1317,9 @@ func dmlTarget(tokens []sqlScopeToken, returning, depth int, dialect string) (st
 		if target >= len(tokens) || tokens[target].depth != depth || !tokens[target].identifier {
 			return "", false
 		}
+		if isDMLTargetKeyword(strings.ToLower(tokens[target].text)) {
+			return "", false
+		}
 		for cursor := target + 1; cursor < returning; cursor++ {
 			if tokens[cursor].depth != depth {
 				continue
@@ -1326,6 +1332,15 @@ func dmlTarget(tokens []sqlScopeToken, returning, depth int, dialect string) (st
 		return normalizeSQLSelector(tokens[target].text, dialect)
 	}
 	return "", false
+}
+
+func isDMLTargetKeyword(word string) bool {
+	switch word {
+	case "set", "only", "from", "using", "where", "returning", "into":
+		return true
+	default:
+		return false
+	}
 }
 
 func isSelectBoundary(word string) bool {
