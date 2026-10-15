@@ -1148,10 +1148,13 @@ func schemaForWildcard(schemas map[string]schemaTable, statement, qualifier, dia
 	if qualifier != "" {
 		return schemaForEmbed(schemas, statement, qualifier, dialect)
 	}
-	pattern := regexp.MustCompile(`(?i)(?:\bfrom|\bjoin)\s+([A-Za-z0-9_."` + "`" + `]+)`)
+	pattern := regexp.MustCompile(`(?i)(?:\bfrom|\bjoin)\s+(` + sqlQualifiedIdentifierPattern + `)`)
 	resolved := map[string][]string{}
 	for _, match := range pattern.FindAllStringSubmatch(statement, -1) {
-		selector := strings.Trim(match[1], "\"`")
+		selector, ok := normalizeSQLSelector(match[1], dialect)
+		if !ok {
+			return "", nil, false
+		}
 		qualified, columns, ok := schemaColumns(schemas, selector, dialect)
 		if ok {
 			resolved[qualified] = columns
@@ -1167,16 +1170,88 @@ func schemaForWildcard(schemas map[string]schemaTable, statement, qualifier, dia
 }
 
 func schemaForEmbed(schemas map[string]schemaTable, statement, argument, dialect string) (string, []string, bool) {
-	if qualified, columns, ok := schemaColumns(schemas, argument, dialect); ok {
+	normalizedArgument, ok := normalizeSQLSelector(argument, dialect)
+	if !ok {
+		return "", nil, false
+	}
+	if qualified, columns, ok := schemaColumns(schemas, normalizedArgument, dialect); ok {
 		return qualified, columns, true
 	}
-	pattern := regexp.MustCompile(`(?i)(?:\bfrom|\bjoin)\s+([A-Za-z0-9_."` + "`" + `]+)(?:\s+as)?\s+` + regexp.QuoteMeta(argument) + `\b`)
+	pattern := regexp.MustCompile(`(?i)(?:\bfrom|\bjoin)\s+(` + sqlQualifiedIdentifierPattern + `)(?:\s+as)?\s+` + regexp.QuoteMeta(argument) + `\b`)
 	matches := pattern.FindAllStringSubmatch(statement, -1)
 	if len(matches) != 1 {
 		return "", nil, false
 	}
-	declared := strings.Trim(matches[0][1], "\"`")
+	declared, ok := normalizeSQLSelector(matches[0][1], dialect)
+	if !ok {
+		return "", nil, false
+	}
 	return schemaColumns(schemas, declared, dialect)
+}
+
+const sqlIdentifierPart = `(?:"(?:[^"]|"")*"|` + "`(?:[^`]|``)*`" + `|\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_$]*)`
+const sqlQualifiedIdentifierPattern = sqlIdentifierPart + `(?:\.` + sqlIdentifierPart + `){0,2}`
+
+func normalizeSQLSelector(selector, dialect string) (string, bool) {
+	var parts []string
+	for offset := 0; offset < len(selector); {
+		start := offset
+		quoted := false
+		quote := byte(0)
+		close := byte(0)
+		switch selector[offset] {
+		case '"', '`':
+			quoted = true
+			quote, close = selector[offset], selector[offset]
+			offset++
+		case '[':
+			quoted = true
+			quote, close = '[', ']'
+			offset++
+		}
+		var part strings.Builder
+		if quoted {
+			closed := false
+			for offset < len(selector) {
+				if selector[offset] == close {
+					if close != ']' && offset+1 < len(selector) && selector[offset+1] == close {
+						part.WriteByte(close)
+						offset += 2
+						continue
+					}
+					offset++
+					closed = true
+					break
+				}
+				part.WriteByte(selector[offset])
+				offset++
+			}
+			if !closed || dialect == "postgres" && quote != '"' {
+				return "", false
+			}
+		} else {
+			for offset < len(selector) && selector[offset] != '.' {
+				part.WriteByte(selector[offset])
+				offset++
+			}
+			if part.Len() == 0 || offset == start {
+				return "", false
+			}
+		}
+		value := part.String()
+		if dialect == "postgres" && !quoted {
+			value = strings.ToLower(value)
+		}
+		parts = append(parts, value)
+		if offset == len(selector) {
+			break
+		}
+		if selector[offset] != '.' || offset+1 == len(selector) {
+			return "", false
+		}
+		offset++
+	}
+	return strings.Join(parts, "."), len(parts) > 0
 }
 
 func comparableSQL(source string) string {

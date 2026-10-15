@@ -44,6 +44,49 @@ func TestEquivalentSQLExpandsProjectionWildcardFromSchema(t *testing.T) {
 	}
 }
 
+func TestEquivalentSQLNormalizesPostgreSQLTableIdentifiers(t *testing.T) {
+	tests := []struct {
+		name, handwritten, generated string
+		schemas                      map[string]schemaTable
+	}{
+		{
+			name: "unquoted mixed case", handwritten: `SELECT * FROM Users`, generated: `SELECT id, name FROM Users`,
+			schemas: schemaTables("users"),
+		},
+		{
+			name: "quoted mixed case", handwritten: `SELECT * FROM "Users"`, generated: `SELECT id, name FROM "Users"`,
+			schemas: schemaTables("Users"),
+		},
+		{
+			name: "qualified quoted mixed case", handwritten: `SELECT * FROM public."Users"`, generated: `SELECT id, name FROM public."Users"`,
+			schemas: schemaTables("public.Users"),
+		},
+		{
+			name: "unquoted chooses folded table", handwritten: `SELECT * FROM Users`, generated: `SELECT id, name FROM Users`,
+			schemas: schemaTables("users", "Users"),
+		},
+		{
+			name: "embed unquoted mixed case", handwritten: `SELECT sqlc.embed(u) FROM Users AS u`, generated: `SELECT u.id, u.name FROM Users AS u`,
+			schemas: schemaTables("users"),
+		},
+		{
+			name: "embed quoted mixed case", handwritten: `SELECT sqlc.embed(u) FROM "Users" AS u`, generated: `SELECT u.id, u.name FROM "Users" AS u`,
+			schemas: schemaTables("Users"),
+		},
+		{
+			name: "embed qualified quoted mixed case", handwritten: `SELECT sqlc.embed(u) FROM public."Users" AS u`, generated: `SELECT u.id, u.name FROM public."Users" AS u`,
+			schemas: schemaTables("public.Users"),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if !equivalentSQL(test.handwritten, test.generated, "postgres", test.schemas) {
+				t.Fatal("equivalent PostgreSQL was rejected")
+			}
+		})
+	}
+}
+
 func TestSchemaColumnsRequiresExactOrDefaultSchema(t *testing.T) {
 	tests := []struct {
 		name, selector, engine string
