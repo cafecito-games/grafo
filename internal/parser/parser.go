@@ -343,6 +343,27 @@ func (b *Builder) SetNodeProperty(id, key, value string) bool {
 	return false
 }
 
+// AppendNodeProperty records another deterministic value for a multi-valued
+// parser property. Values are separated by NUL so SQL identifiers remain
+// lossless without exposing the property as a resolvable graph edge.
+func (b *Builder) AppendNodeProperty(id, key, value string) bool {
+	for index := range b.Result.Nodes {
+		if b.Result.Nodes[index].ID != id {
+			continue
+		}
+		if b.Result.Nodes[index].Properties == nil {
+			b.Result.Nodes[index].Properties = map[string]string{}
+		}
+		if existing := b.Result.Nodes[index].Properties[key]; existing != "" {
+			b.Result.Nodes[index].Properties[key] = existing + "\x00" + value
+		} else {
+			b.Result.Nodes[index].Properties[key] = value
+		}
+		return true
+	}
+	return false
+}
+
 func (b *Builder) AddFact(from string, kind graph.EdgeKind, targetID, target string, targetKind graph.NodeKind, loc graph.Location, properties map[string]string) {
 	b.addFact("id:"+from, graph.Fact{FromID: from}, kind, targetID, target, targetKind, loc, properties)
 }

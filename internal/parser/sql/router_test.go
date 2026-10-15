@@ -524,6 +524,7 @@ func TestRouterDoesNotExpandWildcardAcrossPostgreSQLSchemaMutations(t *testing.T
 		{name: "qualified alter", schema: "CREATE TABLE users (id bigint PRIMARY KEY, name text); ALTER TABLE public.users ADD COLUMN email text;", query: "SELECT * FROM users;"},
 		{name: "set schema", schema: "CREATE TABLE users (id bigint PRIMARY KEY, name text); ALTER TABLE users SET SCHEMA audit;", query: "SELECT * FROM users;"},
 		{name: "drop schema cascade", schema: "CREATE TABLE audit.users (id bigint PRIMARY KEY, name text); DROP SCHEMA audit CASCADE;", query: "SELECT * FROM audit.users;"},
+		{name: "rename schema", schema: "CREATE TABLE audit.users (id bigint PRIMARY KEY, name text); ALTER SCHEMA audit RENAME TO archive;", query: "SELECT * FROM audit.users;"},
 		{name: "rename table", schema: "CREATE TABLE users (id bigint PRIMARY KEY, name text); ALTER TABLE users RENAME TO members;", query: "SELECT * FROM members;"},
 		{name: "drop and recreate", schema: "CREATE TABLE users (id bigint PRIMARY KEY, old_name text); DROP TABLE users; CREATE TABLE users (id bigint PRIMARY KEY, new_name text);", query: "SELECT * FROM users;"},
 	}

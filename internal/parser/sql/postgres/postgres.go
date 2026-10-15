@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -441,6 +442,8 @@ func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 			writes[value.GetRelation()] = true
 			if table := relationName(value.GetRelation()); table != "" {
 				mutatedTables[table] = true
+			} else if value.GetRenameType() == pg_query.ObjectType_OBJECT_SCHEMA && value.GetSubname() != "" {
+				droppedSchemas[value.GetSubname()] = true
 			}
 		case *pg_query.DropStmt:
 			switch value.GetRemoveType() {
@@ -483,7 +486,12 @@ func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 		}
 		e.b.AddFact(fromID, kind, "", qualified, "", e.location(relation.GetLocation(), 0), properties)
 	}
+	droppedTableNames := make([]string, 0, len(droppedTables))
 	for table := range droppedTables {
+		droppedTableNames = append(droppedTableNames, table)
+	}
+	sort.Strings(droppedTableNames)
+	for _, table := range droppedTableNames {
 		key := string(graph.EdgeWrites) + "\x00" + table
 		if seen[key] {
 			continue
@@ -491,10 +499,13 @@ func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 		seen[key] = true
 		e.b.AddFact(fromID, graph.EdgeWrites, "", table, "", e.location(0, 0), map[string]string{"statement": "schema_mutation"})
 	}
+	droppedSchemaNames := make([]string, 0, len(droppedSchemas))
 	for schema := range droppedSchemas {
-		e.b.AddFact(fromID, graph.EdgeWrites, "", schema, "", e.location(0, 0), map[string]string{
-			"statement": "schema_mutation", "scope": "schema",
-		})
+		droppedSchemaNames = append(droppedSchemaNames, schema)
+	}
+	sort.Strings(droppedSchemaNames)
+	for _, schema := range droppedSchemaNames {
+		e.b.AppendNodeProperty(fromID, "incomplete_schemas", schema)
 	}
 	emitColumn := func(kind graph.EdgeKind, qualified string, location int32) {
 		if qualified == "" {

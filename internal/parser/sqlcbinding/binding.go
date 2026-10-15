@@ -678,6 +678,11 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 		columns := map[string][]locatedColumn{}
 		declarations := map[string]int{}
 		for _, node := range parsed.Nodes {
+			for _, schema := range strings.Split(node.Properties["incomplete_schemas"], "\x00") {
+				if schema != "" {
+					incompleteSchemas[schema] = true
+				}
+			}
 			if node.Kind == graph.KindTable {
 				declarations[node.QualifiedName]++
 				if node.Properties["columns_incomplete"] == "true" {

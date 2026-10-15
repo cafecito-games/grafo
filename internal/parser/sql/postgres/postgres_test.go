@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -216,6 +217,30 @@ CREATE TABLE typed OF pair (a WITH OPTIONS NOT NULL);
 		if !found {
 			t.Fatalf("missing table %q", qualified)
 		}
+	}
+}
+
+func TestParserKeepsSchemaMutationsOutOfTableWriteFacts(t *testing.T) {
+	content := []byte(`
+CREATE TABLE audit (id bigint);
+CREATE TABLE audit.users (id bigint);
+DROP SCHEMA audit CASCADE;
+`)
+	first, err := postgresparser.New().Parse(context.Background(), parserapi.Input{Path: "db/schema.sql", Content: content})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := postgresparser.New().Parse(context.Background(), parserapi.Input{Path: "db/schema.sql", Content: content})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fact := range first.Facts {
+		if fact.Kind == graph.EdgeWrites && fact.Target == "audit" {
+			t.Fatalf("schema mutation was exposed as a table write: %#v", fact)
+		}
+	}
+	if !reflect.DeepEqual(first.Facts, second.Facts) {
+		t.Fatalf("schema mutation facts are nondeterministic:\nfirst: %#v\nsecond: %#v", first.Facts, second.Facts)
 	}
 }
 
