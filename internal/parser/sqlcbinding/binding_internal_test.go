@@ -66,6 +66,10 @@ func TestEquivalentSQLNormalizesPostgreSQLTableIdentifiers(t *testing.T) {
 			schemas: schemaTables("users", "Users"),
 		},
 		{
+			name: "unquoted preserves non ascii case", handwritten: `SELECT * FROM Üsers`, generated: `SELECT id, name FROM Üsers`,
+			schemas: schemaTables("Üsers", "üsers"),
+		},
+		{
 			name: "embed unquoted mixed case", handwritten: `SELECT sqlc.embed(u) FROM Users AS u`, generated: `SELECT u.id, u.name FROM Users AS u`,
 			schemas: schemaTables("users"),
 		},

@@ -1189,7 +1189,8 @@ func schemaForEmbed(schemas map[string]schemaTable, statement, argument, dialect
 	return schemaColumns(schemas, declared, dialect)
 }
 
-const sqlIdentifierPart = `(?:"(?:[^"]|"")*"|` + "`(?:[^`]|``)*`" + `|\[[^\]]+\]|[A-Za-z_][A-Za-z0-9_$]*)`
+const sqlBareIdentifier = `(?:[A-Za-z_]|[\x{80}-\x{10FFFF}])(?:[A-Za-z0-9_$]|[\x{80}-\x{10FFFF}])*`
+const sqlIdentifierPart = `(?:"(?:[^"]|"")*"|` + "`(?:[^`]|``)*`" + `|\[[^\]]+\]|` + sqlBareIdentifier + `)`
 const sqlQualifiedIdentifierPattern = sqlIdentifierPart + `(?:\.` + sqlIdentifierPart + `){0,2}`
 
 func normalizeSQLSelector(selector, dialect string) (string, bool) {
@@ -1240,7 +1241,7 @@ func normalizeSQLSelector(selector, dialect string) (string, bool) {
 		}
 		value := part.String()
 		if dialect == "postgres" && !quoted {
-			value = strings.ToLower(value)
+			value = lowerASCII(value)
 		}
 		parts = append(parts, value)
 		if offset == len(selector) {
@@ -1252,6 +1253,16 @@ func normalizeSQLSelector(selector, dialect string) (string, bool) {
 		offset++
 	}
 	return strings.Join(parts, "."), len(parts) > 0
+}
+
+func lowerASCII(value string) string {
+	result := []byte(value)
+	for index, char := range result {
+		if char >= 'A' && char <= 'Z' {
+			result[index] = char + ('a' - 'A')
+		}
+	}
+	return string(result)
 }
 
 func comparableSQL(source string) string {
