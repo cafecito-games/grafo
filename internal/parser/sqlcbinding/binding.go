@@ -711,9 +711,6 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 }
 
 func schemaColumns(tables map[string]schemaTable, selector, engine string) (string, []string, bool) {
-	if table, ok := tables[selector]; ok && !table.ambiguous && !table.incomplete && len(table.columns) > 0 {
-		return selector, table.columns, true
-	}
 	selectorSchema, selectorName := splitTableName(selector)
 	defaultSchema := ""
 	switch engine {
@@ -723,6 +720,10 @@ func schemaColumns(tables map[string]schemaTable, selector, engine string) (stri
 		defaultSchema = "main"
 	}
 	if selectorSchema != "" && !strings.EqualFold(selectorSchema, defaultSchema) {
+		table, ok := tables[selector]
+		if ok && !table.ambiguous && !table.incomplete && len(table.columns) > 0 {
+			return selector, table.columns, true
+		}
 		return "", nil, false
 	}
 	var matched schemaTable
