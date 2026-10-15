@@ -266,7 +266,7 @@ func nodeNames(nodes []graph.Node) []string {
 	return result
 }
 
-func hasEdge(edges []graph.Edge, id string) bool {
+func hasEdge(edges []query.TraversalEdge, id string) bool {
 	for _, edge := range edges {
 		if edge.ID == id {
 			return true

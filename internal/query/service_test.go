@@ -2,6 +2,7 @@ package query_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -643,5 +644,202 @@ func TestResolveRanksCaseSensitiveEvidenceAboveStrongerFoldedLevels(t *testing.T
 	if _, err = service.Resolve(context.Background(), "SEARCH"); err == nil ||
 		!strings.Contains(err.Error(), "by name ignoring case") {
 		t.Fatalf("a folded-only ambiguity must say it ignored case, got %v", err)
+	}
+}
+
+// TestTraversalEdgesDistinguishDirectFromTransitive pins the shape that caused a
+// consumer to report transitive callers as direct call sites: a root with one
+// caller whose own callers sit two and three hops out.
+func TestTraversalEdgesDistinguishDirectFromTransitive(t *testing.T) {
+	root := node("Root")
+	intermediate := node("Intermediate")
+	firstOuter := node("FirstOuter")
+	secondOuter := node("SecondOuter")
+	outermost := node("Outermost")
+	repository := &fakeRepository{
+		nodes: map[string]graph.Node{root.ID: root, intermediate.ID: intermediate,
+			firstOuter.ID: firstOuter, secondOuter.ID: secondOuter, outermost.ID: outermost},
+		edges: []graph.Edge{
+			{ID: "edge-direct", FromID: intermediate.ID, ToID: root.ID, Kind: graph.EdgeCalls},
+			{ID: "edge-first", FromID: firstOuter.ID, ToID: intermediate.ID, Kind: graph.EdgeCalls},
+			{ID: "edge-second", FromID: secondOuter.ID, ToID: intermediate.ID, Kind: graph.EdgeCalls},
+			{ID: "edge-outermost", FromID: outermost.ID, ToID: firstOuter.ID, Kind: graph.EdgeCalls},
+		},
+	}
+	service := query.NewService(repository)
+	traversal, err := service.Neighborhood(context.Background(), "Root", "", 3, query.Incoming, nil, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(traversal.Edges) != 4 {
+		t.Fatalf("expected every walked edge: %#v", traversal.Edges)
+	}
+	expectedDepth := map[string]int{"edge-direct": 1, "edge-first": 2, "edge-second": 2, "edge-outermost": 3}
+	var direct []string
+	for _, edge := range traversal.Edges {
+		if edge.Depth != expectedDepth[edge.ID] {
+			t.Fatalf("edge %s reported depth %d, want %d", edge.ID, edge.Depth, expectedDepth[edge.ID])
+		}
+		if edge.Direct {
+			direct = append(direct, edge.ID)
+		}
+		if edge.Direct != (edge.ToID == root.ID || edge.FromID == root.ID) {
+			t.Fatalf("edge %s direct flag %v contradicts its endpoints", edge.ID, edge.Direct)
+		}
+		if edge.Depth > 1 && edge.Direct {
+			t.Fatalf("transitive edge %s is marked direct", edge.ID)
+		}
+	}
+	if len(direct) != 1 || direct[0] != "edge-direct" {
+		t.Fatalf("direct subset = %#v, want only the one edge incident to the root", direct)
+	}
+}
+
+// TestTraversalEdgeJSONKeepsEdgeFieldsAndAddsDepth holds the wire shape an agent
+// reads: the edge fields stay where they were and gain the depth and direct
+// markers, rather than moving under a nested object.
+func TestTraversalEdgeJSONKeepsEdgeFieldsAndAddsDepth(t *testing.T) {
+	encoded, err := json.Marshal(query.TraversalEdge{
+		Edge:   graph.Edge{ID: "edge", FromID: "caller", ToID: "root", Kind: graph.EdgeCalls},
+		Depth:  2,
+		Direct: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"id", "from_id", "to_id", "kind", "depth", "direct"} {
+		if _, ok := decoded[field]; !ok {
+			t.Fatalf("serialized traversal edge is missing %q: %s", field, encoded)
+		}
+	}
+	if decoded["from_id"] != "caller" || decoded["depth"] != float64(2) || decoded["direct"] != false {
+		t.Fatalf("serialized traversal edge = %s", encoded)
+	}
+}
+
+// TestTraversalEdgeDepthComesFromItsEndpoints pins the half of the depth
+// contract a tree cannot show: an edge between two nodes the walk already
+// reached is labelled from its endpoints, not from the level that discovered it.
+// Both siblings sit one hop from the root, so the edge joining them is depth 1
+// even though it surfaces while the walk expands the second level, and it is not
+// direct because it never touches the root.
+func TestTraversalEdgeDepthComesFromItsEndpoints(t *testing.T) {
+	root := node("Root")
+	firstNeighbor := node("FirstNeighbor")
+	secondNeighbor := node("SecondNeighbor")
+	repository := &fakeRepository{
+		nodes: map[string]graph.Node{root.ID: root, firstNeighbor.ID: firstNeighbor, secondNeighbor.ID: secondNeighbor},
+		edges: []graph.Edge{
+			{ID: "edge-first", FromID: root.ID, ToID: firstNeighbor.ID, Kind: graph.EdgeCalls},
+			{ID: "edge-second", FromID: root.ID, ToID: secondNeighbor.ID, Kind: graph.EdgeCalls},
+			{ID: "edge-sibling", FromID: firstNeighbor.ID, ToID: secondNeighbor.ID, Kind: graph.EdgeCalls},
+		},
+	}
+	service := query.NewService(repository)
+	traversal, err := service.Neighborhood(context.Background(), "Root", "", 2, query.Both, nil, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := map[string]query.TraversalEdge{
+		"edge-first":   {Depth: 1, Direct: true},
+		"edge-second":  {Depth: 1, Direct: true},
+		"edge-sibling": {Depth: 1, Direct: false},
+	}
+	if len(traversal.Edges) != len(expected) {
+		t.Fatalf("expected every walked edge: %#v", traversal.Edges)
+	}
+	for _, edge := range traversal.Edges {
+		want, known := expected[edge.ID]
+		if !known {
+			t.Fatalf("unexpected edge %s", edge.ID)
+		}
+		if edge.Depth != want.Depth || edge.Direct != want.Direct {
+			t.Fatalf("edge %s labelled depth %d direct %v, want depth %d direct %v",
+				edge.ID, edge.Depth, edge.Direct, want.Depth, want.Direct)
+		}
+	}
+}
+
+// TestTraversalEdgeDepthSurvivesCyclesAndSelfLoops keeps the labels meaningful on
+// the shapes a call graph really contains: an edge back to the root closes a
+// cycle and is still direct, and a self-recursive root is depth 0 because both
+// of that edge's endpoints are the root.
+func TestTraversalEdgeDepthSurvivesCyclesAndSelfLoops(t *testing.T) {
+	root := node("Root")
+	middle := node("Middle")
+	repository := &fakeRepository{
+		nodes: map[string]graph.Node{root.ID: root, middle.ID: middle},
+		edges: []graph.Edge{
+			{ID: "edge-self", FromID: root.ID, ToID: root.ID, Kind: graph.EdgeCalls},
+			{ID: "edge-down", FromID: root.ID, ToID: middle.ID, Kind: graph.EdgeCalls},
+			{ID: "edge-back", FromID: middle.ID, ToID: root.ID, Kind: graph.EdgeCalls},
+		},
+	}
+	service := query.NewService(repository)
+	traversal, err := service.Neighborhood(context.Background(), "Root", "", 3, query.Outgoing, nil, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := map[string]query.TraversalEdge{
+		"edge-self": {Depth: 0, Direct: true},
+		"edge-down": {Depth: 1, Direct: true},
+		"edge-back": {Depth: 1, Direct: true},
+	}
+	if len(traversal.Edges) != len(expected) {
+		t.Fatalf("expected every walked edge: %#v", traversal.Edges)
+	}
+	for _, edge := range traversal.Edges {
+		want, known := expected[edge.ID]
+		if !known {
+			t.Fatalf("unexpected edge %s", edge.ID)
+		}
+		if edge.Depth != want.Depth || edge.Direct != want.Direct {
+			t.Fatalf("edge %s labelled depth %d direct %v, want depth %d direct %v",
+				edge.ID, edge.Depth, edge.Direct, want.Depth, want.Direct)
+		}
+	}
+}
+
+// TestTraversalEdgeDepthIsExactForNeighborsTheLimitExcluded covers the one case
+// where an endpoint has no recorded depth: the node limit kept the neighbor out
+// of Nodes while the walk still reports the edge that exposed it. Breadth-first
+// order means that neighbor cannot be nearer than the level it surfaced at, so
+// the fallback is exact rather than a guess.
+func TestTraversalEdgeDepthIsExactForNeighborsTheLimitExcluded(t *testing.T) {
+	root := node("Root")
+	middle := node("Middle")
+	excluded := node("Excluded")
+	repository := &fakeRepository{
+		nodes: map[string]graph.Node{root.ID: root, middle.ID: middle, excluded.ID: excluded},
+		edges: []graph.Edge{
+			{ID: "edge-down", FromID: root.ID, ToID: middle.ID, Kind: graph.EdgeCalls},
+			{ID: "edge-further", FromID: middle.ID, ToID: excluded.ID, Kind: graph.EdgeCalls},
+		},
+	}
+	service := query.NewService(repository)
+	traversal, err := service.Neighborhood(context.Background(), "Root", "", 3, query.Outgoing, nil, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !traversal.Truncated || len(traversal.Nodes) != 2 {
+		t.Fatalf("expected the node limit to exclude the far node: %#v", traversal)
+	}
+	expected := map[string]query.TraversalEdge{
+		"edge-down":    {Depth: 1, Direct: true},
+		"edge-further": {Depth: 2, Direct: false},
+	}
+	for _, edge := range traversal.Edges {
+		want, known := expected[edge.ID]
+		if !known {
+			t.Fatalf("unexpected edge %s", edge.ID)
+		}
+		if edge.Depth != want.Depth || edge.Direct != want.Direct {
+			t.Fatalf("edge %s labelled depth %d direct %v, want depth %d direct %v",
+				edge.ID, edge.Depth, edge.Direct, want.Depth, want.Direct)
+		}
 	}
 }
