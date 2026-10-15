@@ -647,6 +647,7 @@ func buildRegistry(ctx context.Context, input parserapi.Input, files []fileConte
 func parseSchema(ctx context.Context, config *Config, entry Entry, input parserapi.Input, contents map[string]fileContent) map[string]schemaTable {
 	result := map[string]schemaTable{}
 	incompleteNames := map[string]bool{}
+	incompleteSchemas := map[string]bool{}
 	valid := true
 	for _, schemaPath := range entry.SchemaPaths {
 		file := contents[schemaPath]
@@ -690,7 +691,11 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 		}
 		for _, fact := range parsed.Facts {
 			if fact.Kind == graph.EdgeWrites && fact.Properties["statement"] != "" && fact.Target != "" {
-				incompleteNames[fact.Target] = true
+				if fact.Properties["scope"] == "schema" {
+					incompleteSchemas[fact.Target] = true
+				} else {
+					incompleteNames[fact.Target] = true
+				}
 			}
 		}
 		for table, located := range columns {
@@ -715,6 +720,20 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 	for table, value := range result {
 		for incomplete := range incompleteNames {
 			if strings.EqualFold(graph.SimpleName(table), graph.SimpleName(incomplete)) {
+				value.incomplete = true
+				break
+			}
+		}
+		tableSchema, _ := splitTableName(table)
+		if tableSchema == "" {
+			if entry.Engine == "postgres" {
+				tableSchema = "public"
+			} else if entry.Engine == "sqlite" {
+				tableSchema = "main"
+			}
+		}
+		for incompleteSchema := range incompleteSchemas {
+			if identifiersEqual(tableSchema, incompleteSchema, entry.Engine) {
 				value.incomplete = true
 				break
 			}

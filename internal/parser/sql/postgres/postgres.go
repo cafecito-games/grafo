@@ -343,6 +343,7 @@ func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 	altered := map[*pg_query.RangeVar]bool{}
 	mutatedTables := map[string]bool{}
 	droppedTables := map[string]bool{}
+	droppedSchemas := map[string]bool{}
 	cteNames := map[string]bool{}
 	hasCTE := false
 	walkMessage(root, func(message protoreflect.Message) {
@@ -431,17 +432,29 @@ func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 		case *pg_query.AlterTableStmt:
 			writes[value.GetRelation()] = true
 			altered[value.GetRelation()] = true
+		case *pg_query.AlterObjectSchemaStmt:
+			if value.GetRelation() != nil {
+				writes[value.GetRelation()] = true
+				mutatedTables[relationName(value.GetRelation())] = true
+			}
 		case *pg_query.RenameStmt:
 			writes[value.GetRelation()] = true
 			if table := relationName(value.GetRelation()); table != "" {
 				mutatedTables[table] = true
 			}
 		case *pg_query.DropStmt:
-			if value.GetRemoveType() == pg_query.ObjectType_OBJECT_TABLE {
+			switch value.GetRemoveType() {
+			case pg_query.ObjectType_OBJECT_TABLE:
 				for _, object := range value.GetObjects() {
 					if table := postgresObjectName(object); table != "" {
 						droppedTables[table] = true
 						mutatedTables[table] = true
+					}
+				}
+			case pg_query.ObjectType_OBJECT_SCHEMA:
+				for _, object := range value.GetObjects() {
+					if schema := postgresObjectName(object); schema != "" {
+						droppedSchemas[schema] = true
 					}
 				}
 			}
@@ -477,6 +490,11 @@ func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 		}
 		seen[key] = true
 		e.b.AddFact(fromID, graph.EdgeWrites, "", table, "", e.location(0, 0), map[string]string{"statement": "schema_mutation"})
+	}
+	for schema := range droppedSchemas {
+		e.b.AddFact(fromID, graph.EdgeWrites, "", schema, "", e.location(0, 0), map[string]string{
+			"statement": "schema_mutation", "scope": "schema",
+		})
 	}
 	emitColumn := func(kind graph.EdgeKind, qualified string, location int32) {
 		if qualified == "" {
@@ -520,7 +538,13 @@ func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 }
 
 func postgresObjectName(node *pg_query.Node) string {
-	if node == nil || node.GetList() == nil {
+	if node == nil {
+		return ""
+	}
+	if value := node.GetString_(); value != nil {
+		return value.GetSval()
+	}
+	if node.GetList() == nil {
 		return ""
 	}
 	var parts []string
