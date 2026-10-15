@@ -287,6 +287,13 @@ Every CLI query has an MCP equivalent, and every one of them accepts `--json`,
 | `grafo search <pattern>` | `search_source` | [bounded content search over indexed files](#bounded-source-search) |
 | `grafo reusable <description>` | `find_reusable_code` | [existing code that already does this](#semantic-candidate-discovery) |
 
+`neighbors`, `callers`, and `callees` return a bounded multi-level traversal,
+not a list of one-hop relations: `callers` and `callees` default to depth 3. Each
+reached node carries its `depth` in hops from the root, and each edge carries
+`depth` and `direct`. Only edges marked `direct` touch the root, so a depth-2
+edge is a caller of an intermediate caller rather than a call site of the symbol
+you asked about.
+
 ### Catalogs and system shape
 
 | CLI | MCP tool | Answers |

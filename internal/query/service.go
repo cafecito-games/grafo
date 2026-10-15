@@ -85,12 +85,28 @@ type ReachedNode struct {
 	Node  graph.Node `json:"node"`
 }
 
+// TraversalEdge is one edge of a bounded multi-level walk, labelled with how
+// far from the root it was found. Direct records that the edge is incident to
+// the root itself, so the direct subset is the only evidence of a relation to
+// the root; an edge with Direct false connects two reached nodes and is
+// reachability through an intermediate node, never a relation to the root. The
+// embedded graph.Edge keeps every edge field where a consumer already reads it.
+type TraversalEdge struct {
+	graph.Edge
+	Depth  int  `json:"depth"`
+	Direct bool `json:"direct"`
+}
+
+// Traversal is a bounded breadth-first walk outward from one root. Nodes and
+// Edges are both multi-level: a node's Depth and an edge's Depth count hops
+// from Root, and only edges with Direct set touch Root. Reading Edges as a flat
+// list of relations to Root therefore overstates what the graph proves.
 type Traversal struct {
-	Root      graph.Node    `json:"root"`
-	Nodes     []ReachedNode `json:"nodes"`
-	Edges     []graph.Edge  `json:"edges"`
-	Direction Direction     `json:"direction"`
-	Truncated bool          `json:"truncated"`
+	Root      graph.Node      `json:"root"`
+	Nodes     []ReachedNode   `json:"nodes"`
+	Edges     []TraversalEdge `json:"edges"`
+	Direction Direction       `json:"direction"`
+	Truncated bool            `json:"truncated"`
 }
 
 type Path struct {
@@ -349,8 +365,9 @@ func (s *Service) neighborhood(ctx context.Context, root graph.Node, seeds []dec
 	for _, relation := range relations {
 		relationSet[relation] = true
 	}
-	result := Traversal{Root: root, Direction: direction, Nodes: []ReachedNode{{Depth: 0, Node: root}}, Edges: []graph.Edge{}}
+	result := Traversal{Root: root, Direction: direction, Nodes: []ReachedNode{{Depth: 0, Node: root}}, Edges: []TraversalEdge{}}
 	visited := map[string]bool{root.ID: true}
+	depths := map[string]int{root.ID: 0}
 	frontier := []string{root.ID}
 	edgeSeen := map[string]bool{}
 	// Seeds join the frontier the root's own neighbors join, so a member and a
@@ -366,9 +383,10 @@ func (s *Service) neighborhood(ctx context.Context, root graph.Node, seeds []dec
 			break
 		}
 		visited[seed.node.ID] = true
+		depths[seed.node.ID] = 1
 		result.Nodes = append(result.Nodes, ReachedNode{Depth: 1, Node: seed.node})
 		if !edgeSeen[seed.edge.ID] {
-			result.Edges = append(result.Edges, seed.edge)
+			result.Edges = append(result.Edges, labelEdge(seed.edge, root.ID, depths, 1))
 			edgeSeen[seed.edge.ID] = true
 		}
 		seeded = append(seeded, seed.node.ID)
@@ -387,7 +405,7 @@ func (s *Service) neighborhood(ctx context.Context, root graph.Node, seeds []dec
 					neighbor = edge.FromID
 				}
 				if !edgeSeen[edge.ID] {
-					result.Edges = append(result.Edges, edge)
+					result.Edges = append(result.Edges, labelEdge(edge, root.ID, depths, level))
 					edgeSeen[edge.ID] = true
 				}
 				if visited[neighbor] {
@@ -402,6 +420,7 @@ func (s *Service) neighborhood(ctx context.Context, root graph.Node, seeds []dec
 					return Traversal{}, err
 				}
 				visited[neighbor] = true
+				depths[neighbor] = level
 				next = append(next, neighbor)
 				result.Nodes = append(result.Nodes, ReachedNode{Depth: level, Node: node})
 			}
@@ -418,8 +437,29 @@ func (s *Service) neighborhood(ctx context.Context, root graph.Node, seeds []dec
 		}
 		return result.Nodes[i].Node.ID < result.Nodes[j].Node.ID
 	})
-	sortEdges(result.Edges)
+	sortTraversalEdges(result.Edges)
 	return result, nil
+}
+
+// labelEdge records an edge's distance from the root as the greater depth of its
+// two endpoints, so the label does not depend on which endpoint the walk reached
+// first. unreached is the depth to assume for an endpoint the walk has not
+// recorded yet, which is the level the edge was found at: the frontier node sits
+// one hop closer, and a neighbor dropped by the node limit still belongs to the
+// level that exposed it.
+func labelEdge(edge graph.Edge, rootID string, depths map[string]int, unreached int) TraversalEdge {
+	depth := endpointDepth(edge.FromID, depths, unreached)
+	if other := endpointDepth(edge.ToID, depths, unreached); other > depth {
+		depth = other
+	}
+	return TraversalEdge{Edge: edge, Depth: depth, Direct: edge.FromID == rootID || edge.ToID == rootID}
+}
+
+func endpointDepth(id string, depths map[string]int, unreached int) int {
+	if depth, found := depths[id]; found {
+		return depth
+	}
+	return unreached
 }
 
 // ShortestPath walks from one resolved node to another. kind optionally
@@ -528,6 +568,23 @@ func (s *Service) edges(ctx context.Context, id string, direction Direction, rel
 	}
 	sortEdges(filtered)
 	return filtered, nil
+}
+
+// sortTraversalEdges orders labelled edges by the same key as sortEdges, so
+// adding the depth labels did not reorder any existing traversal output.
+func sortTraversalEdges(edges []TraversalEdge) {
+	sort.Slice(edges, func(i, j int) bool {
+		if edges[i].Kind != edges[j].Kind {
+			return edges[i].Kind < edges[j].Kind
+		}
+		if edges[i].FromID != edges[j].FromID {
+			return edges[i].FromID < edges[j].FromID
+		}
+		if edges[i].ToID != edges[j].ToID {
+			return edges[i].ToID < edges[j].ToID
+		}
+		return edges[i].ID < edges[j].ID
+	})
 }
 
 func sortEdges(edges []graph.Edge) {

@@ -2,6 +2,7 @@ package query_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -643,5 +644,79 @@ func TestResolveRanksCaseSensitiveEvidenceAboveStrongerFoldedLevels(t *testing.T
 	if _, err = service.Resolve(context.Background(), "SEARCH"); err == nil ||
 		!strings.Contains(err.Error(), "by name ignoring case") {
 		t.Fatalf("a folded-only ambiguity must say it ignored case, got %v", err)
+	}
+}
+
+// TestTraversalEdgesDistinguishDirectFromTransitive pins the shape that caused a
+// consumer to report transitive callers as direct call sites: a root with one
+// caller whose own callers sit two and three hops out.
+func TestTraversalEdgesDistinguishDirectFromTransitive(t *testing.T) {
+	root := node("Root")
+	intermediate := node("Intermediate")
+	firstOuter := node("FirstOuter")
+	secondOuter := node("SecondOuter")
+	outermost := node("Outermost")
+	repository := &fakeRepository{
+		nodes: map[string]graph.Node{root.ID: root, intermediate.ID: intermediate,
+			firstOuter.ID: firstOuter, secondOuter.ID: secondOuter, outermost.ID: outermost},
+		edges: []graph.Edge{
+			{ID: "edge-direct", FromID: intermediate.ID, ToID: root.ID, Kind: graph.EdgeCalls},
+			{ID: "edge-first", FromID: firstOuter.ID, ToID: intermediate.ID, Kind: graph.EdgeCalls},
+			{ID: "edge-second", FromID: secondOuter.ID, ToID: intermediate.ID, Kind: graph.EdgeCalls},
+			{ID: "edge-outermost", FromID: outermost.ID, ToID: firstOuter.ID, Kind: graph.EdgeCalls},
+		},
+	}
+	service := query.NewService(repository)
+	traversal, err := service.Neighborhood(context.Background(), "Root", "", 3, query.Incoming, nil, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(traversal.Edges) != 4 {
+		t.Fatalf("expected every walked edge: %#v", traversal.Edges)
+	}
+	expectedDepth := map[string]int{"edge-direct": 1, "edge-first": 2, "edge-second": 2, "edge-outermost": 3}
+	var direct []string
+	for _, edge := range traversal.Edges {
+		if edge.Depth != expectedDepth[edge.ID] {
+			t.Fatalf("edge %s reported depth %d, want %d", edge.ID, edge.Depth, expectedDepth[edge.ID])
+		}
+		if edge.Direct {
+			direct = append(direct, edge.ID)
+		}
+		if edge.Direct != (edge.ToID == root.ID || edge.FromID == root.ID) {
+			t.Fatalf("edge %s direct flag %v contradicts its endpoints", edge.ID, edge.Direct)
+		}
+		if edge.Depth > 1 && edge.Direct {
+			t.Fatalf("transitive edge %s is marked direct", edge.ID)
+		}
+	}
+	if len(direct) != 1 || direct[0] != "edge-direct" {
+		t.Fatalf("direct subset = %#v, want only the one edge incident to the root", direct)
+	}
+}
+
+// TestTraversalEdgeJSONKeepsEdgeFieldsAndAddsDepth holds the wire shape an agent
+// reads: the edge fields stay where they were and gain the depth and direct
+// markers, rather than moving under a nested object.
+func TestTraversalEdgeJSONKeepsEdgeFieldsAndAddsDepth(t *testing.T) {
+	encoded, err := json.Marshal(query.TraversalEdge{
+		Edge:   graph.Edge{ID: "edge", FromID: "caller", ToID: "root", Kind: graph.EdgeCalls},
+		Depth:  2,
+		Direct: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"id", "from_id", "to_id", "kind", "depth", "direct"} {
+		if _, ok := decoded[field]; !ok {
+			t.Fatalf("serialized traversal edge is missing %q: %s", field, encoded)
+		}
+	}
+	if decoded["from_id"] != "caller" || decoded["depth"] != float64(2) || decoded["direct"] != false {
+		t.Fatalf("serialized traversal edge = %s", encoded)
 	}
 }

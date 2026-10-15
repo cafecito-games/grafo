@@ -141,7 +141,7 @@ type ImpactSection struct {
 	Depth     int              `json:"depth"`
 	Relations []graph.EdgeKind `json:"relations"`
 	Nodes     []ReachedNode    `json:"nodes"`
-	Edges     []graph.Edge     `json:"edges"`
+	Edges     []TraversalEdge  `json:"edges"`
 	Truncated bool             `json:"truncated"`
 }
 
@@ -349,7 +349,7 @@ func impactedFiles(sections []ImpactSection) []ImpactedFile {
 				accumulator := ensure(key)
 				accumulator.edges[edge.ID] = true
 				accumulator.directions[string(section.Direction)] = true
-				if isFederated(edge) {
+				if isFederated(edge.Edge) {
 					accumulator.federated = true
 				}
 			}
@@ -428,7 +428,7 @@ func crossRepositoryHops(sections []ImpactSection) []CrossRepositoryHop {
 			nodes[reached.Node.ID] = reached.Node
 		}
 		for _, edge := range section.Edges {
-			if !isFederated(edge) {
+			if !isFederated(edge.Edge) {
 				continue
 			}
 			far := edge.FromID
@@ -444,7 +444,7 @@ func crossRepositoryHops(sections []ImpactSection) []CrossRepositoryHop {
 				continue
 			}
 			seen[key] = true
-			result = append(result, CrossRepositoryHop{Direction: section.Direction, Edge: edge, Node: node})
+			result = append(result, CrossRepositoryHop{Direction: section.Direction, Edge: edge.Edge, Node: node})
 		}
 	}
 	sort.Slice(result, func(i, j int) bool {
@@ -486,7 +486,7 @@ func partitionRelations(sections []ImpactSection) (config, data, events []Impact
 			nodes[reached.Node.ID] = reached.Node
 		}
 		for _, edge := range section.Edges {
-			bucket, node, ok := classifyRelation(edge, nodes)
+			bucket, node, ok := classifyRelation(edge.Edge, nodes)
 			if !ok {
 				continue
 			}
@@ -495,7 +495,7 @@ func partitionRelations(sections []ImpactSection) (config, data, events []Impact
 				continue
 			}
 			seen[key] = true
-			relation := ImpactRelation{Direction: section.Direction, Edge: edge, Node: node}
+			relation := ImpactRelation{Direction: section.Direction, Edge: edge.Edge, Node: node}
 			switch bucket {
 			case relationConfig:
 				config = append(config, relation)

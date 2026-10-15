@@ -287,6 +287,24 @@ ID and returned with a one-hop traversal from the graph repository. Similarity
 search can later move to a specialized vector index without changing graph
 parsers, traversal, or the MCP contract.
 
+## Traversal output
+
+`get_neighbors`, `get_callers`, `get_callees`, and the impact sections all return
+one `query.Traversal`, a bounded breadth-first walk outward from a resolved root.
+Both of its arrays are multi-level. A node carries `depth` in hops from the root,
+and an edge carries `depth` plus `direct`: `depth` is the greater depth of the
+edge's two endpoints, so the label does not depend on which endpoint the walk
+reached first, and `direct` says the edge is incident to the root.
+
+Only the direct subset is evidence of a relation to the root. Every other edge
+connects two reached nodes, so it proves reachability through an intermediate
+node and nothing about the root. The primary consumer is an agent reading the
+JSON rather than a rendered tree, and a flat edge array with no level marker had
+already been read as an undifferentiated list of call sites, so the markers
+travel on the edges instead of having to be reconstructed from the root's ID. The
+labels are additive: edge fields keep their names and positions, and edge
+ordering is unchanged.
+
 ## Change impact
 
 `internal/query` owns the bidirectional impact use case. Upstream is an incoming

@@ -267,7 +267,7 @@ func nodeEvidence() []Evidence {
 		}
 		items = append(items, Evidence{Name: string(kind), Role: role, Capabilities: uniqueCaps(caps), Producers: all,
 			Consumers: []string{"resolution", "source", "semantic", "query", "federation"},
-			Anchors:   []Anchor{{Path: "internal/graph/model.go", Line: 26}, {Path: "internal/query/service.go", Line: 112}}, Notes: notes})
+			Anchors:   []Anchor{{Path: "internal/graph/model.go", Line: 26}, {Path: "internal/query/service.go", Line: 128}}, Notes: notes})
 	}
 	return items
 }
@@ -400,13 +400,13 @@ func operationEvidence() []Operation {
 		path string
 		line int
 	}{
-		{"find", []Capability{CapabilityStructural}, "internal/query/service.go", 110},
-		{"show", []Capability{CapabilityStructural}, "internal/query/service.go", 124},
+		{"find", []Capability{CapabilityStructural}, "internal/query/service.go", 126},
+		{"show", []Capability{CapabilityStructural}, "internal/query/service.go", 140},
 		{"source", []Capability{CapabilityStructural, CapabilitySourceLookup}, "internal/source/service.go", 63},
-		{"neighbors", []Capability{CapabilityStructural}, "internal/query/service.go", 323},
-		{"callers", []Capability{CapabilityStructural}, "internal/query/service.go", 323},
-		{"callees", []Capability{CapabilityStructural}, "internal/query/service.go", 323},
-		{"path", []Capability{CapabilityStructural}, "internal/query/service.go", 427},
+		{"neighbors", []Capability{CapabilityStructural}, "internal/query/service.go", 339},
+		{"callers", []Capability{CapabilityStructural}, "internal/query/service.go", 339},
+		{"callees", []Capability{CapabilityStructural}, "internal/query/service.go", 339},
+		{"path", []Capability{CapabilityStructural}, "internal/query/service.go", 467},
 		{"impact", []Capability{CapabilityImpactDataflow}, "internal/query/impact.go", 198},
 		{"failure-flow", []Capability{CapabilityFailureFlow}, "internal/query/failureflow.go", 57},
 		{"godot-composition", []Capability{CapabilityGodotComposition}, "internal/query/godot.go", 74},
