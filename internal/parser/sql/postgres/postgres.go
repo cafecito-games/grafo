@@ -153,6 +153,18 @@ func (e *extractor) parseCreateTable(raw *pg_query.RawStmt, statement *pg_query.
 	if persistence := relationPersistence(relation.GetRelpersistence()); persistence != "" {
 		properties["persistence"] = persistence
 	}
+	// INHERITS and LIKE can add columns that are not represented by the local
+	// ColumnDef nodes below. Preserve that uncertainty for consumers that need
+	// a complete column set, such as sqlc wildcard expansion.
+	if len(statement.GetInhRelations()) > 0 {
+		properties["columns_incomplete"] = "true"
+	}
+	for _, item := range statement.GetTableElts() {
+		if item.GetTableLikeClause() != nil {
+			properties["columns_incomplete"] = "true"
+			break
+		}
+	}
 	tableID := e.b.Declare(e.b.FileID(), graph.Node{Kind: graph.KindTable, Name: relation.GetRelname(),
 		QualifiedName: qualified, Location: e.location(relation.GetLocation(), raw.GetStmtLocation()), Properties: properties})
 

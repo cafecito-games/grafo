@@ -661,10 +661,13 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 		}
 		columns := map[string][]locatedColumn{}
 		declarations := map[string]int{}
-		alteredTables := map[string]bool{}
+		incompleteTables := map[string]bool{}
 		for _, node := range parsed.Nodes {
 			if node.Kind == graph.KindTable {
 				declarations[node.QualifiedName]++
+				if node.Properties["columns_incomplete"] == "true" {
+					incompleteTables[node.QualifiedName] = true
+				}
 			}
 			if node.Kind == graph.KindColumn {
 				table := strings.TrimSuffix(node.QualifiedName, "."+node.Name)
@@ -673,7 +676,7 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 		}
 		for _, fact := range parsed.Facts {
 			if fact.Kind == graph.EdgeWrites && fact.Properties["statement"] != "" && fact.Target != "" {
-				alteredTables[fact.Target] = true
+				incompleteTables[fact.Target] = true
 			}
 		}
 		for table, located := range columns {
@@ -694,7 +697,7 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 			}
 			result[table] = schemaTable{columns: names, ambiguous: declarations[table] > 1}
 		}
-		for table := range alteredTables {
+		for table := range incompleteTables {
 			value := result[table]
 			value.incomplete = true
 			result[table] = value

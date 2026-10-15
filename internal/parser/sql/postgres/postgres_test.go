@@ -190,6 +190,33 @@ ORDER BY total;
 	}
 }
 
+func TestParserMarksCopiedColumnSetsIncomplete(t *testing.T) {
+	result, err := postgresparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "db/schema.sql", Content: []byte(`
+CREATE TABLE parent (inherited_id bigint);
+CREATE TABLE inherited (local_id bigint) INHERITS (parent);
+CREATE TABLE copied (LIKE parent INCLUDING ALL, local_id bigint);
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, qualified := range []string{"inherited", "copied"} {
+		found := false
+		for _, node := range result.Nodes {
+			if node.Kind == graph.KindTable && node.QualifiedName == qualified {
+				found = true
+				if node.Properties["columns_incomplete"] != "true" {
+					t.Fatalf("table %q properties = %#v", qualified, node.Properties)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("missing table %q", qualified)
+		}
+	}
+}
+
 func TestParserReportsInvalidPostgreSQL(t *testing.T) {
 	result, err := postgresparser.New().Parse(context.Background(), parserapi.Input{
 		Path: "broken.sql", Content: []byte("CREATE TABLE missing ("), Repository: "sample",

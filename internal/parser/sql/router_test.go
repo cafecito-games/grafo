@@ -448,6 +448,57 @@ sql:
 	}
 }
 
+func TestRouterDoesNotExpandWildcardAcrossPostgreSQLCopiedColumns(t *testing.T) {
+	schemas := []struct {
+		name, schema string
+	}{
+		{name: "inherits", schema: "CREATE TABLE parent (inherited_id bigint); CREATE TABLE child (local_id bigint) INHERITS (parent);"},
+		{name: "like", schema: "CREATE TABLE parent (copied_id bigint); CREATE TABLE child (LIKE parent INCLUDING ALL, local_id bigint);"},
+	}
+	forms := []struct {
+		name, query, diagnostic string
+	}{
+		{name: "wildcard", query: "SELECT * FROM child;", diagnostic: "wildcard column usage is unresolved"},
+		{name: "embed", query: "SELECT sqlc.embed(c) FROM child AS c;", diagnostic: "column expansion lacks complete, unique configured schema evidence"},
+	}
+	for _, schema := range schemas {
+		for _, form := range forms {
+			t.Run(schema.name+"/"+form.name, func(t *testing.T) {
+				root := testtemp.Dir(t)
+				writeRouterFiles(t, root, map[string]string{
+					"sqlc.yaml": `version: "2"
+sql:
+  - engine: postgresql
+    schema: schema.sql
+    queries: queries.sql
+    gen: {go: {package: db, out: internal/db}}
+`,
+					"schema.sql":  schema.schema,
+					"queries.sql": "-- name: ListRows :many\n" + form.query,
+				})
+				content, err := os.ReadFile(filepath.Join(root, "queries.sql"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				result, err := sqlparser.New(postgresparser.New(), sqliteparser.New()).Parse(context.Background(), parserapi.Input{
+					Root: root, Path: "queries.sql", Content: content, SourcePaths: []string{"sqlc.yaml", "schema.sql", "queries.sql"},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !hasDiagnostic(result, form.diagnostic) {
+					t.Fatalf("diagnostics = %#v", result.Diagnostics)
+				}
+				for _, fact := range result.Facts {
+					if fact.TargetKind == graph.KindColumn && fact.Producer == "sqlcbinding" {
+						t.Fatalf("copied schema produced %s column evidence: %#v", form.name, fact)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestRouterDoesNotUseSqlcSchemaAcrossDialectMismatch(t *testing.T) {
 	root := testtemp.Dir(t)
 	writeRouterFiles(t, root, map[string]string{

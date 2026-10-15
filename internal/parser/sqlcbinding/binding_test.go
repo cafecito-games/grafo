@@ -111,6 +111,38 @@ sql:
 	}
 }
 
+func TestLoaderRejectsIncompletePostgreSQLCopiedColumnSets(t *testing.T) {
+	tests := []struct {
+		name, schema string
+	}{
+		{name: "inherits", schema: "CREATE TABLE parent (inherited_id bigint); CREATE TABLE child (local_id bigint) INHERITS (parent);"},
+		{name: "like", schema: "CREATE TABLE parent (copied_id bigint); CREATE TABLE child (LIKE parent INCLUDING ALL, local_id bigint);"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := testtemp.Dir(t)
+			paths := writeFiles(t, root, map[string]string{
+				"sqlc.yaml": `version: "2"
+sql:
+  - engine: postgresql
+    schema: schema.sql
+    queries: queries.sql
+    gen: {go: {package: db, out: generated}}
+`,
+				"schema.sql":  test.schema,
+				"queries.sql": "-- name: ListChildren :many\nSELECT * FROM child;",
+			})
+			registry, err := sqlcbinding.NewLoader().Load(context.Background(), parserapi.Input{Root: root, SourcePaths: paths})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, columns, ok := registry.SchemaColumnsForQuery("queries.sql", "child"); ok {
+				t.Fatalf("incomplete column set was accepted: %#v", columns)
+			}
+		})
+	}
+}
+
 func TestLoaderRejectsDuplicateNamesWithinOneEntry(t *testing.T) {
 	root := testtemp.Dir(t)
 	paths := writeFiles(t, root, map[string]string{
