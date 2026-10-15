@@ -641,6 +641,7 @@ func buildRegistry(ctx context.Context, input parserapi.Input, files []fileConte
 
 func parseSchema(ctx context.Context, config *Config, entry Entry, input parserapi.Input, contents map[string]fileContent) map[string]schemaTable {
 	result := map[string]schemaTable{}
+	incompleteNames := map[string]bool{}
 	for _, schemaPath := range entry.SchemaPaths {
 		file := contents[schemaPath]
 		parseInput := parserapi.Input{Path: schemaPath, Content: file.content, Repository: input.Repository, RepoID: input.RepoID}
@@ -661,12 +662,11 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 		}
 		columns := map[string][]locatedColumn{}
 		declarations := map[string]int{}
-		incompleteTables := map[string]bool{}
 		for _, node := range parsed.Nodes {
 			if node.Kind == graph.KindTable {
 				declarations[node.QualifiedName]++
 				if node.Properties["columns_incomplete"] == "true" {
-					incompleteTables[node.QualifiedName] = true
+					incompleteNames[node.QualifiedName] = true
 				}
 			}
 			if node.Kind == graph.KindColumn {
@@ -676,7 +676,7 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 		}
 		for _, fact := range parsed.Facts {
 			if fact.Kind == graph.EdgeWrites && fact.Properties["statement"] != "" && fact.Target != "" {
-				incompleteTables[fact.Target] = true
+				incompleteNames[fact.Target] = true
 			}
 		}
 		for table, located := range columns {
@@ -697,11 +697,15 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 			}
 			result[table] = schemaTable{columns: names, ambiguous: declarations[table] > 1}
 		}
-		for table := range incompleteTables {
-			value := result[table]
-			value.incomplete = true
-			result[table] = value
+	}
+	for table, value := range result {
+		for incomplete := range incompleteNames {
+			if strings.EqualFold(graph.SimpleName(table), graph.SimpleName(incomplete)) {
+				value.incomplete = true
+				break
+			}
 		}
+		result[table] = value
 	}
 	return result
 }
