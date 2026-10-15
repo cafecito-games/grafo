@@ -153,7 +153,7 @@ func Analyze(source []byte, dialect string) Document {
 				}
 				continue
 			}
-			replacement := ""
+			var replacement string
 			if macro.Embed {
 				replacement = macro.Argument + ".*"
 			} else {
@@ -236,7 +236,7 @@ func projectionWildcards(source []byte, code []bool) []Wildcard {
 func wildcardQualifier(source []byte, code []bool, dot int) (string, int, bool) {
 	position := dot - 1
 	var parts []string
-	start := dot
+	var start int
 	for {
 		for position >= 0 && whitespace(source[position]) {
 			position--

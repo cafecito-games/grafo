@@ -817,9 +817,10 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 func schemaTableIdentity(name, engine string) (string, string) {
 	schema, table := splitTableName(name)
 	if schema == "" {
-		if engine == "postgres" {
+		switch engine {
+		case "postgres":
 			schema = "public"
-		} else if engine == "sqlite" {
+		case "sqlite":
 			schema = "main"
 		}
 	}
