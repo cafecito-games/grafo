@@ -488,8 +488,10 @@ func (e *extractor) emitAccesses(fromID string, root ast.Node) {
 		}
 		column := parts[len(parts)-1]
 		if len(parts) == 2 {
-			if table := aliases[parts[0]]; table != "" {
-				emitColumn(graph.EdgeReads, table+"."+column, reference)
+			if !hasCTE && !hasNonTableSource {
+				if table := aliases[parts[0]]; table != "" {
+					emitColumn(graph.EdgeReads, table+"."+column, reference)
+				}
 			}
 		} else {
 			emitColumn(graph.EdgeReads, strings.Join(parts[:len(parts)-1], ".")+"."+column, reference)

@@ -461,6 +461,7 @@ func TestRouterDoesNotExpandQualifiedColumnsFromNonTableSource(t *testing.T) {
 	}{
 		{name: "qualified wildcard", expression: "users.*", diagnostic: "wildcard column usage is unresolved"},
 		{name: "embed", expression: "sqlc.embed(users)", diagnostic: "column expansion is ambiguous"},
+		{name: "qualified column", expression: "users.id"},
 	}
 	for _, source := range sources {
 		for _, form := range forms {
@@ -487,11 +488,11 @@ sql:
 				if err != nil {
 					t.Fatal(err)
 				}
-				if !hasDiagnostic(result, form.diagnostic) {
+				if form.diagnostic != "" && !hasDiagnostic(result, form.diagnostic) {
 					t.Fatalf("diagnostics = %#v", result.Diagnostics)
 				}
 				for _, fact := range result.Facts {
-					if fact.TargetKind == graph.KindColumn && fact.Producer == "sqlcbinding" {
+					if fact.TargetKind == graph.KindColumn {
 						t.Fatalf("non-table source produced qualified column evidence: %#v", fact)
 					}
 				}
