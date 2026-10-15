@@ -1172,7 +1172,7 @@ func expandProjectionWildcards(source, dialect string, schemas map[string]schema
 	expanded := []byte(source)
 	for index := len(document.Wildcards) - 1; index >= 0; index-- {
 		wildcard := document.Wildcards[index]
-		_, columns, ok := schemaForWildcard(schemas, source, wildcard.Qualifier, dialect)
+		_, columns, ok := schemaForWildcard(schemas, source, wildcard.Qualifier, wildcard.Start, dialect)
 		if !ok {
 			return "", false
 		}
@@ -1190,29 +1190,209 @@ func expandProjectionWildcards(source, dialect string, schemas map[string]schema
 	return string(expanded), true
 }
 
-func schemaForWildcard(schemas map[string]schemaTable, statement, qualifier, dialect string) (string, []string, bool) {
+func schemaForWildcard(schemas map[string]schemaTable, statement, qualifier string, position int, dialect string) (string, []string, bool) {
 	if qualifier != "" {
 		return schemaForEmbed(schemas, statement, qualifier, dialect)
 	}
-	pattern := regexp.MustCompile(`(?i)(?:\bfrom|\bjoin)\s+(` + sqlQualifiedIdentifierPattern + `)`)
-	resolved := map[string][]string{}
-	for _, match := range pattern.FindAllStringSubmatch(statement, -1) {
-		selector, ok := normalizeSQLSelector(match[1], dialect)
-		if !ok {
-			return "", nil, false
-		}
-		qualified, columns, ok := schemaColumns(schemas, selector, dialect)
-		if ok {
-			resolved[qualified] = columns
-		}
-	}
-	if len(resolved) != 1 {
+	selector, ok := wildcardSource(statement, position, dialect)
+	if !ok {
 		return "", nil, false
 	}
-	for qualified, columns := range resolved {
-		return qualified, columns, true
+	return schemaColumns(schemas, selector, dialect)
+}
+
+type sqlScopeToken struct {
+	text       string
+	start      int
+	depth      int
+	identifier bool
+}
+
+var sqlIdentifierTokenPattern = regexp.MustCompile(`^` + sqlQualifiedIdentifierPattern)
+
+func wildcardSource(statement string, position int, dialect string) (string, bool) {
+	tokens := sqlScopeTokens(statement)
+	wildcard := -1
+	for index, token := range tokens {
+		if token.start == position && token.text == "*" {
+			wildcard = index
+			break
+		}
 	}
-	return "", nil, false
+	if wildcard < 0 {
+		return "", false
+	}
+	depth := tokens[wildcard].depth
+	projection := ""
+	projectionIndex := -1
+	for index := wildcard - 1; index >= 0; index-- {
+		if tokens[index].depth != depth {
+			continue
+		}
+		word := strings.ToLower(tokens[index].text)
+		if word == "returning" || word == "select" {
+			projection, projectionIndex = word, index
+			break
+		}
+		if tokens[index].text == ";" {
+			break
+		}
+	}
+	if projection == "returning" {
+		return dmlTarget(tokens, projectionIndex, depth, dialect)
+	}
+	if projection != "select" {
+		return "", false
+	}
+	for index := wildcard + 1; index < len(tokens); index++ {
+		token := tokens[index]
+		if token.depth != depth {
+			continue
+		}
+		word := strings.ToLower(token.text)
+		if word == "from" {
+			if index+1 >= len(tokens) || tokens[index+1].depth != depth || !tokens[index+1].identifier {
+				return "", false
+			}
+			selector, ok := normalizeSQLSelector(tokens[index+1].text, dialect)
+			if !ok {
+				return "", false
+			}
+			for cursor := index + 2; cursor < len(tokens); cursor++ {
+				if tokens[cursor].depth != depth {
+					continue
+				}
+				boundary := strings.ToLower(tokens[cursor].text)
+				if boundary == "," || boundary == "join" {
+					return "", false
+				}
+				if isSelectBoundary(boundary) {
+					break
+				}
+			}
+			return selector, true
+		}
+		if isSelectBoundary(word) || token.text == ";" {
+			break
+		}
+	}
+	return "", false
+}
+
+func dmlTarget(tokens []sqlScopeToken, returning, depth int, dialect string) (string, bool) {
+	for index := returning - 1; index >= 0; index-- {
+		if tokens[index].depth != depth {
+			continue
+		}
+		word := strings.ToLower(tokens[index].text)
+		var target int
+		switch word {
+		case "update":
+			target = index + 1
+		case "insert":
+			if index+1 >= len(tokens) || !strings.EqualFold(tokens[index+1].text, "into") {
+				return "", false
+			}
+			target = index + 2
+		case "delete":
+			if index+1 >= len(tokens) || !strings.EqualFold(tokens[index+1].text, "from") {
+				return "", false
+			}
+			target = index + 2
+		default:
+			if tokens[index].text == ";" {
+				return "", false
+			}
+			continue
+		}
+		if target >= len(tokens) || tokens[target].depth != depth || !tokens[target].identifier {
+			return "", false
+		}
+		return normalizeSQLSelector(tokens[target].text, dialect)
+	}
+	return "", false
+}
+
+func isSelectBoundary(word string) bool {
+	switch word {
+	case "where", "group", "having", "order", "limit", "offset", "union", "intersect", "except", "returning":
+		return true
+	default:
+		return false
+	}
+}
+
+func sqlScopeTokens(source string) []sqlScopeToken {
+	var tokens []sqlScopeToken
+	depth := 0
+	for offset := 0; offset < len(source); {
+		switch {
+		case source[offset] == ' ' || source[offset] == '\t' || source[offset] == '\r' || source[offset] == '\n':
+			offset++
+		case strings.HasPrefix(source[offset:], "--"):
+			if end := strings.IndexByte(source[offset+2:], '\n'); end >= 0 {
+				offset += end + 2
+			} else {
+				offset = len(source)
+			}
+		case strings.HasPrefix(source[offset:], "/*"):
+			if end := strings.Index(source[offset+2:], "*/"); end >= 0 {
+				offset += end + 4
+			} else {
+				offset = len(source)
+			}
+		case source[offset] == '\'':
+			offset = sqlStringEnd(source, offset, '\'')
+		case source[offset] == '$':
+			end := offset + 1
+			for end < len(source) && (source[end] == '_' || source[end] >= 'A' && source[end] <= 'Z' || source[end] >= 'a' && source[end] <= 'z' || source[end] >= '0' && source[end] <= '9') {
+				end++
+			}
+			if end < len(source) && source[end] == '$' {
+				tag := source[offset : end+1]
+				if close := strings.Index(source[end+1:], tag); close >= 0 {
+					offset = end + 1 + close + len(tag)
+					continue
+				}
+			}
+			tokens = append(tokens, sqlScopeToken{text: "$", start: offset, depth: depth})
+			offset++
+		case source[offset] == '(':
+			tokens = append(tokens, sqlScopeToken{text: "(", start: offset, depth: depth})
+			depth++
+			offset++
+		case source[offset] == ')':
+			if depth > 0 {
+				depth--
+			}
+			tokens = append(tokens, sqlScopeToken{text: ")", start: offset, depth: depth})
+			offset++
+		default:
+			match := sqlIdentifierTokenPattern.FindString(source[offset:])
+			if match != "" {
+				tokens = append(tokens, sqlScopeToken{text: match, start: offset, depth: depth, identifier: true})
+				offset += len(match)
+				continue
+			}
+			tokens = append(tokens, sqlScopeToken{text: source[offset : offset+1], start: offset, depth: depth})
+			offset++
+		}
+	}
+	return tokens
+}
+
+func sqlStringEnd(source string, start int, quote byte) int {
+	for offset := start + 1; offset < len(source); offset++ {
+		if source[offset] != quote {
+			continue
+		}
+		if offset+1 < len(source) && source[offset+1] == quote {
+			offset++
+			continue
+		}
+		return offset + 1
+	}
+	return len(source)
 }
 
 func schemaForEmbed(schemas map[string]schemaTable, statement, argument, dialect string) (string, []string, bool) {

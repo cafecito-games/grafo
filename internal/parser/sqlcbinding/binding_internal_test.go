@@ -91,6 +91,35 @@ func TestEquivalentSQLNormalizesPostgreSQLTableIdentifiers(t *testing.T) {
 	}
 }
 
+func TestEquivalentSQLScopesProjectionWildcards(t *testing.T) {
+	schemas := map[string]schemaTable{
+		"users":  {columns: []string{"id", "name"}},
+		"orders": {columns: []string{"id", "user_id"}},
+	}
+	tests := []struct {
+		name, handwritten, generated string
+		want                         bool
+	}{
+		{name: "insert returning", handwritten: `INSERT INTO users (name) VALUES ($1) RETURNING *`, generated: `INSERT INTO users (name) VALUES ($1) RETURNING id, name`, want: true},
+		{name: "update returning", handwritten: `UPDATE users SET name = $1 RETURNING *`, generated: `UPDATE users SET name = $1 RETURNING id, name`, want: true},
+		{name: "update from returning", handwritten: `UPDATE users SET name = orders.id::text FROM orders RETURNING *`, generated: `UPDATE users SET name = orders.id::text FROM orders RETURNING id, name`, want: true},
+		{name: "insert select returning", handwritten: `INSERT INTO users (name) SELECT id::text FROM orders RETURNING *`, generated: `INSERT INTO users (name) SELECT id::text FROM orders RETURNING id, name`, want: true},
+		{name: "delete returning", handwritten: `DELETE FROM users RETURNING *`, generated: `DELETE FROM users RETURNING id, name`, want: true},
+		{name: "nested select", handwritten: `SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)`, generated: `SELECT id, name FROM users WHERE id IN (SELECT user_id FROM orders)`, want: true},
+		{name: "literal from", handwritten: `SELECT * FROM users WHERE name = 'from orders'`, generated: `SELECT id, name FROM users WHERE name = 'from orders'`, want: true},
+		{name: "cte source unresolved", handwritten: `WITH r AS (SELECT id FROM users) SELECT * FROM r`, generated: `WITH r AS (SELECT id FROM users) SELECT id FROM r`, want: false},
+		{name: "derived source unresolved", handwritten: `SELECT * FROM (SELECT id FROM users) AS r`, generated: `SELECT id FROM (SELECT id FROM users) AS r`, want: false},
+		{name: "join unresolved", handwritten: `SELECT * FROM users JOIN orders ON orders.user_id = users.id`, generated: `SELECT id, name FROM users JOIN orders ON orders.user_id = users.id`, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := equivalentSQL(test.handwritten, test.generated, "postgres", schemas); got != test.want {
+				t.Fatalf("equivalentSQL() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestSchemaColumnsRequiresExactOrDefaultSchema(t *testing.T) {
 	tests := []struct {
 		name, selector, engine string
