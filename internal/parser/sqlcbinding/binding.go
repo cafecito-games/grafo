@@ -252,8 +252,7 @@ func (l *Loader) AffectedPaths(root string, changedPaths []string) (queries, con
 		for _, config := range l.value.configs {
 			for _, entry := range config.Entries {
 				affects := pathMatchesRoots(entry.SchemaRoots, changed) || pathMatchesRoots(entry.QueryRoots, changed)
-				outputPrefix := strings.TrimSuffix(entry.Go.Out, "/") + "/"
-				if entry.Go.Out != "" && (changed == entry.Go.Out || strings.HasPrefix(changed, outputPrefix)) {
+				if entry.Go.Out != "" && pathWithin(entry.Go.Out, changed) {
 					affects = true
 				}
 				if !affects {
@@ -302,6 +301,12 @@ func pathMatchesRoots(roots []string, target string) bool {
 	return false
 }
 
+func pathWithin(root, target string) bool {
+	root = clean(root)
+	target = clean(target)
+	return root == "." || root == target || strings.HasPrefix(target, strings.TrimSuffix(root, "/")+"/")
+}
+
 func IsConfigPath(filePath string) bool {
 	base := strings.ToLower(filepath.Base(filePath))
 	return base == "sqlc.yaml" || base == "sqlc.yml" || base == "sqlc.json"
@@ -346,7 +351,7 @@ func relevantFiles(ctx context.Context, input parserapi.Input) ([]fileContent, s
 			configContents[filePath] = content
 		}
 	}
-	var outputPrefixes []string
+	var outputRoots []string
 	for configPath, content := range configContents {
 		var raw rawConfig
 		if err := yaml.Unmarshal(content, &raw); err != nil {
@@ -373,7 +378,7 @@ func relevantFiles(ctx context.Context, input parserapi.Input) ([]fileContent, s
 			}
 			out, ok := resolveRelative(configPath, entry.Gen.Go.Out)
 			if ok {
-				outputPrefixes = append(outputPrefixes, strings.TrimSuffix(out, "/")+"/")
+				outputRoots = append(outputRoots, out)
 			}
 		}
 	}
@@ -381,8 +386,8 @@ func relevantFiles(ctx context.Context, input parserapi.Input) ([]fileContent, s
 		if !strings.EqualFold(filepath.Ext(filePath), ".go") {
 			continue
 		}
-		for _, prefix := range outputPrefixes {
-			if strings.HasPrefix(filePath, prefix) {
+		for _, root := range outputRoots {
+			if pathWithin(root, filePath) {
 				selected[filePath] = true
 				break
 			}
@@ -642,6 +647,7 @@ func buildRegistry(ctx context.Context, input parserapi.Input, files []fileConte
 func parseSchema(ctx context.Context, config *Config, entry Entry, input parserapi.Input, contents map[string]fileContent) map[string]schemaTable {
 	result := map[string]schemaTable{}
 	incompleteNames := map[string]bool{}
+	valid := true
 	for _, schemaPath := range entry.SchemaPaths {
 		file := contents[schemaPath]
 		parseInput := parserapi.Input{Path: schemaPath, Content: file.content, Repository: input.Repository, RepoID: input.RepoID}
@@ -654,6 +660,14 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 		}
 		if err != nil {
 			addDiagnostic(config, schemaPath, 1, fmt.Sprintf("parse configured %s schema: %v", entry.Engine, err))
+			valid = false
+			continue
+		}
+		if len(parsed.Diagnostics) > 0 {
+			valid = false
+			for _, diagnostic := range parsed.Diagnostics {
+				addDiagnostic(config, schemaPath, diagnostic.Line, fmt.Sprintf("parse configured %s schema: %s", entry.Engine, diagnostic.Message))
+			}
 			continue
 		}
 		type locatedColumn struct {
@@ -706,6 +720,9 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 			}
 		}
 		result[table] = value
+	}
+	if !valid {
+		return nil
 	}
 	return result
 }
@@ -902,10 +919,9 @@ var versionHeader = regexp.MustCompile(`(?m)^//\s+sqlc\s+(v?[^\s]+)\s*$`)
 var packageDeclaration = regexp.MustCompile(`(?m)^package\s+[A-Za-z_]`)
 
 func scanGenerated(registry *Registry, config *Config, entry Entry, input parserapi.Input, paths []string, contents map[string]fileContent) {
-	prefix := strings.TrimSuffix(entry.Go.Out, "/") + "/"
 	found := false
 	for _, generatedPath := range paths {
-		if !strings.HasPrefix(generatedPath, prefix) || !strings.EqualFold(filepath.Ext(generatedPath), ".go") {
+		if !pathWithin(entry.Go.Out, generatedPath) || !strings.EqualFold(filepath.Ext(generatedPath), ".go") {
 			continue
 		}
 		base := strings.ToLower(filepath.Base(generatedPath))

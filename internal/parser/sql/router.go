@@ -213,7 +213,7 @@ func expandSQLCWildcards(result *graph.ParseResult, input parserapi.Input, regis
 			ok := false
 			if wildcard.Qualifier != "" {
 				table, ok = resolveEmbedTable(wildcard.Qualifier, statement, tablesByQuery[node.ID])
-			} else if len(tablesByQuery[node.ID]) == 1 {
+			} else if node.Properties["unqualified_wildcard_safe"] == "true" && len(tablesByQuery[node.ID]) == 1 {
 				table, ok = tablesByQuery[node.ID][0], true
 			}
 			if !ok || !emitColumns(table, "wildcard", wildcard.Qualifier, line, column) {

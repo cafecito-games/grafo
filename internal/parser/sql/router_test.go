@@ -405,6 +405,84 @@ sql:
 	}
 }
 
+func TestRouterDoesNotExpandUnqualifiedWildcardFromNonTableSource(t *testing.T) {
+	tests := []struct {
+		name, query string
+	}{
+		{name: "cte", query: "WITH r AS (SELECT id FROM users) SELECT * FROM r;"},
+		{name: "derived table", query: "SELECT * FROM (SELECT id FROM users) AS r;"},
+		{name: "lateral function", query: "SELECT * FROM users, LATERAL generate_series(1, 2) AS n;"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := testtemp.Dir(t)
+			writeRouterFiles(t, root, map[string]string{
+				"sqlc.yaml": `version: "2"
+sql:
+  - engine: postgresql
+    schema: schema.sql
+    queries: queries.sql
+    gen: {go: {package: db, out: internal/db}}
+`,
+				"schema.sql":  "CREATE TABLE users (id bigint PRIMARY KEY, name text, email text);",
+				"queries.sql": "-- name: ListRows :many\n" + test.query,
+			})
+			content, err := os.ReadFile(filepath.Join(root, "queries.sql"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := sqlparser.New(postgresparser.New(), sqliteparser.New()).Parse(context.Background(), parserapi.Input{
+				Root: root, Path: "queries.sql", Content: content, SourcePaths: []string{"sqlc.yaml", "schema.sql", "queries.sql"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !hasDiagnostic(result, "wildcard column usage is unresolved") {
+				t.Fatalf("diagnostics = %#v", result.Diagnostics)
+			}
+			for _, fact := range result.Facts {
+				if fact.TargetKind == graph.KindColumn && fact.Producer == "sqlcbinding" {
+					t.Fatalf("non-table source produced wildcard column evidence: %#v", fact)
+				}
+			}
+		})
+	}
+}
+
+func TestRouterDisablesSchemaEvidenceWhenMigrationDoesNotParse(t *testing.T) {
+	root := testtemp.Dir(t)
+	writeRouterFiles(t, root, map[string]string{
+		"sqlc.yaml": `version: "2"
+sql:
+  - engine: postgresql
+    schema: [schema.sql, broken.sql]
+    queries: queries.sql
+    gen: {go: {package: db, out: internal/db}}
+`,
+		"schema.sql":  "CREATE TABLE users (id bigint PRIMARY KEY, name text);",
+		"broken.sql":  "ALTER TABLE users ADD COLUMN",
+		"queries.sql": "-- name: ListUsers :many\nSELECT * FROM users;",
+	})
+	content, err := os.ReadFile(filepath.Join(root, "queries.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := sqlparser.New(postgresparser.New(), sqliteparser.New()).Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "queries.sql", Content: content, SourcePaths: []string{"sqlc.yaml", "schema.sql", "broken.sql", "queries.sql"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDiagnostic(result, "wildcard column usage is unresolved") {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	for _, fact := range result.Facts {
+		if fact.TargetKind == graph.KindColumn && fact.Producer == "sqlcbinding" {
+			t.Fatalf("unparseable schema produced wildcard column evidence: %#v", fact)
+		}
+	}
+}
+
 func TestRouterDoesNotExpandWildcardAcrossCaseDifferentSQLiteAlter(t *testing.T) {
 	root := testtemp.Dir(t)
 	writeRouterFiles(t, root, map[string]string{

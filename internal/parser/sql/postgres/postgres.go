@@ -516,6 +516,7 @@ func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 	for _, write := range columnWrites {
 		emitColumn(graph.EdgeWrites, write.table+"."+write.column, write.location)
 	}
+	e.b.SetNodeProperty(fromID, "unqualified_wildcard_safe", strconv.FormatBool(!hasCTE && !hasNonTableSource && len(uniqueRelations) == 1))
 }
 
 func postgresObjectName(node *pg_query.Node) string {

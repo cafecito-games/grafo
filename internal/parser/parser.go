@@ -328,6 +328,21 @@ func (b *Builder) AddNode(node graph.Node) string {
 	return node.ID
 }
 
+// SetNodeProperty records parser evidence discovered after a node was declared.
+func (b *Builder) SetNodeProperty(id, key, value string) bool {
+	for index := range b.Result.Nodes {
+		if b.Result.Nodes[index].ID != id {
+			continue
+		}
+		if b.Result.Nodes[index].Properties == nil {
+			b.Result.Nodes[index].Properties = map[string]string{}
+		}
+		b.Result.Nodes[index].Properties[key] = value
+		return true
+	}
+	return false
+}
+
 func (b *Builder) AddFact(from string, kind graph.EdgeKind, targetID, target string, targetKind graph.NodeKind, loc graph.Location, properties map[string]string) {
 	b.addFact("id:"+from, graph.Fact{FromID: from}, kind, targetID, target, targetKind, loc, properties)
 }
