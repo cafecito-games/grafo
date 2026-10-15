@@ -144,6 +144,35 @@ sql:
 	}
 }
 
+func TestLoaderScopesPostgreSQLSchemaMutationEvidence(t *testing.T) {
+	root := testtemp.Dir(t)
+	paths := writeFiles(t, root, map[string]string{
+		"sqlc.yaml": `version: "2"
+sql:
+  - engine: postgresql
+    schema: schema.sql
+    queries: queries.sql
+    gen: {go: {package: db, out: generated}}
+`,
+		"schema.sql": `
+CREATE TABLE audit (id bigint PRIMARY KEY);
+CREATE TABLE audit.users (id bigint PRIMARY KEY);
+DROP SCHEMA audit CASCADE;
+`,
+		"queries.sql": "-- name: ListAudit :many\nSELECT * FROM audit;",
+	})
+	registry, err := sqlcbinding.NewLoader().Load(context.Background(), parserapi.Input{Root: root, SourcePaths: paths})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, columns, ok := registry.SchemaColumnsForQuery("queries.sql", "audit"); !ok || len(columns) != 1 || columns[0] != "id" {
+		t.Fatalf("same-named table was invalidated: columns %#v, ok %v", columns, ok)
+	}
+	if _, columns, ok := registry.SchemaColumnsForQuery("queries.sql", "audit.users"); ok {
+		t.Fatalf("dropped schema retained column evidence: %#v", columns)
+	}
+}
+
 func TestLoaderRejectsDuplicateNamesWithinOneEntry(t *testing.T) {
 	root := testtemp.Dir(t)
 	paths := writeFiles(t, root, map[string]string{

@@ -696,11 +696,7 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 		}
 		for _, fact := range parsed.Facts {
 			if fact.Kind == graph.EdgeWrites && fact.Properties["statement"] != "" && fact.Target != "" {
-				if fact.Properties["scope"] == "schema" {
-					incompleteSchemas[fact.Target] = true
-				} else {
-					incompleteNames[fact.Target] = true
-				}
+				incompleteNames[fact.Target] = true
 			}
 		}
 		for table, located := range columns {
