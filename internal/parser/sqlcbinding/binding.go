@@ -1254,6 +1254,12 @@ func wildcardSource(statement string, position int, dialect string) (string, boo
 			if index+1 >= len(tokens) || tokens[index+1].depth != depth || !tokens[index+1].identifier {
 				return "", false
 			}
+			if strings.EqualFold(tokens[index+1].text, "only") || strings.EqualFold(tokens[index+1].text, "lateral") {
+				return "", false
+			}
+			if index+2 < len(tokens) && tokens[index+2].depth == depth && tokens[index+2].text == "(" {
+				return "", false
+			}
 			selector, ok := normalizeSQLSelector(tokens[index+1].text, dialect)
 			if !ok {
 				return "", false
@@ -1307,6 +1313,15 @@ func dmlTarget(tokens []sqlScopeToken, returning, depth int, dialect string) (st
 		}
 		if target >= len(tokens) || tokens[target].depth != depth || !tokens[target].identifier {
 			return "", false
+		}
+		for cursor := target + 1; cursor < returning; cursor++ {
+			if tokens[cursor].depth != depth {
+				continue
+			}
+			sourceWord := strings.ToLower(tokens[cursor].text)
+			if (word == "update" && sourceWord == "from") || (word == "delete" && sourceWord == "using") {
+				return "", false
+			}
 		}
 		return normalizeSQLSelector(tokens[target].text, dialect)
 	}

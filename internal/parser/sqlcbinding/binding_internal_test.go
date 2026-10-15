@@ -102,14 +102,18 @@ func TestEquivalentSQLScopesProjectionWildcards(t *testing.T) {
 	}{
 		{name: "insert returning", handwritten: `INSERT INTO users (name) VALUES ($1) RETURNING *`, generated: `INSERT INTO users (name) VALUES ($1) RETURNING id, name`, want: true},
 		{name: "update returning", handwritten: `UPDATE users SET name = $1 RETURNING *`, generated: `UPDATE users SET name = $1 RETURNING id, name`, want: true},
-		{name: "update from returning", handwritten: `UPDATE users SET name = orders.id::text FROM orders RETURNING *`, generated: `UPDATE users SET name = orders.id::text FROM orders RETURNING id, name`, want: true},
+		{name: "update from returning", handwritten: `UPDATE users SET name = orders.id::text FROM orders RETURNING *`, generated: `UPDATE users SET name = orders.id::text FROM orders RETURNING id, name`, want: false},
 		{name: "insert select returning", handwritten: `INSERT INTO users (name) SELECT id::text FROM orders RETURNING *`, generated: `INSERT INTO users (name) SELECT id::text FROM orders RETURNING id, name`, want: true},
 		{name: "delete returning", handwritten: `DELETE FROM users RETURNING *`, generated: `DELETE FROM users RETURNING id, name`, want: true},
+		{name: "delete using returning", handwritten: `DELETE FROM users USING orders WHERE orders.user_id = users.id RETURNING *`, generated: `DELETE FROM users USING orders WHERE orders.user_id = users.id RETURNING id, name`, want: false},
 		{name: "nested select", handwritten: `SELECT * FROM users WHERE id IN (SELECT user_id FROM orders)`, generated: `SELECT id, name FROM users WHERE id IN (SELECT user_id FROM orders)`, want: true},
 		{name: "literal from", handwritten: `SELECT * FROM users WHERE name = 'from orders'`, generated: `SELECT id, name FROM users WHERE name = 'from orders'`, want: true},
 		{name: "cte source unresolved", handwritten: `WITH r AS (SELECT id FROM users) SELECT * FROM r`, generated: `WITH r AS (SELECT id FROM users) SELECT id FROM r`, want: false},
 		{name: "derived source unresolved", handwritten: `SELECT * FROM (SELECT id FROM users) AS r`, generated: `SELECT id FROM (SELECT id FROM users) AS r`, want: false},
 		{name: "join unresolved", handwritten: `SELECT * FROM users JOIN orders ON orders.user_id = users.id`, generated: `SELECT id, name FROM users JOIN orders ON orders.user_id = users.id`, want: false},
+		{name: "function source unresolved", handwritten: `SELECT * FROM users($1)`, generated: `SELECT id, name FROM users($1)`, want: false},
+		{name: "lateral source unresolved", handwritten: `SELECT * FROM LATERAL users($1)`, generated: `SELECT id, name FROM LATERAL users($1)`, want: false},
+		{name: "only source unresolved", handwritten: `SELECT * FROM ONLY users`, generated: `SELECT id, name FROM ONLY users`, want: false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
