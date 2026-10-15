@@ -402,11 +402,11 @@ func TestSearchRejectsInvalidRequests(t *testing.T) {
 		{name: "negative context lines", request: Request{Patterns: []string{"alpha"}, ContextLines: -1},
 			want: "context lines must be between 0 and 20"},
 		{name: "negative total cap", request: Request{Patterns: []string{"alpha"}, MaxMatches: -1},
-			want: "max matches must be positive"},
+			want: "max matches must be between 1 and 500"},
 		{name: "negative per-file cap", request: Request{Patterns: []string{"alpha"}, MaxMatchesPerFile: -2},
-			want: "max matches per file must be positive"},
+			want: "max matches per file must be between 1 and 50"},
 		{name: "negative per-pattern cap", request: Request{Patterns: []string{"alpha"}, MaxMatchesPattern: -3},
-			want: "max matches per pattern must be positive"},
+			want: "max matches per pattern must be between 1 and 200"},
 		{name: "file bytes too large", request: Request{Patterns: []string{"alpha"}, MaxFileBytes: MaxFileBytesCeiling + 1},
 			want: "max file bytes must be between"},
 	}
@@ -556,5 +556,215 @@ func TestServiceSourcesAreCopied(t *testing.T) {
 	sources[0].Project.Name = "mutated"
 	if service.Sources()[0].Project.Name != "repo" {
 		t.Fatal("Sources returned an aliased slice")
+	}
+}
+
+// TestSearchDefaultBoundsAreTheDocumentedOnes pins the defaults the CLI help,
+// the MCP schema and the README all advertise. Raising them silently would
+// restore the unbounded responses this bound exists to prevent.
+func TestSearchDefaultBoundsAreTheDocumentedOnes(t *testing.T) {
+	limits, err := resolveBounds(Request{Patterns: []string{"alpha"}})
+	if err != nil {
+		t.Fatalf("resolve bounds: %v", err)
+	}
+	want := bounds{perFile: 10, perPattern: 50, total: 100,
+		fileBytes: 1 << 20, responseBytes: 32 << 10}
+	if limits != want {
+		t.Fatalf("default bounds %+v, want %+v", limits, want)
+	}
+}
+
+func TestSearchBoundsResponseBytes(t *testing.T) {
+	// Every count cap is satisfied: ten short lines, one match each, well
+	// inside the per-file, per-pattern and total caps. Only the payload
+	// budget can clip this response.
+	line := strings.Repeat("x", 200) + "alpha\n"
+	source := worktree(t, "repo", map[string]string{"a.txt": strings.Repeat(line, 10)}, nil)
+	const budget = 600
+
+	result, err := NewService([]Source{source}).Search(context.Background(),
+		Request{Patterns: []string{"alpha"}, MaxResponseBytes: budget})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if result.ResponseBytes > budget {
+		t.Fatalf("response accounted %d bytes, over the %d budget", result.ResponseBytes, budget)
+	}
+	if len(result.Matches) == 0 || len(result.Matches) >= 10 {
+		t.Fatalf("expected a clipped prefix of the ten matches, got %d", len(result.Matches))
+	}
+	if !result.Truncated {
+		t.Fatalf("a clipped response must report truncation: %+v", result)
+	}
+	if !hasNote(result.Notes, "max_response_bytes budget of 600 reached; results are truncated") {
+		t.Fatalf("notes %v missing the payload-budget note", result.Notes)
+	}
+	if !hasNote(result.Notes, truncationDisclaimer) {
+		t.Fatalf("notes %v missing the truncation disclaimer", result.Notes)
+	}
+	// The retained matches are the deterministic prefix of the reporting
+	// order, and the accounted bytes are the bytes actually returned.
+	var accounted int64
+	for index, match := range result.Matches {
+		if match.Line != index+1 {
+			t.Fatalf("match %d is line %d; the retained set must be the reporting prefix", index, match.Line)
+		}
+		accounted += matchBytes(match)
+	}
+	if accounted != result.ResponseBytes {
+		t.Fatalf("reported %d bytes, matches account for %d", result.ResponseBytes, accounted)
+	}
+}
+
+// TestSearchStopsReadingOnceTheBudgetIsSpent pins the cost side of the bound:
+// once no further match can be reported, later files are not opened at all.
+func TestSearchStopsReadingOnceTheBudgetIsSpent(t *testing.T) {
+	content := strings.Repeat(strings.Repeat("x", 200)+"alpha\n", 5)
+	source := worktree(t, "repo", map[string]string{
+		"a.txt": content, "b.txt": content, "c.txt": content, "d.txt": content,
+	}, nil)
+	result, err := NewService([]Source{source}).Search(context.Background(),
+		Request{Patterns: []string{"alpha"}, MaxResponseBytes: 600})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if result.FilesSearched != 1 {
+		t.Fatalf("searched %d files; the budget was spent inside the first", result.FilesSearched)
+	}
+	if !result.Truncated {
+		t.Fatal("expected Truncated")
+	}
+}
+
+func TestSearchReportsExhaustiveResponseBytes(t *testing.T) {
+	source := worktree(t, "repo", map[string]string{"a.txt": "alpha\nbeta\nalpha\n"}, nil)
+	result, err := NewService([]Source{source}).Search(context.Background(),
+		Request{Patterns: []string{"alpha"}})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if result.Truncated || len(result.Notes) != 0 {
+		t.Fatalf("an exhaustive response must not report truncation: %+v", result)
+	}
+	if len(result.Matches) != 2 {
+		t.Fatalf("got %d matches, want 2", len(result.Matches))
+	}
+	var want int64
+	for _, match := range result.Matches {
+		want += matchBytes(match)
+	}
+	if result.ResponseBytes != want {
+		t.Fatalf("reported %d bytes, want %d", result.ResponseBytes, want)
+	}
+}
+
+func TestSearchResponseBudgetAccountsContextLines(t *testing.T) {
+	source := worktree(t, "repo", map[string]string{
+		"a.txt": strings.Repeat(strings.Repeat("y", 100)+"\n", 3) + "alpha\n" +
+			strings.Repeat(strings.Repeat("z", 100)+"\n", 3),
+	}, nil)
+	service := NewService([]Source{source})
+	bare, err := service.Search(context.Background(), Request{Patterns: []string{"alpha"}})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	withContext, err := service.Search(context.Background(),
+		Request{Patterns: []string{"alpha"}, ContextLines: 3})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	// Three leading and three trailing context lines of 100 bytes each.
+	if withContext.ResponseBytes != bare.ResponseBytes+6*(100+lineFramingBytes) {
+		t.Fatalf("context lines must count against the budget: %d then %d",
+			bare.ResponseBytes, withContext.ResponseBytes)
+	}
+	// The same match with context no longer fits a budget the bare match did.
+	clipped, err := service.Search(context.Background(), Request{Patterns: []string{"alpha"},
+		ContextLines: 3, MaxResponseBytes: bare.ResponseBytes + 1})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(clipped.Matches) != 1 {
+		t.Fatalf("the only match must still be reported, got %d", len(clipped.Matches))
+	}
+	if clipped.ResponseBytes <= bare.ResponseBytes+1 {
+		t.Fatalf("the single oversized match must be reported whole, got %d bytes", clipped.ResponseBytes)
+	}
+}
+
+// TestSearchReportsEveryBoundThatClipped covers the budget interacting with
+// the count caps: both clip the same response and both are named.
+func TestSearchReportsEveryBoundThatClipped(t *testing.T) {
+	line := strings.Repeat("x", 300) + " hit hit\n"
+	source := worktree(t, "repo", map[string]string{
+		"a.txt": strings.Repeat(line, 20),
+		"b.txt": strings.Repeat(line, 20),
+	}, nil)
+	result, err := NewService([]Source{source}).Search(context.Background(),
+		Request{Patterns: []string{"hit"}, MaxMatchesPerFile: 4, MaxResponseBytes: 1800})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if result.ResponseBytes > 1800 {
+		t.Fatalf("response accounted %d bytes, over the 1800 budget", result.ResponseBytes)
+	}
+	if !result.Truncated {
+		t.Fatal("expected Truncated")
+	}
+	if !hasNote(result.Notes, "max_response_bytes budget of 1800 reached; results are truncated") {
+		t.Fatalf("notes %v missing the payload-budget note", result.Notes)
+	}
+	if !hasNote(result.Notes, "max_matches_per_file cap of 4 clipped matches in 1 file(s): repo/a.txt") {
+		t.Fatalf("notes %v missing the per-file note", result.Notes)
+	}
+	if !hasNote(result.Notes, truncationDisclaimer) {
+		t.Fatalf("notes %v missing the truncation disclaimer", result.Notes)
+	}
+}
+
+// TestSearchCountCapsGovernUnderAGenerousBudget proves the budget does not
+// quietly take over from the documented count caps.
+func TestSearchCountCapsGovernUnderAGenerousBudget(t *testing.T) {
+	source := worktree(t, "repo", map[string]string{"a.txt": strings.Repeat("hit\n", 400)}, nil)
+	result, err := NewService([]Source{source}).Search(context.Background(),
+		Request{Patterns: []string{"hit"}, MaxMatches: 120, MaxMatchesPattern: 120,
+			MaxMatchesPerFile: 50, MaxResponseBytes: MaxResponseBytesCeiling})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(result.Matches) != 50 {
+		t.Fatalf("got %d matches, want the per-file cap of 50", len(result.Matches))
+	}
+	if hasNote(result.Notes, "max_response_bytes budget of 262144 reached; results are truncated") {
+		t.Fatalf("the budget must not clip here: %v", result.Notes)
+	}
+}
+
+func TestSearchRejectsBoundsAboveTheirCeilings(t *testing.T) {
+	source := worktree(t, "repo", map[string]string{"a.txt": "alpha\n"}, nil)
+	service := NewService([]Source{source})
+	tests := []struct {
+		name    string
+		request Request
+		wantErr string
+	}{
+		{name: "total above ceiling", request: Request{Patterns: []string{"alpha"}, MaxMatches: MaxMatchesCeiling + 1},
+			wantErr: "max matches must be between 1 and 500"},
+		{name: "per pattern above ceiling", request: Request{Patterns: []string{"alpha"}, MaxMatchesPattern: MaxMatchesPatternCeiling + 1},
+			wantErr: "max matches per pattern must be between 1 and 200"},
+		{name: "per file above ceiling", request: Request{Patterns: []string{"alpha"}, MaxMatchesPerFile: MaxMatchesPerFileCeiling + 1},
+			wantErr: "max matches per file must be between 1 and 50"},
+		{name: "response bytes above ceiling", request: Request{Patterns: []string{"alpha"}, MaxResponseBytes: MaxResponseBytesCeiling + 1},
+			wantErr: "max response bytes must be between 1 and 262144"},
+		{name: "negative response bytes", request: Request{Patterns: []string{"alpha"}, MaxResponseBytes: -1},
+			wantErr: "max response bytes must be between 1 and 262144"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := service.Search(context.Background(), test.request)
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("error %v does not contain %q", err, test.wantErr)
+			}
+		})
 	}
 }

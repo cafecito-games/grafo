@@ -22,16 +22,23 @@ import (
 	sourcecontext "github.com/cafecito-games/grafo/internal/source"
 )
 
-// Documented defaults applied when the matching Request field is zero.
+// Documented defaults applied when the matching Request field is zero. They
+// are deliberately small: search answers content questions the graph does not
+// model, so a default response is meant to be evidence an agent can read, not
+// an exhaustive index dump. A caller that needs more raises the matching field
+// explicitly, up to the ceilings below.
 const (
 	// DefaultMaxMatchesPerFile bounds matches reported for a single file.
-	DefaultMaxMatchesPerFile = 50
+	DefaultMaxMatchesPerFile = 10
 	// DefaultMaxMatchesPattern bounds matches reported for a single pattern.
-	DefaultMaxMatchesPattern = 200
+	DefaultMaxMatchesPattern = 50
 	// DefaultMaxMatches bounds matches reported for the whole request.
-	DefaultMaxMatches = 500
+	DefaultMaxMatches = 100
 	// DefaultMaxFileBytes bounds the size of a file that will be searched.
 	DefaultMaxFileBytes int64 = 1 << 20
+	// DefaultMaxResponseBytes bounds the match payload one response carries,
+	// independently of how many matches satisfy the count caps.
+	DefaultMaxResponseBytes int64 = 32 << 10
 )
 
 const (
@@ -44,6 +51,17 @@ const (
 	MaxPatternBytes = 1024
 	// MaxFileBytesCeiling is the largest MaxFileBytes a caller may request.
 	MaxFileBytesCeiling int64 = 16 << 20
+	// MaxMatchesPerFileCeiling is the largest MaxMatchesPerFile a caller may
+	// request.
+	MaxMatchesPerFileCeiling = 50
+	// MaxMatchesPatternCeiling is the largest MaxMatchesPattern a caller may
+	// request.
+	MaxMatchesPatternCeiling = 200
+	// MaxMatchesCeiling is the largest MaxMatches a caller may request.
+	MaxMatchesCeiling = 500
+	// MaxResponseBytesCeiling is the largest MaxResponseBytes a caller may
+	// request.
+	MaxResponseBytesCeiling int64 = 256 << 10
 
 	// binarySniffBytes is the leading window examined for a NUL byte.
 	binarySniffBytes = 8000
@@ -53,6 +71,14 @@ const (
 	cancellationInterval = 512
 	// skipExampleLimit bounds how many paths a skip note names.
 	skipExampleLimit = 3
+	// matchFramingBytes is charged per reported match on top of its text, and
+	// lineFramingBytes per context line, so the response budget accounts for
+	// the envelope each carries rather than only the source text. The budget
+	// bounds that accounted payload; a serialized response is a roughly
+	// proportional multiple of it, since indentation and escaping depend on
+	// the encoder and on the content.
+	matchFramingBytes int64 = 64
+	lineFramingBytes  int64 = 4
 )
 
 // Source is one searchable repository index: the file catalog plus the
@@ -75,6 +101,7 @@ type Request struct {
 	MaxMatchesPattern int // per-pattern cap
 	MaxMatches        int // total cap
 	MaxFileBytes      int64
+	MaxResponseBytes  int64 // total reported match payload cap, in bytes
 }
 
 // Match is one matched span. Line and Column are 1-based, Column counting
@@ -98,6 +125,7 @@ type Result struct {
 	FilesSearched int      `json:"files_searched"`
 	FilesSkipped  int      `json:"files_skipped"`
 	Truncated     bool     `json:"truncated"`
+	ResponseBytes int64    `json:"response_bytes"`  // accounted payload of Matches
 	Notes         []string `json:"notes,omitempty"` // e.g. which caps clipped results
 }
 
@@ -134,10 +162,11 @@ type compiled struct {
 }
 
 type bounds struct {
-	perFile    int
-	perPattern int
-	total      int
-	fileBytes  int64
+	perFile       int
+	perPattern    int
+	total         int
+	fileBytes     int64
+	responseBytes int64
 }
 
 type skipReason int
@@ -160,6 +189,8 @@ type collector struct {
 	clippedFiles  map[string]bool
 	clippedPatts  map[string]bool
 	clippedTotal  bool
+	clippedBytes  bool
+	reportedBytes int64
 	filesSearched int
 	filesSkipped  int
 	skips         map[skipReason][]string
@@ -213,7 +244,7 @@ func (s *Service) Search(ctx context.Context, request Request) (Result, error) {
 			if err := ctx.Err(); err != nil {
 				return Result{}, err
 			}
-			if state.clippedTotal {
+			if state.exhausted() {
 				break
 			}
 			record := files[path]
@@ -227,11 +258,17 @@ func (s *Service) Search(ctx context.Context, request Request) (Result, error) {
 				return Result{}, err
 			}
 		}
-		if state.clippedTotal {
+		if state.exhausted() {
 			break
 		}
 	}
 	return state.result(), nil
+}
+
+// exhausted reports whether a bound has stopped the search, so no later file
+// can contribute a reported match.
+func (c *collector) exhausted() bool {
+	return c.clippedTotal || c.clippedBytes
 }
 
 func (c *collector) result() Result {
@@ -255,8 +292,14 @@ func (c *collector) result() Result {
 	if matches == nil {
 		matches = []Match{}
 	}
-	result := Result{Matches: matches, FilesSearched: c.filesSearched, FilesSkipped: c.filesSkipped}
+	matches, reported := c.fit(matches)
+	result := Result{Matches: matches, FilesSearched: c.filesSearched,
+		FilesSkipped: c.filesSkipped, ResponseBytes: reported}
 	var notes []string
+	if c.clippedBytes {
+		notes = append(notes, fmt.Sprintf("max_response_bytes budget of %d reached; results are truncated",
+			c.bounds.responseBytes))
+	}
 	if c.clippedTotal {
 		notes = append(notes, fmt.Sprintf("max_matches cap of %d reached; results are truncated", c.bounds.total))
 	}
@@ -282,11 +325,53 @@ func (c *collector) result() Result {
 		}
 		notes = append(notes, fmt.Sprintf("%s: %d file(s) including %s", skipDescription(reason, c.bounds.fileBytes), len(paths), strings.Join(examples, ", ")))
 	}
+	result.Truncated = c.clippedTotal || c.clippedBytes ||
+		len(c.clippedFiles) > 0 || len(c.clippedPatts) > 0
+	if result.Truncated {
+		notes = append(notes, truncationDisclaimer)
+	}
 	if len(notes) > 0 {
 		result.Notes = notes
 	}
-	result.Truncated = c.clippedTotal || len(c.clippedFiles) > 0 || len(c.clippedPatts) > 0
 	return result
+}
+
+// truncationDisclaimer keeps a clipped response from reading as an exhaustive
+// one. A truncated search reports part of the evidence, so it can never
+// support a claim that nothing else matches.
+const truncationDisclaimer = "truncated results are a partial view; a pattern or path absent from this " +
+	"response is not evidence that it does not occur elsewhere"
+
+// fit clips the reported matches to the response budget and returns them with
+// the bytes they account for. Matches are already in reporting order, so the
+// retained set is the deterministic prefix of that order. The first match is
+// always kept, so a single oversized match is reported rather than turning the
+// response into an empty, truncated one.
+func (c *collector) fit(matches []Match) ([]Match, int64) {
+	var reported int64
+	for index := range matches {
+		cost := matchBytes(matches[index])
+		if index > 0 && reported+cost > c.bounds.responseBytes {
+			c.clippedBytes = true
+			return matches[:index], reported
+		}
+		reported += cost
+	}
+	return matches, reported
+}
+
+// matchBytes is what one reported match costs against the response budget: the
+// bytes of every string it carries, plus the envelope allowances.
+func matchBytes(match Match) int64 {
+	total := int64(len(match.Pattern) + len(match.Repository) + len(match.Branch) +
+		len(match.Path) + len(match.Language) + len(match.Text))
+	for _, line := range match.Before {
+		total += int64(len(line)) + lineFramingBytes
+	}
+	for _, line := range match.After {
+		total += int64(len(line)) + lineFramingBytes
+	}
+	return total + matchFramingBytes
 }
 
 func skipDescription(reason skipReason, fileBytes int64) string {
@@ -396,6 +481,7 @@ func (c *collector) scan(ctx context.Context, reader io.Reader, source Source, r
 		for _, item := range waiting {
 			if lineNumber-item.line <= contextLines {
 				found[item.index].After = append(found[item.index].After, line)
+				c.reportedBytes += int64(len(line)) + lineFramingBytes
 			}
 			if lineNumber-item.line < contextLines {
 				remaining = append(remaining, item)
@@ -426,6 +512,16 @@ func (c *collector) scan(ctx context.Context, reader io.Reader, source Source, r
 					if contextLines > 0 && len(before) > 0 {
 						match.Before = append(match.Before, before...)
 					}
+					// Stop collecting once the budget is spent. Trailing
+					// context for matches already recorded still completes, so
+					// fit applies the exact bound to the reported set.
+					cost := matchBytes(match)
+					if c.total > 0 && c.reportedBytes+cost > c.bounds.responseBytes {
+						c.clippedBytes = true
+						capped = true
+						break
+					}
+					c.reportedBytes += cost
 					found = append(found, match)
 					if contextLines > 0 {
 						waiting = append(waiting, pending{index: len(found) - 1, line: lineNumber})
@@ -545,7 +641,8 @@ func truncatePattern(pattern string) string {
 
 func resolveBounds(request Request) (bounds, error) {
 	limits := bounds{perFile: request.MaxMatchesPerFile, perPattern: request.MaxMatchesPattern,
-		total: request.MaxMatches, fileBytes: request.MaxFileBytes}
+		total: request.MaxMatches, fileBytes: request.MaxFileBytes,
+		responseBytes: request.MaxResponseBytes}
 	if limits.perFile == 0 {
 		limits.perFile = DefaultMaxMatchesPerFile
 	}
@@ -558,17 +655,27 @@ func resolveBounds(request Request) (bounds, error) {
 	if limits.fileBytes == 0 {
 		limits.fileBytes = DefaultMaxFileBytes
 	}
-	if limits.perFile < 1 {
-		return bounds{}, fmt.Errorf("max matches per file must be positive, got %d", request.MaxMatchesPerFile)
+	if limits.responseBytes == 0 {
+		limits.responseBytes = DefaultMaxResponseBytes
 	}
-	if limits.perPattern < 1 {
-		return bounds{}, fmt.Errorf("max matches per pattern must be positive, got %d", request.MaxMatchesPattern)
+	if limits.perFile < 1 || limits.perFile > MaxMatchesPerFileCeiling {
+		return bounds{}, fmt.Errorf("max matches per file must be between 1 and %d, got %d",
+			MaxMatchesPerFileCeiling, request.MaxMatchesPerFile)
 	}
-	if limits.total < 1 {
-		return bounds{}, fmt.Errorf("max matches must be positive, got %d", request.MaxMatches)
+	if limits.perPattern < 1 || limits.perPattern > MaxMatchesPatternCeiling {
+		return bounds{}, fmt.Errorf("max matches per pattern must be between 1 and %d, got %d",
+			MaxMatchesPatternCeiling, request.MaxMatchesPattern)
+	}
+	if limits.total < 1 || limits.total > MaxMatchesCeiling {
+		return bounds{}, fmt.Errorf("max matches must be between 1 and %d, got %d",
+			MaxMatchesCeiling, request.MaxMatches)
 	}
 	if limits.fileBytes < 1 || limits.fileBytes > MaxFileBytesCeiling {
 		return bounds{}, fmt.Errorf("max file bytes must be between 1 and %d, got %d", MaxFileBytesCeiling, request.MaxFileBytes)
+	}
+	if limits.responseBytes < 1 || limits.responseBytes > MaxResponseBytesCeiling {
+		return bounds{}, fmt.Errorf("max response bytes must be between 1 and %d, got %d",
+			MaxResponseBytesCeiling, request.MaxResponseBytes)
 	}
 	return limits, nil
 }

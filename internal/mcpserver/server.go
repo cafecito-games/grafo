@@ -207,7 +207,7 @@ func (s *Service) Server(version string) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{Name: "get_test_coverage", Title: "Get structural test coverage", Description: "Return production declarations structurally reached by one test through direct call/reference evidence and bounded test helpers. This is not runtime execution coverage; cycles and exhausted bounds are reported as truncated.", Annotations: annotations}, s.getTestCoverage)
 	mcp.AddTool(server, &mcp.Tool{Name: "get_blast_radius", Title: "Get change impact", Description: "Return a bounded bidirectional change-impact report: what depends on the symbol, what it depends on, impacted files, cross-repository hops, and config, data, and event relationships. A class, type, or interface selector also reaches the callers and dependencies of the members it declares, through the declares edge that proves each membership.", Annotations: annotations}, s.getBlastRadius)
 	if s.search != nil {
-		mcp.AddTool(server, &mcp.Tool{Name: "search_source", Title: "Search indexed source", Description: "Search literal text or RE2 patterns across files belonging to the refreshed indexes. Use graph tools first when the question is structural; use this for content questions the graph does not model.", Annotations: annotations}, s.searchSource)
+		mcp.AddTool(server, &mcp.Tool{Name: "search_source", Title: "Search indexed source", Description: "Search literal text or RE2 patterns across files belonging to the refreshed indexes. Use graph tools first when the question is structural; use this for content questions the graph does not model. Responses are bounded by match counts and by a total payload budget; a truncated response reports part of the evidence and never proves a pattern does not occur elsewhere.", Annotations: annotations}, s.searchSource)
 	}
 	if s.catalog != nil {
 		mcp.AddTool(server, &mcp.Tool{Name: "list_data_resources", Title: "List data resources", Description: "Catalog indexed tables and views with normalized dialect and object metadata, plus unresolved external targets kept explicit.", Annotations: annotations}, s.listDataResources)
@@ -737,10 +737,11 @@ type SearchSourceInput struct {
 	Languages         []string `json:"languages,omitempty" jsonschema:"optional indexed language filters"`
 	Repositories      []string `json:"repositories,omitempty" jsonschema:"optional repository name filters"`
 	ContextLines      int      `json:"context_lines,omitempty" jsonschema:"surrounding lines from 0 to 20"`
-	MaxMatchesPerFile int      `json:"max_matches_per_file,omitempty" jsonschema:"per-file match cap; defaults to 50"`
-	MaxMatchesPattern int      `json:"max_matches_per_pattern,omitempty" jsonschema:"per-pattern match cap; defaults to 200"`
-	MaxMatches        int      `json:"max_matches,omitempty" jsonschema:"total match cap; defaults to 500"`
+	MaxMatchesPerFile int      `json:"max_matches_per_file,omitempty" jsonschema:"per-file match cap; defaults to 10 and may not exceed 50"`
+	MaxMatchesPattern int      `json:"max_matches_per_pattern,omitempty" jsonschema:"per-pattern match cap; defaults to 50 and may not exceed 200"`
+	MaxMatches        int      `json:"max_matches,omitempty" jsonschema:"total match cap; defaults to 100 and may not exceed 500"`
 	MaxFileBytes      int64    `json:"max_file_bytes,omitempty" jsonschema:"largest file searched; defaults to 1048576"`
+	MaxResponseBytes  int64    `json:"max_response_bytes,omitempty" jsonschema:"total reported match payload budget in bytes; defaults to 32768 and may not exceed 262144"`
 }
 
 func (s *Service) searchSource(ctx context.Context, _ *mcp.CallToolRequest, input SearchSourceInput) (*mcp.CallToolResult, search.Result, error) {
@@ -758,7 +759,7 @@ func (s *Service) searchSource(ctx context.Context, _ *mcp.CallToolRequest, inpu
 		PathPrefixes: input.PathPrefixes, Languages: input.Languages, Repositories: input.Repositories,
 		ContextLines: input.ContextLines, MaxMatchesPerFile: input.MaxMatchesPerFile,
 		MaxMatchesPattern: input.MaxMatchesPattern, MaxMatches: input.MaxMatches,
-		MaxFileBytes: input.MaxFileBytes,
+		MaxFileBytes: input.MaxFileBytes, MaxResponseBytes: input.MaxResponseBytes,
 	})
 	return nil, result, err
 }

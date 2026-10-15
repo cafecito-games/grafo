@@ -418,6 +418,24 @@ files are skipped, every cap is reported rather than silently applied, and
 ordering is by repository, path, line, and column so results never depend on
 filesystem enumeration. Prefer the graph tools when the question is structural.
 
+A response is bounded twice: by match counts, and by a total payload budget so
+a result that satisfies every count cap still cannot be enormous. Defaults are
+deliberately small, and a caller raises them explicitly up to a ceiling.
+
+| Bound | CLI flag | MCP field | Default | Ceiling |
+|---|---|---|---|---|
+| Total matches | `--max-matches` | `max_matches` | 100 | 500 |
+| Matches per pattern | `--max-matches-per-pattern` | `max_matches_per_pattern` | 50 | 200 |
+| Matches per file | `--max-matches-per-file` | `max_matches_per_file` | 10 | 50 |
+| Reported payload bytes | `--max-response-bytes` | `max_response_bytes` | 32768 | 262144 |
+| Searched file bytes | `--max-file-size` | `max_file_bytes` | 1048576 | 16777216 |
+| Context lines | `--context-lines` | `context_lines` | 0 | 20 |
+
+Whenever any bound clips results, the response sets `truncated`, names the
+bound that clipped it, and says so in prose: a truncated search reports part of
+the evidence, so it can never be read as proof that a pattern occurs nowhere
+else. An absence claim needs an untruncated search, or the graph.
+
 `grafo source` resolves a graph node first, then reads its exact bounded source
 span from the active worktree. In a federation, the node ID selects the correct
 repository even when several repos contain the same relative path. Reads are
