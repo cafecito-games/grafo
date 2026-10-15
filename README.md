@@ -432,8 +432,10 @@ deliberately small, and a caller raises them explicitly up to a ceiling.
 | Context lines | `--context-lines` | `context_lines` | 0 | 20 |
 
 One match is always reported whole, so `response_bytes` can exceed
-`max_response_bytes` when a single long match is all there is to report; that
-response is exhaustive and says so, rather than being clipped to nothing.
+`max_response_bytes` when a single long match is all there is to report. Such a
+response is exhaustive, and it reads as exhaustive the same way every other one
+does: `truncated` is unset and no bound is named. Reporting it beats clipping
+the only answer to nothing.
 
 Whenever any bound clips results, the response sets `truncated`, names the
 bound that clipped it, and says so in prose: a truncated search reports part of
