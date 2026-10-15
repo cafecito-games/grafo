@@ -652,6 +652,40 @@ func TestServiceIndexesOnlyChangedFiles(t *testing.T) {
 	}
 }
 
+func TestServiceDoesNotReparseUnownedSQLWithoutSqlcConfig(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	root := testtemp.Dir(t)
+	runGit(t, root, "init", "-b", "main")
+	write(t, filepath.Join(root, "one.sql"), "CREATE TABLE one (id bigint PRIMARY KEY);\n")
+	write(t, filepath.Join(root, "two.sql"), "CREATE TABLE two (id bigint PRIMARY KEY);\n")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "fixture")
+
+	project, err := indexer.DiscoverProject(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, project.IndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	service := indexer.NewService(repository, parserapi.NewRegistry(sqlparser.New(postgresparser.New())))
+	if report, err := service.Run(ctx, project, indexer.Options{}); err != nil || len(report.Updated) != 2 {
+		t.Fatalf("initial index: report=%#v err=%v", report, err)
+	}
+
+	write(t, filepath.Join(root, "one.sql"), "CREATE TABLE one (id bigint PRIMARY KEY, name text);\n")
+	report, err := service.Run(ctx, project, indexer.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(report.Updated, []string{"one.sql"}) || report.Checked != 1 {
+		t.Fatalf("unowned SQL edit reparsed unrelated files: %#v", report)
+	}
+}
+
 // TestServiceReindexesGoDependentsWhenTypeEvidenceChanges is the one test in
 // this package that must not call t.Parallel: it mutates GOOS for the whole
 // process. See parallelism_policy_test.go.

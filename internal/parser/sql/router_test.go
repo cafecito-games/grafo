@@ -337,6 +337,108 @@ sql:
 	}
 }
 
+func TestRouterExpandsOrdinaryWildcardOnlyWithCompleteSchema(t *testing.T) {
+	root := testtemp.Dir(t)
+	writeRouterFiles(t, root, map[string]string{
+		"sqlc.yaml": `version: "2"
+sql:
+  - engine: sqlite
+    schema: schema.sql
+    queries: queries.sql
+    gen: {go: {package: db, out: internal/db}}
+`,
+		"schema.sql":  "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);",
+		"queries.sql": "-- name: ListUsers :many\nSELECT * FROM users;",
+	})
+	content, err := os.ReadFile(filepath.Join(root, "queries.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := sqlparser.New(postgresparser.New(), sqliteparser.New()).Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "queries.sql", Content: content, SourcePaths: []string{"sqlc.yaml", "schema.sql", "queries.sql"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"users.id", "users.name"} {
+		found := false
+		for _, fact := range result.Facts {
+			found = found || fact.Kind == graph.EdgeReads && fact.Target == target && fact.TargetKind == graph.KindColumn
+		}
+		if !found {
+			t.Fatalf("missing expanded wildcard column %q: %#v", target, result.Facts)
+		}
+	}
+}
+
+func TestRouterDoesNotExpandWildcardAcrossAlteredSchema(t *testing.T) {
+	root := testtemp.Dir(t)
+	writeRouterFiles(t, root, map[string]string{
+		"sqlc.yaml": `version: "2"
+sql:
+  - engine: sqlite
+    schema: schema.sql
+    queries: queries.sql
+    gen: {go: {package: db, out: internal/db}}
+`,
+		"schema.sql":  "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);\nALTER TABLE users ADD COLUMN email TEXT;",
+		"queries.sql": "-- name: ListUsers :many\nSELECT * FROM users;",
+	})
+	content, err := os.ReadFile(filepath.Join(root, "queries.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := sqlparser.New(postgresparser.New(), sqliteparser.New()).Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "queries.sql", Content: content, SourcePaths: []string{"sqlc.yaml", "schema.sql", "queries.sql"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDiagnostic(result, "wildcard column usage is unresolved") {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	for _, fact := range result.Facts {
+		if fact.TargetKind == graph.KindColumn && fact.Properties["form"] == "wildcard" {
+			t.Fatalf("altered schema produced wildcard column evidence: %#v", fact)
+		}
+	}
+}
+
+func TestRouterDoesNotUseSqlcSchemaAcrossDialectMismatch(t *testing.T) {
+	root := testtemp.Dir(t)
+	writeRouterFiles(t, root, map[string]string{
+		"grafo.yaml": "sql:\n  default_dialect: postgres\n",
+		"sqlc.yaml": `version: "2"
+sql:
+  - engine: sqlite
+    schema: schema.sql
+    queries: queries.sql
+    gen: {go: {package: db, out: internal/db}}
+`,
+		"schema.sql":  "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);",
+		"queries.sql": "-- name: ListUsers :many\nSELECT sqlc.embed(u) FROM users AS u;",
+	})
+	content, err := os.ReadFile(filepath.Join(root, "queries.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := sqlparser.New(postgresparser.New(), sqliteparser.New()).Parse(context.Background(), parserapi.Input{
+		Root: root, Path: "queries.sql", Content: content,
+		SourcePaths: []string{"grafo.yaml", "sqlc.yaml", "schema.sql", "queries.sql"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDiagnostic(result, "bindings disabled") || !hasDiagnostic(result, "column expansion lacks") {
+		t.Fatalf("diagnostics = %#v", result.Diagnostics)
+	}
+	for _, fact := range result.Facts {
+		if fact.TargetKind == graph.KindColumn && fact.Producer == "sqlcbinding" {
+			t.Fatalf("dialect mismatch produced sqlc schema evidence: %#v", fact)
+		}
+	}
+}
+
 func TestRouterKeepsUnresolvedEmbedExplicitWithoutConfiguration(t *testing.T) {
 	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "grafo.yaml"), []byte("sql:\n  default_dialect: sqlite\n"), 0o644); err != nil {

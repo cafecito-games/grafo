@@ -33,10 +33,19 @@ func (*Parser) WorkspaceSemanticEvidenceKey(context.Context, parserapi.Input) (s
 }
 
 func (p *Parser) SemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
-	if input.SemanticKey != "" {
-		return input.SemanticKey, nil
+	workspace := input.SemanticKey
+	if workspace == "" {
+		var err error
+		workspace, err = p.loader.SemanticKey(ctx, input)
+		if err != nil {
+			return "", err
+		}
 	}
-	return p.loader.SemanticKey(ctx, input)
+	fileKey, err := p.loader.FileSemanticKey(ctx, input)
+	if err != nil {
+		return "", err
+	}
+	return workspace + ":" + fileKey, nil
 }
 
 func (p *Parser) SemanticAffectedPaths(root string, allPaths, changedPaths []string) []string {

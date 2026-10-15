@@ -124,14 +124,15 @@ func (r *Router) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 		result.Diagnostics = append(result.Diagnostics, graph.Diagnostic{Path: input.Path, Level: "warning",
 			Message: fmt.Sprintf("Grafo SQL %s selected %s but sqlc config selects %s; sqlc bindings disabled", selection, selected, sqlcEngine)})
 	}
-	expandSQLCWildcards(&result, input, registry, selected)
+	allowSQLCSchema := bindingsAllowed && sqlcEngine != "" && selected == sqlcEngine
+	expandSQLCWildcards(&result, input, registry, selected, allowSQLCSchema)
 	if bindingsAllowed && selected == sqlcEngine {
 		addGeneratedBindings(&result, input, registry)
 	}
 	return result, err
 }
 
-func expandSQLCWildcards(result *graph.ParseResult, input parserapi.Input, registry sqlcbinding.Registry, dialect string) {
+func expandSQLCWildcards(result *graph.ParseResult, input parserapi.Input, registry sqlcbinding.Registry, dialect string, allowSchema bool) {
 	document := sqltemplate.Analyze(input.Content, dialect)
 	if len(document.Diagnostics) > 0 {
 		return
@@ -163,6 +164,9 @@ func expandSQLCWildcards(result *graph.ParseResult, input parserapi.Input, regis
 		}
 		statement := string(input.Content[query.StatementStart:query.StatementEnd])
 		emitColumns := func(table, form, argument string, line, column int) bool {
+			if !allowSchema {
+				return false
+			}
 			qualifiedTable, columns, ok := registry.SchemaColumnsForQuery(input.Path, table)
 			if !ok {
 				return false
@@ -288,10 +292,25 @@ func (r *Router) SemanticKey(ctx context.Context, input parserapi.Input) (string
 			return "", err
 		}
 	}
-	return workspace + ":" + config.semanticKey, nil
+	fileBindingKey, err := r.bindings.FileSemanticKey(ctx, input)
+	if err != nil {
+		return "", err
+	}
+	return workspace + ":" + fileBindingKey + ":" + config.semanticKey, nil
 }
 
 func (r *Router) SemanticAffectedPaths(root string, allPaths, changedPaths []string) []string {
+	for _, changed := range changedPaths {
+		if sqlcbinding.IsConfigPath(changed) {
+			var result []string
+			for _, candidate := range allPaths {
+				if _, supported := rDialectExtension(candidate); supported {
+					result = append(result, candidate)
+				}
+			}
+			return result
+		}
+	}
 	queries, _, known := r.bindings.AffectedPaths(root, changedPaths)
 	if known {
 		return queries

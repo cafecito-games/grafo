@@ -22,6 +22,10 @@ type Input struct {
 	RepoID      string
 	GoModule    string
 	SemanticKey string
+	// MaxFileSize is the indexing run's per-file byte ceiling. Repository-wide
+	// semantic loaders must apply the same limit to dependency files they read
+	// directly. Zero means the production default.
+	MaxFileSize int64
 	// ScopeKey is the scope-local component of this file's semantic key, when
 	// the caller has already derived it. A parser that would otherwise compute
 	// the same value again consumes this instead. Empty means the caller has no

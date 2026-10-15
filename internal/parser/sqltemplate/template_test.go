@@ -70,13 +70,54 @@ func TestAnalyzeIgnoresMacroLookingTextOutsideSQLCode(t *testing.T) {
 }
 
 func TestAnalyzeFindsOnlyProjectionWildcards(t *testing.T) {
-	source := []byte("SELECT *, u.*, price * quantity, count(*), 'literal *' FROM users AS u; -- SELECT *\n")
+	source := []byte("SELECT *, u.*, DISTINCT *, a, *, \"q\".*, public.users.*, price * quantity, count(*), 'literal *' FROM users AS u; -- SELECT *\n")
 	document := sqltemplate.Analyze(source, "sqlite")
-	if len(document.Wildcards) != 2 {
+	if len(document.Wildcards) != 6 {
 		t.Fatalf("wildcards = %#v", document.Wildcards)
 	}
-	if document.Wildcards[0].Qualifier != "" || document.Wildcards[1].Qualifier != "u" {
+	qualifiers := []string{"", "u", "", "", "q", "public.users"}
+	for index, qualifier := range qualifiers {
+		if document.Wildcards[index].Qualifier != qualifier {
+			t.Fatalf("wildcards = %#v", document.Wildcards)
+		}
+	}
+	if document.HasFatalDiagnostics() {
 		t.Fatalf("wildcards = %#v", document.Wildcards)
+	}
+}
+
+func TestAnalyzeUsesDialectSpecificQuotingAndOperators(t *testing.T) {
+	postgres := []byte("-- display name: array probe\nSELECT tags <@ ARRAY[sqlc.arg(tag), @other], values[sqlc.arg(idx)];")
+	document := sqltemplate.Analyze(postgres, "postgres")
+	if len(document.Diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v", document.Diagnostics)
+	}
+	if len(document.Macros) != 3 {
+		t.Fatalf("macros = %#v", document.Macros)
+	}
+	if document.Macros[0].Argument != "tag" || document.Macros[1].Argument != "other" || document.Macros[2].Argument != "idx" {
+		t.Fatalf("macros = %#v", document.Macros)
+	}
+	if bytes.Contains(document.SQL, []byte("sqlc.arg")) || bytes.Contains(document.SQL, []byte("@other")) {
+		t.Fatalf("PostgreSQL array macros were not normalized: %q", document.SQL)
+	}
+}
+
+func TestAnalyzeHandlesPostgreSQLEscapeStringsAndSQLiteComments(t *testing.T) {
+	postgres := []byte("SELECT E'it\\'s sqlc.arg(fake)';\n-- name: Real :one\nSELECT sqlc.arg(id);")
+	document := sqltemplate.Analyze(postgres, "postgres")
+	if len(document.Diagnostics) != 0 || len(document.Macros) != 1 || len(document.Queries) != 1 {
+		t.Fatalf("document = %#v", document)
+	}
+
+	sqlite := sqltemplate.Analyze([]byte("/* outer /* old */ SELECT sqlc.arg(id);"), "sqlite")
+	if sqlite.HasFatalDiagnostics() || len(sqlite.Macros) != 1 {
+		t.Fatalf("SQLite comment handling = %#v", sqlite)
+	}
+
+	unterminated := sqltemplate.Analyze([]byte("SELECT 'missing"), "sqlite")
+	if !unterminated.HasFatalDiagnostics() {
+		t.Fatalf("unterminated quote was not fatal: %#v", unterminated.Diagnostics)
 	}
 }
 

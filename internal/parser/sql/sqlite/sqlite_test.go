@@ -97,6 +97,19 @@ func TestParserExtractsCreateTableAsSelect(t *testing.T) {
 	assertFactFrom(t, result, graph.KindTable, "report", graph.EdgeReads, "events")
 }
 
+func TestParserKeepsOrdinarySQLWithNameProseComment(t *testing.T) {
+	result, err := sqliteparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "schema.sql", Content: []byte("-- display name: users\nCREATE TABLE users (id INTEGER PRIMARY KEY);"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNode(t, result.Nodes, graph.KindTable, "users")
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("prose comment diagnostics = %#v", result.Diagnostics)
+	}
+}
+
 func TestParserNormalizesSqlcTemplatesAndOwnsNamedQueryUsage(t *testing.T) {
 	content := []byte(`CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, role_id INTEGER);
 
@@ -144,6 +157,23 @@ SELECT id, a.name, b.title FROM alpha AS a JOIN beta AS b ON a.key = b.alpha_key
 	assertFactFrom(t, result, graph.KindSQLQuery, "db/join.sql#Joined", graph.EdgeReads, "beta.title")
 	assertNoFact(t, result.Facts, graph.EdgeReads, "alpha.id")
 	assertNoFact(t, result.Facts, graph.EdgeReads, "beta.id")
+}
+
+func TestParserDoesNotGuessReusedAliasesOrOutputAliases(t *testing.T) {
+	result, err := sqliteparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "db/scopes.sql", RepoID: "repo:sample", Content: []byte(`-- name: Scoped :many
+SELECT t.name, count(*) AS total
+FROM users AS t
+WHERE EXISTS (SELECT 1 FROM orders AS t WHERE t.user_id = 1)
+ORDER BY total;
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoFact(t, result.Facts, graph.EdgeReads, "orders.name")
+	assertNoFact(t, result.Facts, graph.EdgeReads, "users.name")
+	assertNoFact(t, result.Facts, graph.EdgeReads, "users.total")
 }
 
 func TestParserDeclaresSQLiteDialectWithoutBinaryExtensions(t *testing.T) {

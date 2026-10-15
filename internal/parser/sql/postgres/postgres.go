@@ -29,8 +29,10 @@ func (*Parser) Probe(ctx context.Context, input parserapi.Input) error {
 		return err
 	}
 	document := sqltemplate.Analyze(input.Content, "postgres")
-	if len(document.Diagnostics) > 0 {
-		return fmt.Errorf("SQL template: %s", document.Diagnostics[0].Message)
+	for _, diagnostic := range document.Diagnostics {
+		if diagnostic.Fatal {
+			return fmt.Errorf("SQL template: %s", diagnostic.Message)
+		}
 	}
 	_, err := pg_query.Parse(string(document.SQL))
 	return err
@@ -54,7 +56,7 @@ func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseRes
 		line, _ := document.Position(diagnostic.Offset)
 		b.Diagnostic(line, "warning", "SQL template: "+diagnostic.Message)
 	}
-	if len(document.Diagnostics) > 0 {
+	if document.HasFatalDiagnostics() {
 		return b.Finish(), nil
 	}
 	queries := declareQueries(b, input, document, "postgres")
@@ -326,6 +328,7 @@ func (e *extractor) emitReferences(fromID string, root protoreflect.Message) {
 
 func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 	writes := map[*pg_query.RangeVar]bool{}
+	altered := map[*pg_query.RangeVar]bool{}
 	cteNames := map[string]bool{}
 	hasCTE := false
 	walkMessage(root, func(message protoreflect.Message) {
@@ -337,13 +340,29 @@ func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 	var relations []*pg_query.RangeVar
 	aliases := map[string]string{}
 	uniqueRelations := map[string]bool{}
+	resultAliases := map[string]bool{}
+	hasNonTableSource := false
 	var columnReferences []*pg_query.ColumnRef
 	type columnWrite struct {
 		table, column string
 		location      int32
 	}
 	var columnWrites []columnWrite
+	registerAlias := func(name, table string) {
+		if name == "" || table == "" {
+			return
+		}
+		if existing, exists := aliases[name]; exists && existing != table {
+			aliases[name] = ""
+			return
+		}
+		aliases[name] = table
+	}
 	walkMessage(root, func(message protoreflect.Message) {
+		switch string(message.Descriptor().Name()) {
+		case "RangeSubselect", "RangeFunction", "RangeTableFunc", "JsonTable":
+			hasNonTableSource = true
+		}
 		switch value := message.Interface().(type) {
 		case *pg_query.RangeVar:
 			if value.GetSchemaname() == "" && cteNames[strings.ToLower(value.GetRelname())] {
@@ -353,14 +372,18 @@ func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 			qualified := relationName(value)
 			if qualified != "" {
 				uniqueRelations[qualified] = true
-				aliases[value.GetRelname()] = qualified
-				aliases[qualified] = qualified
+				registerAlias(value.GetRelname(), qualified)
+				registerAlias(qualified, qualified)
 				if value.GetAlias() != nil && value.GetAlias().GetAliasname() != "" {
-					aliases[value.GetAlias().GetAliasname()] = qualified
+					registerAlias(value.GetAlias().GetAliasname(), qualified)
 				}
 			}
 		case *pg_query.ColumnRef:
 			columnReferences = append(columnReferences, value)
+		case *pg_query.ResTarget:
+			if value.GetName() != "" {
+				resultAliases[value.GetName()] = true
+			}
 		case *pg_query.InsertStmt:
 			writes[value.GetRelation()] = true
 			if table := relationName(value.GetRelation()); table != "" {
@@ -393,6 +416,7 @@ func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 			}
 		case *pg_query.AlterTableStmt:
 			writes[value.GetRelation()] = true
+			altered[value.GetRelation()] = true
 		case *pg_query.RenameStmt:
 			writes[value.GetRelation()] = true
 		}
@@ -412,7 +436,11 @@ func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 			continue
 		}
 		seen[key] = true
-		e.b.AddFact(fromID, kind, "", qualified, "", e.location(relation.GetLocation(), 0), nil)
+		var properties map[string]string
+		if altered[relation] {
+			properties = map[string]string{"statement": "alter_table"}
+		}
+		e.b.AddFact(fromID, kind, "", qualified, "", e.location(relation.GetLocation(), 0), properties)
 	}
 	emitColumn := func(kind graph.EdgeKind, qualified string, location int32) {
 		if qualified == "" {
@@ -436,7 +464,7 @@ func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 		column := parts[len(parts)-1]
 		switch len(parts) {
 		case 1:
-			if !hasCTE && len(uniqueRelations) == 1 {
+			if !hasCTE && !hasNonTableSource && !resultAliases[column] && len(uniqueRelations) == 1 {
 				for table := range uniqueRelations {
 					emitColumn(graph.EdgeReads, table+"."+column, reference.GetLocation())
 				}

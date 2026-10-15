@@ -32,8 +32,10 @@ func (*Parser) Probe(ctx context.Context, input parserapi.Input) error {
 		return err
 	}
 	document := sqltemplate.Analyze(input.Content, "sqlite")
-	if len(document.Diagnostics) > 0 {
-		return fmt.Errorf("SQL template: %s", document.Diagnostics[0].Message)
+	for _, diagnostic := range document.Diagnostics {
+		if diagnostic.Fatal {
+			return fmt.Errorf("SQL template: %s", diagnostic.Message)
+		}
 	}
 	_, err := parser.Parse(ctx, bytes.NewReader(document.SQL))
 	return err
@@ -57,7 +59,7 @@ func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseRes
 		line, _ := document.Position(diagnostic.Offset)
 		b.Diagnostic(line, "warning", "SQL template: "+diagnostic.Message)
 	}
-	if len(document.Diagnostics) > 0 {
+	if document.HasFatalDiagnostics() {
 		return b.Finish(), nil
 	}
 	queries := declareQueries(b, input, document, "sqlite")
@@ -309,6 +311,7 @@ func (e *extractor) emitAccesses(fromID string, root ast.Node) {
 	seen := map[string]bool{}
 	aliases := map[string]string{}
 	uniqueRelations := map[string]bool{}
+	resultAliases := map[string]bool{}
 	excludedIdentifiers := map[*ast.Ident]bool{}
 	var qualifiedReferences []*ast.QualifiedRef
 	var unqualifiedReferences []*ast.Ident
@@ -318,29 +321,43 @@ func (e *extractor) emitAccesses(fromID string, root ast.Node) {
 	}
 	var columnWrites []columnWrite
 	hasCTE := false
+	hasNonTableSource := false
+	registerAlias := func(name, table string) {
+		if name == "" || table == "" {
+			return
+		}
+		if existing, exists := aliases[name]; exists && existing != table {
+			aliases[name] = ""
+			return
+		}
+		aliases[name] = table
+	}
 	registerTable := func(name *ast.QualifiedName, alias *ast.Ident) {
 		table := qualifiedName(name)
 		if table == "" {
 			return
 		}
 		uniqueRelations[table] = true
-		aliases[name.Name.Name] = table
-		aliases[table] = table
+		registerAlias(name.Name.Name, table)
+		registerAlias(table, table)
 		if alias != nil && alias.Name != "" {
-			aliases[alias.Name] = table
+			registerAlias(alias.Name, table)
 		}
 	}
 	ast.Walk(root, func(node ast.Node) bool {
 		switch node := node.(type) {
 		case *ast.TableRef:
+			if node.Name == nil || node.HasArgs || node.Select != nil || len(node.List) > 0 {
+				hasNonTableSource = true
+			}
 			if !cteReferences[node] {
 				table := qualifiedName(node.Name)
 				if table != "" {
 					uniqueRelations[table] = true
-					aliases[node.Name.Name.Name] = table
-					aliases[table] = table
+					registerAlias(node.Name.Name.Name, table)
+					registerAlias(table, table)
 					if node.Alias != nil && node.Alias.Name != "" {
-						aliases[node.Alias.Name] = table
+						registerAlias(node.Alias.Name, table)
 					}
 				}
 			}
@@ -369,6 +386,16 @@ func (e *extractor) emitAccesses(fromID string, root ast.Node) {
 		case *ast.ResultColumn:
 			if node.Alias != nil {
 				excludedIdentifiers[node.Alias] = true
+				resultAliases[node.Alias.Name] = true
+			}
+		case *ast.WindowDef:
+			if node.Name != nil {
+				excludedIdentifiers[node.Name] = true
+				resultAliases[node.Name.Name] = true
+			}
+			if node.Base != nil {
+				excludedIdentifiers[node.Base] = true
+				resultAliases[node.Base.Name] = true
 			}
 		case *ast.Star:
 			if node.Table != nil {
@@ -409,7 +436,7 @@ func (e *extractor) emitAccesses(fromID string, root ast.Node) {
 		}
 		return true
 	})
-	emit := func(kind graph.EdgeKind, name string, node ast.Node) {
+	emitWithProperties := func(kind graph.EdgeKind, name string, node ast.Node, properties map[string]string) {
 		if name == "" {
 			return
 		}
@@ -418,8 +445,9 @@ func (e *extractor) emitAccesses(fromID string, root ast.Node) {
 			return
 		}
 		seen[key] = true
-		e.b.AddFact(fromID, kind, "", name, "", e.location(node), nil)
+		e.b.AddFact(fromID, kind, "", name, "", e.location(node), properties)
 	}
+	emit := func(kind graph.EdgeKind, name string, node ast.Node) { emitWithProperties(kind, name, node, nil) }
 	ast.Walk(root, func(node ast.Node) bool {
 		switch node := node.(type) {
 		case *ast.TableRef:
@@ -433,7 +461,7 @@ func (e *extractor) emitAccesses(fromID string, root ast.Node) {
 		case *ast.DeleteStmt:
 			emit(graph.EdgeWrites, qualifiedName(node.Table), node.Table)
 		case *ast.AlterTableStmt:
-			emit(graph.EdgeWrites, qualifiedName(node.Table), node.Table)
+			emitWithProperties(graph.EdgeWrites, qualifiedName(node.Table), node.Table, map[string]string{"statement": "alter_table"})
 		}
 		return true
 	})
@@ -465,9 +493,12 @@ func (e *extractor) emitAccesses(fromID string, root ast.Node) {
 			emitColumn(graph.EdgeReads, strings.Join(parts[:len(parts)-1], ".")+"."+column, reference)
 		}
 	}
-	if !hasCTE && len(uniqueRelations) == 1 {
+	if !hasCTE && !hasNonTableSource && len(uniqueRelations) == 1 {
 		for table := range uniqueRelations {
 			for _, reference := range unqualifiedReferences {
+				if resultAliases[reference.Name] {
+					continue
+				}
 				emitColumn(graph.EdgeReads, table+"."+reference.Name, reference)
 			}
 		}

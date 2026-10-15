@@ -442,6 +442,7 @@ func (s *Service) Run(ctx context.Context, project Project, options Options) (re
 	report.ScopedOut = discovered.scopedOut
 	workspaceSemanticKeys, err := s.parsers.WorkspaceSemanticKeys(ctx, parserapi.Input{
 		Root: project.Root, SourcePaths: paths, Repository: project.Name, RepoID: project.ID, GoModule: project.GoModule,
+		MaxFileSize: options.MaxFileSize,
 	})
 	if err != nil {
 		return report, err

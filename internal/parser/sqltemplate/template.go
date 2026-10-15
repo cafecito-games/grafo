@@ -15,6 +15,7 @@ import (
 type Diagnostic struct {
 	Offset  int
 	Message string
+	Fatal   bool
 }
 
 type Macro struct {
@@ -53,6 +54,7 @@ type Document struct {
 }
 
 var annotationPattern = regexp.MustCompile(`(?is)^\s*name\s*:\s*([A-Za-z_][A-Za-z0-9_]*)\s+(:[A-Za-z][A-Za-z0-9_]*)\s*$`)
+var annotationPrefixPattern = regexp.MustCompile(`^name\s*:`)
 
 var supportedCommands = map[string]bool{
 	":one": true, ":many": true, ":exec": true, ":execrows": true,
@@ -78,6 +80,7 @@ type annotation struct {
 // source, so every grammar byte offset is also an original-source byte offset.
 func Analyze(source []byte, dialect string) Document {
 	d := Document{Original: append([]byte(nil), source...), SQL: append([]byte(nil), source...)}
+	postgres := strings.EqualFold(strings.TrimSpace(dialect), "postgres") || strings.EqualFold(strings.TrimSpace(dialect), "postgresql")
 	code := make([]bool, len(source))
 	for i := range code {
 		code[i] = true
@@ -97,10 +100,9 @@ func Analyze(source []byte, dialect string) Document {
 			comments = append(comments, comment{span: span{i, end}, contentStart: i + 2, contentEnd: end})
 			i = end
 		case hasPrefix(source, i, "/*"):
-			end := blockCommentEnd(source, i)
-			if end < 0 {
-				d.Diagnostics = append(d.Diagnostics, Diagnostic{i, "unterminated SQL block comment"})
-				end = len(source)
+			end, closed := blockCommentEnd(source, i, postgres)
+			if !closed {
+				d.Diagnostics = append(d.Diagnostics, Diagnostic{Offset: i, Message: "unterminated SQL block comment", Fatal: true})
 			}
 			markNonCode(code, i, end)
 			contentEnd := end
@@ -109,16 +111,32 @@ func Analyze(source []byte, dialect string) Document {
 			}
 			comments = append(comments, comment{span: span{i, end}, contentStart: i + 2, contentEnd: contentEnd})
 			i = end
+		case postgres && (source[i] == 'E' || source[i] == 'e') && i+1 < len(source) && source[i+1] == '\'' && boundaryBefore(source, i):
+			end, closed := quotedEnd(source, i+1, '\'', true)
+			if !closed {
+				d.Diagnostics = append(d.Diagnostics, Diagnostic{Offset: i, Message: "unterminated PostgreSQL escape string", Fatal: true})
+			}
+			markNonCode(code, i, end)
+			i = end
 		case source[i] == '\'', source[i] == '"', source[i] == '`':
-			end := quotedEnd(source, i, source[i])
+			end, closed := quotedEnd(source, i, source[i], false)
+			if !closed {
+				d.Diagnostics = append(d.Diagnostics, Diagnostic{Offset: i, Message: "unterminated SQL quoted value", Fatal: true})
+			}
 			markNonCode(code, i, end)
 			i = end
-		case source[i] == '[':
-			end := bracketEnd(source, i)
+		case !postgres && source[i] == '[':
+			end, closed := bracketEnd(source, i)
+			if !closed {
+				d.Diagnostics = append(d.Diagnostics, Diagnostic{Offset: i, Message: "unterminated SQLite bracket identifier", Fatal: true})
+			}
 			markNonCode(code, i, end)
 			i = end
-		case source[i] == '$':
-			if end, ok := dollarQuoteEnd(source, i); ok {
+		case postgres && source[i] == '$':
+			if end, recognized, closed := dollarQuoteEnd(source, i); recognized {
+				if !closed {
+					d.Diagnostics = append(d.Diagnostics, Diagnostic{Offset: i, Message: "unterminated PostgreSQL dollar-quoted string", Fatal: true})
+				}
 				markNonCode(code, i, end)
 				i = end
 				continue
@@ -127,7 +145,7 @@ func Analyze(source []byte, dialect string) Document {
 		case hasPrefix(source, i, "sqlc.") && boundaryBefore(source, i):
 			end, macro, diagnostic := parseMacro(source, i)
 			if diagnostic != "" {
-				d.Diagnostics = append(d.Diagnostics, Diagnostic{i, diagnostic})
+				d.Diagnostics = append(d.Diagnostics, Diagnostic{Offset: i, Message: diagnostic, Fatal: true})
 				if end <= i {
 					i++
 				} else {
@@ -174,6 +192,15 @@ func Analyze(source []byte, dialect string) Document {
 	return d
 }
 
+func (d Document) HasFatalDiagnostics() bool {
+	for _, diagnostic := range d.Diagnostics {
+		if diagnostic.Fatal {
+			return true
+		}
+	}
+	return false
+}
+
 func projectionWildcards(source []byte, code []bool) []Wildcard {
 	var result []Wildcard
 	for index, value := range source {
@@ -185,25 +212,78 @@ func projectionWildcards(source []byte, code []bool) []Wildcard {
 			previous--
 		}
 		if previous >= 0 && source[previous] == '.' {
-			end := previous
-			previous--
-			for previous >= 0 && identifierPart(source[previous]) && code[previous] {
-				previous--
+			if qualifier, start, ok := wildcardQualifier(source, code, previous); ok {
+				result = append(result, Wildcard{Qualifier: qualifier, Start: start, End: index + 1})
 			}
-			if previous+1 < end {
-				result = append(result, Wildcard{Qualifier: string(source[previous+1 : end]), Start: previous + 1, End: index + 1})
-			}
+			continue
+		}
+		if previous >= 0 && source[previous] == ',' {
+			result = append(result, Wildcard{Start: index, End: index + 1})
 			continue
 		}
 		end := previous + 1
 		for previous >= 0 && identifierPart(source[previous]) && code[previous] {
 			previous--
 		}
-		if strings.EqualFold(string(source[previous+1:end]), "select") || strings.EqualFold(string(source[previous+1:end]), "returning") {
+		word := string(source[previous+1 : end])
+		if strings.EqualFold(word, "select") || strings.EqualFold(word, "returning") || strings.EqualFold(word, "distinct") || strings.EqualFold(word, "all") {
 			result = append(result, Wildcard{Start: index, End: index + 1})
 		}
 	}
 	return result
+}
+
+func wildcardQualifier(source []byte, code []bool, dot int) (string, int, bool) {
+	position := dot - 1
+	var parts []string
+	start := dot
+	for {
+		for position >= 0 && whitespace(source[position]) {
+			position--
+		}
+		end := position + 1
+		switch {
+		case position >= 0 && identifierPart(source[position]) && code[position]:
+			for position >= 0 && identifierPart(source[position]) && code[position] {
+				position--
+			}
+			parts = append([]string{string(source[position+1 : end])}, parts...)
+			start = position + 1
+		case position >= 0 && (source[position] == '"' || source[position] == '`'):
+			quote := source[position]
+			position--
+			for position >= 0 && source[position] != quote {
+				position--
+			}
+			if position < 0 {
+				return "", 0, false
+			}
+			parts = append([]string{string(source[position+1 : end-1])}, parts...)
+			start = position
+			position--
+		case position >= 0 && source[position] == ']':
+			position--
+			for position >= 0 && source[position] != '[' {
+				position--
+			}
+			if position < 0 {
+				return "", 0, false
+			}
+			parts = append([]string{string(source[position+1 : end-1])}, parts...)
+			start = position
+			position--
+		default:
+			return "", 0, false
+		}
+		for position >= 0 && whitespace(source[position]) {
+			position--
+		}
+		if position < 0 || source[position] != '.' {
+			break
+		}
+		position--
+	}
+	return strings.Join(parts, "."), start, len(parts) > 0
 }
 
 func (d Document) Position(offset int) (line, column int) {
@@ -299,7 +379,8 @@ func macroCallEnd(source []byte, open int) int {
 	for i := open; i < len(source); i++ {
 		switch source[i] {
 		case '\'', '"', '`':
-			i = quotedEnd(source, i, source[i]) - 1
+			end, _ := quotedEnd(source, i, source[i], false)
+			i = end - 1
 		case '(':
 			depth++
 		case ')':
@@ -344,9 +425,9 @@ func parseAnnotations(source []byte, comments []comment, d *Document) []annotati
 		}
 		match := annotationPattern.FindSubmatchIndex(content)
 		if match == nil {
-			if bytes.Contains(bytes.ToLower(content), []byte("name:")) || bytes.Contains(bytes.ToLower(content), []byte("name :")) {
-				d.Diagnostics = append(d.Diagnostics, Diagnostic{item.start, "malformed sqlc named-query annotation"})
-				annotations = append(annotations, annotation{start: item.start, end: item.end, diagnosticIndex: len(d.Diagnostics) - 1})
+			trimmed := bytes.TrimSpace(bytes.ToLower(content))
+			if annotationPrefixPattern.Match(trimmed) {
+				d.Diagnostics = append(d.Diagnostics, Diagnostic{Offset: item.start, Message: "malformed sqlc named-query annotation"})
 			}
 			continue
 		}
@@ -354,7 +435,7 @@ func parseAnnotations(source []byte, comments []comment, d *Document) []annotati
 		command := strings.ToLower(string(content[match[4]:match[5]]))
 		valid := supportedCommands[command]
 		if !valid {
-			d.Diagnostics = append(d.Diagnostics, Diagnostic{item.contentStart + match[4], fmt.Sprintf("unsupported sqlc query command %q", command)})
+			d.Diagnostics = append(d.Diagnostics, Diagnostic{Offset: item.contentStart + match[4], Message: fmt.Sprintf("unsupported sqlc query command %q", command)})
 		}
 		annotations = append(annotations, annotation{
 			name: name, command: command, start: item.start, end: item.end,
@@ -401,7 +482,7 @@ func associateQueries(source []byte, code []bool, annotations []annotation, stat
 		associated := -1
 		for index, statement := range statements {
 			if item.start >= statement.start && item.start < statement.end {
-				d.Diagnostics = append(d.Diagnostics, Diagnostic{item.start, "sqlc named-query annotation appears inside a SQL statement"})
+				d.Diagnostics = append(d.Diagnostics, Diagnostic{Offset: item.start, Message: "sqlc named-query annotation appears inside a SQL statement"})
 				associated = -2
 				break
 			}
@@ -417,7 +498,7 @@ func associateQueries(source []byte, code []bool, annotations []annotation, stat
 			}
 		}
 		if associated == -1 {
-			d.Diagnostics = append(d.Diagnostics, Diagnostic{item.start, "sqlc named-query annotation has no following statement"})
+			d.Diagnostics = append(d.Diagnostics, Diagnostic{Offset: item.start, Message: "sqlc named-query annotation has no following statement"})
 		} else if associated >= 0 {
 			byStatement[associated] = append(byStatement[associated], item)
 		}
@@ -426,7 +507,7 @@ func associateQueries(source []byte, code []bool, annotations []annotation, stat
 	for index, items := range byStatement {
 		if len(items) != 1 {
 			for _, item := range items {
-				d.Diagnostics = append(d.Diagnostics, Diagnostic{item.start, "multiple sqlc named-query annotations target one statement"})
+				d.Diagnostics = append(d.Diagnostics, Diagnostic{Offset: item.start, Message: "multiple sqlc named-query annotations target one statement"})
 			}
 			continue
 		}
@@ -458,7 +539,7 @@ func associateQueries(source []byte, code []bool, annotations []annotation, stat
 	filtered := queries[:0]
 	for _, query := range queries {
 		if duplicates[strings.ToLower(query.Name)] > 1 {
-			d.Diagnostics = append(d.Diagnostics, Diagnostic{query.NameStart, fmt.Sprintf("duplicate sqlc query name %q", query.Name)})
+			d.Diagnostics = append(d.Diagnostics, Diagnostic{Offset: query.NameStart, Message: fmt.Sprintf("duplicate sqlc query name %q", query.Name)})
 			continue
 		}
 		filtered = append(filtered, query)
@@ -497,7 +578,14 @@ func shorthandStart(source []byte, index int) bool {
 	if index+1 >= len(source) || !identifierStart(source[index+1]) {
 		return false
 	}
-	return index == 0 || (!identifierPart(source[index-1]) && source[index-1] != '@')
+	if index == 0 {
+		return true
+	}
+	previous := source[index-1]
+	if identifierPart(previous) || previous == '@' {
+		return false
+	}
+	return !strings.ContainsRune("<>?|&#/+-%^~!*", rune(previous))
 }
 
 func identifierStart(value byte) bool {
@@ -525,8 +613,12 @@ func markNonCode(code []bool, start, end int) {
 	}
 }
 
-func quotedEnd(source []byte, start int, quote byte) int {
+func quotedEnd(source []byte, start int, quote byte, backslashEscapes bool) (int, bool) {
 	for i := start + 1; i < len(source); i++ {
+		if backslashEscapes && source[i] == '\\' && i+1 < len(source) {
+			i++
+			continue
+		}
 		if source[i] != quote {
 			continue
 		}
@@ -534,46 +626,46 @@ func quotedEnd(source []byte, start int, quote byte) int {
 			i++
 			continue
 		}
-		return i + 1
+		return i + 1, true
 	}
-	return len(source)
+	return len(source), false
 }
 
-func bracketEnd(source []byte, start int) int {
+func bracketEnd(source []byte, start int) (int, bool) {
 	if end := bytes.IndexByte(source[start+1:], ']'); end >= 0 {
-		return start + 1 + end + 1
+		return start + 1 + end + 1, true
 	}
-	return len(source)
+	return len(source), false
 }
 
-func blockCommentEnd(source []byte, start int) int {
+func blockCommentEnd(source []byte, start int, nested bool) (int, bool) {
 	depth := 1
 	for i := start + 2; i+1 < len(source); i++ {
-		if hasPrefix(source, i, "/*") {
+		if nested && hasPrefix(source, i, "/*") {
 			depth++
 			i++
 		} else if hasPrefix(source, i, "*/") {
 			depth--
 			i++
 			if depth == 0 {
-				return i + 1
+				return i + 1, true
 			}
 		}
 	}
-	return -1
+	return len(source), false
 }
 
-func dollarQuoteEnd(source []byte, start int) (int, bool) {
+func dollarQuoteEnd(source []byte, start int) (end int, recognized, closed bool) {
 	i := start + 1
 	for i < len(source) && (identifierPart(source[i]) || source[i] == '_') {
 		i++
 	}
 	if i >= len(source) || source[i] != '$' {
-		return 0, false
+		return 0, false, false
 	}
 	delimiter := source[start : i+1]
 	if end := bytes.Index(source[i+1:], delimiter); end >= 0 {
-		return i + 1 + end + len(delimiter), true
+		return i + 1 + end + len(delimiter), true, true
 	}
-	return len(source), true
+	return len(source), true, false
 }

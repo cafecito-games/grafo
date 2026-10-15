@@ -323,7 +323,8 @@ func (stage *fileStage) prepare(ctx context.Context, path string) fileOutcome {
 		return fileOutcome{path: path, kind: outcomeUnsupported}
 	}
 	input := parserapi.Input{Root: stage.project.Root, Path: path, Content: content,
-		SourcePaths: stage.paths, Repository: stage.project.Name, RepoID: stage.project.ID, GoModule: stage.project.GoModule}
+		SourcePaths: stage.paths, Repository: stage.project.Name, RepoID: stage.project.ID, GoModule: stage.project.GoModule,
+		MaxFileSize: stage.options.MaxFileSize}
 	digest := sha256.New()
 	_, _ = digest.Write(content)
 	_, _ = digest.Write([]byte{0})

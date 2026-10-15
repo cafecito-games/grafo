@@ -30,7 +30,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const adapterVersion = "1"
+const (
+	adapterVersion       = "2"
+	workspaceSemanticKey = "sqlc-binding-workspace-v2"
+	defaultMaxFileSize   = int64(5 << 20)
+)
 
 type GoConfig struct {
 	Package             string
@@ -45,6 +49,8 @@ type Entry struct {
 	Engine      string
 	SchemaPaths []string
 	QueryPaths  []string
+	SchemaRoots []string
+	QueryRoots  []string
 	Go          GoConfig
 	Valid       bool
 }
@@ -89,8 +95,9 @@ type Registry struct {
 }
 
 type schemaTable struct {
-	columns   []string
-	ambiguous bool
+	columns    []string
+	ambiguous  bool
+	incomplete bool
 }
 
 func (r Registry) Config(path string) (Config, bool) {
@@ -192,7 +199,7 @@ func (l *Loader) Load(ctx context.Context, input parserapi.Input) (Registry, err
 	if l.root == input.Root && l.digest == digest {
 		return l.value, nil
 	}
-	registry := buildRegistry(input, files, digest)
+	registry := buildRegistry(ctx, input, files, digest)
 	l.root, l.digest, l.value = input.Root, digest, registry
 	return registry, nil
 }
@@ -200,13 +207,21 @@ func (l *Loader) Load(ctx context.Context, input parserapi.Input) (Registry, err
 func (l *Loader) cached(root, semanticKey string) (Registry, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.root == root && l.digest != "" && strings.Contains(semanticKey, l.digest) {
+	if l.root == root && l.digest != "" && semanticKey == workspaceSemanticKey {
 		return l.value, true
 	}
 	return Registry{}, false
 }
 
 func (l *Loader) SemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
+	_, err := l.Load(ctx, input)
+	if err != nil {
+		return "", err
+	}
+	return workspaceSemanticKey, nil
+}
+
+func (l *Loader) FileSemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
 	registry, err := l.Load(ctx, input)
 	if err != nil {
 		return "", err
@@ -229,13 +244,13 @@ func (l *Loader) AffectedPaths(root string, changedPaths []string) (queries, con
 	all := false
 	for _, changed := range changedPaths {
 		changed = clean(changed)
-		if IsConfigPath(changed) {
+		if IsConfigPath(changed) || changed == "go.mod" {
 			all = true
 			continue
 		}
 		for _, config := range l.value.configs {
 			for _, entry := range config.Entries {
-				affects := containsPath(entry.SchemaPaths, changed) || containsPath(entry.QueryPaths, changed)
+				affects := pathMatchesRoots(entry.SchemaRoots, changed) || pathMatchesRoots(entry.QueryRoots, changed)
 				outputPrefix := strings.TrimSuffix(entry.Go.Out, "/") + "/"
 				if entry.Go.Out != "" && (changed == entry.Go.Out || strings.HasPrefix(changed, outputPrefix)) {
 					affects = true
@@ -247,6 +262,9 @@ func (l *Loader) AffectedPaths(root string, changedPaths []string) (queries, con
 				for _, queryPath := range entry.QueryPaths {
 					querySet[queryPath] = true
 				}
+				for _, schemaPath := range entry.SchemaPaths {
+					querySet[schemaPath] = true
+				}
 			}
 		}
 	}
@@ -256,6 +274,9 @@ func (l *Loader) AffectedPaths(root string, changedPaths []string) (queries, con
 			for _, entry := range config.Entries {
 				for _, queryPath := range entry.QueryPaths {
 					querySet[queryPath] = true
+				}
+				for _, schemaPath := range entry.SchemaPaths {
+					querySet[schemaPath] = true
 				}
 			}
 		}
@@ -271,9 +292,9 @@ func (l *Loader) AffectedPaths(root string, changedPaths []string) (queries, con
 	return queries, configs, true
 }
 
-func containsPath(paths []string, target string) bool {
-	for _, candidate := range paths {
-		if candidate == target {
+func pathMatchesRoots(roots []string, target string) bool {
+	for _, root := range roots {
+		if root == target || strings.HasPrefix(target, strings.TrimSuffix(root, "/")+"/") {
 			return true
 		}
 	}
@@ -287,7 +308,7 @@ func IsConfigPath(filePath string) bool {
 
 func IsSemanticInput(filePath string) bool {
 	extension := strings.ToLower(filepath.Ext(filePath))
-	return IsConfigPath(filePath) || isSQLSourceExtension(extension) || extension == ".go"
+	return IsConfigPath(filePath) || isSQLSourceExtension(extension) || extension == ".go" || clean(filePath) == "go.mod"
 }
 
 func isSQLSourceExtension(extension string) bool {
@@ -316,15 +337,12 @@ func relevantFiles(ctx context.Context, input parserapi.Input) ([]fileContent, s
 	selected := map[string]bool{}
 	configContents := map[string][]byte{}
 	for _, filePath := range paths {
-		extension := strings.ToLower(filepath.Ext(filePath))
-		if !IsConfigPath(filePath) && !isSQLSourceExtension(extension) {
+		if !IsConfigPath(filePath) {
 			continue
 		}
 		selected[filePath] = true
-		if IsConfigPath(filePath) {
-			if content, err := secureRead(input.Root, filePath); err == nil {
-				configContents[filePath] = content
-			}
+		if content, err := secureRead(input.Root, filePath, input.MaxFileSize); err == nil {
+			configContents[filePath] = content
 		}
 	}
 	var outputPrefixes []string
@@ -334,6 +352,21 @@ func relevantFiles(ctx context.Context, input parserapi.Input) ([]fileContent, s
 			continue
 		}
 		for _, entry := range raw.SQL {
+			for _, inputPath := range append(append([]string(nil), entry.Schema...), entry.Queries...) {
+				resolved, ok := resolveRelative(configPath, inputPath)
+				if !ok {
+					continue
+				}
+				if containsCleanPath(paths, resolved) {
+					selected[resolved] = true
+					continue
+				}
+				for _, candidate := range paths {
+					if sqlcDirectoryCandidate(resolved, candidate) {
+						selected[candidate] = true
+					}
+				}
+			}
 			if entry.Gen.Go == nil {
 				continue
 			}
@@ -362,7 +395,7 @@ func relevantFiles(ctx context.Context, input parserapi.Input) ([]fileContent, s
 	hash := sha256.New()
 	var files []fileContent
 	for _, filePath := range selectedPaths {
-		content, readErr := secureRead(input.Root, filePath)
+		content, readErr := secureRead(input.Root, filePath, input.MaxFileSize)
 		item := fileContent{path: filePath, content: content}
 		if readErr != nil {
 			item.readError = readErr.Error()
@@ -378,7 +411,22 @@ func relevantFiles(ctx context.Context, input parserapi.Input) ([]fileContent, s
 		_, _ = hash.Write([]byte{0})
 	}
 	_, _ = hash.Write([]byte(adapterVersion))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write([]byte(input.GoModule))
 	return files, hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func containsCleanPath(paths []string, target string) bool {
+	index := sort.SearchStrings(paths, target)
+	return index < len(paths) && paths[index] == target
+}
+
+func sqlcDirectoryCandidate(directory, candidate string) bool {
+	if path.Dir(candidate) != strings.TrimSuffix(directory, "/") {
+		return false
+	}
+	base := path.Base(candidate)
+	return !strings.HasPrefix(base, ".") && strings.HasSuffix(strings.ToLower(base), ".sql") && !strings.HasSuffix(strings.ToLower(base), ".down.sql")
 }
 
 func repositoryPaths(ctx context.Context, root string) ([]string, error) {
@@ -415,7 +463,10 @@ func repositoryPaths(ctx context.Context, root string) ([]string, error) {
 	return result, err
 }
 
-func secureRead(root, relative string) ([]byte, error) {
+func secureRead(root, relative string, maximum int64) ([]byte, error) {
+	if maximum <= 0 {
+		maximum = defaultMaxFileSize
+	}
 	full := filepath.Join(root, filepath.FromSlash(relative))
 	resolved, err := filepath.EvalSymlinks(full)
 	if err != nil {
@@ -428,6 +479,16 @@ func secureRead(root, relative string) ([]byte, error) {
 	rel, err := filepath.Rel(resolvedRoot, resolved)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return nil, fmt.Errorf("path %q escapes repository root", relative)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("path %q is not a regular file", relative)
+	}
+	if info.Size() > maximum {
+		return nil, fmt.Errorf("path %q exceeds maximum file size of %d bytes", relative, maximum)
 	}
 	return os.ReadFile(resolved)
 }
@@ -478,7 +539,7 @@ func emptyRegistry(digest string) Registry {
 	return Registry{Digest: digest, configs: map[string]*Config{}, entries: map[string][]Entry{}, sqlPaths: map[string][]Entry{}, queries: map[string]Query{}, bindings: map[string][]Binding{}, schemas: map[string]map[string]schemaTable{}}
 }
 
-func buildRegistry(input parserapi.Input, files []fileContent, digest string) Registry {
+func buildRegistry(ctx context.Context, input parserapi.Input, files []fileContent, digest string) Registry {
 	registry := emptyRegistry(digest)
 	contents := map[string]fileContent{}
 	paths := make([]string, 0, len(files))
@@ -512,7 +573,7 @@ func buildRegistry(input parserapi.Input, files []fileContent, digest string) Re
 			if !entry.Valid {
 				continue
 			}
-			registry.schemas[entryKey(entry)] = parseSchema(config, entry, input, contents)
+			registry.schemas[entryKey(entry)] = parseSchema(ctx, config, entry, input, contents)
 			for _, schemaPath := range entry.SchemaPaths {
 				registry.sqlPaths[schemaPath] = append(registry.sqlPaths[schemaPath], entry)
 			}
@@ -537,7 +598,13 @@ func buildRegistry(input parserapi.Input, files []fileContent, digest string) Re
 			}
 		}
 	}
-	for _, config := range registry.configs {
+	configPaths := make([]string, 0, len(registry.configs))
+	for configPath := range registry.configs {
+		configPaths = append(configPaths, configPath)
+	}
+	sort.Strings(configPaths)
+	for _, configPath := range configPaths {
+		config := registry.configs[configPath]
 		for _, entry := range config.Entries {
 			if entry.Valid && entry.Go.Out != "" {
 				scanGenerated(&registry, config, entry, input, paths, contents)
@@ -555,13 +622,23 @@ func buildRegistry(input parserapi.Input, files []fileContent, digest string) Re
 	}
 	for key := range registry.bindings {
 		sort.Slice(registry.bindings[key], func(i, j int) bool {
-			return registry.bindings[key][i].Method < registry.bindings[key][j].Method
+			left, right := registry.bindings[key][i], registry.bindings[key][j]
+			if left.Method != right.Method {
+				return left.Method < right.Method
+			}
+			if left.ConfigPath != right.ConfigPath {
+				return left.ConfigPath < right.ConfigPath
+			}
+			if left.Entry != right.Entry {
+				return left.Entry < right.Entry
+			}
+			return left.GeneratedPath < right.GeneratedPath
 		})
 	}
 	return registry
 }
 
-func parseSchema(config *Config, entry Entry, input parserapi.Input, contents map[string]fileContent) map[string]schemaTable {
+func parseSchema(ctx context.Context, config *Config, entry Entry, input parserapi.Input, contents map[string]fileContent) map[string]schemaTable {
 	result := map[string]schemaTable{}
 	for _, schemaPath := range entry.SchemaPaths {
 		file := contents[schemaPath]
@@ -569,9 +646,9 @@ func parseSchema(config *Config, entry Entry, input parserapi.Input, contents ma
 		var parsed graph.ParseResult
 		var err error
 		if entry.Engine == "sqlite" {
-			parsed, err = sqliteparser.New().Parse(context.Background(), parseInput)
+			parsed, err = sqliteparser.New().Parse(ctx, parseInput)
 		} else {
-			parsed, err = postgresparser.New().Parse(context.Background(), parseInput)
+			parsed, err = postgresparser.New().Parse(ctx, parseInput)
 		}
 		if err != nil {
 			addDiagnostic(config, schemaPath, 1, fmt.Sprintf("parse configured %s schema: %v", entry.Engine, err))
@@ -582,10 +659,16 @@ func parseSchema(config *Config, entry Entry, input parserapi.Input, contents ma
 			line, column int
 		}
 		columns := map[string][]locatedColumn{}
+		alteredTables := map[string]bool{}
 		for _, node := range parsed.Nodes {
 			if node.Kind == graph.KindColumn {
 				table := strings.TrimSuffix(node.QualifiedName, "."+node.Name)
 				columns[table] = append(columns[table], locatedColumn{name: node.Name, line: node.Location.Line, column: node.Location.Column})
+			}
+		}
+		for _, fact := range parsed.Facts {
+			if fact.Kind == graph.EdgeWrites && fact.Properties["statement"] == "alter_table" && fact.Target != "" {
+				alteredTables[fact.Target] = true
 			}
 		}
 		for table, located := range columns {
@@ -606,12 +689,17 @@ func parseSchema(config *Config, entry Entry, input parserapi.Input, contents ma
 			}
 			result[table] = schemaTable{columns: names}
 		}
+		for table := range alteredTables {
+			value := result[table]
+			value.incomplete = true
+			result[table] = value
+		}
 	}
 	return result
 }
 
 func schemaColumns(tables map[string]schemaTable, selector string) (string, []string, bool) {
-	if table, ok := tables[selector]; ok && !table.ambiguous && len(table.columns) > 0 {
+	if table, ok := tables[selector]; ok && !table.ambiguous && !table.incomplete && len(table.columns) > 0 {
 		return selector, table.columns, true
 	}
 	var matched schemaTable
@@ -624,11 +712,13 @@ func schemaColumns(tables map[string]schemaTable, selector string) (string, []st
 			count++
 		}
 	}
-	return qualified, matched.columns, count == 1 && !matched.ambiguous && len(matched.columns) > 0
+	return qualified, matched.columns, count == 1 && !matched.ambiguous && !matched.incomplete && len(matched.columns) > 0
 }
 
 func buildEntry(config *Config, index int, raw rawEntry, paths []string, contents map[string]fileContent) Entry {
 	entry := Entry{ConfigPath: config.Path, Index: index, Valid: true}
+	entry.SchemaRoots = resolvedRoots(config.Path, raw.Schema)
+	entry.QueryRoots = resolvedRoots(config.Path, raw.Queries)
 	switch strings.ToLower(strings.TrimSpace(raw.Engine)) {
 	case "sqlite":
 		entry.Engine = "sqlite"
@@ -676,10 +766,9 @@ func expandPaths(config *Config, entry int, field string, values []string, paths
 			seen[resolved] = true
 			continue
 		}
-		prefix := strings.TrimSuffix(resolved, "/") + "/"
 		matched := false
 		for _, candidate := range paths {
-			if strings.HasPrefix(candidate, prefix) && isSQLSourceExtension(strings.ToLower(filepath.Ext(candidate))) {
+			if sqlcDirectoryCandidate(resolved, candidate) {
 				if contents[candidate].readError != "" {
 					continue
 				}
@@ -689,6 +778,21 @@ func expandPaths(config *Config, entry int, field string, values []string, paths
 		}
 		if !matched {
 			addDiagnostic(config, config.Path, 1, fmt.Sprintf("sqlc sql[%d] %s path %q is missing or excluded", entry, field, value))
+		}
+	}
+	result := make([]string, 0, len(seen))
+	for value := range seen {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func resolvedRoots(configPath string, values []string) []string {
+	seen := map[string]bool{}
+	for _, value := range values {
+		if resolved, ok := resolveRelative(configPath, value); ok {
+			seen[resolved] = true
 		}
 	}
 	result := make([]string, 0, len(seen))
@@ -834,13 +938,15 @@ func scanGenerated(registry *Registry, config *Config, entry Entry, input parser
 			if receiver != "Queries" {
 				continue
 			}
+			directory := path.Dir(generatedPath)
 			packageName := file.Name.Name
 			if input.GoModule != "" {
-				directory := path.Dir(generatedPath)
 				packageName = strings.TrimSuffix(input.GoModule, "/")
 				if directory != "." {
 					packageName += "/" + directory
 				}
+			} else if directory != "." {
+				packageName = directory
 			}
 			position := fset.Position(method.Pos())
 			end := fset.Position(method.End())

@@ -99,6 +99,19 @@ func TestParserDeclaresPostgreSQLDialect(t *testing.T) {
 	}
 }
 
+func TestParserPreservesPostgreSQLContainmentOperators(t *testing.T) {
+	result, err := postgresparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "query.psql", Content: []byte("SELECT tags <@ ARRAY['one', 'two'] FROM records;"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFact(t, result.Facts, graph.EdgeReads, "records", "")
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("operator diagnostics = %#v", result.Diagnostics)
+	}
+}
+
 func TestParserKeepsOverloadedFunctionsDistinct(t *testing.T) {
 	content := []byte(`
 CREATE FUNCTION public.lookup(value bigint) RETURNS bigint LANGUAGE SQL AS $$ SELECT value $$;
@@ -160,6 +173,23 @@ SELECT id, a.name, b.title FROM alpha AS a JOIN beta AS b ON a.key = b.alpha_key
 	assertFactFrom(t, result, graph.KindSQLQuery, "db/join.sql#Joined", graph.EdgeReads, "beta.title")
 }
 
+func TestParserDoesNotGuessReusedAliasesOutputAliasesOrFunctionSources(t *testing.T) {
+	result, err := postgresparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "db/scopes.sql", RepoID: "repo:sample", Content: []byte(`-- name: Scoped :many
+SELECT t.name, count(*) AS total, x
+FROM users AS t, generate_series(1, 3) AS x
+WHERE EXISTS (SELECT 1 FROM orders AS t WHERE t.user_id = 1)
+ORDER BY total;
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"orders.name", "users.name", "users.total", "users.x"} {
+		assertNoFact(t, result.Facts, graph.EdgeReads, target)
+	}
+}
+
 func TestParserReportsInvalidPostgreSQL(t *testing.T) {
 	result, err := postgresparser.New().Parse(context.Background(), parserapi.Input{
 		Path: "broken.sql", Content: []byte("CREATE TABLE missing ("), Repository: "sample",
@@ -210,4 +240,13 @@ func assertFactFrom(t *testing.T, result graph.ParseResult, sourceKind graph.Nod
 		}
 	}
 	t.Fatalf("missing %s fact from %q to %q; got %#v", kind, source, target, result.Facts)
+}
+
+func assertNoFact(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, target string) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.Kind == kind && fact.Target == target {
+			t.Fatalf("unexpected %s fact to %q", kind, target)
+		}
+	}
 }
