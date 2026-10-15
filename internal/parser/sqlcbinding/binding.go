@@ -719,22 +719,20 @@ func schemaColumns(tables map[string]schemaTable, selector, engine string) (stri
 	case "sqlite":
 		defaultSchema = "main"
 	}
-	if selectorSchema != "" && !strings.EqualFold(selectorSchema, defaultSchema) {
-		table, ok := tables[selector]
-		if ok && !table.ambiguous && !table.incomplete && len(table.columns) > 0 {
-			return selector, table.columns, true
-		}
-		return "", nil, false
-	}
+	selectorUsesDefault := selectorSchema == "" || identifiersEqual(selectorSchema, defaultSchema, engine)
 	var matched schemaTable
 	qualified := ""
 	count := 0
 	for candidate, table := range tables {
 		candidateSchema, candidateName := splitTableName(candidate)
-		if !strings.EqualFold(candidateName, selectorName) {
+		if !identifiersEqual(candidateName, selectorName, engine) {
 			continue
 		}
-		if candidateSchema != "" && !strings.EqualFold(candidateSchema, defaultSchema) {
+		if selectorUsesDefault {
+			if candidateSchema != "" && !identifiersEqual(candidateSchema, defaultSchema, engine) {
+				continue
+			}
+		} else if !identifiersEqual(candidateSchema, selectorSchema, engine) {
 			continue
 		}
 		matched = table
@@ -742,6 +740,13 @@ func schemaColumns(tables map[string]schemaTable, selector, engine string) (stri
 		count++
 	}
 	return qualified, matched.columns, count == 1 && !matched.ambiguous && !matched.incomplete && len(matched.columns) > 0
+}
+
+func identifiersEqual(left, right, engine string) bool {
+	if engine == "sqlite" {
+		return strings.EqualFold(left, right)
+	}
+	return left == right
 }
 
 func splitTableName(name string) (string, string) {

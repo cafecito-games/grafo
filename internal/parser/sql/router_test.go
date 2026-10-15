@@ -541,6 +541,8 @@ func TestRouterDoesNotGuessPostgreSQLTableSchema(t *testing.T) {
 	}{
 		{name: "qualified query", schema: "CREATE TABLE users (id bigint PRIMARY KEY, name text);", table: "audit.users"},
 		{name: "qualified declaration", schema: "CREATE TABLE audit.users (id bigint PRIMARY KEY, name text);", table: "users"},
+		{name: "quoted table case", schema: "CREATE TABLE users (id bigint PRIMARY KEY, name text);", table: `"Users"`},
+		{name: "quoted schema case", schema: "CREATE TABLE public.users (id bigint PRIMARY KEY, name text);", table: `"Public".users`},
 	}
 	forms := []struct {
 		name, queryFormat, diagnostic string

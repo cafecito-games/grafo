@@ -57,7 +57,8 @@ func TestSchemaColumnsRequiresExactOrDefaultSchema(t *testing.T) {
 		{name: "postgres default selector with unqualified table", selector: "public.users", engine: "postgres", tables: schemaTables("users"), wantOK: true},
 		{name: "postgres duplicate defaults from unqualified selector", selector: "users", engine: "postgres", tables: schemaTables("users", "public.users"), wantOK: false},
 		{name: "postgres duplicate defaults from qualified selector", selector: "public.users", engine: "postgres", tables: schemaTables("users", "public.users"), wantOK: false},
-		{name: "postgres duplicate defaults ignore case", selector: "PUBLIC.users", engine: "postgres", tables: schemaTables("users", "public.users"), wantOK: false},
+		{name: "postgres quoted table case differs", selector: "Users", engine: "postgres", tables: schemaTables("users"), wantOK: false},
+		{name: "postgres quoted schema case differs", selector: "Public.users", engine: "postgres", tables: schemaTables("public.users"), wantOK: false},
 		{name: "postgres multiple non-default declarations", selector: "users", engine: "postgres", tables: schemaTables("audit.users", "other.users"), wantOK: false},
 		{name: "sqlite unqualified selector with default table", selector: "users", engine: "sqlite", tables: schemaTables("main.users"), wantOK: true},
 		{name: "sqlite default selector with unqualified table", selector: "main.users", engine: "sqlite", tables: schemaTables("users"), wantOK: true},
@@ -65,6 +66,8 @@ func TestSchemaColumnsRequiresExactOrDefaultSchema(t *testing.T) {
 		{name: "sqlite duplicate defaults from qualified selector", selector: "main.users", engine: "sqlite", tables: schemaTables("users", "main.users"), wantOK: false},
 		{name: "sqlite postgres schema is non-default", selector: "users", engine: "sqlite", tables: schemaTables("public.users"), wantOK: false},
 		{name: "sqlite custom schema is non-default", selector: "users", engine: "sqlite", tables: schemaTables("audit.users"), wantOK: false},
+		{name: "sqlite table case folds", selector: "Users", engine: "sqlite", tables: schemaTables("users"), wantOK: true},
+		{name: "sqlite default schema case folds", selector: "Main.users", engine: "sqlite", tables: schemaTables("main.users"), wantOK: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
