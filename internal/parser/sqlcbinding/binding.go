@@ -93,6 +93,7 @@ type Registry struct {
 	bindings            map[string][]Binding
 	schemas             map[string]map[string]schemaTable
 	invalidEntryQueries map[string]bool
+	semanticKeys        map[string]string
 }
 
 type schemaTable struct {
@@ -227,7 +228,10 @@ func (l *Loader) FileSemanticKey(ctx context.Context, input parserapi.Input) (st
 	if err != nil {
 		return "", err
 	}
-	return "sqlc-binding-v" + AdapterVersion + ":" + registry.Digest, nil
+	if key := registry.semanticKeys[clean(input.Path)]; key != "" {
+		return "sqlc-binding-v" + AdapterVersion + ":" + key, nil
+	}
+	return "sqlc-binding-v" + AdapterVersion + ":unowned", nil
 }
 
 // AffectedPaths derives the exact config and query files whose binding evidence
@@ -546,7 +550,7 @@ type rawEntry struct {
 }
 
 func emptyRegistry(digest string) Registry {
-	return Registry{Digest: digest, configs: map[string]*Config{}, entries: map[string][]Entry{}, sqlPaths: map[string][]Entry{}, queries: map[string]Query{}, bindings: map[string][]Binding{}, schemas: map[string]map[string]schemaTable{}, invalidEntryQueries: map[string]bool{}}
+	return Registry{Digest: digest, configs: map[string]*Config{}, entries: map[string][]Entry{}, sqlPaths: map[string][]Entry{}, queries: map[string]Query{}, bindings: map[string][]Binding{}, schemas: map[string]map[string]schemaTable{}, invalidEntryQueries: map[string]bool{}, semanticKeys: map[string]string{}}
 }
 
 func buildRegistry(ctx context.Context, input parserapi.Input, files []fileContent, digest string) Registry {
@@ -645,13 +649,71 @@ func buildRegistry(ctx context.Context, input parserapi.Input, files []fileConte
 			return left.GeneratedPath < right.GeneratedPath
 		})
 	}
+	registry.semanticKeys = buildSemanticKeys(registry, input, paths, contents)
 	return registry
+}
+
+func buildSemanticKeys(registry Registry, input parserapi.Input, paths []string, contents map[string]fileContent) map[string]string {
+	targetInputs := map[string]map[string]bool{}
+	add := func(target string, inputs ...string) {
+		if targetInputs[target] == nil {
+			targetInputs[target] = map[string]bool{}
+		}
+		for _, inputPath := range inputs {
+			if inputPath != "" {
+				targetInputs[target][inputPath] = true
+			}
+		}
+	}
+	for configPath, config := range registry.configs {
+		add(configPath, configPath)
+		for _, entry := range config.Entries {
+			entryInputs := []string{configPath}
+			entryInputs = append(entryInputs, entry.SchemaPaths...)
+			entryInputs = append(entryInputs, entry.QueryPaths...)
+			if entry.Go.Out != "" {
+				for _, candidate := range paths {
+					if strings.EqualFold(filepath.Ext(candidate), ".go") && pathWithin(entry.Go.Out, candidate) {
+						entryInputs = append(entryInputs, candidate)
+					}
+				}
+			}
+			add(configPath, entryInputs...)
+			for _, target := range append(append([]string(nil), entry.SchemaPaths...), entry.QueryPaths...) {
+				add(target, entryInputs...)
+			}
+		}
+	}
+	result := make(map[string]string, len(targetInputs))
+	for target, inputSet := range targetInputs {
+		inputPaths := make([]string, 0, len(inputSet))
+		for inputPath := range inputSet {
+			inputPaths = append(inputPaths, inputPath)
+		}
+		sort.Strings(inputPaths)
+		hash := sha256.New()
+		for _, inputPath := range inputPaths {
+			file := contents[inputPath]
+			_, _ = hash.Write([]byte(inputPath))
+			_, _ = hash.Write([]byte{0})
+			if file.readError != "" {
+				_, _ = hash.Write([]byte("unreadable:" + file.readError))
+			} else {
+				_, _ = hash.Write(file.content)
+			}
+			_, _ = hash.Write([]byte{0})
+		}
+		_, _ = hash.Write([]byte(input.GoModule))
+		result[target] = hex.EncodeToString(hash.Sum(nil))
+	}
+	return result
 }
 
 func parseSchema(ctx context.Context, config *Config, entry Entry, input parserapi.Input, contents map[string]fileContent) map[string]schemaTable {
 	result := map[string]schemaTable{}
 	incompleteNames := map[string]bool{}
 	incompleteSchemas := map[string]bool{}
+	var declaredTables []string
 	valid := true
 	for _, schemaPath := range entry.SchemaPaths {
 		file := contents[schemaPath]
@@ -680,7 +742,6 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 			line, column int
 		}
 		columns := map[string][]locatedColumn{}
-		declarations := map[string]int{}
 		for _, node := range parsed.Nodes {
 			for _, schema := range strings.Split(node.Properties["incomplete_schemas"], "\x00") {
 				if schema != "" {
@@ -688,7 +749,7 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 				}
 			}
 			if node.Kind == graph.KindTable {
-				declarations[node.QualifiedName]++
+				declaredTables = append(declaredTables, node.QualifiedName)
 				if node.Properties["columns_incomplete"] == "true" {
 					incompleteNames[node.QualifiedName] = true
 				}
@@ -719,11 +780,19 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 				result[table] = existing
 				continue
 			}
-			result[table] = schemaTable{columns: names, ambiguous: declarations[table] > 1}
+			result[table] = schemaTable{columns: names}
 		}
 	}
 	for table, value := range result {
 		tableSchema, tableName := schemaTableIdentity(table, entry.Engine)
+		declarations := 0
+		for _, declared := range declaredTables {
+			declaredSchema, declaredName := schemaTableIdentity(declared, entry.Engine)
+			if identifiersEqual(tableSchema, declaredSchema, entry.Engine) && identifiersEqual(tableName, declaredName, entry.Engine) {
+				declarations++
+			}
+		}
+		value.ambiguous = value.ambiguous || declarations > 1
 		for incomplete := range incompleteNames {
 			incompleteSchema, incompleteName := schemaTableIdentity(incomplete, entry.Engine)
 			if identifiersEqual(tableSchema, incompleteSchema, entry.Engine) && identifiersEqual(tableName, incompleteName, entry.Engine) {
@@ -1426,23 +1495,63 @@ func sqlStringEnd(source string, start int, quote byte) int {
 }
 
 func schemaForEmbed(schemas map[string]schemaTable, statement, argument, dialect string) (string, []string, bool) {
+	tables := make([]string, 0, len(schemas))
+	for table := range schemas {
+		tables = append(tables, table)
+	}
+	resolved, ok := ResolveTableArgument(argument, statement, tables, dialect)
+	if !ok {
+		return "", nil, false
+	}
+	return schemaColumns(schemas, resolved, dialect)
+}
+
+// ResolveTableArgument maps a table name or statement alias to one unique
+// parser-normalized table without guessing across alias/name collisions.
+func ResolveTableArgument(argument, statement string, tables []string, dialect string) (string, bool) {
 	normalizedArgument, ok := normalizeSQLSelector(argument, dialect)
 	if !ok {
-		return "", nil, false
+		return "", false
 	}
-	if qualified, columns, ok := schemaColumns(schemas, normalizedArgument, dialect); ok {
-		return qualified, columns, true
+	matchTable := func(selector string) (string, bool) {
+		selectorSchema, selectorName := schemaTableIdentity(selector, dialect)
+		matched := ""
+		for _, table := range tables {
+			tableSchema, tableName := schemaTableIdentity(table, dialect)
+			if !identifiersEqual(selectorSchema, tableSchema, dialect) || !identifiersEqual(selectorName, tableName, dialect) {
+				continue
+			}
+			if matched != "" && matched != table {
+				return "", false
+			}
+			matched = table
+		}
+		return matched, matched != ""
 	}
 	pattern := regexp.MustCompile(`(?i)(?:\bfrom|\bjoin)\s+(` + sqlQualifiedIdentifierPattern + `)(?:\s+as)?\s+` + regexp.QuoteMeta(argument) + `\b`)
-	matches := pattern.FindAllStringSubmatch(statement, -1)
-	if len(matches) != 1 {
-		return "", nil, false
+	aliasMatch := ""
+	for _, match := range pattern.FindAllStringSubmatch(statement, -1) {
+		declared, ok := normalizeSQLSelector(match[1], dialect)
+		if !ok {
+			return "", false
+		}
+		table, ok := matchTable(declared)
+		if !ok {
+			return "", false
+		}
+		if aliasMatch != "" && aliasMatch != table {
+			return "", false
+		}
+		aliasMatch = table
 	}
-	declared, ok := normalizeSQLSelector(matches[0][1], dialect)
-	if !ok {
-		return "", nil, false
+	bareMatch, hasBareMatch := matchTable(normalizedArgument)
+	if aliasMatch != "" {
+		if hasBareMatch && bareMatch != aliasMatch {
+			return "", false
+		}
+		return aliasMatch, true
 	}
-	return schemaColumns(schemas, declared, dialect)
+	return bareMatch, hasBareMatch
 }
 
 const sqlBareIdentifier = `(?:[A-Za-z_]|[\x{80}-\x{10FFFF}])(?:[A-Za-z0-9_$]|[\x{80}-\x{10FFFF}])*`

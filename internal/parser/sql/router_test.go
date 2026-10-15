@@ -338,6 +338,49 @@ sql:
 	}
 }
 
+func TestRouterResolvesQuotedQualifiedTableAlias(t *testing.T) {
+	forms := []string{"sqlc.embed(u)", "u.*"}
+	for _, expression := range forms {
+		t.Run(expression, func(t *testing.T) {
+			root := testtemp.Dir(t)
+			writeRouterFiles(t, root, map[string]string{
+				"sqlc.yaml": `version: "2"
+sql:
+  - engine: postgresql
+    schema: schema.sql
+    queries: queries.sql
+    gen: {go: {package: db, out: internal/db}}
+`,
+				"schema.sql": `CREATE TABLE public."Users" (id bigint PRIMARY KEY, name text);`,
+				"queries.sql": `-- name: ListUsers :many
+SELECT ` + expression + ` FROM "public"."Users" AS u;`,
+			})
+			content, err := os.ReadFile(filepath.Join(root, "queries.sql"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := sqlparser.New(postgresparser.New(), sqliteparser.New()).Parse(context.Background(), parserapi.Input{
+				Root: root, Path: "queries.sql", Content: content, SourcePaths: []string{"sqlc.yaml", "schema.sql", "queries.sql"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, target := range []string{"public.Users.id", "public.Users.name"} {
+				found := false
+				for _, fact := range result.Facts {
+					found = found || fact.Target == target && fact.TargetKind == graph.KindColumn && fact.Producer == "sqlcbinding"
+				}
+				if !found {
+					t.Fatalf("missing quoted alias column %q: %#v", target, result.Facts)
+				}
+			}
+			if hasDiagnostic(result, "column expansion is ambiguous") {
+				t.Fatalf("quoted alias was reported ambiguous: %#v", result.Diagnostics)
+			}
+		})
+	}
+}
+
 func TestRouterExpandsOrdinaryWildcardOnlyWithCompleteSchema(t *testing.T) {
 	root := testtemp.Dir(t)
 	writeRouterFiles(t, root, map[string]string{
@@ -790,7 +833,19 @@ sql:
 	}
 }
 
-func TestRouterKeepsUnresolvedEmbedExplicitWithoutConfiguration(t *testing.T) {
+func TestRouterDoesNotWarnForWildcardWithoutSqlcOwner(t *testing.T) {
+	result, err := sqlparser.New(postgresparser.New(), sqliteparser.New()).Parse(context.Background(), parserapi.Input{
+		Path: "queries.psql", Content: []byte("-- name: ListUsers :many\nSELECT * FROM users;"), SourcePaths: []string{"queries.psql"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasDiagnostic(result, "wildcard column usage is unresolved") {
+		t.Fatalf("unowned wildcard produced sqlc diagnostic: %#v", result.Diagnostics)
+	}
+}
+
+func TestRouterDoesNotWarnForEmbedWithoutSqlcOwner(t *testing.T) {
 	root := testtemp.Dir(t)
 	if err := os.WriteFile(filepath.Join(root, "grafo.yaml"), []byte("sql:\n  default_dialect: sqlite\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -802,8 +857,8 @@ func TestRouterKeepsUnresolvedEmbedExplicitWithoutConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !hasDiagnostic(result, "column expansion lacks complete, unique configured schema evidence") {
-		t.Fatalf("missing explicit unresolved embed diagnostic: %#v", result.Diagnostics)
+	if hasDiagnostic(result, "column expansion") {
+		t.Fatalf("unowned embed produced sqlc diagnostic: %#v", result.Diagnostics)
 	}
 }
 

@@ -160,6 +160,39 @@ sql:
 	}
 }
 
+func TestLoaderRejectsDuplicateTableDeclarationsAcrossSchemaFiles(t *testing.T) {
+	tests := []struct {
+		name, engine, duplicate string
+	}{
+		{name: "postgres create table as", engine: "postgresql", duplicate: "CREATE TABLE users AS SELECT 1 AS id;"},
+		{name: "sqlite create table as", engine: "sqlite", duplicate: "CREATE TABLE users AS SELECT 1 AS id;"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := testtemp.Dir(t)
+			paths := writeFiles(t, root, map[string]string{
+				"sqlc.yaml": `version: "2"
+sql:
+  - engine: ` + test.engine + `
+    schema: [base.sql, duplicate.sql]
+    queries: queries.sql
+    gen: {go: {package: db, out: generated}}
+`,
+				"base.sql":      "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);",
+				"duplicate.sql": test.duplicate,
+				"queries.sql":   "-- name: ListUsers :many\nSELECT * FROM users;",
+			})
+			registry, err := sqlcbinding.NewLoader().Load(context.Background(), parserapi.Input{Root: root, SourcePaths: paths})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, columns, ok := registry.SchemaColumnsForQuery("queries.sql", "users"); ok {
+				t.Fatalf("duplicate table retained column evidence: %#v", columns)
+			}
+		})
+	}
+}
+
 func TestLoaderScopesPostgreSQLSchemaMutationEvidence(t *testing.T) {
 	root := testtemp.Dir(t)
 	paths := writeFiles(t, root, map[string]string{
@@ -532,12 +565,34 @@ type Queries struct{}; func (q *Queries) GetUser() { q.row(getUser) }
 		return registry
 	}
 	first := load("example.com/old")
+	semanticKey := func(path, module string) string {
+		t.Helper()
+		key, err := loader.FileSemanticKey(context.Background(), parserapi.Input{Root: root, Path: path, SourcePaths: paths, GoModule: module})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return key
+	}
+	firstOwnedKey := semanticKey("queries.sql", "example.com/old")
+	firstUnownedKey := semanticKey("other.sql", "example.com/old")
 	if err := os.WriteFile(filepath.Join(root, "other.sql"), []byte("SELECT 2;"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	second := load("example.com/old")
 	if first.Digest != second.Digest {
 		t.Fatal("unowned SQL changed the sqlc registry digest")
+	}
+	if firstOwnedKey != semanticKey("queries.sql", "example.com/old") || firstUnownedKey != semanticKey("other.sql", "example.com/old") {
+		t.Fatal("unowned SQL changed a sqlc file semantic key")
+	}
+	if err := os.WriteFile(filepath.Join(root, "schema.sql"), []byte("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if firstOwnedKey == semanticKey("queries.sql", "example.com/old") {
+		t.Fatal("owned schema change did not change query semantic key")
+	}
+	if firstUnownedKey != semanticKey("other.sql", "example.com/old") {
+		t.Fatal("owned schema change changed unowned SQL semantic key")
 	}
 	third := load("example.com/new")
 	if first.Digest == third.Digest {

@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -125,7 +124,9 @@ func (r *Router) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 			Message: fmt.Sprintf("Grafo SQL %s selected %s but sqlc config selects %s; sqlc bindings disabled", selection, selected, sqlcEngine)})
 	}
 	allowSQLCSchema := bindingsAllowed && sqlcEngine != "" && selected == sqlcEngine
-	expandSQLCWildcards(&result, input, registry, selected, allowSQLCSchema)
+	if sqlcEngine != "" {
+		expandSQLCWildcards(&result, input, registry, selected, allowSQLCSchema)
+	}
 	if bindingsAllowed && selected == sqlcEngine {
 		addGeneratedBindings(&result, input, registry)
 	}
@@ -198,7 +199,7 @@ func expandSQLCWildcards(result *graph.ParseResult, input parserapi.Input, regis
 					Message: fmt.Sprintf("sqlc.embed(%s) column expansion is ambiguous in this statement", macro.Argument)})
 				continue
 			}
-			table, ok := resolveEmbedTable(macro.Argument, statement, tablesByQuery[node.ID])
+			table, ok := sqlcbinding.ResolveTableArgument(macro.Argument, statement, tablesByQuery[node.ID], dialect)
 			if !ok {
 				result.Diagnostics = append(result.Diagnostics, graph.Diagnostic{Path: input.Path, Line: line, Level: "warning",
 					Message: fmt.Sprintf("sqlc.embed(%s) column expansion is ambiguous in this statement", macro.Argument)})
@@ -218,7 +219,7 @@ func expandSQLCWildcards(result *graph.ParseResult, input parserapi.Input, regis
 			ok := false
 			if wildcard.Qualifier != "" {
 				if node.Properties["qualified_wildcard_safe"] == "true" {
-					table, ok = resolveEmbedTable(wildcard.Qualifier, statement, tablesByQuery[node.ID])
+					table, ok = sqlcbinding.ResolveTableArgument(wildcard.Qualifier, statement, tablesByQuery[node.ID], dialect)
 				}
 			} else if node.Properties["unqualified_wildcard_safe"] == "true" && len(tablesByQuery[node.ID]) == 1 {
 				table, ok = tablesByQuery[node.ID][0], true
@@ -248,40 +249,6 @@ func appendUnique(values []string, value string) []string {
 		}
 	}
 	return append(values, value)
-}
-
-func resolveEmbedTable(argument, statement string, tables []string) (string, bool) {
-	var matched string
-	pattern := regexp.MustCompile(`(?i)(?:\bfrom|\bjoin)\s+([A-Za-z0-9_."` + "`" + `]+)(?:\s+as)?\s+` + regexp.QuoteMeta(argument) + `\b`)
-	for _, match := range pattern.FindAllStringSubmatch(statement, -1) {
-		declared := strings.Trim(match[1], "\"`")
-		for _, table := range tables {
-			if declared != table && graph.SimpleName(declared) != graph.SimpleName(table) {
-				continue
-			}
-			if matched != "" && matched != table {
-				return "", false
-			}
-			matched = table
-		}
-	}
-	if matched != "" {
-		for _, table := range tables {
-			if (argument == table || argument == graph.SimpleName(table)) && table != matched {
-				return "", false
-			}
-		}
-		return matched, true
-	}
-	for _, table := range tables {
-		if argument == table || argument == graph.SimpleName(table) {
-			if matched != "" && matched != table {
-				return "", false
-			}
-			matched = table
-		}
-	}
-	return matched, matched != ""
 }
 
 func (r *Router) WorkspaceSemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
