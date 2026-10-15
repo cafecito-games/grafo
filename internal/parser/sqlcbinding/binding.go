@@ -714,6 +714,9 @@ func schemaColumns(tables map[string]schemaTable, selector string) (string, []st
 	if table, ok := tables[selector]; ok && !table.ambiguous && !table.incomplete && len(table.columns) > 0 {
 		return selector, table.columns, true
 	}
+	if strings.Contains(selector, ".") {
+		return "", nil, false
+	}
 	var matched schemaTable
 	qualified := ""
 	count := 0

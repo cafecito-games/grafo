@@ -43,3 +43,24 @@ func TestEquivalentSQLExpandsProjectionWildcardFromSchema(t *testing.T) {
 		t.Fatal("schema-backed wildcard expansion was reported stale")
 	}
 }
+
+func TestSchemaColumnsDoesNotGuessQualifiedSelector(t *testing.T) {
+	tables := map[string]schemaTable{
+		"users": {columns: []string{"id", "name"}},
+	}
+	tests := []struct {
+		name, selector string
+		wantOK         bool
+	}{
+		{name: "unqualified", selector: "users", wantOK: true},
+		{name: "unknown qualified schema", selector: "audit.users", wantOK: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, _, ok := schemaColumns(tables, test.selector)
+			if ok != test.wantOK {
+				t.Fatalf("schemaColumns(%q) ok = %v, want %v", test.selector, ok, test.wantOK)
+			}
+		})
+	}
+}
