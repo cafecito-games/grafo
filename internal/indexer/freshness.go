@@ -165,7 +165,7 @@ func probeProjectFreshness(ctx context.Context, project Project, registry *parse
 		return FreshnessProbe{}, err
 	}
 	semanticInput := parserapi.Input{
-		Root: project.Root, Repository: project.Name, RepoID: project.ID, GoModule: project.GoModule,
+		Root: project.Root, Repository: project.Name, RepoID: project.ID, GoModule: project.GoModule, MaxFileSize: maximum,
 	}
 	evidence, cacheable, err := registry.WorkspaceSemanticEvidenceKeys(ctx, semanticInput)
 	if err != nil {

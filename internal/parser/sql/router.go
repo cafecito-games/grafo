@@ -10,6 +10,8 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	"github.com/cafecito-games/grafo/internal/parser/sqlcbinding"
+	"github.com/cafecito-games/grafo/internal/parser/sqltemplate"
 )
 
 // Dialect is the extension point for a SQL grammar and graph extractor.
@@ -28,10 +30,18 @@ type Router struct {
 	ordered  []Dialect
 	ext      map[string][]Dialect
 	initErrs []string
+	bindings *sqlcbinding.Loader
 }
 
 func New(dialects ...Dialect) *Router {
-	router := &Router{dialects: map[string]Dialect{}, ext: map[string][]Dialect{}}
+	return NewWithBindingLoader(sqlcbinding.NewLoader(), dialects...)
+}
+
+func NewWithBindingLoader(loader *sqlcbinding.Loader, dialects ...Dialect) *Router {
+	if loader == nil {
+		loader = sqlcbinding.NewLoader()
+	}
+	router := &Router{dialects: map[string]Dialect{}, ext: map[string][]Dialect{}, bindings: loader}
 	for _, dialect := range dialects {
 		if dialect == nil {
 			router.initErrs = append(router.initErrs, "nil dialect")
@@ -77,6 +87,8 @@ func (*Router) Language() string { return "sql" }
 
 func (*Router) SemanticDependencies() []string { return []string{configFileName} }
 
+func (*Router) IsSemanticInput(path string) bool { return sqlcbinding.IsSemanticInput(path) }
+
 func (r *Router) Supports(filePath string) bool {
 	extension := strings.ToLower(filepath.Ext(filePath))
 	return extension == ".sql" || len(r.ext[extension]) > 0
@@ -90,54 +102,247 @@ func (r *Router) Parse(ctx context.Context, input parserapi.Input) (graph.ParseR
 	if err != nil {
 		return emptyResult(input), err
 	}
-	dialect, err := r.selectDialect(ctx, input, config)
+	registry, err := r.bindings.Load(ctx, input)
+	if err != nil {
+		return emptyResult(input), fmt.Errorf("load sqlc binding registry: %w", err)
+	}
+	sqlcEngine, sqlcConflict := configuredSQLCEngine(registry.EntriesForSQLPath(input.Path))
+	dialect, selection, err := r.selectDialect(ctx, input, config, sqlcEngine)
 	if err != nil {
 		return emptyResult(input), err
 	}
 	result, err := dialect.Parse(ctx, input)
-	decorateDialect(&result, normalizeName(dialect.Name()))
+	selected := normalizeName(dialect.Name())
+	decorateDialect(&result, selected)
+	bindingsAllowed := !sqlcConflict
+	if sqlcConflict {
+		result.Diagnostics = append(result.Diagnostics, graph.Diagnostic{Path: input.Path, Level: "warning", Message: "conflicting sqlc engines own this query file; sqlc bindings disabled"})
+	}
+	if sqlcEngine != "" && selected != sqlcEngine {
+		bindingsAllowed = false
+		result.Diagnostics = append(result.Diagnostics, graph.Diagnostic{Path: input.Path, Level: "warning",
+			Message: fmt.Sprintf("Grafo SQL %s selected %s but sqlc config selects %s; sqlc bindings disabled", selection, selected, sqlcEngine)})
+	}
+	allowSQLCSchema := bindingsAllowed && sqlcEngine != "" && selected == sqlcEngine
+	if sqlcEngine != "" {
+		expandSQLCWildcards(&result, input, registry, selected, allowSQLCSchema)
+	}
+	if bindingsAllowed && selected == sqlcEngine {
+		addGeneratedBindings(&result, input, registry)
+	}
 	return result, err
 }
 
-// SemanticKey makes repository configuration part of the incremental file
-// hash. Changing grafo.yaml therefore reparses unchanged SQL files that may be
-// routed to a different dialect.
-func (*Router) SemanticKey(_ context.Context, input parserapi.Input) (string, error) {
+func expandSQLCWildcards(result *graph.ParseResult, input parserapi.Input, registry sqlcbinding.Registry, dialect string, allowSchema bool) {
+	document := sqltemplate.Analyze(input.Content, dialect)
+	if len(document.Diagnostics) > 0 {
+		return
+	}
+	nodes := map[string]graph.Node{}
+	for _, node := range result.Nodes {
+		if node.Kind == graph.KindSQLQuery {
+			nodes[node.QualifiedName] = node
+		}
+	}
+	tablesByQuery := map[string][]string{}
+	for _, fact := range result.Facts {
+		if (fact.Kind != graph.EdgeReads && fact.Kind != graph.EdgeWrites) || fact.Target == "" || fact.TargetKind == graph.KindColumn {
+			continue
+		}
+		if node, ok := nodeByID(result.Nodes, fact.FromID); ok && node.Kind == graph.KindSQLQuery {
+			tablesByQuery[node.ID] = appendUnique(tablesByQuery[node.ID], fact.Target)
+		}
+	}
+	seen := map[string]bool{}
+	for _, fact := range result.Facts {
+		seen[fact.FromID+"\x00"+string(fact.Kind)+"\x00"+fact.Target] = true
+	}
+	ordinal := len(result.Facts)
+	for _, query := range document.Queries {
+		node, ok := nodes[query.QualifiedName(input.Path)]
+		if !ok {
+			continue
+		}
+		statement := string(input.Content[query.StatementStart:query.StatementEnd])
+		emitColumns := func(table, form, argument string, line, column int) bool {
+			if !allowSchema {
+				return false
+			}
+			qualifiedTable, columns, ok := registry.SchemaColumnsForQuery(input.Path, table)
+			if !ok {
+				return false
+			}
+			for _, columnName := range columns {
+				target := qualifiedTable + "." + columnName
+				key := node.ID + "\x00" + string(graph.EdgeReads) + "\x00" + target
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				ordinal++
+				location := graph.Location{Path: input.Path, Line: line, Column: column, EndLine: line}
+				result.Facts = append(result.Facts, graph.Fact{
+					ID:     graph.FactID(input.Path, "id:"+node.ID, graph.EdgeReads, target, line, ordinal),
+					FromID: node.ID, Kind: graph.EdgeReads, Producer: "sqlcbinding", Target: target, TargetKind: graph.KindColumn,
+					Location: location, Properties: map[string]string{"form": form, "argument": argument}, OwnerFile: input.Path,
+				})
+			}
+			return true
+		}
+		for _, macro := range document.Macros {
+			if !macro.Embed || macro.Start < query.StatementStart || macro.Start >= query.StatementEnd {
+				continue
+			}
+			line, column := document.Position(macro.Start)
+			if node.Properties["qualified_wildcard_safe"] != "true" {
+				result.Diagnostics = append(result.Diagnostics, graph.Diagnostic{Path: input.Path, Line: line, Level: "warning",
+					Message: fmt.Sprintf("sqlc.embed(%s) column expansion is ambiguous in this statement", macro.Argument)})
+				continue
+			}
+			table, ok := sqlcbinding.ResolveTableArgument(macro.Argument, statement, tablesByQuery[node.ID], dialect)
+			if !ok {
+				result.Diagnostics = append(result.Diagnostics, graph.Diagnostic{Path: input.Path, Line: line, Level: "warning",
+					Message: fmt.Sprintf("sqlc.embed(%s) column expansion is ambiguous in this statement", macro.Argument)})
+				continue
+			}
+			if !emitColumns(table, "sqlc.embed", macro.Argument, line, column) {
+				result.Diagnostics = append(result.Diagnostics, graph.Diagnostic{Path: input.Path, Line: line, Level: "warning",
+					Message: fmt.Sprintf("sqlc.embed(%s) column expansion lacks complete, unique configured schema evidence", macro.Argument)})
+			}
+		}
+		for _, wildcard := range document.Wildcards {
+			if wildcard.Start < query.StatementStart || wildcard.Start >= query.StatementEnd {
+				continue
+			}
+			line, column := document.Position(wildcard.Start)
+			table := ""
+			ok := false
+			if wildcard.Qualifier != "" {
+				if node.Properties["qualified_wildcard_safe"] == "true" {
+					table, ok = sqlcbinding.ResolveTableArgument(wildcard.Qualifier, statement, tablesByQuery[node.ID], dialect)
+				}
+			} else if node.Properties["unqualified_wildcard_safe"] == "true" && len(tablesByQuery[node.ID]) == 1 {
+				table, ok = tablesByQuery[node.ID][0], true
+			}
+			if !ok || !emitColumns(table, "wildcard", wildcard.Qualifier, line, column) {
+				result.Diagnostics = append(result.Diagnostics, graph.Diagnostic{Path: input.Path, Line: line, Level: "warning",
+					Message: "SQL query wildcard column usage is unresolved without complete, unique configured schema evidence"})
+			}
+		}
+	}
+	sort.Slice(result.Facts, func(i, j int) bool { return result.Facts[i].ID < result.Facts[j].ID })
+}
+
+func nodeByID(nodes []graph.Node, id string) (graph.Node, bool) {
+	for _, node := range nodes {
+		if node.ID == id {
+			return node, true
+		}
+	}
+	return graph.Node{}, false
+}
+
+func appendUnique(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
+func (r *Router) WorkspaceSemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
+	return r.bindings.SemanticKey(ctx, input)
+}
+
+func (*Router) WorkspaceSemanticEvidenceKey(context.Context, parserapi.Input) (string, error) {
+	return "sqlc-binding-repository-inputs-v1", nil
+}
+
+func (r *Router) SemanticKey(ctx context.Context, input parserapi.Input) (string, error) {
 	config, err := loadConfiguration(input.Root)
 	if err != nil {
 		return "", err
 	}
-	return config.semanticKey, nil
+	workspace := input.SemanticKey
+	if workspace == "" {
+		workspace, err = r.bindings.SemanticKey(ctx, input)
+		if err != nil {
+			return "", err
+		}
+	}
+	fileBindingKey, err := r.bindings.FileSemanticKey(ctx, input)
+	if err != nil {
+		return "", err
+	}
+	return workspace + ":" + fileBindingKey + ":" + config.semanticKey, nil
 }
 
-func (r *Router) selectDialect(ctx context.Context, input parserapi.Input, config configuration) (Dialect, error) {
+func (r *Router) SemanticAffectedPaths(root string, allPaths, changedPaths []string) []string {
+	for _, changed := range changedPaths {
+		if sqlcbinding.IsConfigPath(changed) {
+			var result []string
+			for _, candidate := range allPaths {
+				if _, supported := rDialectExtension(candidate); supported {
+					result = append(result, candidate)
+				}
+			}
+			return result
+		}
+	}
+	queries, _, known := r.bindings.AffectedPaths(root, changedPaths)
+	if known {
+		return queries
+	}
+	for _, changed := range changedPaths {
+		if !sqlcbinding.IsBindingInput(changed) {
+			continue
+		}
+		var result []string
+		for _, candidate := range allPaths {
+			if _, supported := rDialectExtension(candidate); supported {
+				result = append(result, candidate)
+			}
+		}
+		return result
+	}
+	return nil
+}
+
+func (r *Router) selectDialect(ctx context.Context, input parserapi.Input, config configuration, sqlcEngine string) (Dialect, string, error) {
 	configured, err := config.dialectForPath(input.Path)
 	if err != nil {
-		return nil, fmt.Errorf("select SQL dialect for %s: %w", input.Path, err)
+		return nil, "", fmt.Errorf("select SQL dialect for %s: %w", input.Path, err)
 	}
 	if configured != "" {
-		return r.namedDialect(configured, "path mapping", input.Path)
+		dialect, err := r.namedDialect(configured, "path mapping", input.Path)
+		return dialect, "path mapping", err
 	}
 	extension := strings.ToLower(filepath.Ext(input.Path))
 	if extension != ".sql" {
 		candidates := r.ext[extension]
 		switch len(candidates) {
 		case 0:
-			return nil, fmt.Errorf("select SQL dialect for %s: no dialect owns extension %q", input.Path, extension)
+			return nil, "", fmt.Errorf("select SQL dialect for %s: no dialect owns extension %q", input.Path, extension)
 		case 1:
-			return candidates[0], nil
+			return candidates[0], "extension", nil
 		default:
-			return nil, fmt.Errorf("select SQL dialect for %s: extension %q is claimed by %s", input.Path, extension, dialectNames(candidates))
+			return nil, "", fmt.Errorf("select SQL dialect for %s: extension %q is claimed by %s", input.Path, extension, dialectNames(candidates))
 		}
 	}
 	if config.defaultDialect != "" {
-		return r.namedDialect(config.defaultDialect, "default_dialect", input.Path)
+		dialect, err := r.namedDialect(config.defaultDialect, "default_dialect", input.Path)
+		return dialect, "default_dialect", err
+	}
+	if sqlcEngine != "" {
+		dialect, err := r.namedDialect(sqlcEngine, "sqlc engine", input.Path)
+		return dialect, "sqlc engine", err
 	}
 	var accepted []Dialect
 	var rejected []string
 	for _, dialect := range r.ordered {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		if err := dialect.Probe(ctx, input); err == nil {
 			accepted = append(accepted, dialect)
@@ -148,14 +353,60 @@ func (r *Router) selectDialect(ctx context.Context, input parserapi.Input, confi
 	switch len(accepted) {
 	case 0:
 		if len(rejected) == 0 {
-			return nil, fmt.Errorf("select SQL dialect for %s: no SQL dialects are installed", input.Path)
+			return nil, "", fmt.Errorf("select SQL dialect for %s: no SQL dialects are installed", input.Path)
 		}
-		return nil, fmt.Errorf("select SQL dialect for %s: no dialect accepted the syntax (%s)", input.Path, strings.Join(rejected, "; "))
+		return nil, "", fmt.Errorf("select SQL dialect for %s: no dialect accepted the syntax (%s)", input.Path, strings.Join(rejected, "; "))
 	case 1:
-		return accepted[0], nil
+		return accepted[0], "grammar probing", nil
 	default:
-		return nil, fmt.Errorf("select SQL dialect for %s: syntax is ambiguous between %s; set sql.default_dialect or sql.paths in %s", input.Path, dialectNames(accepted), configFileName)
+		return nil, "", fmt.Errorf("select SQL dialect for %s: syntax is ambiguous between %s; set sql.default_dialect or sql.paths in %s", input.Path, dialectNames(accepted), configFileName)
 	}
+}
+
+func configuredSQLCEngine(entries []sqlcbinding.Entry) (string, bool) {
+	engines := map[string]bool{}
+	for _, entry := range entries {
+		if entry.Valid && entry.Engine != "" {
+			engines[entry.Engine] = true
+		}
+	}
+	if len(engines) != 1 {
+		return "", len(engines) > 1
+	}
+	for engine := range engines {
+		return engine, false
+	}
+	return "", false
+}
+
+func addGeneratedBindings(result *graph.ParseResult, input parserapi.Input, registry sqlcbinding.Registry) {
+	ordinal := 0
+	for _, node := range result.Nodes {
+		if node.Kind != graph.KindSQLQuery {
+			continue
+		}
+		for _, binding := range registry.BindingsForQuery(input.Path, node.Name) {
+			ordinal++
+			properties := map[string]string{
+				"generator": binding.Generator, "generator_version": binding.GeneratorVersion,
+				"adapter_version": sqlcbinding.AdapterVersion, "config_path": binding.ConfigPath,
+				"config_entry": fmt.Sprint(binding.Entry), "generated_path": binding.GeneratedPath,
+				"query_constant": binding.Constant,
+			}
+			result.Facts = append(result.Facts, graph.Fact{
+				ID:     graph.FactID(input.Path, "name:"+binding.Method, graph.EdgeGeneratedFrom, node.ID, binding.Location.Line, ordinal),
+				Source: binding.Method, SourceKind: graph.KindMethod, Kind: graph.EdgeGeneratedFrom,
+				Producer: "sqlcbinding", TargetID: node.ID, Location: binding.Location,
+				Properties: properties, OwnerFile: input.Path,
+			})
+		}
+	}
+	sort.Slice(result.Facts, func(i, j int) bool { return result.Facts[i].ID < result.Facts[j].ID })
+}
+
+func rDialectExtension(filePath string) (string, bool) {
+	extension := strings.ToLower(filepath.Ext(filePath))
+	return extension, extension == ".sql" || extension == ".psql" || extension == ".pgsql"
 }
 
 func (r *Router) namedDialect(name, source, filePath string) (Dialect, error) {

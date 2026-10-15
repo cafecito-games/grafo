@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	"github.com/cafecito-games/grafo/internal/parser/sqltemplate"
 	pg_query "github.com/pganalyze/pg_query_go/v6"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
@@ -26,14 +29,22 @@ func (*Parser) Probe(ctx context.Context, input parserapi.Input) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	_, err := pg_query.Parse(string(input.Content))
+	document := sqltemplate.Analyze(input.Content, "postgres")
+	for _, diagnostic := range document.Diagnostics {
+		if diagnostic.Fatal {
+			return fmt.Errorf("SQL template: %s", diagnostic.Message)
+		}
+	}
+	_, err := pg_query.Parse(string(document.SQL))
 	return err
 }
 
 type extractor struct {
-	b       *parserapi.Builder
-	input   parserapi.Input
-	content []byte
+	b        *parserapi.Builder
+	input    parserapi.Input
+	content  []byte
+	document sqltemplate.Document
+	queries  map[string]string
 }
 
 func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseResult, error) {
@@ -41,11 +52,20 @@ func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseRes
 	if err := ctx.Err(); err != nil {
 		return b.Finish(), err
 	}
-	tree, err := pg_query.Parse(string(input.Content))
+	document := sqltemplate.Analyze(input.Content, "postgres")
+	for _, diagnostic := range document.Diagnostics {
+		line, _ := document.Position(diagnostic.Offset)
+		b.Diagnostic(line, "warning", "SQL template: "+diagnostic.Message)
+	}
+	if document.HasFatalDiagnostics() {
+		return b.Finish(), nil
+	}
+	queries := declareQueries(b, input, document, "postgres")
+	tree, err := pg_query.Parse(string(document.SQL))
 	if err != nil {
 		return b.Finish(), fmt.Errorf("parse PostgreSQL: %w", err)
 	}
-	e := &extractor{b: b, input: input, content: input.Content}
+	e := &extractor{b: b, input: input, content: input.Content, document: document, queries: queries}
 	for _, statement := range tree.GetStmts() {
 		if err := ctx.Err(); err != nil {
 			return b.Finish(), err
@@ -60,6 +80,11 @@ func (e *extractor) parseStatement(raw *pg_query.RawStmt) {
 		return
 	}
 	statement := raw.GetStmt()
+	owner := e.b.FileID()
+	start := int(raw.GetStmtLocation())
+	if query, ok := e.document.QueryInRange(start, start+int(raw.GetStmtLen())); ok {
+		owner = e.queries[query.Name]
+	}
 	switch {
 	case statement.GetCreateStmt() != nil:
 		e.parseCreateTable(raw, statement.GetCreateStmt())
@@ -72,8 +97,45 @@ func (e *extractor) parseStatement(raw *pg_query.RawStmt) {
 	case statement.GetIndexStmt() != nil:
 		e.parseCreateIndex(raw, statement.GetIndexStmt())
 	default:
-		e.emitAccesses(e.b.FileID(), statement.ProtoReflect())
+		e.emitAccesses(owner, statement.ProtoReflect())
 	}
+}
+
+func declareQueries(b *parserapi.Builder, input parserapi.Input, document sqltemplate.Document, dialect string) map[string]string {
+	result := make(map[string]string, len(document.Queries))
+	for _, query := range document.Queries {
+		line, column := document.Position(query.NameStart)
+		endLine, _ := document.Position(query.StatementEnd)
+		properties := map[string]string{
+			"command": query.Command, "dialect": dialect,
+			"canonical_sql":   string(input.Content[query.StatementStart:query.StatementEnd]),
+			"statement_start": strconv.Itoa(query.StatementStart), "statement_end": strconv.Itoa(query.StatementEnd),
+		}
+		var embeds, slices []string
+		for _, macro := range document.Macros {
+			if macro.Start < query.StatementStart || macro.Start >= query.StatementEnd {
+				continue
+			}
+			if macro.Embed {
+				embeds = append(embeds, macro.Argument)
+			}
+			if macro.Collection {
+				slices = append(slices, macro.Argument)
+			}
+		}
+		if len(embeds) > 0 {
+			properties["sqlc_embed"] = strings.Join(embeds, ",")
+		}
+		if len(slices) > 0 {
+			properties["sqlc_slice"] = strings.Join(slices, ",")
+		}
+		id := b.Declare(b.FileID(), graph.Node{
+			Kind: graph.KindSQLQuery, Name: query.Name, QualifiedName: query.QualifiedName(input.Path),
+			Location: graph.Location{Path: input.Path, Line: line, Column: column, EndLine: endLine}, Properties: properties,
+		})
+		result[query.Name] = id
+	}
+	return result
 }
 
 func (e *extractor) parseCreateTable(raw *pg_query.RawStmt, statement *pg_query.CreateStmt) {
@@ -91,6 +153,18 @@ func (e *extractor) parseCreateTable(raw *pg_query.RawStmt, statement *pg_query.
 	}
 	if persistence := relationPersistence(relation.GetRelpersistence()); persistence != "" {
 		properties["persistence"] = persistence
+	}
+	// INHERITS, LIKE, and typed tables can add columns that are not represented
+	// by the local ColumnDef nodes below. Preserve that uncertainty for consumers
+	// that need a complete column set, such as sqlc wildcard expansion.
+	if len(statement.GetInhRelations()) > 0 || statement.GetOfTypename() != nil {
+		properties["columns_incomplete"] = "true"
+	}
+	for _, item := range statement.GetTableElts() {
+		if item.GetTableLikeClause() != nil {
+			properties["columns_incomplete"] = "true"
+			break
+		}
 	}
 	tableID := e.b.Declare(e.b.FileID(), graph.Node{Kind: graph.KindTable, Name: relation.GetRelname(),
 		QualifiedName: qualified, Location: e.location(relation.GetLocation(), raw.GetStmtLocation()), Properties: properties})
@@ -267,15 +341,87 @@ func (e *extractor) emitReferences(fromID string, root protoreflect.Message) {
 
 func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 	writes := map[*pg_query.RangeVar]bool{}
-	var relations []*pg_query.RangeVar
+	altered := map[*pg_query.RangeVar]bool{}
+	mutatedTables := map[string]bool{}
+	droppedTables := map[string]bool{}
+	droppedSchemas := map[string]bool{}
+	cteNames := map[string]bool{}
+	hasCTE := false
 	walkMessage(root, func(message protoreflect.Message) {
+		if cte, ok := message.Interface().(*pg_query.CommonTableExpr); ok && cte.GetCtename() != "" {
+			cteNames[strings.ToLower(cte.GetCtename())] = true
+			hasCTE = true
+		}
+	})
+	var relations []*pg_query.RangeVar
+	aliases := map[string]string{}
+	uniqueRelations := map[string]bool{}
+	resultAliases := map[string]bool{}
+	hasNonTableSource := false
+	var columnReferences []*pg_query.ColumnRef
+	type columnWrite struct {
+		table, column string
+		location      int32
+	}
+	var columnWrites []columnWrite
+	registerAlias := func(name, table string) {
+		if name == "" || table == "" {
+			return
+		}
+		if existing, exists := aliases[name]; exists && existing != table {
+			aliases[name] = ""
+			return
+		}
+		aliases[name] = table
+	}
+	walkMessage(root, func(message protoreflect.Message) {
+		switch string(message.Descriptor().Name()) {
+		case "RangeSubselect", "RangeFunction", "RangeTableFunc", "JsonTable":
+			hasNonTableSource = true
+		}
 		switch value := message.Interface().(type) {
+		case *pg_query.JoinExpr:
+			if value.GetAlias() != nil && value.GetAlias().GetAliasname() != "" {
+				hasNonTableSource = true
+			}
 		case *pg_query.RangeVar:
+			if value.GetSchemaname() == "" && cteNames[strings.ToLower(value.GetRelname())] {
+				break
+			}
 			relations = append(relations, value)
+			qualified := relationName(value)
+			if qualified != "" {
+				uniqueRelations[qualified] = true
+				registerAlias(value.GetRelname(), qualified)
+				registerAlias(qualified, qualified)
+				if value.GetAlias() != nil && value.GetAlias().GetAliasname() != "" {
+					registerAlias(value.GetAlias().GetAliasname(), qualified)
+				}
+			}
+		case *pg_query.ColumnRef:
+			columnReferences = append(columnReferences, value)
+		case *pg_query.ResTarget:
+			if value.GetName() != "" {
+				resultAliases[value.GetName()] = true
+			}
 		case *pg_query.InsertStmt:
 			writes[value.GetRelation()] = true
+			if table := relationName(value.GetRelation()); table != "" {
+				for _, item := range value.GetCols() {
+					if target := item.GetResTarget(); target != nil && target.GetName() != "" {
+						columnWrites = append(columnWrites, columnWrite{table: table, column: target.GetName(), location: target.GetLocation()})
+					}
+				}
+			}
 		case *pg_query.UpdateStmt:
 			writes[value.GetRelation()] = true
+			if table := relationName(value.GetRelation()); table != "" {
+				for _, item := range value.GetTargetList() {
+					if target := item.GetResTarget(); target != nil && target.GetName() != "" {
+						columnWrites = append(columnWrites, columnWrite{table: table, column: target.GetName(), location: target.GetLocation()})
+					}
+				}
+			}
 		case *pg_query.DeleteStmt:
 			writes[value.GetRelation()] = true
 		case *pg_query.MergeStmt:
@@ -290,8 +436,35 @@ func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 			}
 		case *pg_query.AlterTableStmt:
 			writes[value.GetRelation()] = true
+			altered[value.GetRelation()] = true
+		case *pg_query.AlterObjectSchemaStmt:
+			if value.GetRelation() != nil {
+				writes[value.GetRelation()] = true
+				mutatedTables[relationName(value.GetRelation())] = true
+			}
 		case *pg_query.RenameStmt:
 			writes[value.GetRelation()] = true
+			if table := relationName(value.GetRelation()); table != "" {
+				mutatedTables[table] = true
+			} else if value.GetRenameType() == pg_query.ObjectType_OBJECT_SCHEMA && value.GetSubname() != "" {
+				droppedSchemas[value.GetSubname()] = true
+			}
+		case *pg_query.DropStmt:
+			switch value.GetRemoveType() {
+			case pg_query.ObjectType_OBJECT_TABLE:
+				for _, object := range value.GetObjects() {
+					if table := postgresObjectName(object); table != "" {
+						droppedTables[table] = true
+						mutatedTables[table] = true
+					}
+				}
+			case pg_query.ObjectType_OBJECT_SCHEMA:
+				for _, object := range value.GetObjects() {
+					if schema := postgresObjectName(object); schema != "" {
+						droppedSchemas[schema] = true
+					}
+				}
+			}
 		}
 	})
 	seen := map[string]bool{}
@@ -309,8 +482,116 @@ func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 			continue
 		}
 		seen[key] = true
-		e.b.AddFact(fromID, kind, "", qualified, "", e.location(relation.GetLocation(), 0), nil)
+		var properties map[string]string
+		if altered[relation] {
+			properties = map[string]string{"statement": "alter_table"}
+		} else if mutatedTables[qualified] {
+			properties = map[string]string{"statement": "schema_mutation"}
+		}
+		e.b.AddFact(fromID, kind, "", qualified, "", e.location(relation.GetLocation(), 0), properties)
 	}
+	droppedTableNames := make([]string, 0, len(droppedTables))
+	for table := range droppedTables {
+		droppedTableNames = append(droppedTableNames, table)
+	}
+	sort.Strings(droppedTableNames)
+	for _, table := range droppedTableNames {
+		key := string(graph.EdgeWrites) + "\x00" + table
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		e.b.AddFact(fromID, graph.EdgeWrites, "", table, "", e.location(0, 0), map[string]string{"statement": "schema_mutation"})
+	}
+	droppedSchemaNames := make([]string, 0, len(droppedSchemas))
+	for schema := range droppedSchemas {
+		droppedSchemaNames = append(droppedSchemaNames, schema)
+	}
+	sort.Strings(droppedSchemaNames)
+	for _, schema := range droppedSchemaNames {
+		e.b.AppendNodeProperty(fromID, "incomplete_schemas", schema)
+	}
+	emitColumn := func(kind graph.EdgeKind, qualified string, location int32) {
+		if qualified == "" {
+			return
+		}
+		key := string(kind) + "\x00column\x00" + qualified
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		e.b.AddFact(fromID, kind, "", qualified, graph.KindColumn, e.location(location, 0), nil)
+	}
+	for _, reference := range columnReferences {
+		parts, star := postgresColumnParts(reference)
+		if star {
+			continue
+		}
+		if len(parts) == 0 {
+			continue
+		}
+		column := parts[len(parts)-1]
+		switch len(parts) {
+		case 1:
+			if !hasCTE && !hasNonTableSource && !resultAliases[column] && len(uniqueRelations) == 1 {
+				for table := range uniqueRelations {
+					emitColumn(graph.EdgeReads, table+"."+column, reference.GetLocation())
+				}
+			}
+		case 2:
+			if !hasCTE && !hasNonTableSource {
+				if table := aliases[parts[0]]; table != "" {
+					emitColumn(graph.EdgeReads, table+"."+column, reference.GetLocation())
+				}
+			}
+		default:
+			emitColumn(graph.EdgeReads, strings.Join(parts[:len(parts)-1], ".")+"."+column, reference.GetLocation())
+		}
+	}
+	for _, write := range columnWrites {
+		emitColumn(graph.EdgeWrites, write.table+"."+write.column, write.location)
+	}
+	for _, queryID := range e.queries {
+		if queryID == fromID {
+			e.b.SetNodeProperty(fromID, "unqualified_wildcard_safe", strconv.FormatBool(!hasCTE && !hasNonTableSource && len(uniqueRelations) == 1))
+			e.b.SetNodeProperty(fromID, "qualified_wildcard_safe", strconv.FormatBool(!hasCTE && !hasNonTableSource))
+			break
+		}
+	}
+}
+
+func postgresObjectName(node *pg_query.Node) string {
+	if node == nil {
+		return ""
+	}
+	if value := node.GetString_(); value != nil {
+		return value.GetSval()
+	}
+	if node.GetList() == nil {
+		return ""
+	}
+	var parts []string
+	for _, item := range node.GetList().GetItems() {
+		if item.GetString_() == nil || item.GetString_().GetSval() == "" {
+			return ""
+		}
+		parts = append(parts, item.GetString_().GetSval())
+	}
+	return strings.Join(parts, ".")
+}
+
+func postgresColumnParts(reference *pg_query.ColumnRef) ([]string, bool) {
+	var parts []string
+	star := false
+	for _, field := range reference.GetFields() {
+		switch {
+		case field.GetString_() != nil:
+			parts = append(parts, field.GetString_().GetSval())
+		case field.GetAStar() != nil:
+			star = true
+		}
+	}
+	return parts, star
 }
 
 func (e *extractor) statementOffset(raw *pg_query.RawStmt) int32 {

@@ -2,6 +2,7 @@ package postgres_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -99,6 +100,19 @@ func TestParserDeclaresPostgreSQLDialect(t *testing.T) {
 	}
 }
 
+func TestParserPreservesPostgreSQLContainmentOperators(t *testing.T) {
+	result, err := postgresparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "query.psql", Content: []byte("SELECT tags <@ ARRAY['one', 'two'] FROM records;"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFact(t, result.Facts, graph.EdgeReads, "records", "")
+	if len(result.Diagnostics) != 0 {
+		t.Fatalf("operator diagnostics = %#v", result.Diagnostics)
+	}
+}
+
 func TestParserKeepsOverloadedFunctionsDistinct(t *testing.T) {
 	content := []byte(`
 CREATE FUNCTION public.lookup(value bigint) RETURNS bigint LANGUAGE SQL AS $$ SELECT value $$;
@@ -118,6 +132,120 @@ CREATE FUNCTION public.lookup(value text) RETURNS text LANGUAGE SQL AS $$ SELECT
 	}
 	if len(ids) != 2 {
 		t.Fatalf("expected two distinct overloads, got %#v", result.Nodes)
+	}
+}
+
+func TestParserNormalizesSqlcTemplatesAndOwnsNamedQueryUsage(t *testing.T) {
+	content := []byte(`CREATE TABLE users (id bigint PRIMARY KEY, name text, role text);
+
+-- name: SearchUsers :many
+SELECT u.name FROM users AS u
+WHERE u.id = sqlc.arg(id) AND u.name = @name AND u.role = sqlc.narg('role');
+
+-- name: DeleteUsers :execrows
+DELETE FROM users WHERE id = ANY(sqlc.slice(ids));
+`)
+	result, err := postgresparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "db/queries.sql", Content: content, Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNode(t, result.Nodes, graph.KindSQLQuery, "db/queries.sql#SearchUsers")
+	assertNode(t, result.Nodes, graph.KindSQLQuery, "db/queries.sql#DeleteUsers")
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#SearchUsers", graph.EdgeReads, "users")
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#SearchUsers", graph.EdgeReads, "users.name")
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#SearchUsers", graph.EdgeReads, "users.id")
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#SearchUsers", graph.EdgeReads, "users.role")
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#DeleteUsers", graph.EdgeWrites, "users")
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#DeleteUsers", graph.EdgeReads, "users.id")
+	for _, node := range result.Nodes {
+		if node.Kind != graph.KindSQLQuery && node.Properties["unqualified_wildcard_safe"] != "" {
+			t.Fatalf("non-query node has wildcard safety property: %#v", node)
+		}
+	}
+}
+
+func TestParserDoesNotGuessAmbiguousUnqualifiedColumns(t *testing.T) {
+	result, err := postgresparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "db/join.sql", RepoID: "repo:sample", Content: []byte(`-- name: Joined :many
+SELECT id, a.name, b.title FROM alpha AS a JOIN beta AS b ON a.key = b.alpha_key;
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/join.sql#Joined", graph.EdgeReads, "alpha.name")
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/join.sql#Joined", graph.EdgeReads, "beta.title")
+}
+
+func TestParserDoesNotGuessReusedAliasesOutputAliasesOrFunctionSources(t *testing.T) {
+	result, err := postgresparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "db/scopes.sql", RepoID: "repo:sample", Content: []byte(`-- name: Scoped :many
+SELECT t.name, count(*) AS total, x
+FROM users AS t, generate_series(1, 3) AS x
+WHERE EXISTS (SELECT 1 FROM orders AS t WHERE t.user_id = 1)
+ORDER BY total;
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"orders.name", "users.name", "users.total", "users.x"} {
+		assertNoFact(t, result.Facts, graph.EdgeReads, target)
+	}
+}
+
+func TestParserMarksExternallyDerivedColumnSetsIncomplete(t *testing.T) {
+	result, err := postgresparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "db/schema.sql", Content: []byte(`
+CREATE TABLE parent (inherited_id bigint);
+CREATE TABLE inherited (local_id bigint) INHERITS (parent);
+CREATE TABLE copied (LIKE parent INCLUDING ALL, local_id bigint);
+CREATE TYPE pair AS (a int, b int);
+CREATE TABLE typed OF pair (a WITH OPTIONS NOT NULL);
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, qualified := range []string{"inherited", "copied", "typed"} {
+		found := false
+		for _, node := range result.Nodes {
+			if node.Kind == graph.KindTable && node.QualifiedName == qualified {
+				found = true
+				if node.Properties["columns_incomplete"] != "true" {
+					t.Fatalf("table %q properties = %#v", qualified, node.Properties)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("missing table %q", qualified)
+		}
+	}
+}
+
+func TestParserKeepsSchemaMutationsOutOfTableWriteFacts(t *testing.T) {
+	content := []byte(`
+CREATE TABLE audit (id bigint);
+CREATE TABLE audit.users (id bigint);
+DROP SCHEMA audit CASCADE;
+`)
+	first, err := postgresparser.New().Parse(context.Background(), parserapi.Input{Path: "db/schema.sql", Content: content})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := postgresparser.New().Parse(context.Background(), parserapi.Input{Path: "db/schema.sql", Content: content})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fact := range first.Facts {
+		if fact.Kind == graph.EdgeWrites && fact.Target == "audit" {
+			t.Fatalf("schema mutation was exposed as a table write: %#v", fact)
+		}
+	}
+	if !reflect.DeepEqual(first.Facts, second.Facts) {
+		t.Fatalf("schema mutation facts are nondeterministic:\nfirst: %#v\nsecond: %#v", first.Facts, second.Facts)
 	}
 }
 
@@ -171,4 +299,13 @@ func assertFactFrom(t *testing.T, result graph.ParseResult, sourceKind graph.Nod
 		}
 	}
 	t.Fatalf("missing %s fact from %q to %q; got %#v", kind, source, target, result.Facts)
+}
+
+func assertNoFact(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, target string) {
+	t.Helper()
+	for _, fact := range facts {
+		if fact.Kind == kind && fact.Target == target {
+			t.Fatalf("unexpected %s fact to %q", kind, target)
+		}
+	}
 }

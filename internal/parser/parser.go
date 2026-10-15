@@ -22,6 +22,10 @@ type Input struct {
 	RepoID      string
 	GoModule    string
 	SemanticKey string
+	// MaxFileSize is the indexing run's per-file byte ceiling. Repository-wide
+	// semantic loaders must apply the same limit to dependency files they read
+	// directly. Zero means the production default.
+	MaxFileSize int64
 	// ScopeKey is the scope-local component of this file's semantic key, when
 	// the caller has already derived it. A parser that would otherwise compute
 	// the same value again consumes this instead. Empty means the caller has no
@@ -322,6 +326,42 @@ func (b *Builder) AddNode(node graph.Node) string {
 		b.seenNode[node.ID] = true
 	}
 	return node.ID
+}
+
+// SetNodeProperty records parser evidence discovered after a node was declared.
+func (b *Builder) SetNodeProperty(id, key, value string) bool {
+	for index := range b.Result.Nodes {
+		if b.Result.Nodes[index].ID != id {
+			continue
+		}
+		if b.Result.Nodes[index].Properties == nil {
+			b.Result.Nodes[index].Properties = map[string]string{}
+		}
+		b.Result.Nodes[index].Properties[key] = value
+		return true
+	}
+	return false
+}
+
+// AppendNodeProperty records another deterministic value for a multi-valued
+// parser property. Values are separated by NUL so SQL identifiers remain
+// lossless without exposing the property as a resolvable graph edge.
+func (b *Builder) AppendNodeProperty(id, key, value string) bool {
+	for index := range b.Result.Nodes {
+		if b.Result.Nodes[index].ID != id {
+			continue
+		}
+		if b.Result.Nodes[index].Properties == nil {
+			b.Result.Nodes[index].Properties = map[string]string{}
+		}
+		if existing := b.Result.Nodes[index].Properties[key]; existing != "" {
+			b.Result.Nodes[index].Properties[key] = existing + "\x00" + value
+		} else {
+			b.Result.Nodes[index].Properties[key] = value
+		}
+		return true
+	}
+	return false
 }
 
 func (b *Builder) AddFact(from string, kind graph.EdgeKind, targetID, target string, targetKind graph.NodeKind, loc graph.Location, properties map[string]string) {

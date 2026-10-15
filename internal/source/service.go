@@ -37,16 +37,20 @@ func (l *singleProjectLocator) ProjectForNode(ctx context.Context, id string) (i
 }
 
 type Excerpt struct {
-	Node        graph.Node `json:"node"`
-	Repository  string     `json:"repository"`
-	Branch      string     `json:"branch"`
-	Path        string     `json:"path"`
-	StartLine   int        `json:"start_line"`
-	EndLine     int        `json:"end_line"`
-	SymbolStart int        `json:"symbol_start_line"`
-	SymbolEnd   int        `json:"symbol_end_line"`
-	Content     string     `json:"content"`
-	Truncated   bool       `json:"truncated"`
+	Node graph.Node `json:"node"`
+	// GeneratedNode is present when a generated symbol selector was projected
+	// to its canonical handwritten declaration. Supplying the generated node ID
+	// explicitly bypasses this projection and reads the generated source itself.
+	GeneratedNode *graph.Node `json:"generated_node,omitempty"`
+	Repository    string      `json:"repository"`
+	Branch        string      `json:"branch"`
+	Path          string      `json:"path"`
+	StartLine     int         `json:"start_line"`
+	EndLine       int         `json:"end_line"`
+	SymbolStart   int         `json:"symbol_start_line"`
+	SymbolEnd     int         `json:"symbol_end_line"`
+	Content       string      `json:"content"`
+	Truncated     bool        `json:"truncated"`
 }
 
 type Service struct {
@@ -85,6 +89,14 @@ func (s *Service) ReadKind(ctx context.Context, selector string, kind graph.Node
 	if err != nil {
 		return Excerpt{}, err
 	}
+	var generatedNode *graph.Node
+	if !strings.HasPrefix(strings.TrimSpace(selector), "n:") {
+		if canonical, ok := s.canonicalSQLQuery(ctx, node); ok {
+			copy := node
+			generatedNode = &copy
+			node = canonical
+		}
+	}
 	if node.Location.Path == "" || node.Location.Line < 1 {
 		return Excerpt{}, fmt.Errorf("node %s has no source location", node.QualifiedName)
 	}
@@ -117,10 +129,36 @@ func (s *Service) ReadKind(ctx context.Context, selector string, kind graph.Node
 	start := max(1, node.Location.Line-contextLines)
 	desiredEnd := min(len(lines), symbolEnd+contextLines)
 	end := min(desiredEnd, start+maxLines-1)
-	return Excerpt{Node: node, Repository: project.Name, Branch: project.Branch,
+	return Excerpt{Node: node, GeneratedNode: generatedNode, Repository: project.Name, Branch: project.Branch,
 		Path: node.Location.Path, StartLine: start, EndLine: end,
 		SymbolStart: node.Location.Line, SymbolEnd: symbolEnd,
 		Content: strings.Join(lines[start-1:end], "\n"), Truncated: end < desiredEnd}, nil
+}
+
+func (s *Service) canonicalSQLQuery(ctx context.Context, node graph.Node) (graph.Node, bool) {
+	if node.Kind != graph.KindMethod && node.Kind != graph.KindFunction {
+		return graph.Node{}, false
+	}
+	edges, err := s.repository.EdgesFrom(ctx, node.ID)
+	if err != nil {
+		return graph.Node{}, false
+	}
+	var canonical graph.Node
+	found := false
+	for _, edge := range edges {
+		if edge.Kind != graph.EdgeGeneratedFrom {
+			continue
+		}
+		target, err := s.repository.Node(ctx, edge.ToID)
+		if err != nil || target.Kind != graph.KindSQLQuery {
+			continue
+		}
+		if found && canonical.ID != target.ID {
+			return graph.Node{}, false
+		}
+		canonical, found = target, true
+	}
+	return canonical, found
 }
 
 // SafePath resolves a repository-relative path against root and confines the

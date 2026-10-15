@@ -17,14 +17,16 @@ import (
 	sqlparser "github.com/cafecito-games/grafo/internal/parser/sql"
 	postgresparser "github.com/cafecito-games/grafo/internal/parser/sql/postgres"
 	sqliteparser "github.com/cafecito-games/grafo/internal/parser/sql/sqlite"
+	"github.com/cafecito-games/grafo/internal/parser/sqlcbinding"
 	swiftparser "github.com/cafecito-games/grafo/internal/parser/swift"
 	typescriptparser "github.com/cafecito-games/grafo/internal/parser/typescript"
 )
 
 func NewRegistry() *parserapi.Registry {
 	bindings := protobufbinding.NewLoader()
+	sqlcBindings := sqlcbinding.NewLoader()
 	return parserapi.NewRegistry(
 		protobufbinding.New(bindings), gdscriptparser.NewWithBindingLoader(bindings), godotparser.New(), golangparser.NewWithBindingLoader(bindings), javaparser.New(), pythonparser.New(), protobufparser.New(), swiftparser.New(), typescriptparser.New(),
-		manifestparser.New(), markdownparser.New(), sqlparser.New(postgresparser.New(), sqliteparser.New()), configparser.New(),
+		manifestparser.New(), markdownparser.New(), sqlcbinding.New(sqlcBindings), sqlparser.NewWithBindingLoader(sqlcBindings, postgresparser.New(), sqliteparser.New()), configparser.New(),
 	)
 }

@@ -984,7 +984,10 @@ or an unavailable dialect instead of depending on parser registration order.
 
 The distribution installs PostgreSQL and SQLite dialects. Files containing
 portable SQL that both parsers accept therefore need a default or path mapping;
-dialect-specific syntax can still be selected by probing.
+dialect-specific syntax can still be selected by probing. A unique owning
+sqlc version-2 entry supplies its SQLite or PostgreSQL engine only when the
+preceding Grafo selections do not. See [sqlc indexing](docs/sqlc.md) for the
+supported macros, generated-Go binding proof, and uncertainty rules.
 
 </details>
 
@@ -1353,7 +1356,10 @@ relations read or written by DDL and DML statements in `.sql`, `.pgsql`, and
 foreign-key references, and the relations read or written by DDL and DML
 statements in `.sql` files.
 
-See [SQL dialect selection](#configuration) for mixed-dialect repositories.
+Named sqlc queries own their table and conservatively proven column usage, and
+verified generated Go methods link back to the canonical handwritten query.
+See [SQL dialect selection](#configuration) for mixed-dialect repositories and
+[sqlc indexing](docs/sqlc.md) for support and fail-closed behavior.
 
 </details>
 
@@ -1490,6 +1496,7 @@ operational analysis, decision threshold, and recommendation.
 | Document | Contents |
 |---|---|
 | [Architecture and extension points](docs/architecture.md) | the model, the package layout, and how to add a parser |
+| [sqlc indexing](docs/sqlc.md) | SQL templates, generated Go provenance, routing, and uncertainty |
 | [Deterministic resolution corpus](docs/evaluation.md) | the correctness gate for structural changes |
 | [TypeScript resolution](docs/typescript-resolution.md) | how TypeScript imports and calls resolve |
 | [Catalog evidence benchmark](docs/catalog-evidence-benchmark.md) | catalog evidence cost measurements |
