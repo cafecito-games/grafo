@@ -117,6 +117,7 @@ func TestLoaderRejectsIncompletePostgreSQLCopiedColumnSets(t *testing.T) {
 	}{
 		{name: "inherits", schema: "CREATE TABLE parent (inherited_id bigint); CREATE TABLE child (local_id bigint) INHERITS (parent);"},
 		{name: "like", schema: "CREATE TABLE parent (copied_id bigint); CREATE TABLE child (LIKE parent INCLUDING ALL, local_id bigint);"},
+		{name: "typed table", schema: "CREATE TYPE pair AS (a int, b int); CREATE TABLE child OF pair (a WITH OPTIONS NOT NULL);"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

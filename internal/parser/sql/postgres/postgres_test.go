@@ -190,18 +190,20 @@ ORDER BY total;
 	}
 }
 
-func TestParserMarksCopiedColumnSetsIncomplete(t *testing.T) {
+func TestParserMarksExternallyDerivedColumnSetsIncomplete(t *testing.T) {
 	result, err := postgresparser.New().Parse(context.Background(), parserapi.Input{
 		Path: "db/schema.sql", Content: []byte(`
 CREATE TABLE parent (inherited_id bigint);
 CREATE TABLE inherited (local_id bigint) INHERITS (parent);
 CREATE TABLE copied (LIKE parent INCLUDING ALL, local_id bigint);
+CREATE TYPE pair AS (a int, b int);
+CREATE TABLE typed OF pair (a WITH OPTIONS NOT NULL);
 `),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, qualified := range []string{"inherited", "copied"} {
+	for _, qualified := range []string{"inherited", "copied", "typed"} {
 		found := false
 		for _, node := range result.Nodes {
 			if node.Kind == graph.KindTable && node.QualifiedName == qualified {
