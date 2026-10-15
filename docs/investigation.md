@@ -152,6 +152,17 @@ Source and indexes remain local.
 
 ## Evaluation status
 
+**This entry point did not meet its acceptance criteria and is experimental.** A
+blinded held-out evaluation against batched graph tools plus text search returned
+a no-go. Answer quality held at the baseline, 7/7 complete positive answers and
+21/21 supported required claims in each of two passes, and the bounds and latency
+gates passed. The efficiency gate failed: pooled valid MCP calls fell only 9.88%
+against a required 20%, while returned response tokens rose 109.76% against an
+allowance of 10%. Agents given the tool added it to broad content search instead
+of replacing it. Do not treat this command as an established improvement, and do
+not cite it as one. The measured results, the reason for the failure and the
+confounds are in the [experiment log](investigation-experiments.md).
+
 The experimental protocol and frozen gates are in
 [the evaluation protocol](evaluation/251-protocol.md) and
 [acceptance criteria](evaluation/251-acceptance.md). The
