@@ -431,6 +431,10 @@ deliberately small, and a caller raises them explicitly up to a ceiling.
 | Searched file bytes | `--max-file-size` | `max_file_bytes` | 1048576 | 16777216 |
 | Context lines | `--context-lines` | `context_lines` | 0 | 20 |
 
+One match is always reported whole, so `response_bytes` can exceed
+`max_response_bytes` when a single long match is all there is to report; that
+response is exhaustive and says so, rather than being clipped to nothing.
+
 Whenever any bound clips results, the response sets `truncated`, names the
 bound that clipped it, and says so in prose: a truncated search reports part of
 the evidence, so it can never be read as proof that a pattern occurs nowhere
