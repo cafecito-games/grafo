@@ -1860,7 +1860,7 @@ func prefixRepository(name string) string {
 
 func (a *App) search(ctx context.Context, args parsedArguments) error {
 	if len(args.positionals) == 0 {
-		return fmt.Errorf("usage: grafo search <pattern>... [--regex] [--case-sensitive] [--path-prefix dir] [--language go] [--context-lines 0] [--max-matches 500]")
+		return fmt.Errorf("usage: grafo search <pattern>... [--regex] [--case-sensitive] [--path-prefix dir] [--language go] [--context-lines 0] [--max-matches 100] [--max-response-bytes 32768]")
 	}
 	prefixes, err := pathPrefixOption(args)
 	if err != nil {
@@ -1894,6 +1894,12 @@ func (a *App) search(ctx context.Context, args parsedArguments) error {
 	}
 	if args.values["max-file-size"] != "" {
 		request.MaxFileBytes, err = int64Option(args, "max-file-size", 0)
+		if err != nil {
+			return err
+		}
+	}
+	if args.values["max-response-bytes"] != "" {
+		request.MaxResponseBytes, err = int64Option(args, "max-response-bytes", 0)
 		if err != nil {
 			return err
 		}
@@ -2787,7 +2793,7 @@ var valueOptions = map[string]bool{
 	"upstream-depth": true, "downstream-depth": true, "upstream-limit": true,
 	"downstream-limit": true, "source-limit": true, "path-prefix": true, "language": true,
 	"repo-name": true, "max-matches": true, "max-matches-per-file": true,
-	"max-matches-per-pattern": true, "client": true, "hook": true,
+	"max-matches-per-pattern": true, "max-response-bytes": true, "client": true, "hook": true,
 	"kind": true, "name": true, "state-dir": true, "lines": true, "concurrency": true,
 	"filter": true, "method": true, "route": true, "event": true, "component": true,
 	"package": true, "message": true, "oneof": true, "status": true,
@@ -3003,8 +3009,9 @@ Usage:
                           [--kind godot_scene] [--depth 8] [--limit 1000]
   grafo search <pattern>... [--regex] [--case-sensitive] [--path-prefix dir,...]
                             [--language go,...] [--repo-name name,...] [--context-lines 0]
-                            [--max-matches 500] [--max-matches-per-file 50]
-                            [--max-matches-per-pattern 200] [--max-file-size 1048576]
+                            [--max-matches 100] [--max-matches-per-file 10]
+                            [--max-matches-per-pattern 50] [--max-file-size 1048576]
+                            [--max-response-bytes 32768]
   grafo path <from> <to> [--kind function] [--direction outgoing] [--relation calls,...]
   grafo data-resources [--kind table,view] [--name text] [--repo-name name]
                        [--path-prefix dir,...] [--limit 100] [--json]
@@ -3120,7 +3127,11 @@ cache without contacting the provider. 'grafo embed-cache prune' evicts the
 oldest rows matching every supplied filter; dry runs are read-only and actual
 deletion requires --yes. Pruning checkpoints but never vacuums the cache.
 'grafo search' reads only files that belong to a refreshed
-index and never persists source text.
+index and never persists source text. Its response is bounded both by match
+counts and by --max-response-bytes, the total payload budget; every bound that
+clips results is reported, and a truncated response is a partial view that
+never proves a pattern occurs nowhere else. Callers may raise the caps to
+500 total matches, 200 per pattern, 50 per file and 262144 response bytes.
 
 The catalog commands accept --repo-name to restrict results to one indexed
 repository, and report truncation whenever a bound is reached. A --name fragment

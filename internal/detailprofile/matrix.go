@@ -411,7 +411,7 @@ func operationEvidence() []Operation {
 		{"failure-flow", []Capability{CapabilityFailureFlow}, "internal/query/failureflow.go", 57},
 		{"godot-composition", []Capability{CapabilityGodotComposition}, "internal/query/godot.go", 74},
 		{"godot-interactions", []Capability{CapabilityGodotInteraction}, "internal/query/godotinteractions.go", 135},
-		{"search", []Capability{CapabilitySourceLookup}, "internal/search/service.go", 170},
+		{"search", []Capability{CapabilitySourceLookup}, "internal/search/service.go", 201},
 		{"data-resources", []Capability{CapabilityCatalogTopology}, "internal/query/catalog.go", 194},
 		{"data-usage", []Capability{CapabilityCatalogTopology}, "internal/query/catalog.go", 243},
 		{"config-keys", []Capability{CapabilityCatalogTopology}, "internal/query/catalog.go", 283},

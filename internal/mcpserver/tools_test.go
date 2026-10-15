@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cafecito-games/grafo/internal/graph"
@@ -271,4 +272,54 @@ func TestSearchSourceIsRegisteredOnlyWhenConfigured(t *testing.T) {
 	// An invalid regex names the pattern instead of searching.
 	callExpectingError(t, session, "search_source", map[string]any{"pattern": "a(", "regex": true})
 	callExpectingError(t, session, "search_source", map[string]any{})
+}
+
+// TestSearchSourceBoundsTheResponse checks that the payload budget and its
+// truncation signal survive to the MCP response, so an agent reading the
+// structured result can tell a clipped search from an exhaustive one.
+func TestSearchSourceBoundsTheResponse(t *testing.T) {
+	repository, project := batchFixture(t)
+	searchService := search.NewService([]search.Source{{Project: project, Catalog: repository}})
+	session := connect(t, mcpserver.New(repository, project).WithSearch(searchService))
+
+	exhaustive := call(t, session, "search_source", map[string]any{"pattern": "Charge()"})
+	if truncated, _ := exhaustive["truncated"].(bool); truncated {
+		t.Fatalf("an exhaustive search must not report truncation: %#v", exhaustive)
+	}
+	reported, ok := exhaustive["response_bytes"].(float64)
+	if !ok || reported <= 0 {
+		t.Fatalf("missing response_bytes in %#v", exhaustive)
+	}
+
+	// A budget below the second match clips it, and the response says so.
+	clipped := call(t, session, "search_source", map[string]any{
+		"pattern": "Charge()", "max_response_bytes": 1,
+	})
+	matches, _ := clipped["matches"].([]any)
+	if len(matches) != 1 {
+		t.Fatalf("expected the budget to clip to one match, got %#v", clipped)
+	}
+	if truncated, _ := clipped["truncated"].(bool); !truncated {
+		t.Fatalf("a clipped response must set truncated: %#v", clipped)
+	}
+	notes, _ := clipped["notes"].([]any)
+	var joined []string
+	for _, note := range notes {
+		text, _ := note.(string)
+		joined = append(joined, text)
+	}
+	if !strings.Contains(strings.Join(joined, "\n"), "max_response_bytes budget of 1 reached") {
+		t.Fatalf("notes %v do not name the payload budget", joined)
+	}
+	if !strings.Contains(strings.Join(joined, "\n"), "is not evidence that it does not occur elsewhere") {
+		t.Fatalf("notes %v do not keep truncation distinguishable from exhaustion", joined)
+	}
+
+	// The MCP surface enforces the same ceilings as the CLI.
+	callExpectingError(t, session, "search_source", map[string]any{
+		"pattern": "Charge()", "max_matches": search.MaxMatchesCeiling + 1,
+	})
+	callExpectingError(t, session, "search_source", map[string]any{
+		"pattern": "Charge()", "max_response_bytes": search.MaxResponseBytesCeiling + 1,
+	})
 }

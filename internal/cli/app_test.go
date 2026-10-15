@@ -367,6 +367,27 @@ func TestSearchFindsIndexedContentOnly(t *testing.T) {
 		t.Fatalf("expected a note naming the cap that clipped results:\n%s", stderr)
 	}
 
+	// The payload budget clips the same way and is reported the same way, so
+	// the CLI and MCP surfaces keep identical limits.
+	stdout, stderr, code = output(t, "search", "func [A-Z]", "--regex",
+		"--max-response-bytes", "1", "--repo", root)
+	if code != 0 {
+		t.Fatalf("budgeted search exited with %d: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "truncated") {
+		t.Fatalf("expected a truncation marker:\n%s", stdout)
+	}
+	if !strings.Contains(stderr, "max_response_bytes budget of 1") {
+		t.Fatalf("expected a note naming the payload budget:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "is not evidence that it does not occur elsewhere") {
+		t.Fatalf("a truncated search must not read as exhaustive:\n%s", stderr)
+	}
+	_, stderr, code = output(t, "search", "func", "--max-response-bytes", "262145", "--repo", root)
+	if code == 0 || !strings.Contains(stderr, "max response bytes must be between 1 and 262144") {
+		t.Fatalf("expected the documented ceiling to be enforced: %q (code %d)", stderr, code)
+	}
+
 	// An invalid pattern names the problem instead of searching.
 	_, stderr, code = output(t, "search", "a(", "--regex", "--repo", root)
 	if code == 0 || !strings.Contains(stderr, "a(") {
