@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const SchemaVersion = 12
+const SchemaVersion = 13
 
 // Stable extraction producers identify the authority that created a fact.
 // Producer is deliberately separate from source language: one fact can point
@@ -34,13 +34,17 @@ const (
 	// KindTest is a statically recognized test declaration. Subtype and
 	// framework details remain properties so one language-neutral kind covers
 	// Go tests, benchmarks, fuzz tests, examples, and Godot test methods.
-	KindTest       NodeKind = "test"
-	KindType       NodeKind = "type"
-	KindClass      NodeKind = "class"
-	KindInterface  NodeKind = "interface"
-	KindField      NodeKind = "field"
-	KindVariable   NodeKind = "variable"
-	KindParameter  NodeKind = "parameter"
+	KindTest      NodeKind = "test"
+	KindType      NodeKind = "type"
+	KindClass     NodeKind = "class"
+	KindInterface NodeKind = "interface"
+	KindField     NodeKind = "field"
+	KindVariable  NodeKind = "variable"
+	KindParameter NodeKind = "parameter"
+	// KindSQLQuery is one canonical, handwritten sqlc named-query declaration.
+	// Generated methods project onto it with generated_from; they never replace
+	// the handwritten SQL as the authority for data usage.
+	KindSQLQuery   NodeKind = "sql_query"
 	KindTable      NodeKind = "table"
 	KindView       NodeKind = "view"
 	KindColumn     NodeKind = "column"
@@ -83,7 +87,7 @@ const (
 // vocabulary instead of silently matching nothing.
 var nodeKinds = []NodeKind{
 	KindRepository, KindComponent, KindFile, KindPackage, KindModule, KindFunction, KindMethod, KindTest,
-	KindType, KindClass, KindInterface, KindField, KindVariable, KindParameter,
+	KindType, KindClass, KindInterface, KindField, KindVariable, KindParameter, KindSQLQuery,
 	KindTable, KindView, KindColumn, KindIndex, KindConfigKey, KindEndpoint,
 	KindEvent, KindDocSection, KindExternal,
 	KindGodotScene, KindGodotResource, KindGodotSceneNode, KindGodotAutoload,

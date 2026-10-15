@@ -1,0 +1,1205 @@
+{
+  "schema_version": 2,
+  "case_id": "sqlc-bindings",
+  "repositories": [
+    {
+      "id": "sqlc",
+      "path": "repos/sqlc"
+    }
+  ],
+  "expect": {
+    "nodes": [
+      {
+        "repo": "sqlc",
+        "kind": "column",
+        "qualified_name": "users.id"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "column",
+        "qualified_name": "users.name"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "config_key",
+        "qualified_name": "config:sqlc.yaml:sql"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "config_key",
+        "qualified_name": "config:sqlc.yaml:sql.gen"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "config_key",
+        "qualified_name": "config:sqlc.yaml:sql.gen.go"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "config_key",
+        "qualified_name": "config:sqlc.yaml:sql.gen.go.emit_exported_queries"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "config_key",
+        "qualified_name": "config:sqlc.yaml:sql.gen.go.emit_prepared_queries"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "config_key",
+        "qualified_name": "config:sqlc.yaml:sql.gen.go.out"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "config_key",
+        "qualified_name": "config:sqlc.yaml:sql.gen.go.package"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "config_key",
+        "qualified_name": "config:sqlc.yaml:sql.queries"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "config_key",
+        "qualified_name": "config:sqlc.yaml:sql.schema"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "config_key",
+        "qualified_name": "config:sqlc.yaml:version"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "field",
+        "qualified_name": "example.com/sqlcfixture/internal/db.User.ID"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "field",
+        "qualified_name": "example.com/sqlcfixture/internal/db.User.Name"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "file",
+        "qualified_name": "app.go"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "file",
+        "qualified_name": "go.mod"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "file",
+        "qualified_name": "internal/db/queries.sql.go"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "file",
+        "qualified_name": "queries.sql"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "file",
+        "qualified_name": "schema.sql"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "file",
+        "qualified_name": "sqlc.yaml"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "function",
+        "qualified_name": "example.com/sqlcfixture.Load"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "interface",
+        "qualified_name": "builtin.error",
+        "external": true
+      },
+      {
+        "repo": "sqlc",
+        "kind": "method",
+        "qualified_name": "example.com/sqlcfixture/internal/db.Queries.GetUser"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "module",
+        "qualified_name": "context",
+        "external": true
+      },
+      {
+        "repo": "sqlc",
+        "kind": "module",
+        "qualified_name": "example.com/sqlcfixture"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "module",
+        "qualified_name": "example.com/sqlcfixture/internal/db",
+        "external": true
+      },
+      {
+        "repo": "sqlc",
+        "kind": "parameter",
+        "qualified_name": "example.com/sqlcfixture.Load.ctx"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "parameter",
+        "qualified_name": "example.com/sqlcfixture.Load.id"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "parameter",
+        "qualified_name": "example.com/sqlcfixture.Load.queries"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "parameter",
+        "qualified_name": "example.com/sqlcfixture/internal/db.Queries.GetUser.id"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "repository",
+        "qualified_name": "sqlc"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "sql_query",
+        "qualified_name": "queries.sql#GetUser"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "table",
+        "qualified_name": "users"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "type",
+        "qualified_name": "example.com/sqlcfixture/internal/db.Queries"
+      },
+      {
+        "repo": "sqlc",
+        "kind": "type",
+        "qualified_name": "example.com/sqlcfixture/internal/db.User"
+      }
+    ],
+    "edges": [
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "app.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "sqlc",
+          "kind": "function",
+          "qualified_name": "example.com/sqlcfixture.Load"
+        },
+        "source": {
+          "path": "app.go",
+          "line": 9,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "app.go"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "sqlc",
+          "kind": "module",
+          "qualified_name": "context",
+          "external": true
+        },
+        "source": {
+          "path": "app.go",
+          "line": 4,
+          "column": 2
+        },
+        "properties": {
+          "alias": "context"
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "app.go"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "sqlc",
+          "kind": "module",
+          "qualified_name": "example.com/sqlcfixture/internal/db",
+          "external": true
+        },
+        "source": {
+          "path": "app.go",
+          "line": 6,
+          "column": 2
+        },
+        "properties": {
+          "alias": "db"
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "go.mod"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "sqlc",
+          "kind": "module",
+          "qualified_name": "example.com/sqlcfixture"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "internal/db/queries.sql.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "sqlc",
+          "kind": "method",
+          "qualified_name": "example.com/sqlcfixture/internal/db.Queries.GetUser"
+        },
+        "source": {
+          "path": "internal/db/queries.sql.go",
+          "line": 23,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "internal/db/queries.sql.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "sqlc",
+          "kind": "type",
+          "qualified_name": "example.com/sqlcfixture/internal/db.Queries"
+        },
+        "source": {
+          "path": "internal/db/queries.sql.go",
+          "line": 16,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "internal/db/queries.sql.go"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "sqlc",
+          "kind": "type",
+          "qualified_name": "example.com/sqlcfixture/internal/db.User"
+        },
+        "source": {
+          "path": "internal/db/queries.sql.go",
+          "line": 18,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "internal/db/queries.sql.go"
+        },
+        "relation": "imports",
+        "to": {
+          "repo": "sqlc",
+          "kind": "module",
+          "qualified_name": "context",
+          "external": true
+        },
+        "source": {
+          "path": "internal/db/queries.sql.go",
+          "line": 8,
+          "column": 8
+        },
+        "properties": {
+          "alias": "context"
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "queries.sql"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "sqlc",
+          "kind": "sql_query",
+          "qualified_name": "queries.sql#GetUser"
+        },
+        "source": {
+          "path": "queries.sql",
+          "line": 1,
+          "column": 10
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "schema.sql"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "sqlc",
+          "kind": "table",
+          "qualified_name": "users"
+        },
+        "source": {
+          "path": "schema.sql",
+          "line": 1,
+          "column": 14
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "sqlc.yaml"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "sqlc",
+          "kind": "config_key",
+          "qualified_name": "config:sqlc.yaml:sql.gen.go.emit_exported_queries"
+        },
+        "source": {
+          "path": "sqlc.yaml",
+          "line": 11,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "sqlc.yaml"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "sqlc",
+          "kind": "config_key",
+          "qualified_name": "config:sqlc.yaml:sql.gen.go.emit_prepared_queries"
+        },
+        "source": {
+          "path": "sqlc.yaml",
+          "line": 10,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "sqlc.yaml"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "sqlc",
+          "kind": "config_key",
+          "qualified_name": "config:sqlc.yaml:sql.gen.go.out"
+        },
+        "source": {
+          "path": "sqlc.yaml",
+          "line": 9,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "sqlc.yaml"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "sqlc",
+          "kind": "config_key",
+          "qualified_name": "config:sqlc.yaml:sql.gen.go.package"
+        },
+        "source": {
+          "path": "sqlc.yaml",
+          "line": 8,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "sqlc.yaml"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "sqlc",
+          "kind": "config_key",
+          "qualified_name": "config:sqlc.yaml:sql.gen.go"
+        },
+        "source": {
+          "path": "sqlc.yaml",
+          "line": 7,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "sqlc.yaml"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "sqlc",
+          "kind": "config_key",
+          "qualified_name": "config:sqlc.yaml:sql.gen"
+        },
+        "source": {
+          "path": "sqlc.yaml",
+          "line": 6,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "sqlc.yaml"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "sqlc",
+          "kind": "config_key",
+          "qualified_name": "config:sqlc.yaml:sql.queries"
+        },
+        "source": {
+          "path": "sqlc.yaml",
+          "line": 5,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "sqlc.yaml"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "sqlc",
+          "kind": "config_key",
+          "qualified_name": "config:sqlc.yaml:sql.schema"
+        },
+        "source": {
+          "path": "sqlc.yaml",
+          "line": 4,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "sqlc.yaml"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "sqlc",
+          "kind": "config_key",
+          "qualified_name": "config:sqlc.yaml:sql"
+        },
+        "source": {
+          "path": "sqlc.yaml",
+          "line": 2,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "sqlc.yaml"
+        },
+        "relation": "defines",
+        "to": {
+          "repo": "sqlc",
+          "kind": "config_key",
+          "qualified_name": "config:sqlc.yaml:version"
+        },
+        "source": {
+          "path": "sqlc.yaml",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "function",
+          "qualified_name": "example.com/sqlcfixture.Load"
+        },
+        "relation": "calls",
+        "to": {
+          "repo": "sqlc",
+          "kind": "method",
+          "qualified_name": "example.com/sqlcfixture/internal/db.Queries.GetUser"
+        },
+        "source": {
+          "path": "app.go",
+          "line": 10,
+          "column": 9
+        },
+        "properties": {
+          "resolution": "go/types"
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "function",
+          "qualified_name": "example.com/sqlcfixture.Load"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "sqlc",
+          "kind": "parameter",
+          "qualified_name": "example.com/sqlcfixture.Load.ctx"
+        },
+        "source": {
+          "path": "app.go",
+          "line": 9,
+          "column": 11
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "function",
+          "qualified_name": "example.com/sqlcfixture.Load"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "sqlc",
+          "kind": "parameter",
+          "qualified_name": "example.com/sqlcfixture.Load.id"
+        },
+        "source": {
+          "path": "app.go",
+          "line": 9,
+          "column": 53
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "function",
+          "qualified_name": "example.com/sqlcfixture.Load"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "sqlc",
+          "kind": "parameter",
+          "qualified_name": "example.com/sqlcfixture.Load.queries"
+        },
+        "source": {
+          "path": "app.go",
+          "line": 9,
+          "column": 32
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "function",
+          "qualified_name": "example.com/sqlcfixture.Load"
+        },
+        "relation": "propagates_error",
+        "to": {
+          "repo": "sqlc",
+          "kind": "method",
+          "qualified_name": "example.com/sqlcfixture/internal/db.Queries.GetUser"
+        },
+        "source": {
+          "path": "app.go",
+          "line": 10,
+          "column": 2
+        },
+        "properties": {
+          "callee_result_position": "1",
+          "conditional": "false",
+          "evidence": "go/types",
+          "form": "return_call",
+          "resolution": "go/types",
+          "result_position": "1"
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "function",
+          "qualified_name": "example.com/sqlcfixture.Load"
+        },
+        "relation": "returns_error",
+        "to": {
+          "repo": "sqlc",
+          "kind": "interface",
+          "qualified_name": "builtin.error",
+          "external": true
+        },
+        "source": {
+          "path": "app.go",
+          "line": 9,
+          "column": 73
+        },
+        "properties": {
+          "evidence": "go/types",
+          "form": "signature",
+          "resolution": "go/types",
+          "result_position": "1",
+          "type": "builtin.error"
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "method",
+          "qualified_name": "example.com/sqlcfixture/internal/db.Queries.GetUser"
+        },
+        "relation": "declares",
+        "to": {
+          "repo": "sqlc",
+          "kind": "parameter",
+          "qualified_name": "example.com/sqlcfixture/internal/db.Queries.GetUser.id"
+        },
+        "source": {
+          "path": "internal/db/queries.sql.go",
+          "line": 23,
+          "column": 46
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "method",
+          "qualified_name": "example.com/sqlcfixture/internal/db.Queries.GetUser"
+        },
+        "relation": "generated_from",
+        "to": {
+          "repo": "sqlc",
+          "kind": "sql_query",
+          "qualified_name": "queries.sql#GetUser"
+        },
+        "source": {
+          "path": "internal/db/queries.sql.go",
+          "line": 23,
+          "column": 1
+        },
+        "properties": {
+          "adapter_version": "1",
+          "config_entry": "0",
+          "config_path": "sqlc.yaml",
+          "generated_path": "internal/db/queries.sql.go",
+          "generator": "sqlc",
+          "generator_version": "v1.31.1",
+          "query_constant": "GetUserSQL"
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "method",
+          "qualified_name": "example.com/sqlcfixture/internal/db.Queries.GetUser"
+        },
+        "relation": "returns_error",
+        "to": {
+          "repo": "sqlc",
+          "kind": "interface",
+          "qualified_name": "builtin.error",
+          "external": true
+        },
+        "source": {
+          "path": "internal/db/queries.sql.go",
+          "line": 23,
+          "column": 63
+        },
+        "properties": {
+          "evidence": "go/types",
+          "form": "signature",
+          "resolution": "go/types",
+          "result_position": "1",
+          "type": "builtin.error"
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "parameter",
+          "qualified_name": "example.com/sqlcfixture.Load.ctx"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "sqlc",
+          "kind": "method",
+          "qualified_name": "example.com/sqlcfixture/internal/db.Queries.GetUser"
+        },
+        "source": {
+          "path": "app.go",
+          "line": 10,
+          "column": 9
+        },
+        "properties": {
+          "argument": "0"
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "parameter",
+          "qualified_name": "example.com/sqlcfixture.Load.ctx"
+        },
+        "relation": "returns",
+        "to": {
+          "repo": "sqlc",
+          "kind": "function",
+          "qualified_name": "example.com/sqlcfixture.Load"
+        },
+        "source": {
+          "path": "app.go",
+          "line": 10,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "parameter",
+          "qualified_name": "example.com/sqlcfixture.Load.id"
+        },
+        "relation": "passes",
+        "to": {
+          "repo": "sqlc",
+          "kind": "method",
+          "qualified_name": "example.com/sqlcfixture/internal/db.Queries.GetUser"
+        },
+        "source": {
+          "path": "app.go",
+          "line": 10,
+          "column": 9
+        },
+        "properties": {
+          "argument": "1"
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "parameter",
+          "qualified_name": "example.com/sqlcfixture.Load.id"
+        },
+        "relation": "returns",
+        "to": {
+          "repo": "sqlc",
+          "kind": "function",
+          "qualified_name": "example.com/sqlcfixture.Load"
+        },
+        "source": {
+          "path": "app.go",
+          "line": 10,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "parameter",
+          "qualified_name": "example.com/sqlcfixture.Load.queries"
+        },
+        "relation": "returns",
+        "to": {
+          "repo": "sqlc",
+          "kind": "function",
+          "qualified_name": "example.com/sqlcfixture.Load"
+        },
+        "source": {
+          "path": "app.go",
+          "line": 10,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "repository",
+          "qualified_name": "sqlc"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "app.go"
+        },
+        "source": {
+          "path": "app.go",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "repository",
+          "qualified_name": "sqlc"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "go.mod"
+        },
+        "source": {
+          "path": "go.mod",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "repository",
+          "qualified_name": "sqlc"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "internal/db/queries.sql.go"
+        },
+        "source": {
+          "path": "internal/db/queries.sql.go",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "repository",
+          "qualified_name": "sqlc"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "queries.sql"
+        },
+        "source": {
+          "path": "queries.sql",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "repository",
+          "qualified_name": "sqlc"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "schema.sql"
+        },
+        "source": {
+          "path": "schema.sql",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "repository",
+          "qualified_name": "sqlc"
+        },
+        "relation": "contains",
+        "to": {
+          "repo": "sqlc",
+          "kind": "file",
+          "qualified_name": "sqlc.yaml"
+        },
+        "source": {
+          "path": "sqlc.yaml",
+          "line": 1,
+          "column": 1
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "sql_query",
+          "qualified_name": "queries.sql#GetUser"
+        },
+        "relation": "reads",
+        "to": {
+          "repo": "sqlc",
+          "kind": "column",
+          "qualified_name": "users.id"
+        },
+        "source": {
+          "path": "queries.sql",
+          "line": 4,
+          "column": 7
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "sql_query",
+          "qualified_name": "queries.sql#GetUser"
+        },
+        "relation": "reads",
+        "to": {
+          "repo": "sqlc",
+          "kind": "column",
+          "qualified_name": "users.name"
+        },
+        "source": {
+          "path": "queries.sql",
+          "line": 2,
+          "column": 8
+        },
+        "properties": {
+          "argument": "u",
+          "form": "sqlc.embed"
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "sql_query",
+          "qualified_name": "queries.sql#GetUser"
+        },
+        "relation": "reads",
+        "to": {
+          "repo": "sqlc",
+          "kind": "table",
+          "qualified_name": "users"
+        },
+        "source": {
+          "path": "queries.sql",
+          "line": 3,
+          "column": 6
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "table",
+          "qualified_name": "users"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "sqlc",
+          "kind": "column",
+          "qualified_name": "users.id"
+        },
+        "source": {
+          "path": "schema.sql",
+          "line": 2,
+          "column": 5
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "table",
+          "qualified_name": "users"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "sqlc",
+          "kind": "column",
+          "qualified_name": "users.name"
+        },
+        "source": {
+          "path": "schema.sql",
+          "line": 3,
+          "column": 5
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "type",
+          "qualified_name": "example.com/sqlcfixture/internal/db.User"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "sqlc",
+          "kind": "field",
+          "qualified_name": "example.com/sqlcfixture/internal/db.User.ID"
+        },
+        "source": {
+          "path": "internal/db/queries.sql.go",
+          "line": 19,
+          "column": 2
+        }
+      },
+      {
+        "from": {
+          "repo": "sqlc",
+          "kind": "type",
+          "qualified_name": "example.com/sqlcfixture/internal/db.User"
+        },
+        "relation": "has_field",
+        "to": {
+          "repo": "sqlc",
+          "kind": "field",
+          "qualified_name": "example.com/sqlcfixture/internal/db.User.Name"
+        },
+        "source": {
+          "path": "internal/db/queries.sql.go",
+          "line": 20,
+          "column": 2
+        }
+      }
+    ],
+    "queries": [
+      {
+        "id": "caller-to-sql-column",
+        "from": "example.com/sqlcfixture.Load",
+        "to": "users.name",
+        "direction": "outgoing",
+        "relations": [
+          "calls",
+          "generated_from",
+          "reads"
+        ],
+        "nodes": [
+          {
+            "repo": "sqlc",
+            "kind": "function",
+            "qualified_name": "example.com/sqlcfixture.Load"
+          },
+          {
+            "repo": "sqlc",
+            "kind": "method",
+            "qualified_name": "example.com/sqlcfixture/internal/db.Queries.GetUser"
+          },
+          {
+            "repo": "sqlc",
+            "kind": "sql_query",
+            "qualified_name": "queries.sql#GetUser"
+          },
+          {
+            "repo": "sqlc",
+            "kind": "column",
+            "qualified_name": "users.name"
+          }
+        ],
+        "edges": [
+          {
+            "from": {
+              "repo": "sqlc",
+              "kind": "function",
+              "qualified_name": "example.com/sqlcfixture.Load"
+            },
+            "relation": "calls",
+            "to": {
+              "repo": "sqlc",
+              "kind": "method",
+              "qualified_name": "example.com/sqlcfixture/internal/db.Queries.GetUser"
+            },
+            "source": {
+              "path": "app.go",
+              "line": 10,
+              "column": 9
+            },
+            "properties": {
+              "resolution": "go/types"
+            }
+          },
+          {
+            "from": {
+              "repo": "sqlc",
+              "kind": "method",
+              "qualified_name": "example.com/sqlcfixture/internal/db.Queries.GetUser"
+            },
+            "relation": "generated_from",
+            "to": {
+              "repo": "sqlc",
+              "kind": "sql_query",
+              "qualified_name": "queries.sql#GetUser"
+            },
+            "source": {
+              "path": "internal/db/queries.sql.go",
+              "line": 23,
+              "column": 1
+            },
+            "properties": {
+              "adapter_version": "1",
+              "config_entry": "0",
+              "config_path": "sqlc.yaml",
+              "generated_path": "internal/db/queries.sql.go",
+              "generator": "sqlc",
+              "generator_version": "v1.31.1",
+              "query_constant": "GetUserSQL"
+            }
+          },
+          {
+            "from": {
+              "repo": "sqlc",
+              "kind": "sql_query",
+              "qualified_name": "queries.sql#GetUser"
+            },
+            "relation": "reads",
+            "to": {
+              "repo": "sqlc",
+              "kind": "column",
+              "qualified_name": "users.name"
+            },
+            "source": {
+              "path": "queries.sql",
+              "line": 2,
+              "column": 8
+            },
+            "properties": {
+              "argument": "u",
+              "form": "sqlc.embed"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

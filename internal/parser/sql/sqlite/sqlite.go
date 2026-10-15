@@ -5,10 +5,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	"github.com/cafecito-games/grafo/internal/parser/sqltemplate"
 	"github.com/sqlc-dev/meyer/ast"
 	"github.com/sqlc-dev/meyer/parser"
 )
@@ -29,14 +31,20 @@ func (*Parser) Probe(ctx context.Context, input parserapi.Input) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	_, err := parser.Parse(ctx, bytes.NewReader(input.Content))
+	document := sqltemplate.Analyze(input.Content, "sqlite")
+	if len(document.Diagnostics) > 0 {
+		return fmt.Errorf("SQL template: %s", document.Diagnostics[0].Message)
+	}
+	_, err := parser.Parse(ctx, bytes.NewReader(document.SQL))
 	return err
 }
 
 type extractor struct {
-	b       *parserapi.Builder
-	input   parserapi.Input
-	content []byte
+	b        *parserapi.Builder
+	input    parserapi.Input
+	content  []byte
+	document sqltemplate.Document
+	queries  map[string]string
 }
 
 func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseResult, error) {
@@ -44,11 +52,20 @@ func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseRes
 	if err := ctx.Err(); err != nil {
 		return b.Finish(), err
 	}
-	statements, err := parser.Parse(ctx, bytes.NewReader(input.Content))
+	document := sqltemplate.Analyze(input.Content, "sqlite")
+	for _, diagnostic := range document.Diagnostics {
+		line, _ := document.Position(diagnostic.Offset)
+		b.Diagnostic(line, "warning", "SQL template: "+diagnostic.Message)
+	}
+	if len(document.Diagnostics) > 0 {
+		return b.Finish(), nil
+	}
+	queries := declareQueries(b, input, document, "sqlite")
+	statements, err := parser.Parse(ctx, bytes.NewReader(document.SQL))
 	if err != nil {
 		return b.Finish(), fmt.Errorf("parse SQLite: %w", err)
 	}
-	e := &extractor{b: b, input: input, content: input.Content}
+	e := &extractor{b: b, input: input, content: input.Content, document: document, queries: queries}
 	for _, statement := range statements {
 		if err := ctx.Err(); err != nil {
 			return b.Finish(), err
@@ -59,6 +76,10 @@ func (*Parser) Parse(ctx context.Context, input parserapi.Input) (graph.ParseRes
 }
 
 func (e *extractor) parseStatement(statement ast.Stmt) {
+	owner := e.b.FileID()
+	if query, ok := e.document.QueryAt(statement.Pos()); ok {
+		owner = e.queries[query.Name]
+	}
 	switch statement := statement.(type) {
 	case *ast.CreateTableStmt:
 		e.parseCreateTable(statement)
@@ -71,8 +92,45 @@ func (e *extractor) parseStatement(statement ast.Stmt) {
 	case *ast.CreateTriggerStmt:
 		e.parseCreateTrigger(statement)
 	default:
-		e.emitAccesses(e.b.FileID(), statement)
+		e.emitAccesses(owner, statement)
 	}
+}
+
+func declareQueries(b *parserapi.Builder, input parserapi.Input, document sqltemplate.Document, dialect string) map[string]string {
+	result := make(map[string]string, len(document.Queries))
+	for _, query := range document.Queries {
+		line, column := document.Position(query.NameStart)
+		endLine, _ := document.Position(query.StatementEnd)
+		properties := map[string]string{
+			"command": query.Command, "dialect": dialect,
+			"canonical_sql":   string(input.Content[query.StatementStart:query.StatementEnd]),
+			"statement_start": strconv.Itoa(query.StatementStart), "statement_end": strconv.Itoa(query.StatementEnd),
+		}
+		var embeds, slices []string
+		for _, macro := range document.Macros {
+			if macro.Start < query.StatementStart || macro.Start >= query.StatementEnd {
+				continue
+			}
+			if macro.Embed {
+				embeds = append(embeds, macro.Argument)
+			}
+			if macro.Collection {
+				slices = append(slices, macro.Argument)
+			}
+		}
+		if len(embeds) > 0 {
+			properties["sqlc_embed"] = strings.Join(embeds, ",")
+		}
+		if len(slices) > 0 {
+			properties["sqlc_slice"] = strings.Join(slices, ",")
+		}
+		id := b.Declare(b.FileID(), graph.Node{
+			Kind: graph.KindSQLQuery, Name: query.Name, QualifiedName: query.QualifiedName(input.Path),
+			Location: graph.Location{Path: input.Path, Line: line, Column: column, EndLine: endLine}, Properties: properties,
+		})
+		result[query.Name] = id
+	}
+	return result
 }
 
 func (e *extractor) parseCreateTable(statement *ast.CreateTableStmt) {
@@ -249,6 +307,108 @@ func (e *extractor) emitAccesses(fromID string, root ast.Node) {
 	}
 	cteReferences := markCTEReferences(root)
 	seen := map[string]bool{}
+	aliases := map[string]string{}
+	uniqueRelations := map[string]bool{}
+	excludedIdentifiers := map[*ast.Ident]bool{}
+	var qualifiedReferences []*ast.QualifiedRef
+	var unqualifiedReferences []*ast.Ident
+	type columnWrite struct {
+		table, column string
+		node          ast.Node
+	}
+	var columnWrites []columnWrite
+	hasCTE := false
+	registerTable := func(name *ast.QualifiedName, alias *ast.Ident) {
+		table := qualifiedName(name)
+		if table == "" {
+			return
+		}
+		uniqueRelations[table] = true
+		aliases[name.Name.Name] = table
+		aliases[table] = table
+		if alias != nil && alias.Name != "" {
+			aliases[alias.Name] = table
+		}
+	}
+	ast.Walk(root, func(node ast.Node) bool {
+		switch node := node.(type) {
+		case *ast.TableRef:
+			if !cteReferences[node] {
+				table := qualifiedName(node.Name)
+				if table != "" {
+					uniqueRelations[table] = true
+					aliases[node.Name.Name.Name] = table
+					aliases[table] = table
+					if node.Alias != nil && node.Alias.Name != "" {
+						aliases[node.Alias.Name] = table
+					}
+				}
+			}
+			if node.Alias != nil {
+				excludedIdentifiers[node.Alias] = true
+			}
+			if node.IndexedBy != nil {
+				excludedIdentifiers[node.IndexedBy] = true
+			}
+		case *ast.QualifiedName:
+			if node.Name != nil {
+				excludedIdentifiers[node.Name] = true
+			}
+			if node.Schema != nil {
+				excludedIdentifiers[node.Schema] = true
+			}
+		case *ast.QualifiedRef:
+			qualifiedReferences = append(qualifiedReferences, node)
+			for _, part := range node.Parts {
+				excludedIdentifiers[part] = true
+			}
+		case *ast.FuncCall:
+			if node.Name != nil {
+				excludedIdentifiers[node.Name] = true
+			}
+		case *ast.ResultColumn:
+			if node.Alias != nil {
+				excludedIdentifiers[node.Alias] = true
+			}
+		case *ast.Star:
+			if node.Table != nil {
+				excludedIdentifiers[node.Table] = true
+			}
+		case *ast.CTE:
+			hasCTE = true
+			if node.Name != nil {
+				excludedIdentifiers[node.Name] = true
+			}
+		}
+		return true
+	})
+	if insert, ok := root.(*ast.InsertStmt); ok {
+		table := qualifiedName(insert.Table)
+		registerTable(insert.Table, insert.Alias)
+		for _, column := range insert.Columns {
+			excludedIdentifiers[column] = true
+			columnWrites = append(columnWrites, columnWrite{table: table, column: column.Name, node: column})
+		}
+	}
+	if update, ok := root.(*ast.UpdateStmt); ok {
+		table := qualifiedName(update.Table)
+		registerTable(update.Table, update.Alias)
+		for _, pair := range update.Set {
+			for _, column := range pair.Columns {
+				excludedIdentifiers[column] = true
+				columnWrites = append(columnWrites, columnWrite{table: table, column: column.Name, node: column})
+			}
+		}
+	}
+	if deleteStatement, ok := root.(*ast.DeleteStmt); ok {
+		registerTable(deleteStatement.Table, deleteStatement.Alias)
+	}
+	ast.Walk(root, func(node ast.Node) bool {
+		if identifier, ok := node.(*ast.Ident); ok && !excludedIdentifiers[identifier] {
+			unqualifiedReferences = append(unqualifiedReferences, identifier)
+		}
+		return true
+	})
 	emit := func(kind graph.EdgeKind, name string, node ast.Node) {
 		if name == "" {
 			return
@@ -277,6 +437,44 @@ func (e *extractor) emitAccesses(fromID string, root ast.Node) {
 		}
 		return true
 	})
+	emitColumn := func(kind graph.EdgeKind, name string, node ast.Node) {
+		if name == "" {
+			return
+		}
+		key := string(kind) + "\x00column\x00" + name
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		e.b.AddFact(fromID, kind, "", name, graph.KindColumn, e.location(node), nil)
+	}
+	for _, reference := range qualifiedReferences {
+		parts := make([]string, 0, len(reference.Parts))
+		for _, part := range reference.Parts {
+			parts = append(parts, part.Name)
+		}
+		if len(parts) < 2 {
+			continue
+		}
+		column := parts[len(parts)-1]
+		if len(parts) == 2 {
+			if table := aliases[parts[0]]; table != "" {
+				emitColumn(graph.EdgeReads, table+"."+column, reference)
+			}
+		} else {
+			emitColumn(graph.EdgeReads, strings.Join(parts[:len(parts)-1], ".")+"."+column, reference)
+		}
+	}
+	if !hasCTE && len(uniqueRelations) == 1 {
+		for table := range uniqueRelations {
+			for _, reference := range unqualifiedReferences {
+				emitColumn(graph.EdgeReads, table+"."+reference.Name, reference)
+			}
+		}
+	}
+	for _, write := range columnWrites {
+		emitColumn(graph.EdgeWrites, write.table+"."+write.column, write.node)
+	}
 }
 
 // markCTEReferences distinguishes statement-local CTEs from persistent

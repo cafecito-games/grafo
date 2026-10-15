@@ -4952,6 +4952,42 @@
         "relation": "reads",
         "to": {
           "repo": "matrix",
+          "kind": "column",
+          "qualified_name": "public.events.id"
+        },
+        "source": {
+          "path": "schema.sql",
+          "line": 7,
+          "column": 8
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "view",
+          "qualified_name": "public.recent_events"
+        },
+        "relation": "reads",
+        "to": {
+          "repo": "matrix",
+          "kind": "column",
+          "qualified_name": "public.events.payload"
+        },
+        "source": {
+          "path": "schema.sql",
+          "line": 7,
+          "column": 12
+        }
+      },
+      {
+        "from": {
+          "repo": "matrix",
+          "kind": "view",
+          "qualified_name": "public.recent_events"
+        },
+        "relation": "reads",
+        "to": {
+          "repo": "matrix",
           "kind": "table",
           "qualified_name": "public.events"
         },

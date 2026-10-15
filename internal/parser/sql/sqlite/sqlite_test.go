@@ -97,6 +97,55 @@ func TestParserExtractsCreateTableAsSelect(t *testing.T) {
 	assertFactFrom(t, result, graph.KindTable, "report", graph.EdgeReads, "events")
 }
 
+func TestParserNormalizesSqlcTemplatesAndOwnsNamedQueryUsage(t *testing.T) {
+	content := []byte(`CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, role_id INTEGER);
+
+-- name: GetUser :one
+SELECT u.name FROM users AS u WHERE u.id = sqlc.arg('id');
+
+-- name: UpdateUser :execrows
+UPDATE users SET name = sqlc.narg(name) WHERE id = @id;
+
+SELECT id FROM audit_log;
+`)
+	result, err := sqliteparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "db/queries.sql", Content: content, Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNode(t, result.Nodes, graph.KindSQLQuery, "db/queries.sql#GetUser")
+	assertNode(t, result.Nodes, graph.KindSQLQuery, "db/queries.sql#UpdateUser")
+	assertNodeProperty(t, result.Nodes, graph.KindSQLQuery, "db/queries.sql#GetUser", "command", ":one")
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#GetUser", graph.EdgeReads, "users")
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#GetUser", graph.EdgeReads, "users.name")
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#GetUser", graph.EdgeReads, "users.id")
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#UpdateUser", graph.EdgeWrites, "users")
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#UpdateUser", graph.EdgeWrites, "users.name")
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#UpdateUser", graph.EdgeReads, "users.id")
+	assertFact(t, result.Facts, graph.EdgeReads, "audit_log")
+	for _, diagnostic := range result.Diagnostics {
+		if strings.Contains(diagnostic.Message, "sqlc") || strings.Contains(diagnostic.Message, "parse SQLite") {
+			t.Fatalf("unexpected template diagnostic: %#v", diagnostic)
+		}
+	}
+}
+
+func TestParserDoesNotGuessAmbiguousUnqualifiedColumns(t *testing.T) {
+	result, err := sqliteparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "db/join.sql", RepoID: "repo:sample", Content: []byte(`-- name: Joined :many
+SELECT id, a.name, b.title FROM alpha AS a JOIN beta AS b ON a.key = b.alpha_key;
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/join.sql#Joined", graph.EdgeReads, "alpha.name")
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/join.sql#Joined", graph.EdgeReads, "beta.title")
+	assertNoFact(t, result.Facts, graph.EdgeReads, "alpha.id")
+	assertNoFact(t, result.Facts, graph.EdgeReads, "beta.id")
+}
+
 func TestParserDeclaresSQLiteDialectWithoutBinaryExtensions(t *testing.T) {
 	p := sqliteparser.New()
 	if p.Name() != "sqlite" || p.Language() != "sqlite" {
@@ -176,7 +225,7 @@ func assertNoFact(t *testing.T, facts []graph.Fact, kind graph.EdgeKind, target 
 func assertRelationFactsRemainTableOrViewAgnostic(t *testing.T, facts []graph.Fact) {
 	t.Helper()
 	for _, fact := range facts {
-		if (fact.Kind == graph.EdgeReads || fact.Kind == graph.EdgeWrites) && fact.TargetKind != "" {
+		if (fact.Kind == graph.EdgeReads || fact.Kind == graph.EdgeWrites) && fact.TargetKind != "" && fact.TargetKind != graph.KindColumn {
 			t.Fatalf("%s fact to %q unexpectedly requires target kind %q", fact.Kind, fact.Target, fact.TargetKind)
 		}
 	}

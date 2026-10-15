@@ -1,0 +1,45 @@
+package sqlcbinding
+
+import (
+	"testing"
+
+	"github.com/cafecito-games/grafo/internal/parser/sqltemplate"
+)
+
+func TestEquivalentSQLReusesNamedParameters(t *testing.T) {
+	handwritten := `SELECT
+    COUNT(*) AS total,
+    CAST(COALESCE(SUM(CASE WHEN instr(qualified_name, @target) > 0 OR instr(name, @target) > 0 THEN 1 ELSE 0 END), 0) AS INTEGER) AS strict_matches
+FROM nodes
+WHERE (lower(name) LIKE '%' || lower(@target) || '%'
+    OR lower(qualified_name) LIKE '%' || lower(@target) || '%')
+  AND external = CAST(@external AS INTEGER)
+  AND (CAST(@kind AS TEXT) = '' OR kind = CAST(@kind AS TEXT));`
+	generated := `-- name: CountNodeMatchesBySubstring :one
+SELECT
+    COUNT(*) AS total,
+    CAST(COALESCE(SUM(CASE WHEN instr(qualified_name, ?1) > 0 OR instr(name, ?1) > 0 THEN 1 ELSE 0 END), 0) AS INTEGER) AS strict_matches
+FROM nodes
+WHERE (lower(name) LIKE '%' || lower(?1) || '%'
+    OR lower(qualified_name) LIKE '%' || lower(?1) || '%')
+  AND external = CAST(?2 AS INTEGER)
+  AND (CAST(?3 AS TEXT) = '' OR kind = CAST(?3 AS TEXT))
+`
+	if !equivalentSQL(handwritten, generated, "sqlite", nil) {
+		document := sqltemplate.Analyze([]byte(handwritten), "sqlite")
+		t.Logf("handwritten: %q", comparableSQL(string(document.SQL)))
+		t.Logf("generated:   %q", comparableSQL(generated))
+		t.Fatal("reused named parameters were reported stale")
+	}
+}
+
+func TestEquivalentSQLExpandsProjectionWildcardFromSchema(t *testing.T) {
+	schemas := map[string]schemaTable{
+		"nodes": {columns: []string{"id", "kind", "name"}},
+	}
+	handwritten := `SELECT * FROM nodes WHERE id = ?;`
+	generated := `SELECT id, kind, name FROM nodes WHERE id = ?`
+	if !equivalentSQL(handwritten, generated, "sqlite", schemas) {
+		t.Fatal("schema-backed wildcard expansion was reported stale")
+	}
+}

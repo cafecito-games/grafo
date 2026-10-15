@@ -121,6 +121,45 @@ CREATE FUNCTION public.lookup(value text) RETURNS text LANGUAGE SQL AS $$ SELECT
 	}
 }
 
+func TestParserNormalizesSqlcTemplatesAndOwnsNamedQueryUsage(t *testing.T) {
+	content := []byte(`CREATE TABLE users (id bigint PRIMARY KEY, name text, role text);
+
+-- name: SearchUsers :many
+SELECT u.name FROM users AS u
+WHERE u.id = sqlc.arg(id) AND u.name = @name AND u.role = sqlc.narg('role');
+
+-- name: DeleteUsers :execrows
+DELETE FROM users WHERE id = ANY(sqlc.slice(ids));
+`)
+	result, err := postgresparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "db/queries.sql", Content: content, Repository: "sample", RepoID: "repo:sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNode(t, result.Nodes, graph.KindSQLQuery, "db/queries.sql#SearchUsers")
+	assertNode(t, result.Nodes, graph.KindSQLQuery, "db/queries.sql#DeleteUsers")
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#SearchUsers", graph.EdgeReads, "users")
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#SearchUsers", graph.EdgeReads, "users.name")
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#SearchUsers", graph.EdgeReads, "users.id")
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#SearchUsers", graph.EdgeReads, "users.role")
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#DeleteUsers", graph.EdgeWrites, "users")
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/queries.sql#DeleteUsers", graph.EdgeReads, "users.id")
+}
+
+func TestParserDoesNotGuessAmbiguousUnqualifiedColumns(t *testing.T) {
+	result, err := postgresparser.New().Parse(context.Background(), parserapi.Input{
+		Path: "db/join.sql", RepoID: "repo:sample", Content: []byte(`-- name: Joined :many
+SELECT id, a.name, b.title FROM alpha AS a JOIN beta AS b ON a.key = b.alpha_key;
+`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/join.sql#Joined", graph.EdgeReads, "alpha.name")
+	assertFactFrom(t, result, graph.KindSQLQuery, "db/join.sql#Joined", graph.EdgeReads, "beta.title")
+}
+
 func TestParserReportsInvalidPostgreSQL(t *testing.T) {
 	result, err := postgresparser.New().Parse(context.Background(), parserapi.Input{
 		Path: "broken.sql", Content: []byte("CREATE TABLE missing ("), Repository: "sample",

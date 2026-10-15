@@ -1,0 +1,417 @@
+package sqlcbinding_test
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	parserapi "github.com/cafecito-games/grafo/internal/parser"
+	"github.com/cafecito-games/grafo/internal/parser/sqlcbinding"
+	"github.com/cafecito-games/grafo/internal/testtemp"
+)
+
+func TestLoaderDiscoversNestedV2YAMLAndJSONEntries(t *testing.T) {
+	tests := []struct {
+		name, config, content string
+	}{
+		{name: "yaml scalar paths", config: "services/api/sqlc.yaml", content: `version: "2"
+sql:
+  - engine: sqlite
+    schema: schema.sql
+    queries: queries.sql
+    gen:
+      go:
+        package: database
+        out: generated
+`},
+		{name: "yml list paths", config: "services/api/sqlc.yml", content: `version: "2"
+sql:
+  - engine: postgresql
+    schema: [schema/base.sql]
+    queries: [queries]
+    gen:
+      go: {package: database, out: generated}
+`},
+		{name: "json", config: "services/api/sqlc.json", content: `{"version":"2","sql":[{"engine":"sqlite","schema":"schema.sql","queries":"queries.sql","gen":{"go":{"package":"database","out":"generated"}}}]}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := testtemp.Dir(t)
+			files := map[string]string{
+				test.config:                      test.content,
+				"services/api/schema.sql":        "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);",
+				"services/api/schema/base.sql":   "CREATE TABLE users (id bigint PRIMARY KEY, name text);",
+				"services/api/queries.sql":       "-- name: GetUser :one\nSELECT id, name FROM users WHERE id = sqlc.arg(id);",
+				"services/api/queries/users.sql": "-- name: GetUser :one\nSELECT id, name FROM users WHERE id = sqlc.arg(id);",
+			}
+			paths := writeFiles(t, root, files)
+			registry, err := sqlcbinding.NewLoader().Load(context.Background(), parserapi.Input{
+				Root: root, SourcePaths: paths, RepoID: "repo:sample", GoModule: "example.com/sample",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			config, ok := registry.Config(test.config)
+			if !ok || hasUnexpectedDiagnostic(config, "has no indexed generated query files") {
+				t.Fatalf("config = %#v, ok = %v", config, ok)
+			}
+			queryPath := "services/api/queries.sql"
+			if strings.Contains(test.content, "queries]") {
+				queryPath = "services/api/queries/users.sql"
+			}
+			entries := registry.EntriesForQuery(queryPath)
+			if len(entries) != 1 {
+				t.Fatalf("entries for %s = %#v", queryPath, entries)
+			}
+			wantEngine := "sqlite"
+			if strings.Contains(test.content, "postgresql") {
+				wantEngine = "postgres"
+			}
+			if entries[0].Engine != wantEngine || entries[0].Go.Package != "database" || entries[0].Go.Out != "services/api/generated" {
+				t.Fatalf("entry = %#v", entries[0])
+			}
+			if query, ok := registry.Query(queryPath, "GetUser"); !ok || query.Command != ":one" {
+				t.Fatalf("query = %#v, ok = %v", query, ok)
+			}
+		})
+	}
+}
+
+func TestLoaderRejectsDuplicateNamesWithinOneEntry(t *testing.T) {
+	root := testtemp.Dir(t)
+	paths := writeFiles(t, root, map[string]string{
+		"sqlc.yaml": `version: "2"
+sql:
+  - engine: sqlite
+    schema: schema.sql
+    queries: queries
+    gen: {go: {package: db, out: generated}}
+`,
+		"schema.sql":    "CREATE TABLE users (id INTEGER PRIMARY KEY);",
+		"queries/a.sql": "-- name: Same :one\nSELECT id FROM users;",
+		"queries/b.sql": "-- name: Same :many\nSELECT id FROM users;",
+	})
+	registry, err := sqlcbinding.NewLoader().Load(context.Background(), parserapi.Input{Root: root, SourcePaths: paths})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := registry.Query("queries/a.sql", "Same"); ok {
+		t.Fatal("duplicate query remained binding-eligible")
+	}
+	config, _ := registry.Config("sqlc.yaml")
+	if !strings.Contains(diagnostics(config), "duplicated") {
+		t.Fatalf("diagnostics = %q", diagnostics(config))
+	}
+}
+
+func TestLoaderRejectsDuplicateNamesWithinOneQueryFile(t *testing.T) {
+	root := testtemp.Dir(t)
+	paths := writeFiles(t, root, map[string]string{
+		"sqlc.yaml": `version: "2"
+sql:
+  - engine: sqlite
+    schema: schema.sql
+    queries: queries.sql
+    gen: {go: {package: db, out: generated}}
+`,
+		"schema.sql":  "CREATE TABLE users (id INTEGER PRIMARY KEY);",
+		"queries.sql": "-- name: Same :one\nSELECT id FROM users;\n-- name: Same :many\nSELECT id FROM users;",
+	})
+	registry, err := sqlcbinding.NewLoader().Load(context.Background(), parserapi.Input{Root: root, SourcePaths: paths})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := registry.Query("queries.sql", "Same"); ok {
+		t.Fatal("duplicate query in one file remained binding-eligible")
+	}
+	config, _ := registry.Config("sqlc.yaml")
+	if !strings.Contains(diagnostics(config), "duplicate sqlc query name") {
+		t.Fatalf("diagnostics = %q", diagnostics(config))
+	}
+}
+
+func TestLoaderRejectsUnsupportedAndEscapingConfiguration(t *testing.T) {
+	root := testtemp.Dir(t)
+	paths := writeFiles(t, root, map[string]string{
+		"sqlc.yaml": `version: "1"
+sql:
+  - engine: mysql
+    schema: /outside/schema.sql
+    queries: ../outside.sql
+    gen:
+      go: {package: db, out: ../generated}
+`,
+	})
+	registry, err := sqlcbinding.NewLoader().Load(context.Background(), parserapi.Input{Root: root, SourcePaths: paths})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, ok := registry.Config("sqlc.yaml")
+	if !ok || len(config.Diagnostics) == 0 {
+		t.Fatalf("expected rejected config diagnostics, got %#v", config)
+	}
+	joined := diagnostics(config)
+	if !strings.Contains(joined, "version 2") {
+		t.Fatalf("diagnostics = %q", joined)
+	}
+	if len(registry.EntriesForQuery("outside.sql")) != 0 {
+		t.Fatal("escaping configuration produced an entry")
+	}
+}
+
+func TestLoaderBindsCorroboratedGeneratedGoMethod(t *testing.T) {
+	root := testtemp.Dir(t)
+	paths := writeFiles(t, root, map[string]string{
+		"sqlc.yaml": `version: "2"
+sql:
+  - engine: sqlite
+    schema: schema.sql
+    queries: queries.sql
+    gen:
+      go:
+        package: db
+        out: internal/db
+        emit_prepared_queries: true
+        emit_exported_queries: true
+`,
+		"schema.sql":  "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);",
+		"queries.sql": "-- name: GetUser :one\nSELECT id, name FROM users WHERE id = sqlc.arg(id);",
+		"internal/db/queries.sql.go": `// Code generated by sqlc. DO NOT EDIT.
+// versions:
+//   sqlc v1.31.1
+// source: queries.sql
+
+package db
+
+import "context"
+
+const GetUserSQL = ` + "`" + `SELECT id, name FROM users WHERE id = ?` + "`" + `
+
+type Queries struct{}
+func (q *Queries) GetUser(ctx context.Context, id int64) { q.queryRow(ctx, GetUserSQL, id) }
+func (q *Queries) queryRow(context.Context, string, ...any) {}
+`,
+	})
+	registry, err := sqlcbinding.NewLoader().Load(context.Background(), parserapi.Input{
+		Root: root, SourcePaths: paths, RepoID: "repo:sample", GoModule: "example.com/sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings := registry.BindingsForQuery("queries.sql", "GetUser")
+	if len(bindings) != 1 {
+		t.Fatalf("bindings = %#v; diagnostics = %s", bindings, diagnosticsForRegistry(registry))
+	}
+	binding := bindings[0]
+	if binding.Method != "example.com/sample/internal/db.Queries.GetUser" || binding.GeneratedPath != "internal/db/queries.sql.go" || binding.Constant != "GetUserSQL" {
+		t.Fatalf("binding = %#v", binding)
+	}
+}
+
+func TestLoaderBindsPostgreSQLPgxGeneratedMethod(t *testing.T) {
+	root := testtemp.Dir(t)
+	paths := writeFiles(t, root, map[string]string{
+		"sqlc.yaml": `version: "2"
+sql:
+  - engine: postgresql
+    schema: schema.sql
+    queries: queries.sql
+    gen:
+      go:
+        package: pgdb
+        out: internal/pgdb
+        sql_package: pgx/v5
+        emit_prepared_queries: true
+`,
+		"schema.sql":  "CREATE TABLE users (id bigint PRIMARY KEY, name text);",
+		"queries.sql": "-- name: GetUser :one\nSELECT id, name FROM users WHERE id = sqlc.arg(id);",
+		"internal/pgdb/queries.sql.go": `// Code generated by sqlc. DO NOT EDIT.
+// versions:
+//   sqlc v1.31.1
+// source: queries.sql
+package pgdb
+import "context"
+const getUser = ` + "`" + `SELECT id, name FROM users WHERE id = $1` + "`" + `
+type Queries struct{}
+func (q *Queries) GetUser(ctx context.Context, id int64) { q.queryRow(ctx, getUser, id) }
+`,
+	})
+	registry, err := sqlcbinding.NewLoader().Load(context.Background(), parserapi.Input{
+		Root: root, SourcePaths: paths, GoModule: "example.com/sample",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings := registry.BindingsForQuery("queries.sql", "GetUser")
+	if len(bindings) != 1 || bindings[0].Method != "example.com/sample/internal/pgdb.Queries.GetUser" {
+		t.Fatalf("bindings = %#v; diagnostics = %s", bindings, diagnosticsForRegistry(registry))
+	}
+}
+
+func TestLoaderDropsAndRestoresBindingsAsEvidenceChanges(t *testing.T) {
+	root := testtemp.Dir(t)
+	files := map[string]string{
+		"sqlc.yaml": `version: "2"
+sql:
+  - engine: sqlite
+    schema: schema.sql
+    queries: queries.sql
+    gen: {go: {package: db, out: internal/db}}
+`,
+		"schema.sql":  "CREATE TABLE users (id INTEGER PRIMARY KEY);",
+		"queries.sql": "-- name: GetUser :one\nSELECT id FROM users WHERE id = sqlc.arg(id);",
+		"internal/db/queries.sql.go": `// Code generated by sqlc. DO NOT EDIT.
+// source: queries.sql
+package db
+const getUser = ` + "`" + `SELECT id FROM users WHERE id = ?` + "`" + `
+type Queries struct{}; func (q *Queries) GetUser() { q.row(getUser) }
+`,
+	}
+	paths := writeFiles(t, root, files)
+	loader := sqlcbinding.NewLoader()
+	load := func(sourcePaths []string) sqlcbinding.Registry {
+		t.Helper()
+		registry, err := loader.Load(context.Background(), parserapi.Input{Root: root, SourcePaths: sourcePaths, GoModule: "example.com/sample"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return registry
+	}
+	if got := load(paths).BindingsForQuery("queries.sql", "GetUser"); len(got) != 1 {
+		t.Fatalf("initial bindings = %#v", got)
+	}
+	generatedPath := filepath.Join(root, "internal/db/queries.sql.go")
+	if err := os.WriteFile(generatedPath, []byte(strings.ReplaceAll(files["internal/db/queries.sql.go"], "SELECT id", "SELECT missing")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := load(paths).BindingsForQuery("queries.sql", "GetUser"); len(got) != 0 {
+		t.Fatalf("stale generated edit retained bindings: %#v", got)
+	}
+	if err := os.Remove(filepath.Join(root, "sqlc.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	withoutConfig := make([]string, 0, len(paths)-1)
+	for _, path := range paths {
+		if path != "sqlc.yaml" {
+			withoutConfig = append(withoutConfig, path)
+		}
+	}
+	if got := load(withoutConfig).BindingsForQuery("queries.sql", "GetUser"); len(got) != 0 {
+		t.Fatalf("removed config retained bindings: %#v", got)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sqlc.yaml"), []byte(files["sqlc.yaml"]), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(generatedPath, []byte(files["internal/db/queries.sql.go"]), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := load(paths).BindingsForQuery("queries.sql", "GetUser"); len(got) != 1 {
+		t.Fatalf("restored evidence did not restore binding: %#v", got)
+	}
+}
+
+func TestLoaderRejectsStaleForgedAndUnusedGeneratedEvidence(t *testing.T) {
+	tests := []struct {
+		name, generated string
+	}{
+		{name: "missing header", generated: `package db
+const getUser = ` + "`" + `SELECT id FROM users WHERE id = ?` + "`" + `
+type Queries struct{}; func (q *Queries) GetUser() { q.row(getUser) }
+`},
+		{name: "header text in body", generated: `// handwritten file
+package db
+const fakeHeader = "// Code generated by sqlc. DO NOT EDIT."
+// source: queries.sql
+const getUser = ` + "`" + `SELECT id FROM users WHERE id = ?` + "`" + `
+type Queries struct{}; func (q *Queries) GetUser() { q.row(getUser) }
+`},
+		{name: "stale sql", generated: `// Code generated by sqlc. DO NOT EDIT.
+// source: queries.sql
+package db
+const getUser = ` + "`" + `SELECT name FROM users WHERE id = ?` + "`" + `
+type Queries struct{}; func (q *Queries) GetUser() { q.row(getUser) }
+`},
+		{name: "unused constant", generated: `// Code generated by sqlc. DO NOT EDIT.
+// source: queries.sql
+package db
+const getUser = ` + "`" + `SELECT id FROM users WHERE id = ?` + "`" + `
+type Queries struct{}; func (q *Queries) GetUser() { q.row("different") }
+`},
+		{name: "wrong package", generated: `// Code generated by sqlc. DO NOT EDIT.
+// source: queries.sql
+package wrong
+const getUser = ` + "`" + `SELECT id FROM users WHERE id = ?` + "`" + `
+type Queries struct{}; func (q *Queries) GetUser() { q.row(getUser) }
+`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := testtemp.Dir(t)
+			paths := writeFiles(t, root, map[string]string{
+				"sqlc.yaml": `version: "2"
+sql:
+  - engine: sqlite
+    schema: schema.sql
+    queries: queries.sql
+    gen: {go: {package: db, out: internal/db}}
+`,
+				"schema.sql":                 "CREATE TABLE users (id INTEGER PRIMARY KEY);",
+				"queries.sql":                "-- name: GetUser :one\nSELECT id FROM users WHERE id = sqlc.arg(id);",
+				"internal/db/queries.sql.go": test.generated,
+			})
+			registry, err := sqlcbinding.NewLoader().Load(context.Background(), parserapi.Input{Root: root, SourcePaths: paths, GoModule: "example.com/sample"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := registry.BindingsForQuery("queries.sql", "GetUser"); len(got) != 0 {
+				t.Fatalf("rejected evidence produced bindings: %#v", got)
+			}
+			if diagnosticsForRegistry(registry) == "" {
+				t.Fatal("rejected evidence was not explicit")
+			}
+		})
+	}
+}
+
+func writeFiles(t *testing.T, root string, files map[string]string) []string {
+	t.Helper()
+	paths := make([]string, 0, len(files))
+	for path, content := range files {
+		full := filepath.Join(root, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+func diagnostics(config sqlcbinding.Config) string {
+	var messages []string
+	for _, diagnostic := range config.Diagnostics {
+		messages = append(messages, diagnostic.Message)
+	}
+	return strings.Join(messages, "\n")
+}
+
+func diagnosticsForRegistry(registry sqlcbinding.Registry) string {
+	var messages []string
+	for _, config := range registry.Configs() {
+		messages = append(messages, diagnostics(config))
+	}
+	return strings.Join(messages, "\n")
+}
+
+func hasUnexpectedDiagnostic(config sqlcbinding.Config, allowed string) bool {
+	for _, diagnostic := range config.Diagnostics {
+		if !strings.Contains(diagnostic.Message, allowed) {
+			return true
+		}
+	}
+	return false
+}

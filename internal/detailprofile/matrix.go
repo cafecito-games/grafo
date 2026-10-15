@@ -380,7 +380,8 @@ func producerEvidence() []Evidence {
 		{"java", "internal/parser/java/java.go", 21}, {"manifest", "internal/parser/manifest/manifest.go", 22},
 		{"markdown", "internal/parser/markdown/markdown.go", 32}, {"protobuf", "internal/parser/protobuf/protobuf.go", 24},
 		{"protobufbinding", "internal/parser/protobufbinding/parser.go", 21}, {"python", "internal/parser/python/python.go", 20},
-		{"sql", "internal/parser/sql/router.go", 76}, {"swift", "internal/parser/swift/swift.go", 21},
+		{"sql", "internal/parser/sql/router.go", 76}, {"sqlcbinding", "internal/parser/sqlcbinding/parser.go", 23},
+		{"swift", "internal/parser/swift/swift.go", 21},
 		{"typescript", "internal/parser/typescript/typescript.go", 40}, {"indexer", "internal/indexer/service.go", 465},
 	}
 	result := make([]Evidence, 0, len(values))
@@ -402,7 +403,7 @@ func operationEvidence() []Operation {
 	}{
 		{"find", []Capability{CapabilityStructural}, "internal/query/service.go", 126},
 		{"show", []Capability{CapabilityStructural}, "internal/query/service.go", 140},
-		{"source", []Capability{CapabilityStructural, CapabilitySourceLookup}, "internal/source/service.go", 63},
+		{"source", []Capability{CapabilityStructural, CapabilitySourceLookup}, "internal/source/service.go", 67},
 		{"neighbors", []Capability{CapabilityStructural}, "internal/query/service.go", 339},
 		{"callers", []Capability{CapabilityStructural}, "internal/query/service.go", 339},
 		{"callees", []Capability{CapabilityStructural}, "internal/query/service.go", 339},

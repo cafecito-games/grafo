@@ -120,6 +120,7 @@ func TestIsDeclarationMemberClassifiesTheWholeVocabulary(t *testing.T) {
 		graph.KindType:       false,
 		graph.KindClass:      false,
 		graph.KindInterface:  false,
+		graph.KindSQLQuery:   false,
 		graph.KindTable:      false,
 		graph.KindView:       false,
 		// An index carries its own top-level qualified name, not "table.index".

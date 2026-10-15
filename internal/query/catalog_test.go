@@ -96,6 +96,27 @@ func TestDataResourceUsageSeparatesReadersAndWriters(t *testing.T) {
 	}
 }
 
+func TestDataResourceUsagePresentsCanonicalSQLQueryAsUsageSite(t *testing.T) {
+	repository := newCatalogFixture()
+	repository.add("checkout", graph.Node{ID: "n:list-orders-query", Kind: graph.KindSQLQuery, Name: "ListOrders",
+		QualifiedName: "queries/orders.sql#ListOrders", Language: "sqlite",
+		Location: graph.Location{Path: "queries/orders.sql", Line: 4}})
+	repository.edges = append(repository.edges, graph.Edge{ID: "e:query-read", FactID: "f:query-read",
+		FromID: "n:list-orders-query", ToID: "n:orders", Kind: graph.EdgeReads,
+		Location: graph.Location{Path: "queries/orders.sql", Line: 5}})
+
+	usage, err := query.NewCatalog(repository).DataResourceUsage(context.Background(), "orders", query.CatalogOptions{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, reader := range usage.Readers {
+		if reader.Node.Kind == graph.KindSQLQuery && reader.Node.QualifiedName == "queries/orders.sql#ListOrders" && reader.Location.Line == 5 {
+			return
+		}
+	}
+	t.Fatalf("canonical SQL query missing from readers: %#v", usage.Readers)
+}
+
 func TestDataResourceUsageRequiresAnUnambiguousName(t *testing.T) {
 	repository := newCatalogFixture()
 	repository.add("checkout", graph.Node{ID: "n:stock-billing", Kind: graph.KindTable, Name: "stock",

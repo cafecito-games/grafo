@@ -150,3 +150,50 @@ func TestReadKindNarrowsResolution(t *testing.T) {
 		t.Fatalf("unexpected excerpt: %#v", excerpt)
 	}
 }
+
+func TestGeneratedSQLMethodReadsCanonicalQueryUnlessIDIsExplicit(t *testing.T) {
+	ctx := context.Background()
+	root := testtemp.Dir(t)
+	if err := os.MkdirAll(filepath.Join(root, "db"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "db", "queries.sql"), []byte("-- name: GetUser :one\nSELECT id FROM users WHERE id = ?;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "db", "queries.sql.go"), []byte("package db\n\nfunc (q *Queries) GetUser() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repository, err := sqlite.Open(ctx, filepath.Join(testtemp.Dir(t), "graph.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = repository.Close() }()
+	method := graph.Node{ID: "n:generated", Kind: graph.KindMethod, Name: "GetUser", QualifiedName: "example/db.Queries.GetUser",
+		OwnerFile: "db/queries.sql.go", Location: graph.Location{Path: "db/queries.sql.go", Line: 3, Column: 1, EndLine: 3}}
+	queryNode := graph.Node{ID: "n:query", Kind: graph.KindSQLQuery, Name: "GetUser", QualifiedName: "db/queries.sql#GetUser",
+		OwnerFile: "db/queries.sql", Location: graph.Location{Path: "db/queries.sql", Line: 1, Column: 10, EndLine: 2}}
+	if err := repository.ReplaceOwner(ctx, "db/queries.sql", graph.ParseResult{Nodes: []graph.Node{method, queryNode}, Facts: []graph.Fact{{
+		ID: "f:binding", FromID: method.ID, Kind: graph.EdgeGeneratedFrom, TargetID: queryNode.ID, OwnerFile: "db/queries.sql",
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	service := sourcecontext.NewService(repository, sourcecontext.NewSingleProjectLocator(repository,
+		indexer.Project{Root: root, Name: "sample", Branch: "main"}))
+	canonical, err := service.Read(ctx, method.QualifiedName, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canonical.Node.ID != queryNode.ID || canonical.GeneratedNode == nil || canonical.GeneratedNode.ID != method.ID || canonical.Path != "db/queries.sql" {
+		t.Fatalf("canonical excerpt = %#v", canonical)
+	}
+	explicit, err := service.Read(ctx, method.ID, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if explicit.Node.ID != method.ID || explicit.GeneratedNode != nil || explicit.Path != "db/queries.sql.go" {
+		t.Fatalf("explicit generated excerpt = %#v", explicit)
+	}
+}
