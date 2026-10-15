@@ -455,6 +455,7 @@ func TestRouterDoesNotExpandQualifiedColumnsFromNonTableSource(t *testing.T) {
 	}{
 		{name: "cte shadows table", format: "WITH users AS (SELECT id FROM public.users) SELECT %s FROM users;"},
 		{name: "derived alias shadows table", format: "SELECT %s FROM (SELECT id FROM public.users) AS users;"},
+		{name: "join alias shadows table", format: "SELECT %s FROM (public.users u JOIN public.orders o USING (id)) AS users;"},
 	}
 	forms := []struct {
 		name, expression, diagnostic string
@@ -475,7 +476,7 @@ sql:
     queries: queries.sql
     gen: {go: {package: db, out: internal/db}}
 `,
-					"schema.sql":  "CREATE TABLE public.users (id bigint PRIMARY KEY, name text, email text);",
+					"schema.sql":  "CREATE TABLE public.users (id bigint PRIMARY KEY, name text, email text); CREATE TABLE public.orders (id bigint PRIMARY KEY, user_id bigint);",
 					"queries.sql": "-- name: ListRows :many\n" + fmt.Sprintf(source.format, form.expression),
 				})
 				content, err := os.ReadFile(filepath.Join(root, "queries.sql"))

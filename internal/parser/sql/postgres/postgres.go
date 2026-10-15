@@ -380,6 +380,10 @@ func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 			hasNonTableSource = true
 		}
 		switch value := message.Interface().(type) {
+		case *pg_query.JoinExpr:
+			if value.GetAlias() != nil && value.GetAlias().GetAliasname() != "" {
+				hasNonTableSource = true
+			}
 		case *pg_query.RangeVar:
 			if value.GetSchemaname() == "" && cteNames[strings.ToLower(value.GetRelname())] {
 				break
