@@ -154,7 +154,7 @@ func (r Registry) SchemaColumnsForQuery(queryPath, table string) (string, []stri
 	found := false
 	for _, entry := range r.EntriesForQuery(queryPath) {
 		tables := r.schemas[entryKey(entry)]
-		resolved, candidate, ok := schemaColumns(tables, table)
+		resolved, candidate, ok := schemaColumns(tables, table, entry.Engine)
 		if !ok {
 			return "", nil, false
 		}
@@ -710,24 +710,45 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 	return result
 }
 
-func schemaColumns(tables map[string]schemaTable, selector string) (string, []string, bool) {
+func schemaColumns(tables map[string]schemaTable, selector, engine string) (string, []string, bool) {
 	if table, ok := tables[selector]; ok && !table.ambiguous && !table.incomplete && len(table.columns) > 0 {
 		return selector, table.columns, true
 	}
-	if strings.Contains(selector, ".") {
+	selectorSchema, selectorName := splitTableName(selector)
+	defaultSchema := ""
+	switch engine {
+	case "postgres":
+		defaultSchema = "public"
+	case "sqlite":
+		defaultSchema = "main"
+	}
+	if selectorSchema != "" && !strings.EqualFold(selectorSchema, defaultSchema) {
 		return "", nil, false
 	}
 	var matched schemaTable
 	qualified := ""
 	count := 0
 	for candidate, table := range tables {
-		if graph.SimpleName(candidate) == graph.SimpleName(selector) {
-			matched = table
-			qualified = candidate
-			count++
+		candidateSchema, candidateName := splitTableName(candidate)
+		if !strings.EqualFold(candidateName, selectorName) {
+			continue
 		}
+		if candidateSchema != "" && !strings.EqualFold(candidateSchema, defaultSchema) {
+			continue
+		}
+		matched = table
+		qualified = candidate
+		count++
 	}
 	return qualified, matched.columns, count == 1 && !matched.ambiguous && !matched.incomplete && len(matched.columns) > 0
+}
+
+func splitTableName(name string) (string, string) {
+	index := strings.LastIndexByte(name, '.')
+	if index < 0 {
+		return "", name
+	}
+	return name[:index], name[index+1:]
 }
 
 func buildEntry(config *Config, index int, raw rawEntry, paths []string, contents map[string]fileContent) Entry {
@@ -1072,7 +1093,7 @@ func equivalentSQL(handwritten, generated, dialect string, schemas map[string]sc
 		if !macro.Embed {
 			continue
 		}
-		_, columns, ok := schemaForEmbed(schemas, handwritten, macro.Argument)
+		_, columns, ok := schemaForEmbed(schemas, handwritten, macro.Argument, dialect)
 		if !ok {
 			return false
 		}
@@ -1099,7 +1120,7 @@ func expandProjectionWildcards(source, dialect string, schemas map[string]schema
 	expanded := []byte(source)
 	for index := len(document.Wildcards) - 1; index >= 0; index-- {
 		wildcard := document.Wildcards[index]
-		_, columns, ok := schemaForWildcard(schemas, source, wildcard.Qualifier)
+		_, columns, ok := schemaForWildcard(schemas, source, wildcard.Qualifier, dialect)
 		if !ok {
 			return "", false
 		}
@@ -1117,15 +1138,15 @@ func expandProjectionWildcards(source, dialect string, schemas map[string]schema
 	return string(expanded), true
 }
 
-func schemaForWildcard(schemas map[string]schemaTable, statement, qualifier string) (string, []string, bool) {
+func schemaForWildcard(schemas map[string]schemaTable, statement, qualifier, dialect string) (string, []string, bool) {
 	if qualifier != "" {
-		return schemaForEmbed(schemas, statement, qualifier)
+		return schemaForEmbed(schemas, statement, qualifier, dialect)
 	}
 	pattern := regexp.MustCompile(`(?i)(?:\bfrom|\bjoin)\s+([A-Za-z0-9_."` + "`" + `]+)`)
 	resolved := map[string][]string{}
 	for _, match := range pattern.FindAllStringSubmatch(statement, -1) {
 		selector := strings.Trim(match[1], "\"`")
-		qualified, columns, ok := schemaColumns(schemas, selector)
+		qualified, columns, ok := schemaColumns(schemas, selector, dialect)
 		if ok {
 			resolved[qualified] = columns
 		}
@@ -1139,8 +1160,8 @@ func schemaForWildcard(schemas map[string]schemaTable, statement, qualifier stri
 	return "", nil, false
 }
 
-func schemaForEmbed(schemas map[string]schemaTable, statement, argument string) (string, []string, bool) {
-	if qualified, columns, ok := schemaColumns(schemas, argument); ok {
+func schemaForEmbed(schemas map[string]schemaTable, statement, argument, dialect string) (string, []string, bool) {
+	if qualified, columns, ok := schemaColumns(schemas, argument, dialect); ok {
 		return qualified, columns, true
 	}
 	pattern := regexp.MustCompile(`(?i)(?:\bfrom|\bjoin)\s+([A-Za-z0-9_."` + "`" + `]+)(?:\s+as)?\s+` + regexp.QuoteMeta(argument) + `\b`)
@@ -1149,7 +1170,7 @@ func schemaForEmbed(schemas map[string]schemaTable, statement, argument string) 
 		return "", nil, false
 	}
 	declared := strings.Trim(matches[0][1], "\"`")
-	return schemaColumns(schemas, declared)
+	return schemaColumns(schemas, declared, dialect)
 }
 
 func comparableSQL(source string) string {

@@ -44,23 +44,28 @@ func TestEquivalentSQLExpandsProjectionWildcardFromSchema(t *testing.T) {
 	}
 }
 
-func TestSchemaColumnsDoesNotGuessQualifiedSelector(t *testing.T) {
-	tables := map[string]schemaTable{
-		"users": {columns: []string{"id", "name"}},
-	}
+func TestSchemaColumnsRequiresExactOrDefaultSchema(t *testing.T) {
 	tests := []struct {
 		name, selector string
+		tables         map[string]schemaTable
 		wantOK         bool
 	}{
-		{name: "unqualified", selector: "users", wantOK: true},
-		{name: "unknown qualified schema", selector: "audit.users", wantOK: false},
+		{name: "unqualified exact", selector: "users", tables: schemaTables("users"), wantOK: true},
+		{name: "qualified non-default selector", selector: "audit.users", tables: schemaTables("users"), wantOK: false},
+		{name: "unqualified selector with non-default table", selector: "users", tables: schemaTables("audit.users"), wantOK: false},
+		{name: "unqualified selector with default table", selector: "users", tables: schemaTables("public.users"), wantOK: true},
+		{name: "default selector with unqualified table", selector: "public.users", tables: schemaTables("users"), wantOK: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, _, ok := schemaColumns(tables, test.selector)
+			_, _, ok := schemaColumns(test.tables, test.selector, "postgres")
 			if ok != test.wantOK {
 				t.Fatalf("schemaColumns(%q) ok = %v, want %v", test.selector, ok, test.wantOK)
 			}
 		})
 	}
+}
+
+func schemaTables(name string) map[string]schemaTable {
+	return map[string]schemaTable{name: {columns: []string{"id", "name"}}}
 }
