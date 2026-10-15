@@ -316,7 +316,7 @@ func (r *Router) SemanticAffectedPaths(root string, allPaths, changedPaths []str
 		return queries
 	}
 	for _, changed := range changedPaths {
-		if !sqlcbinding.IsSemanticInput(changed) {
+		if !sqlcbinding.IsBindingInput(changed) {
 			continue
 		}
 		var result []string
@@ -410,7 +410,7 @@ func addGeneratedBindings(result *graph.ParseResult, input parserapi.Input, regi
 			ordinal++
 			properties := map[string]string{
 				"generator": binding.Generator, "generator_version": binding.GeneratorVersion,
-				"adapter_version": "1", "config_path": binding.ConfigPath,
+				"adapter_version": sqlcbinding.AdapterVersion, "config_path": binding.ConfigPath,
 				"config_entry": fmt.Sprint(binding.Entry), "generated_path": binding.GeneratedPath,
 				"query_constant": binding.Constant,
 			}

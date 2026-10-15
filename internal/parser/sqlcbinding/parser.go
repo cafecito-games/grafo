@@ -54,7 +54,7 @@ func (p *Parser) SemanticAffectedPaths(root string, allPaths, changedPaths []str
 		return configs
 	}
 	for _, changed := range changedPaths {
-		if !IsSemanticInput(changed) {
+		if !IsBindingInput(changed) {
 			continue
 		}
 		var result []string

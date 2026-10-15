@@ -724,7 +724,7 @@
           "column": 1
         },
         "properties": {
-          "adapter_version": "1",
+          "adapter_version": "2",
           "config_entry": "0",
           "config_path": "sqlc.yaml",
           "generated_path": "internal/db/queries.sql.go",
@@ -1167,7 +1167,7 @@
               "column": 1
             },
             "properties": {
-              "adapter_version": "1",
+              "adapter_version": "2",
               "config_entry": "0",
               "config_path": "sqlc.yaml",
               "generated_path": "internal/db/queries.sql.go",

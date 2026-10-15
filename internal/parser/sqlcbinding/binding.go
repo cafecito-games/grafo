@@ -31,7 +31,7 @@ import (
 )
 
 const (
-	adapterVersion       = "2"
+	AdapterVersion       = "2"
 	workspaceSemanticKey = "sqlc-binding-workspace-v2"
 	defaultMaxFileSize   = int64(5 << 20)
 )
@@ -227,7 +227,7 @@ func (l *Loader) FileSemanticKey(ctx context.Context, input parserapi.Input) (st
 	if err != nil {
 		return "", err
 	}
-	return "sqlc-binding-v" + adapterVersion + ":" + registry.Digest, nil
+	return "sqlc-binding-v" + AdapterVersion + ":" + registry.Digest, nil
 }
 
 // AffectedPaths derives the exact config and query files whose binding evidence
@@ -313,6 +313,10 @@ func IsConfigPath(filePath string) bool {
 }
 
 func IsSemanticInput(filePath string) bool {
+	return IsConfigPath(filePath)
+}
+
+func IsBindingInput(filePath string) bool {
 	extension := strings.ToLower(filepath.Ext(filePath))
 	return IsConfigPath(filePath) || isSQLSourceExtension(extension) || extension == ".go" || clean(filePath) == "go.mod"
 }
@@ -416,7 +420,7 @@ func relevantFiles(ctx context.Context, input parserapi.Input) ([]fileContent, s
 		}
 		_, _ = hash.Write([]byte{0})
 	}
-	_, _ = hash.Write([]byte(adapterVersion))
+	_, _ = hash.Write([]byte(AdapterVersion))
 	_, _ = hash.Write([]byte{0})
 	_, _ = hash.Write([]byte(input.GoModule))
 	return files, hex.EncodeToString(hash.Sum(nil)), nil

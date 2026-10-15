@@ -79,6 +79,22 @@ sql:
 	}
 }
 
+func TestSemanticInputOnlyIncludesSqlcConfiguration(t *testing.T) {
+	for _, path := range []string{"sqlc.yaml", "nested/sqlc.yml", "sqlc.json"} {
+		if !sqlcbinding.IsSemanticInput(path) {
+			t.Fatalf("configuration %q is not a semantic input", path)
+		}
+	}
+	for _, path := range []string{"dump.sql", "queries.psql", "generated.go", "go.mod"} {
+		if sqlcbinding.IsSemanticInput(path) {
+			t.Fatalf("ordinary binding input %q was classified as a hidden semantic input", path)
+		}
+		if !sqlcbinding.IsBindingInput(path) {
+			t.Fatalf("ordinary binding input %q was excluded from invalidation", path)
+		}
+	}
+}
+
 func TestLoaderMatchesSqlcDirectoryMembership(t *testing.T) {
 	root := testtemp.Dir(t)
 	paths := writeFiles(t, root, map[string]string{

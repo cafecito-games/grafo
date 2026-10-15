@@ -11,6 +11,10 @@ import (
 	"github.com/cafecito-games/grafo/internal/indexer"
 	parserapi "github.com/cafecito-games/grafo/internal/parser"
 	golangparser "github.com/cafecito-games/grafo/internal/parser/golang"
+	sqlparser "github.com/cafecito-games/grafo/internal/parser/sql"
+	postgresparser "github.com/cafecito-games/grafo/internal/parser/sql/postgres"
+	sqliteparser "github.com/cafecito-games/grafo/internal/parser/sql/sqlite"
+	"github.com/cafecito-games/grafo/internal/parser/sqlcbinding"
 	"github.com/cafecito-games/grafo/internal/parser/typescript"
 	"github.com/cafecito-games/grafo/internal/testtemp"
 )
@@ -158,6 +162,35 @@ func TestFreshnessIgnoresProjectsOutsideGitMembership(t *testing.T) {
 	}
 	if !second.Token.Equal(third.Token) {
 		t.Fatal("hard-excluded project.godot changed freshness")
+	}
+}
+
+func TestFreshnessIgnoresOversizedUnconfiguredSQL(t *testing.T) {
+	t.Parallel()
+	root := testtemp.Dir(t)
+	runGit(t, root, "init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("dump.sql\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sample.sql"), []byte("SELECT 1;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.name=Grafo Test", "-c", "user.email=grafo@example.invalid", "commit", "-m", "initial")
+	if err := os.WriteFile(filepath.Join(root, "dump.sql"), []byte(strings.Repeat("x", 128)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bindings := sqlcbinding.NewLoader()
+	registry := parserapi.NewRegistry(
+		sqlcbinding.New(bindings),
+		sqlparser.NewWithBindingLoader(bindings, postgresparser.New(), sqliteparser.New()),
+	)
+	probe, err := indexer.ProbeFreshness(context.Background(), root, registry, indexer.FreshnessOptions{MaxFileSize: 64})
+	if err != nil {
+		t.Fatalf("oversized unconfigured SQL failed freshness: %v", err)
+	}
+	if !probe.Supported {
+		t.Fatalf("freshness probe unsupported: %#v", probe)
 	}
 }
 
