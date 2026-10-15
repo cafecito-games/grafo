@@ -46,19 +46,25 @@ func TestEquivalentSQLExpandsProjectionWildcardFromSchema(t *testing.T) {
 
 func TestSchemaColumnsRequiresExactOrDefaultSchema(t *testing.T) {
 	tests := []struct {
-		name, selector string
-		tables         map[string]schemaTable
-		wantOK         bool
+		name, selector, engine string
+		tables                 map[string]schemaTable
+		wantOK                 bool
 	}{
-		{name: "unqualified exact", selector: "users", tables: schemaTables("users"), wantOK: true},
-		{name: "qualified non-default selector", selector: "audit.users", tables: schemaTables("users"), wantOK: false},
-		{name: "unqualified selector with non-default table", selector: "users", tables: schemaTables("audit.users"), wantOK: false},
-		{name: "unqualified selector with default table", selector: "users", tables: schemaTables("public.users"), wantOK: true},
-		{name: "default selector with unqualified table", selector: "public.users", tables: schemaTables("users"), wantOK: true},
+		{name: "postgres unqualified exact", selector: "users", engine: "postgres", tables: schemaTables("users"), wantOK: true},
+		{name: "postgres qualified non-default selector", selector: "audit.users", engine: "postgres", tables: schemaTables("users"), wantOK: false},
+		{name: "postgres unqualified selector with non-default table", selector: "users", engine: "postgres", tables: schemaTables("audit.users"), wantOK: false},
+		{name: "postgres unqualified selector with default table", selector: "users", engine: "postgres", tables: schemaTables("public.users"), wantOK: true},
+		{name: "postgres default selector with unqualified table", selector: "public.users", engine: "postgres", tables: schemaTables("users"), wantOK: true},
+		{name: "postgres duplicate default declarations", selector: "PUBLIC.users", engine: "postgres", tables: schemaTables("users", "public.users"), wantOK: false},
+		{name: "postgres multiple non-default declarations", selector: "users", engine: "postgres", tables: schemaTables("audit.users", "other.users"), wantOK: false},
+		{name: "sqlite unqualified selector with default table", selector: "users", engine: "sqlite", tables: schemaTables("main.users"), wantOK: true},
+		{name: "sqlite default selector with unqualified table", selector: "main.users", engine: "sqlite", tables: schemaTables("users"), wantOK: true},
+		{name: "sqlite postgres schema is non-default", selector: "users", engine: "sqlite", tables: schemaTables("public.users"), wantOK: false},
+		{name: "sqlite custom schema is non-default", selector: "users", engine: "sqlite", tables: schemaTables("audit.users"), wantOK: false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, _, ok := schemaColumns(test.tables, test.selector, "postgres")
+			_, _, ok := schemaColumns(test.tables, test.selector, test.engine)
 			if ok != test.wantOK {
 				t.Fatalf("schemaColumns(%q) ok = %v, want %v", test.selector, ok, test.wantOK)
 			}
@@ -66,6 +72,10 @@ func TestSchemaColumnsRequiresExactOrDefaultSchema(t *testing.T) {
 	}
 }
 
-func schemaTables(name string) map[string]schemaTable {
-	return map[string]schemaTable{name: {columns: []string{"id", "name"}}}
+func schemaTables(names ...string) map[string]schemaTable {
+	tables := make(map[string]schemaTable, len(names))
+	for _, name := range names {
+		tables[name] = schemaTable{columns: []string{"id", "name"}}
+	}
+	return tables
 }
