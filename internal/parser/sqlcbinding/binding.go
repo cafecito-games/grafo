@@ -85,13 +85,14 @@ type Config struct {
 }
 
 type Registry struct {
-	Digest   string
-	configs  map[string]*Config
-	entries  map[string][]Entry
-	sqlPaths map[string][]Entry
-	queries  map[string]Query
-	bindings map[string][]Binding
-	schemas  map[string]map[string]schemaTable
+	Digest              string
+	configs             map[string]*Config
+	entries             map[string][]Entry
+	sqlPaths            map[string][]Entry
+	queries             map[string]Query
+	bindings            map[string][]Binding
+	schemas             map[string]map[string]schemaTable
+	invalidEntryQueries map[string]bool
 }
 
 type schemaTable struct {
@@ -536,7 +537,7 @@ type rawEntry struct {
 }
 
 func emptyRegistry(digest string) Registry {
-	return Registry{Digest: digest, configs: map[string]*Config{}, entries: map[string][]Entry{}, sqlPaths: map[string][]Entry{}, queries: map[string]Query{}, bindings: map[string][]Binding{}, schemas: map[string]map[string]schemaTable{}}
+	return Registry{Digest: digest, configs: map[string]*Config{}, entries: map[string][]Entry{}, sqlPaths: map[string][]Entry{}, queries: map[string]Query{}, bindings: map[string][]Binding{}, schemas: map[string]map[string]schemaTable{}, invalidEntryQueries: map[string]bool{}}
 }
 
 func buildRegistry(ctx context.Context, input parserapi.Input, files []fileContent, digest string) Registry {
@@ -593,7 +594,7 @@ func buildRegistry(ctx context.Context, input parserapi.Input, files []fileConte
 				sort.Strings(queryPaths)
 				addDiagnostic(config, config.Path, 1, fmt.Sprintf("sqlc sql[%d] query name %q is duplicated across %s; bindings disabled", index, name, strings.Join(queryPaths, ", ")))
 				for _, queryPath := range queryPaths {
-					delete(registry.queries, queryKey(queryPath, name))
+					registry.invalidEntryQueries[entryQueryKey(entry, queryPath, name)] = true
 				}
 			}
 		}
@@ -659,15 +660,19 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 			line, column int
 		}
 		columns := map[string][]locatedColumn{}
+		declarations := map[string]int{}
 		alteredTables := map[string]bool{}
 		for _, node := range parsed.Nodes {
+			if node.Kind == graph.KindTable {
+				declarations[node.QualifiedName]++
+			}
 			if node.Kind == graph.KindColumn {
 				table := strings.TrimSuffix(node.QualifiedName, "."+node.Name)
 				columns[table] = append(columns[table], locatedColumn{name: node.Name, line: node.Location.Line, column: node.Location.Column})
 			}
 		}
 		for _, fact := range parsed.Facts {
-			if fact.Kind == graph.EdgeWrites && fact.Properties["statement"] == "alter_table" && fact.Target != "" {
+			if fact.Kind == graph.EdgeWrites && fact.Properties["statement"] != "" && fact.Target != "" {
 				alteredTables[fact.Target] = true
 			}
 		}
@@ -687,7 +692,7 @@ func parseSchema(ctx context.Context, config *Config, entry Entry, input parsera
 				result[table] = existing
 				continue
 			}
-			result[table] = schemaTable{columns: names}
+			result[table] = schemaTable{columns: names, ambiguous: declarations[table] > 1}
 		}
 		for table := range alteredTables {
 			value := result[table]
@@ -845,6 +850,8 @@ func parseQueries(registry *Registry, config *Config, entry Entry, file fileCont
 		if existing, ok := registry.queries[key]; ok {
 			if existing.Engine != query.Engine {
 				addDiagnostic(config, file.path, 1, fmt.Sprintf("query %q has conflicting sqlc engines %s and %s", named.Name, existing.Engine, query.Engine))
+				registry.invalidEntryQueries[entryQueryKey(entry, file.path, named.Name)] = true
+				registry.invalidEntryQueries[entryQueryKey(Entry{ConfigPath: existing.ConfigPath, Index: existing.Entry}, existing.Path, existing.Name)] = true
 			}
 			continue
 		}
@@ -914,7 +921,7 @@ func scanGenerated(registry *Registry, config *Config, entry Entry, input parser
 				continue
 			}
 			query, ok := registry.Query(queryPath, method.Name.Name)
-			if !ok {
+			if !ok || registry.invalidEntryQueries[entryQueryKey(entry, queryPath, method.Name.Name)] {
 				continue
 			}
 			references := referencedIdentifiers(method.Body)
@@ -1219,6 +1226,10 @@ func addDiagnostic(config *Config, filePath string, line int, message string) {
 }
 
 func queryKey(filePath, name string) string { return clean(filePath) + "\x00" + strings.ToLower(name) }
+
+func entryQueryKey(entry Entry, filePath, name string) string {
+	return entryKey(entry) + "\x00" + queryKey(filePath, name)
+}
 
 func entryKey(entry Entry) string { return entry.ConfigPath + "\x00" + strconv.Itoa(entry.Index) }
 

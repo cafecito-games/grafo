@@ -329,6 +329,8 @@ func (e *extractor) emitReferences(fromID string, root protoreflect.Message) {
 func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 	writes := map[*pg_query.RangeVar]bool{}
 	altered := map[*pg_query.RangeVar]bool{}
+	mutatedTables := map[string]bool{}
+	droppedTables := map[string]bool{}
 	cteNames := map[string]bool{}
 	hasCTE := false
 	walkMessage(root, func(message protoreflect.Message) {
@@ -419,6 +421,18 @@ func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 			altered[value.GetRelation()] = true
 		case *pg_query.RenameStmt:
 			writes[value.GetRelation()] = true
+			if table := relationName(value.GetRelation()); table != "" {
+				mutatedTables[table] = true
+			}
+		case *pg_query.DropStmt:
+			if value.GetRemoveType() == pg_query.ObjectType_OBJECT_TABLE {
+				for _, object := range value.GetObjects() {
+					if table := postgresObjectName(object); table != "" {
+						droppedTables[table] = true
+						mutatedTables[table] = true
+					}
+				}
+			}
 		}
 	})
 	seen := map[string]bool{}
@@ -439,8 +453,18 @@ func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 		var properties map[string]string
 		if altered[relation] {
 			properties = map[string]string{"statement": "alter_table"}
+		} else if mutatedTables[qualified] {
+			properties = map[string]string{"statement": "schema_mutation"}
 		}
 		e.b.AddFact(fromID, kind, "", qualified, "", e.location(relation.GetLocation(), 0), properties)
+	}
+	for table := range droppedTables {
+		key := string(graph.EdgeWrites) + "\x00" + table
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		e.b.AddFact(fromID, graph.EdgeWrites, "", table, "", e.location(0, 0), map[string]string{"statement": "schema_mutation"})
 	}
 	emitColumn := func(kind graph.EdgeKind, qualified string, location int32) {
 		if qualified == "" {
@@ -480,6 +504,20 @@ func (e *extractor) emitAccesses(fromID string, root protoreflect.Message) {
 	for _, write := range columnWrites {
 		emitColumn(graph.EdgeWrites, write.table+"."+write.column, write.location)
 	}
+}
+
+func postgresObjectName(node *pg_query.Node) string {
+	if node == nil || node.GetList() == nil {
+		return ""
+	}
+	var parts []string
+	for _, item := range node.GetList().GetItems() {
+		if item.GetString_() == nil || item.GetString_().GetSval() == "" {
+			return ""
+		}
+		parts = append(parts, item.GetString_().GetSval())
+	}
+	return strings.Join(parts, ".")
 }
 
 func postgresColumnParts(reference *pg_query.ColumnRef) ([]string, bool) {

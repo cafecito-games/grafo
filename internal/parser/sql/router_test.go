@@ -404,6 +404,50 @@ sql:
 	}
 }
 
+func TestRouterDoesNotExpandWildcardAcrossPostgreSQLSchemaMutations(t *testing.T) {
+	tests := []struct {
+		name, schema, query string
+	}{
+		{name: "rename column", schema: "CREATE TABLE users (id bigint PRIMARY KEY, name text); ALTER TABLE users RENAME COLUMN name TO full_name;", query: "SELECT * FROM users;"},
+		{name: "rename table", schema: "CREATE TABLE users (id bigint PRIMARY KEY, name text); ALTER TABLE users RENAME TO members;", query: "SELECT * FROM members;"},
+		{name: "drop and recreate", schema: "CREATE TABLE users (id bigint PRIMARY KEY, old_name text); DROP TABLE users; CREATE TABLE users (id bigint PRIMARY KEY, new_name text);", query: "SELECT * FROM users;"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := testtemp.Dir(t)
+			writeRouterFiles(t, root, map[string]string{
+				"sqlc.yaml": `version: "2"
+sql:
+  - engine: postgresql
+    schema: schema.sql
+    queries: queries.sql
+    gen: {go: {package: db, out: internal/db}}
+`,
+				"schema.sql":  test.schema,
+				"queries.sql": "-- name: ListUsers :many\n" + test.query,
+			})
+			content, err := os.ReadFile(filepath.Join(root, "queries.sql"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := sqlparser.New(postgresparser.New(), sqliteparser.New()).Parse(context.Background(), parserapi.Input{
+				Root: root, Path: "queries.sql", Content: content, SourcePaths: []string{"sqlc.yaml", "schema.sql", "queries.sql"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !hasDiagnostic(result, "wildcard column usage is unresolved") {
+				t.Fatalf("diagnostics = %#v", result.Diagnostics)
+			}
+			for _, fact := range result.Facts {
+				if fact.TargetKind == graph.KindColumn && fact.Producer == "sqlcbinding" {
+					t.Fatalf("schema mutation produced wildcard column evidence: %#v", fact)
+				}
+			}
+		})
+	}
+}
+
 func TestRouterDoesNotUseSqlcSchemaAcrossDialectMismatch(t *testing.T) {
 	root := testtemp.Dir(t)
 	writeRouterFiles(t, root, map[string]string{

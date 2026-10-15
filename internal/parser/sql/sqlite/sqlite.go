@@ -462,6 +462,8 @@ func (e *extractor) emitAccesses(fromID string, root ast.Node) {
 			emit(graph.EdgeWrites, qualifiedName(node.Table), node.Table)
 		case *ast.AlterTableStmt:
 			emitWithProperties(graph.EdgeWrites, qualifiedName(node.Table), node.Table, map[string]string{"statement": "alter_table"})
+		case *ast.DropTableStmt:
+			emitWithProperties(graph.EdgeWrites, qualifiedName(node.Name), node.Name, map[string]string{"statement": "schema_mutation"})
 		}
 		return true
 	})
