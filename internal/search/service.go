@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -19,6 +18,7 @@ import (
 
 	"github.com/cafecito-games/grafo/internal/graph"
 	"github.com/cafecito-games/grafo/internal/indexer"
+	"github.com/cafecito-games/grafo/internal/pathscope"
 	sourcecontext "github.com/cafecito-games/grafo/internal/source"
 )
 
@@ -213,7 +213,10 @@ func (s *Service) Search(ctx context.Context, request Request) (Result, error) {
 	if request.ContextLines < 0 || request.ContextLines > MaxContextLines {
 		return Result{}, fmt.Errorf("context lines must be between 0 and %d", MaxContextLines)
 	}
-	prefixes := normalizePrefixes(request.PathPrefixes)
+	prefixes, err := normalizePrefixes(request.PathPrefixes)
+	if err != nil {
+		return Result{}, err
+	}
 	languages := lowerSet(request.Languages)
 	repositories := lowerSet(request.Repositories)
 
@@ -680,29 +683,39 @@ func resolveBounds(request Request) (bounds, error) {
 	return limits, nil
 }
 
-func normalizePrefixes(prefixes []string) []string {
-	var result []string
+// normalizePrefixes validates, deduplicates, and orders repository-relative
+// segment prefixes. Invalid prefixes are rejected here, so search refuses the
+// same prefixes every other surface refuses instead of silently matching
+// nothing against a value that can never name a repository path.
+func normalizePrefixes(prefixes []string) ([]string, error) {
+	if len(prefixes) == 0 {
+		return nil, nil
+	}
+	set := map[string]bool{}
 	for _, prefix := range prefixes {
-		clean := strings.TrimSpace(filepath.ToSlash(prefix))
-		clean = strings.TrimPrefix(clean, "./")
-		clean = strings.TrimPrefix(clean, "/")
-		clean = strings.TrimSuffix(clean, "/")
-		if clean == "" || clean == "." {
-			continue
+		normalized, err := pathscope.NormalizePrefix(prefix)
+		if err != nil {
+			return nil, fmt.Errorf("invalid path prefix %q: %w", prefix, err)
 		}
-		result = append(result, clean)
+		set[normalized] = true
+	}
+	result := make([]string, 0, len(set))
+	for prefix := range set {
+		result = append(result, prefix)
 	}
 	sort.Strings(result)
-	return result
+	return result, nil
 }
 
+// matchesPrefix reports whether path lies under one of the prefixes. Matching
+// respects whole path segments, so prefix "client" selects "client/main.gd"
+// but never "client-old/main.gd".
 func matchesPrefix(path string, prefixes []string) bool {
 	if len(prefixes) == 0 {
 		return true
 	}
-	normalized := filepath.ToSlash(path)
 	for _, prefix := range prefixes {
-		if normalized == prefix || strings.HasPrefix(normalized, prefix+"/") || strings.HasPrefix(normalized, prefix) {
+		if pathscope.HasPrefix(path, prefix) {
 			return true
 		}
 	}
