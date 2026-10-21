@@ -381,6 +381,46 @@ func TestSearchSkipsMissingEscapingAndSymlinkedFiles(t *testing.T) {
 	}
 }
 
+func TestSearchPathPrefixRespectsSegmentBoundaries(t *testing.T) {
+	source := worktree(t, "repo", map[string]string{
+		"internal/alpha.go":     "alpha\n",
+		"internal-old/alpha.go": "alpha\n",
+	}, map[string]string{
+		"internal/alpha.go":     "go",
+		"internal-old/alpha.go": "go",
+	})
+	result, err := NewService([]Source{source}).Search(context.Background(),
+		Request{Patterns: []string{"alpha"}, PathPrefixes: []string{"internal"}})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(result.Matches) != 1 || result.Matches[0].Path != "internal/alpha.go" {
+		t.Fatalf("prefix internal must select internal/alpha.go only, got %+v", result.Matches)
+	}
+}
+
+func TestSearchRejectsInvalidPathPrefixes(t *testing.T) {
+	source := sampleSource(t)
+	service := NewService([]Source{source})
+	tests := []struct {
+		name     string
+		prefixes []string
+		want     string
+	}{
+		{name: "traversal", prefixes: []string{"../etc"}, want: "traversal"},
+		{name: "glob", prefixes: []string{"a*b"}, want: "glob"},
+		{name: "backslash", prefixes: []string{`internal\app`}, want: "slash separators"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := service.Search(context.Background(), Request{Patterns: []string{"alpha"}, PathPrefixes: test.prefixes})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error %v does not contain %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestSearchRejectsInvalidRequests(t *testing.T) {
 	source := sampleSource(t)
 	service := NewService([]Source{source})
